@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     fill="none" role="img" aria-labelledby="warsha-logo-title">
+  <title id="warsha-logo-title">Warsha</title>
+  <!-- Geometric W on a workbench rule. The amber bar is the brand signature:
+       the same 2px accent rule sits under the active tab in the UI.
+       Inline the file to recolour it via the two custom properties below;
+       the fallbacks make it correct as a plain img on a dark background. -->
+  <path d="M3.25 4.5 L8.5 15 L12 8.5 L15.5 15 L20.75 4.5"
+        stroke="var(--logo-ink, #FFFFFF)" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M4.75 19.5 H19.25"
+        stroke="var(--logo-accent, #F2A94B)" stroke-width="2.6"
+        stroke-linecap="round"/>
+</svg>
