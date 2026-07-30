@@ -135,6 +135,7 @@ and citations are in [docs/legal/THIRD-PARTY.md](docs/legal/THIRD-PARTY.md).
 
 ## Roadmap
 
-Beyond the MVP: a built-in exercise library with automatic checking, better mobile
-ergonomics for the editor and console, shareable project links that stay device-local, and
-a path to self-hosting the Python runtime so more of Warsha works with no network at all.
+Beyond the MVP: on-device validation on iPadOS so the table above can promise it, a built-in
+exercise library with automatic checking, better mobile ergonomics for the editor and
+console, shareable project links that stay device-local, and a path to self-hosting the
+Python runtime so more of Warsha works with no network at all.

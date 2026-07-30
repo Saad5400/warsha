@@ -10,8 +10,9 @@ updated 2026-07-30.
 
 Warsha is a website that turns your browser into a place to write and run Java and Python
 programs. Everything — the editor, the compiler, the program you run — works inside the
-browser tab on your own phone, tablet, or computer. Warsha is free and open source, and
-anyone can read every line of the code that does this.
+browser tab on your own device. Warsha is free and open source, and anyone can read every
+line of the code that does this. (Which devices and browsers are supported today is a
+separate, shorter list — see the [README](../../README.md#browser-support).)
 
 ## What we collect
 
