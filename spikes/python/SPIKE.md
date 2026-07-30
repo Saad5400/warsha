@@ -15,8 +15,12 @@ Files: `index.html` (page + main-thread wiring), `worker.js` (Pyodide worker),
 `coi-serviceworker.js` (vendored, v0.1.7, unmodified). Serve the directory over
 HTTP and open `index.html`. The page carries four selectable programs:
 `multi-file + input`, `prompt-before-read` (the acceptance tests),
-`traceback`, and `infinite loop`. `screenshot-working.jpg` shows a full session;
-`screenshot-prompt-before-read.jpg` shows the acceptance tests passing.
+`traceback`, and `infinite loop`. `progress-probe.html` is a separate harness for
+the `load(onProgress)` questions.
+
+Screenshots: `screenshot-working.jpg` (full session),
+`screenshot-prompt-before-read.jpg` (acceptance tests passing),
+`screenshot-progress-probe.jpg` (cache-hit evidence).
 
 ## Pyodide version and loader
 
@@ -315,17 +319,169 @@ Measured on Chrome/Linux over a fast connection; treat as a floor, not a promise
 | Warm boot (assets cached) | **1228–1772 ms** (loader 6–8 ms) |
 | Respawn after Stop | 1426–1772 ms worker-internal; ~2000 ms to Run re-enabled |
 
-Payload, fetched with cache-busting to isolate transfer from compile:
+Warm boot later measured as high as 3125 ms with many other tabs competing for the
+machine, so treat 1.2 s as best-case rather than typical.
 
-| asset | size | uncached transfer |
+Payload — note the two different numbers, because jsDelivr serves brotli:
+
+| asset | on the wire (br) | decompressed | uncached transfer |
+| --- | --- | --- | --- |
+| `pyodide.asm.wasm` | 3.28 MiB | 9.15 MiB | 852 ms |
+| `python_stdlib.zip` | 2.39 MiB | 2.43 MiB | 347 ms |
+| `pyodide.mjs` | 7 KiB | 17 KiB | negligible |
+| **total** | **~5.7 MiB** | **~11.6 MiB** | ~1.2 s |
+
+**Correct the headline number to ~5.7 MiB.** An earlier version of this document
+said 11.6 MiB, which is the decompressed size — real network transfer is roughly
+half that, because the wasm compresses about 2.8×. (`python_stdlib.zip` barely
+compresses; it is already a zip.) The 11.6 MiB figure still matters as what the
+browser must hold and compile, so both belong in capacity planning; only the
+download estimate changes. `cache-control: public, max-age=31536000`, so it is
+cached for a year.
+
+Remaining ~1 s of a cold boot is wasm compile plus Python init. Warm boot is
+entirely compile + init.
+
+## Mapping onto the shell's `Runtime` contract
+
+Against `app/src/runtime/types.ts`. Nothing in `app/` was modified by this spike.
+
+### `writeStdin` ordering — a bug this spike had, and the fix
+
+The shell buffers a line the student typed before the program read it and delivers
+it as soon as `onStdinRequest()` fires, so a session must accept `writeStdin(line)`
+**immediately**, including before the program reaches `input()`. This spike
+originally got that wrong, in the same shape eng-frontend hit in `FakeRuntime`:
+
+```js
+function requestStdinLine() {
+  Atomics.store(ctrl, 0, 0);          // <-- WRONG: wipes a line already delivered
+  self.postMessage({ type: "stdin-request" });
+  while (Atomics.load(ctrl, 0) === 0) Atomics.wait(ctrl, 0, 0, 250);
+```
+
+If a line had already been written into the shared slot, that first store
+discarded it and the worker then parked forever on input it had been handed. The
+symptom is the worst kind: the program hangs holding an answer it was already
+given.
+
+Three changes fix it, and all three matter:
+
+1. **Never clear the slot on entry.** The reader is armed by the slot being
+   readable at all times; `requestStdinLine` now announces the request and then
+   parks, without touching state. A line already present is consumed immediately
+   and the worker never parks at all.
+2. **Release the slot only after copying the bytes out**, then `Atomics.notify`
+   and post `stdin-consumed` so the page knows it may hand over the next line.
+3. **Queue on the page side.** The shared slot holds exactly one unconsumed line,
+   so the page keeps a JS queue and `pumpStdin()` writes the head only when
+   `Atomics.load(ctrl, 0) === 0`. Without this, a student typing two lines quickly
+   would have the second overwrite the first.
+
+Verified: a program that prints for ~1.5 s before its first `input()`, with two
+lines submitted 300 ms in. Neither was dropped, both arrived in order, and total
+runtime was 1511 ms — i.e. exactly the sleep time, proving the reads found their
+input already waiting instead of blocking. Echo is driven by `stdin-consumed`
+rather than by submit, so a typed-ahead line still renders *after* the prompt it
+answers:
+
+```
+working before any read...
+  step 0
+  step 1
+  step 2
+Name? Layla
+hello Layla
+Age? 11
+age 11
+```
+
+The page keeps the input row visible for the whole run (labelled `type ahead ›`
+when the program is not currently blocked, `›` when it is), because a row that
+only appears on `onStdinRequest` makes type-ahead impossible in the first place.
+Normal reply-after-prompt, the EOF path, and kill-while-parked were all
+re-verified after the change, and a queued line does not survive into the next
+run.
+
+### `load(onProgress)` and determinate progress
+
+**`loadPyodide()` exposes no progress callback**, so a determinate bar has to come
+from prefetching the big assets ourselves and letting Pyodide load from cache. The
+obvious worry is that this downloads everything twice. It does not — measured:
+
+```
+prefetch of the real URLs: 60ms          (already warm from the cache-busted run)
+worker boot: 1277ms
+  python_stdlib.zip: transferSize=0B  -> HTTP CACHE HIT (no re-download)
+  pyodide.asm.wasm:  transferSize=0B  -> HTTP CACHE HIT (no re-download)
+```
+
+`transferSize === 0` is trustworthy here because jsDelivr sends
+`timing-allow-origin: *`. The main thread's prefetch and the worker's fetches share
+the HTTP cache, so the prefetch is free. `progress-probe.html` in this directory is
+the harness.
+
+**The trap: do not use `Content-Length` as the denominator.** jsDelivr serves
+brotli, so `Content-Length` is the *compressed* length while
+`response.body.getReader()` hands back *decoded* bytes:
+
+| | Content-Length | bytes from the reader |
 | --- | --- | --- |
-| `pyodide.asm.wasm` | 9.15 MiB | 852 ms |
-| `python_stdlib.zip` | 2.43 MiB | 347 ms |
-| `pyodide.mjs` / `pyodide.js` | ~19 KiB | negligible |
+| `pyodide.asm.wasm` | 3,435,323 | 9,596,462 |
+| both big assets | 5.66 MiB | 11.58 MiB |
 
-So ~11.6 MiB and ~1.2 s of download, with the remaining ~1 s being wasm compile
-plus Python init. Warm boot is entirely compile + init; the download is
-HTTP-cacheable and jsDelivr serves it with long-lived caching.
+Using the header as `total` therefore overshoots — to **279%** on the wasm alone,
+**204%** across both. Because we pin an exact Pyodide version, the fix is to ship
+the decompressed sizes as constants and use those as `total`. Measured with that
+denominator the bar lands on exactly `100.0% (loaded 12141568 of 12141568)`.
+
+**Coalesce the reports.** The reader produced 420–920 chunks per load across runs.
+Emitting only when the integer percentage changes pins it at ≤101 reports with no
+visible loss of smoothness.
+
+Warm path, for comparison — one `boot` report, no download reporting, both assets
+still cache hits:
+
+```
+no prefetch — reporting nothing, as a warm load must
+worker boot: 3125ms (pyodide 314.0.3)
+  python_stdlib.zip: transferSize=0B  -> HTTP CACHE HIT
+  pyodide.asm.wasm:  transferSize=0B  -> HTTP CACHE HIT
+progress reports emitted: 1
+```
+
+Phase mapping: `download` for the prefetch, `boot` for `loadPyodide` (wasm compile
++ Python init). `unpack` is not observable — Pyodide unzips the stdlib internally
+with no hook. `compile` has no Python analogue (that is Java's `javac`), so it is
+simply never reported; per the spec note about not special-casing Python, that
+means the same component with one fewer phase, not different copy.
+
+**Cache-hit silence** is satisfiable but needs a deliberate signal, since there is
+no portable way to ask "is this URL in the HTTP cache?". The workable options, in
+order of preference: mark success in `localStorage`/IndexedDB after the first boot
+and skip the prefetch entirely on later loads (fast, but goes silent-and-slow if
+the HTTP cache was evicted while the marker survived); or store the assets in the
+Cache API so `caches.match()` is an authoritative warm check. Either way the rule
+is the same — on a warm load, emit nothing and let `load()` resolve.
+
+### The rest of the contract
+
+- **`run(files, entryPath, io)`** — matches the spike, which already writes an
+  arbitrary file set into the FS per run and executes an entry module. The spike
+  hardcodes `main.py` as the entry; taking `entryPath` is a one-line change.
+- **Raw chunks** — satisfied. The `write` handler forwards exact bytes, so a
+  `print()` with no newline reaches the console immediately and the input row can
+  sit right after it. This is verified in detail under
+  [Prompt-before-read acceptance criteria](#prompt-before-read-acceptance-criteria).
+- **`onExit(code | null)`, exactly once, `null` = killed** — the spike currently
+  posts `done` on normal completion and treats a kill as a page-level event. Two
+  gaps to close in the real runtime: the exit code must come from `SystemExit`
+  (the runner currently swallows it with `except SystemExit: pass`), and the kill
+  path must synthesise exactly one `onExit(null)` while guaranteeing the dead
+  worker's in-flight `done` cannot also arrive — easiest by tagging messages with
+  a run id and dropping any that do not match the current run.
+- **`load` must be idempotent** — the spike boots on page load instead, so this is
+  unimplemented; wrapping the boot in a memoised promise is the whole job.
 
 ## iPad-relevant caveats
 

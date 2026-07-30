@@ -23,23 +23,32 @@ let data = null;
 const decoder = new TextDecoder();
 
 function requestStdinLine() {
-  Atomics.store(ctrl, 0, 0);
+  // Deliberately does NOT clear the slot first. A student can hit Enter before
+  // the program reaches input(), so a line may already be sitting here; zeroing
+  // the state would discard it and then park forever on input we were handed.
+  // The reader is "armed" simply by the slot being readable at all times, so
+  // announcing the request after this point is safe.
   self.postMessage({ type: "stdin-request" });
 
-  // Park the worker thread until the main thread hands us a line. The timeout
-  // makes this a loop rather than an indefinite park, which keeps the thread
-  // observable and leaves a hook for pyodide.checkInterrupt() later.
+  // Park the worker thread until a line is available. The timeout makes this a
+  // loop rather than an indefinite park, which keeps the thread observable and
+  // leaves a hook for pyodide.checkInterrupt() later.
   while (Atomics.load(ctrl, 0) === 0) {
     Atomics.wait(ctrl, 0, 0, 250);
   }
 
   const state = Atomics.load(ctrl, 0);
-  Atomics.store(ctrl, 0, 0);
-  if (state === 2) return undefined; // EOF -> Python raises EOFError
-
   const len = Atomics.load(ctrl, 1);
-  // Copy out of the SharedArrayBuffer before decoding.
-  const text = decoder.decode(data.slice(0, len));
+  // Copy out of the SharedArrayBuffer before releasing the slot.
+  const text = state === 2 ? undefined : decoder.decode(data.slice(0, len));
+
+  // Release only now that the bytes are safely copied, and tell the page so it
+  // can hand over the next queued line.
+  Atomics.store(ctrl, 0, 0);
+  Atomics.notify(ctrl, 0);
+  self.postMessage({ type: "stdin-consumed", text: text ?? null });
+
+  if (text === undefined) return undefined; // EOF -> Python raises EOFError
   // Pyodide appends a newline to strings that lack one, but being explicit
   // keeps empty lines from looking like EOF.
   return text + "\n";
@@ -83,11 +92,24 @@ async function boot() {
 
   pyodide.FS.mkdirTree(PROJECT_DIR);
 
+  // jsDelivr sends `timing-allow-origin: *`, so transferSize is real here:
+  // 0 means the asset came from the HTTP cache rather than the network.
+  const assets = performance
+    .getEntriesByType("resource")
+    .filter((r) => /pyodide\.asm\.wasm|python_stdlib\.zip/.test(r.name))
+    .map((r) => ({
+      name: r.name.split("/full/")[1],
+      transferSize: r.transferSize,
+      encodedBodySize: r.encodedBodySize,
+      ms: Math.round(r.duration),
+    }));
+
   self.postMessage({
     type: "ready",
     version: pyodide.version,
     scriptMs: Math.round(tScript - t0),
     totalMs: Math.round(performance.now() - t0),
+    assets,
   });
 }
 

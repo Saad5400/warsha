@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warsha - Pyodide load() progress probe</title>
+<script src="coi-serviceworker.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; padding:20px; font:14px/1.6 ui-sans-serif,system-ui,sans-serif; max-width:900px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  p.sub { margin:0 0 16px; opacity:.7; }
+  button { font:inherit; padding:6px 14px; margin-right:6px; border:1px solid #8886; border-radius:5px; background:#8881; cursor:pointer; }
+  button.pri { background:#2563eb; color:#fff; border-color:#2563eb; }
+  button:disabled { opacity:.4; cursor:default; }
+  #bar { height:22px; border:1px solid #8886; border-radius:5px; overflow:hidden; margin:14px 0 6px; background:#8881; }
+  #fill { height:100%; width:0; background:#2563eb; transition:width .12s linear; }
+  #pct { font:12px ui-monospace,monospace; opacity:.8; }
+  pre { font:12px/1.5 ui-monospace,monospace; background:#8881; padding:12px; border-radius:6px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>Pyodide <code>load(onProgress)</code> probe</h1>
+<p class="sub">
+  Answers one question: if we stream the big assets ourselves to drive a determinate
+  progress bar, does Pyodide then re-download them? Watch <code>transferSize</code>
+  in the worker report — <code>0</code> means it came from the HTTP cache.
+</p>
+
+<div>
+  <button id="cold" class="pri">Cold: prefetch with byte counts, then boot</button>
+  <button id="warm">Warm: skip prefetch, boot straight away</button>
+</div>
+
+<div id="bar"><div id="fill"></div></div>
+<div id="pct">idle</div>
+
+<pre id="log"></pre>
+
+<script>
+const V = "314.0.3";
+const BASE = `https://cdn.jsdelivr.net/pyodide/v${V}/full/`;
+const BIG = ["pyodide.asm.wasm", "python_stdlib.zip"];
+
+// DECOMPRESSED sizes for this pinned version. These are the denominator, NOT
+// Content-Length: the CDN serves brotli, so Content-Length is the compressed
+// length (~3.3 MiB for the wasm) while a stream reader hands back decoded bytes
+// (9.15 MiB). Dividing decoded-by-Content-Length runs the bar to 279%.
+const ASSET_BYTES = {
+  "pyodide.asm.wasm": 9596462,
+  "python_stdlib.zip": 2545106,
+};
+
+const el = (id) => document.getElementById(id);
+const say = (s) => { el("log").textContent += s + "\n"; };
+
+// What an opted-in Pyodide runtime would emit as ProgressReport objects.
+const reports = [];
+function onProgress(p) {
+  reports.push(p);
+  if (typeof p === "string") { el("pct").textContent = p; return; }
+  if (p.total) {
+    const frac = p.loaded / p.total;
+    el("fill").style.width = (frac * 100).toFixed(1) + "%";
+    el("pct").textContent =
+      `${p.phase}: ${(p.loaded / 1048576).toFixed(1)} / ${(p.total / 1048576).toFixed(1)} MiB` +
+      ` (${(frac * 100).toFixed(0)}%) — ${p.message}`;
+  } else {
+    el("pct").textContent = `${p.phase}: ${p.message}`;
+  }
+}
+
+// Streaming prefetch driving a determinate bar.
+async function prefetch(bust) {
+  const total = BIG.reduce((a, f) => a + ASSET_BYTES[f], 0);
+  let wireTotal = 0;
+  for (const f of BIG) {
+    const r = await fetch(BASE + f + (bust ? "?cb=" + Math.random() : ""), { method: "HEAD" });
+    wireTotal += Number(r.headers.get("content-length") || 0);
+  }
+  say(`denominator (decompressed, pinned): ${(total / 1048576).toFixed(2)} MiB`);
+  say(`Content-Length sum (compressed, on the wire): ${(wireTotal / 1048576).toFixed(2)} MiB`);
+  say(`  -> naive loaded/Content-Length would reach ${(total / wireTotal * 100).toFixed(0)}%`);
+
+  let loaded = 0;
+  let emitted = 0, coalesced = 0, lastPct = -1;
+  const t0 = performance.now();
+  for (const f of BIG) {
+    const res = await fetch(BASE + f + (bust ? "?cb=" + Math.random() : ""));
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      loaded += value.length;
+      emitted++;
+      // Coalesce: only report when the whole-number percentage changes. A raw
+      // report per chunk is ~900 calls for one load, which is pointless churn
+      // for any UI that re-renders on each one.
+      const pct = Math.floor(loaded / total * 100);
+      if (pct !== lastPct) {
+        lastPct = pct;
+        coalesced++;
+        onProgress({ phase: "download", message: `Downloading Python (${f})`, loaded, total });
+      }
+    }
+    say(`  ${f}: done at ${Math.round(performance.now() - t0)}ms`);
+  }
+  say(`chunks read: ${emitted}, progress reports after coalescing: ${coalesced}`);
+  say(`final bar position: ${(loaded / total * 100).toFixed(1)}%  (loaded ${loaded} of ${total})`);
+  return Math.round(performance.now() - t0);
+}
+
+function boot() {
+  return new Promise((resolve, reject) => {
+    const sab = new SharedArrayBuffer(8 + 65536);
+    const w = new Worker("worker.js", { type: "module" });
+    const t0 = performance.now();
+    w.onmessage = (ev) => {
+      if (ev.data.type === "ready") {
+        resolve({ ms: Math.round(performance.now() - t0), info: ev.data, worker: w });
+      } else if (ev.data.type === "fatal") {
+        reject(new Error(ev.data.text));
+      }
+    };
+    w.onerror = () => reject(new Error("worker failed to load"));
+    onProgress({ phase: "boot", message: "Starting Python" });
+    w.postMessage({ type: "init", sab });
+  });
+}
+
+async function probe(withPrefetch) {
+  el("cold").disabled = el("warm").disabled = true;
+  el("log").textContent = "";
+  el("fill").style.width = "0";
+  reports.length = 0;
+  try {
+    if (!crossOriginIsolated) { say("NOT cross-origin isolated — reload once."); return; }
+
+    let preMs = 0;
+    if (withPrefetch) {
+      // Bust the cache so this really is a first-ever download.
+      preMs = await prefetch(true);
+      say(`prefetch (cache-busted, so genuinely from network): ${preMs}ms`);
+      // Now warm the real URLs (no bust) the way a first visit would.
+      preMs = await prefetch(false);
+      say(`prefetch of the real URLs: ${preMs}ms`);
+    } else {
+      say("no prefetch — reporting nothing, as a warm load must");
+    }
+
+    const { ms, info, worker } = await boot();
+    say(`\nworker boot: ${ms}ms (pyodide ${info.version})`);
+    say("worker's own asset fetches:");
+    for (const a of info.assets) {
+      say(`  ${a.name}: transferSize=${a.transferSize}B encoded=${a.encodedBodySize}B ${a.ms}ms` +
+          `  -> ${a.transferSize === 0 ? "HTTP CACHE HIT (no re-download)" : "WENT TO NETWORK"}`);
+    }
+    say(`\ntotal wall time: ${preMs + ms}ms`);
+    say(`progress reports emitted: ${reports.length}`);
+    el("pct").textContent = "done";
+    worker.terminate();
+  } catch (e) {
+    say("ERROR: " + e.message);
+  } finally {
+    el("cold").disabled = el("warm").disabled = false;
+  }
+}
+
+el("cold").onclick = () => probe(true);
+el("warm").onclick = () => probe(false);
+</script>
+</body>
+</html>

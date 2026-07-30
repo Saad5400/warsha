@@ -314,6 +314,15 @@ function onWorkerMessage(ev) {
     case "stdout": log(m.text); break;
     case "stderr": log(m.text, "err"); break;
     case "stdin-request": askForInput(); break;
+    case "stdin-consumed":
+      // The program has taken the line; echo it here so it lands after the
+      // prompt in the transcript, then release the next queued line.
+      if (m.text === null) log("[EOF]\n", "sys");
+      else log(m.text + "\n", "in");
+      waitingForInput = false;
+      showInputRow();
+      pumpStdin();
+      break;
     case "done":
       running = false;
       hideInput();
@@ -375,46 +384,71 @@ function loadProgram(name) {
 // ---------------------------------------------------------------------------
 // input round-trip
 // ---------------------------------------------------------------------------
+// Lines the student has submitted but the program has not read yet. Typing
+// ahead of the program is normal, so nothing is ever dropped: the queue holds
+// them and pumpStdin() hands them over one at a time, because the shared slot
+// only has room for one unconsumed line.
+const EOF_MARK = Symbol("eof");
+let stdinQueue = [];
+
+function showInputRow() {
+  el("inrow").hidden = false;
+  el("prompt").textContent = waitingForInput ? "›" : "type ahead ›";
+  if (waitingForInput) el("stdin").focus();
+}
+
 function askForInput() {
   waitingForInput = true;
-  // The prompt text Python wrote already landed in #out via stdout, so the
-  // label here is generic on purpose.
-  el("prompt").textContent = "›";
-  el("inrow").hidden = false;
-  el("stdin").value = "";
-  el("stdin").focus();
+  showInputRow();
+  pumpStdin();               // a line may already be queued from type-ahead
 }
 
 function hideInput() {
   waitingForInput = false;
+  stdinQueue = [];
   el("inrow").hidden = true;
 }
 
-function sendLine(text) {
-  if (!waitingForInput) return;
+function pumpStdin() {
+  if (!stdinQueue.length) return;
+  // Slot still holds a line the worker has not taken yet; wait for its
+  // stdin-consumed message rather than overwriting.
+  if (Atomics.load(ctrl, 0) !== 0) return;
+
+  const item = stdinQueue.shift();
+  if (item === EOF_MARK) {
+    Atomics.store(ctrl, 1, 0);
+    Atomics.store(ctrl, 0, 2);          // 2 = EOF
+  } else {
+    const bytes = new TextEncoder().encode(item);
+    data.set(bytes, 0);
+    Atomics.store(ctrl, 1, bytes.length);
+    Atomics.store(ctrl, 0, 1);          // 1 = line ready
+  }
+  Atomics.notify(ctrl, 0);
+}
+
+function submitLine(text) {
+  if (!running) return;
   const bytes = new TextEncoder().encode(text);
   if (bytes.length > CAP) { log("\n[input too long]\n", "err"); return; }
-  data.set(bytes, 0);
-  Atomics.store(ctrl, 1, bytes.length);
-  Atomics.store(ctrl, 0, 1);      // 1 = line ready
-  Atomics.notify(ctrl, 0);
-  log(text + "\n", "in");
-  hideInput();
+  stdinQueue.push(text);
+  el("stdin").value = "";
+  // Echo happens on stdin-consumed, so a typed-ahead line appears after the
+  // prompt it answers rather than before it.
+  pumpStdin();
 }
 
-function sendEof() {
-  if (!waitingForInput) return;
-  Atomics.store(ctrl, 1, 0);
-  Atomics.store(ctrl, 0, 2);      // 2 = EOF
-  Atomics.notify(ctrl, 0);
-  log("[EOF]\n", "sys");
-  hideInput();
+function submitEof() {
+  if (!running) return;
+  stdinQueue.push(EOF_MARK);
+  pumpStdin();
 }
 
-el("send").onclick = () => sendLine(el("stdin").value);
-el("eof").onclick = sendEof;
+el("send").onclick = () => submitLine(el("stdin").value);
+el("eof").onclick = submitEof;
 el("stdin").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); sendLine(el("stdin").value); }
+  if (e.key === "Enter") { e.preventDefault(); submitLine(el("stdin").value); }
 });
 
 // ---------------------------------------------------------------------------
@@ -428,8 +462,14 @@ function syncButtons() {
 el("run").onclick = () => {
   files[current] = el("editor").value;
   running = true;
+  // Fresh program: discard any leftover line from the previous run.
+  stdinQueue = [];
   Atomics.store(ctrl, 0, 0);
+  waitingForInput = false;
   log(`\n[run ${program}]\n`, "sys");
+  // Available immediately, not only once the program asks, so the student can
+  // type ahead of the first input().
+  showInputRow();
   syncButtons();
   worker.postMessage({ type: "run", files });
 };
