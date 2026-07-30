@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warsha - Python runtime spike</title>
+<!-- Must load before anything that needs SharedArrayBuffer. Registers a service
+     worker that injects COOP/COEP so the page becomes cross-origin isolated even
+     when the static host sends no headers. Costs one reload on first visit. -->
+<script src="coi-serviceworker.js"></script>
+<style>
+  :root { color-scheme: light dark; --bd:#8884; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { padding:8px 12px; border-bottom:1px solid var(--bd); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  #iso { font:12px ui-monospace,monospace; padding:2px 6px; border-radius:4px; }
+  .ok { background:#0a02; color:#0a7; } .bad { background:#f002; color:#c33; }
+  #stat { font:12px ui-monospace,monospace; opacity:.75; }
+  main { flex:1; display:flex; min-height:0; }
+  .pane { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .pane + .pane { border-left:1px solid var(--bd); }
+  .bar { padding:6px 10px; border-bottom:1px solid var(--bd); display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .bar .lbl { font-size:12px; opacity:.6; margin-right:2px; }
+  button { font:inherit; padding:4px 12px; border:1px solid var(--bd); border-radius:5px; background:#8881; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.pri { background:#2563eb; color:#fff; border-color:#2563eb; }
+  button.dan { background:#dc2626; color:#fff; border-color:#dc2626; }
+  button.tab[aria-selected=true] { background:#8883; font-weight:600; }
+  textarea, pre { font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #editor { flex:1; border:0; padding:10px; resize:none; outline:none; background:transparent; color:inherit; white-space:pre; tab-size:4; }
+  #out { flex:1; margin:0; padding:10px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+  #out .err { color:#e5534b; }
+  #out .in { color:#3b82f6; font-weight:600; }
+  #out .sys { opacity:.55; font-style:italic; }
+  #inrow { border-top:1px solid var(--bd); padding:8px 10px; display:flex; gap:6px; align-items:center; }
+  #inrow[hidden] { display:none; }
+  #prompt { font:13px ui-monospace,monospace; opacity:.8; white-space:pre; }
+  #stdin { flex:1; min-width:60px; font:13px ui-monospace,monospace; padding:5px 8px; border:1px solid var(--bd); border-radius:5px; background:transparent; color:inherit; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Warsha &mdash; Python runtime spike</h1>
+  <span id="iso" class="bad">checking isolation&hellip;</span>
+  <span id="stat">booting&hellip;</span>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="bar">
+      <span class="lbl">program</span>
+      <span id="progs" style="display:flex;gap:4px"></span>
+      <span style="flex:1"></span>
+      <span class="lbl">file</span>
+      <span id="tabs" style="display:flex;gap:4px"></span>
+    </div>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </section>
+
+  <section class="pane">
+    <div class="bar">
+      <button id="run" class="pri" disabled>Run</button>
+      <button id="stop" class="dan" disabled>Stop</button>
+      <button id="clear">Clear</button>
+    </div>
+    <pre id="out"></pre>
+    <div id="inrow" hidden>
+      <span id="prompt">stdin</span>
+      <input id="stdin" autocomplete="off" autocapitalize="off" autocorrect="off">
+      <button id="send" class="pri">Send</button>
+      <button id="eof" title="send end-of-file">EOF</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// demo programs
+// ---------------------------------------------------------------------------
+const PROGRAMS = {
+  demo: { label: "multi-file + input", files: {
+    "main.py": `import time
+from helpers.shapes import Rectangle, Circle
+
+print("== Warsha Python spike ==")
+print("Rectangle comes from:", Rectangle.__module__)
+
+print()
+print("-- streaming: 5 ticks, 400ms apart --")
+for i in range(1, 6):
+    print(f"  tick {i}/5")
+    time.sleep(0.4)
+
+print()
+print("-- partial line (no newline, explicit flush) --")
+print("  waiting", end="", flush=True)
+for _ in range(3):
+    time.sleep(0.4)
+    print(".", end="", flush=True)
+print(" done")
+
+print()
+print("-- interactive input --")
+name = input("Your name? ")
+print(f"Hello, {name}!")
+
+w = float(input("Rectangle width?  "))
+h = float(input("Rectangle height? "))
+
+r = Rectangle(w, h)
+print(r, "-> area", round(r.area(), 2), "perimeter", round(r.perimeter(), 2))
+
+c = Circle(w)
+print(c, "-> area", round(c.area(), 2))
+
+print()
+print("all done.")
+`,
+    "helpers/__init__.py": `# marks helpers/ as a package
+`,
+    "helpers/shapes.py": `import math
+
+
+class Shape:
+    """Base class living in a second user file."""
+
+    def area(self):
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f"<{type(self).__name__}>"
+
+
+class Rectangle(Shape):
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    def area(self):
+        return self.width * self.height
+
+    def perimeter(self):
+        return 2 * (self.width + self.height)
+
+    def __repr__(self):
+        return f"Rectangle({self.width}x{self.height})"
+
+
+class Circle(Shape):
+    def __init__(self, radius):
+        self.radius = radius
+
+    def area(self):
+        return math.pi * self.radius ** 2
+
+    def __repr__(self):
+        return f"Circle(r={self.radius})"
+`,
+  }},
+
+  // Acceptance tests for "output must appear BEFORE the read blocks".
+  // Every case here deliberately omits flush=True.
+  io: { label: "prompt-before-read", files: {
+    "main.py": `import sys
+
+print("Each case must show its text BEFORE the input box appears.")
+print("None of these call flush().")
+print()
+
+a = input("A) input('prompt: ') -> ")
+print("   got", repr(a))
+
+print("B) print(end='') then bare input() -> ", end="")
+b = input()
+print("   got", repr(b))
+
+sys.stdout.write("C) sys.stdout.write() then bare input() -> ")
+c = input()
+print("   got", repr(c))
+
+print("D) partials:", end="")
+print(" one", end="")
+print(" two", end="")
+d = input(" -> ")
+print("   got", repr(d))
+
+print("E) bare input() must BLOCK, never EOFError.")
+e = input()
+print("   got", repr(e))
+
+print()
+print("all reads completed, no EOFError")
+`,
+  }},
+
+  // Uncaught exception raised two user frames deep, through a helper module.
+  err: { label: "traceback", files: {
+    "main.py": `from helpers.shapes import Rectangle
+
+print("about to fail")
+r = Rectangle(3, 4)
+print("area is", r.area())
+r.scale(0)          # raises inside helpers/shapes.py
+print("never reached")
+`,
+    "helpers/__init__.py": ``,
+    "helpers/shapes.py": `class Rectangle:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    def area(self):
+        return self.width * self.height
+
+    def scale(self, factor):
+        if factor <= 0:
+            raise ValueError(f"factor must be positive, got {factor}")
+        self.width *= factor
+`,
+  }},
+
+  loop: { label: "infinite loop", files: {
+    "main.py": `import time
+
+print("spinning forever -- press Stop to kill me")
+n = 0
+while True:
+    n += 1
+    if n % 5_000_000 == 0:
+        print("still alive, iteration", n)
+`,
+  }},
+};
+
+// ---------------------------------------------------------------------------
+// stdin shared buffer
+// ---------------------------------------------------------------------------
+const HEADER = 8;              // 2 x int32
+const CAP = 64 * 1024;
+let sab = null, ctrl = null, data = null;
+
+const el = (id) => document.getElementById(id);
+const out = el("out"), stat = el("stat");
+
+function log(text, cls) {
+  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  if (cls) {
+    const s = document.createElement("span");
+    s.className = cls;
+    s.textContent = text;
+    out.appendChild(s);
+  } else {
+    out.appendChild(document.createTextNode(text));
+  }
+  if (atBottom) out.scrollTop = out.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// isolation check
+// ---------------------------------------------------------------------------
+const isolated = self.crossOriginIsolated === true && typeof SharedArrayBuffer === "function";
+el("iso").textContent = isolated
+  ? "crossOriginIsolated: true · SharedArrayBuffer: ok"
+  : `crossOriginIsolated: ${self.crossOriginIsolated} · SAB: ${typeof SharedArrayBuffer}`;
+el("iso").className = isolated ? "ok" : "bad";
+
+if (isolated) {
+  sab = new SharedArrayBuffer(HEADER + CAP);
+  ctrl = new Int32Array(sab, 0, 2);
+  data = new Uint8Array(sab, HEADER);
+} else {
+  stat.textContent = "no SharedArrayBuffer - blocking input() unavailable";
+  log("SharedArrayBuffer unavailable. If this is the first visit the coi service worker should have reloaded the page; try a manual reload.\n", "err");
+}
+
+// ---------------------------------------------------------------------------
+// worker lifecycle
+// ---------------------------------------------------------------------------
+let worker = null;
+let ready = false;
+let running = false;
+let waitingForInput = false;
+let bootStart = 0;
+let bootCount = 0;
+
+function spawn(reason) {
+  ready = false;
+  bootStart = performance.now();
+  bootCount++;
+  const label = bootCount === 1 ? "cold/first" : reason;
+  stat.textContent = `booting pyodide (${label})…`;
+  worker = new Worker("worker.js", { type: "module" });
+  worker.onmessage = onWorkerMessage;
+  worker.onerror = (e) => log(`worker error: ${e.message}\n`, "err");
+  const isatty = new URLSearchParams(location.search).get("isatty") === "1";
+  worker.postMessage({ type: "init", sab, isatty });
+  syncButtons();       // keep Run disabled until the new worker reports ready
+  return label;
+}
+
+function onWorkerMessage(ev) {
+  const m = ev.data;
+  switch (m.type) {
+    case "ready": {
+      ready = true;
+      const ms = Math.round(performance.now() - bootStart);
+      stat.textContent = `pyodide ${m.version} · boot ${ms}ms (loader ${m.scriptMs}ms)`;
+      log(`[pyodide ${m.version} ready in ${ms}ms]\n`, "sys");
+      syncButtons();
+      break;
+    }
+    case "stdout": log(m.text); break;
+    case "stderr": log(m.text, "err"); break;
+    case "stdin-request": askForInput(); break;
+    case "done":
+      running = false;
+      hideInput();
+      log(`\n[finished in ${m.ms}ms]\n`, "sys");
+      syncButtons();
+      break;
+    case "fatal":
+      running = false;
+      hideInput();
+      log(`\n[worker fatal] ${m.text}\n`, "err");
+      syncButtons();
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// editor / file tabs
+// ---------------------------------------------------------------------------
+let program = "demo";
+let files = structuredClone(PROGRAMS.demo.files);
+let current = "main.py";
+
+function renderTabs() {
+  const box = el("tabs");
+  box.textContent = "";
+  for (const name of Object.keys(files)) {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.textContent = name;
+    b.setAttribute("aria-selected", String(name === current));
+    b.onclick = () => { files[current] = el("editor").value; current = name; renderTabs(); };
+    box.appendChild(b);
+  }
+  el("editor").value = files[current];
+}
+
+function renderPrograms() {
+  const box = el("progs");
+  box.textContent = "";
+  for (const [name, prog] of Object.entries(PROGRAMS)) {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.id = "p-" + name;
+    b.textContent = prog.label;
+    b.setAttribute("aria-selected", String(name === program));
+    b.onclick = () => loadProgram(name);
+    box.appendChild(b);
+  }
+}
+
+function loadProgram(name) {
+  program = name;
+  files = structuredClone(PROGRAMS[name].files);
+  current = "main.py";
+  renderPrograms();
+  renderTabs();
+}
+
+// ---------------------------------------------------------------------------
+// input round-trip
+// ---------------------------------------------------------------------------
+function askForInput() {
+  waitingForInput = true;
+  // The prompt text Python wrote already landed in #out via stdout, so the
+  // label here is generic on purpose.
+  el("prompt").textContent = "›";
+  el("inrow").hidden = false;
+  el("stdin").value = "";
+  el("stdin").focus();
+}
+
+function hideInput() {
+  waitingForInput = false;
+  el("inrow").hidden = true;
+}
+
+function sendLine(text) {
+  if (!waitingForInput) return;
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length > CAP) { log("\n[input too long]\n", "err"); return; }
+  data.set(bytes, 0);
+  Atomics.store(ctrl, 1, bytes.length);
+  Atomics.store(ctrl, 0, 1);      // 1 = line ready
+  Atomics.notify(ctrl, 0);
+  log(text + "\n", "in");
+  hideInput();
+}
+
+function sendEof() {
+  if (!waitingForInput) return;
+  Atomics.store(ctrl, 1, 0);
+  Atomics.store(ctrl, 0, 2);      // 2 = EOF
+  Atomics.notify(ctrl, 0);
+  log("[EOF]\n", "sys");
+  hideInput();
+}
+
+el("send").onclick = () => sendLine(el("stdin").value);
+el("eof").onclick = sendEof;
+el("stdin").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); sendLine(el("stdin").value); }
+});
+
+// ---------------------------------------------------------------------------
+// run / stop
+// ---------------------------------------------------------------------------
+function syncButtons() {
+  el("run").disabled = !ready || running;
+  el("stop").disabled = !running;
+}
+
+el("run").onclick = () => {
+  files[current] = el("editor").value;
+  running = true;
+  Atomics.store(ctrl, 0, 0);
+  log(`\n[run ${program}]\n`, "sys");
+  syncButtons();
+  worker.postMessage({ type: "run", files });
+};
+
+el("stop").onclick = () => {
+  const t0 = performance.now();
+  worker.terminate();               // kills the thread even mid-Atomics.wait
+  running = false;
+  hideInput();
+  log(`\n[killed by user]\n`, "err");
+  const label = spawn("after kill");
+  log(`[respawning worker (${label})…]\n`, "sys");
+  window.__killMs = Math.round(performance.now() - t0);
+};
+
+el("clear").onclick = () => { out.textContent = ""; };
+
+// ---------------------------------------------------------------------------
+renderPrograms();
+renderTabs();
+if (isolated) spawn("cold");
+</script>
+</body>
+</html>
