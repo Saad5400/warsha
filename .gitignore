@@ -1,0 +1,7 @@
+# Never commit compiler/runtime binaries — licensing (see docs/legal/THIRD-PARTY.md).
+# Oracle JDK jars are NOT redistributable; use Temurin tools.jar or ecj, fetched at runtime.
+*.jar
+
+node_modules/
+dist/
+.DS_Store
