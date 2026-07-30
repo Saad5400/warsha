@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warsha — CheerpJ Java spike (main thread)</title>
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+<style>
+  body { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 12px;
+         background: #12141a; color: #d8dee9; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  .row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .col { flex: 1 1 380px; min-width: 300px; }
+  button { font: inherit; padding: 6px 12px; margin: 0 4px 6px 0; background: #2e3440; color: #eceff4;
+           border: 1px solid #4c566a; border-radius: 4px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #5e81ac; }
+  button.danger { background: #bf616a; }
+  input[type=text] { font: inherit; padding: 6px; width: 220px; background: #2e3440; color: #eceff4;
+                     border: 1px solid #4c566a; border-radius: 4px; }
+  pre { background: #0b0d12; border: 1px solid #2e3440; border-radius: 4px; padding: 8px; margin: 0 0 8px;
+        max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  #console { min-height: 140px; color: #a3be8c; }
+  #log { min-height: 100px; color: #88c0d0; font-size: 12px; }
+  .lbl { color: #81a1c1; margin: 6px 0 4px; }
+  .warn { color: #ebcb8b; }
+  .err { color: #bf616a; }
+  #stdinState { color: #ebcb8b; margin-left: 8px; }
+  details summary { cursor: pointer; color: #81a1c1; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<h1>Warsha spike — CheerpJ 4.3, multi-file Java compile + run + stdin + kill (main thread)</h1>
+
+<div class="row">
+  <div class="col">
+    <div>
+      <button id="btnRun" class="primary" disabled>Compile &amp; Run app.Main</button>
+      <button id="btnLoop" disabled>Run infinite loop (kill test)</button>
+      <button id="btnStop" class="danger" disabled>Stop</button>
+    </div>
+    <div>
+      <input type="text" id="stdin" placeholder="type a line, press Enter">
+      <button id="btnSend">Send</button>
+      <button id="btnEof">Send EOF</button>
+      <span id="stdinState"></span>
+    </div>
+    <div class="lbl">Program output (CheerpJ #console element)</div>
+    <pre id="console"></pre>
+  </div>
+  <div class="col">
+    <div class="lbl">Spike log / timings</div>
+    <pre id="log"></pre>
+    <details>
+      <summary>Hardcoded sources (3 files, 2 packages + bridge)</summary>
+      <pre id="srcDump"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Hardcoded student project: 3 files, 2 packages, inheritance across packages.
+// ---------------------------------------------------------------------------
+// NOTE: /str/ is a FLAT namespace — cheerpOSAddStringFile("/str/a/b.java") is not
+// visible to Java (javac reports "file not found"). javac does not require source
+// files to live in package-shaped directories, only that the file basename matches
+// the public class name, so we write them flat and pass every path explicitly.
+const STUDENT_SOURCES = {
+  "Person.java": `package models;
+
+public class Person {
+    protected String name;
+    protected int age;
+
+    public Person(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public String getName() { return name; }
+    public int getAge() { return age; }
+
+    public String describe() {
+        return "Person " + name + " (" + age + ")";
+    }
+}
+`,
+  "Student.java": `package models;
+
+public class Student extends Person {
+    private String major;
+
+    public Student(String name, int age, String major) {
+        super(name, age);
+        this.major = major;
+    }
+
+    public String getMajor() { return major; }
+
+    @Override
+    public String describe() {
+        return "Student " + name + " (" + age + ") majoring in " + major;
+    }
+}
+`,
+  "Main.java": `package app;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Scanner;
+import models.Person;
+import models.Student;
+
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("=== Warsha Java spike === build-token=WARSHA-TOKEN-B");
+        System.out.println("java.version = " + System.getProperty("java.version"));
+
+        List<Person> people = new ArrayList<Person>();
+        people.add(new Person("Layla", 41));
+        people.add(new Student("Omar", 20, "Computer Science"));
+
+        for (Person p : people) {
+            // polymorphic dispatch across packages
+            System.out.println("  -> " + p.describe());
+            System.out.println("     instanceof Student? " + (p instanceof Student));
+        }
+
+        Scanner sc = new Scanner(System.in);
+
+        System.out.print("Enter your name: ");
+        String name = sc.nextLine();
+        System.out.println("Hello, " + name + "!");
+
+        System.out.print("Enter your age: ");
+        String ageLine = sc.nextLine();
+        int age;
+        try {
+            age = Integer.parseInt(ageLine.trim());
+        } catch (NumberFormatException e) {
+            System.err.println("Not a number: '" + ageLine + "', defaulting to 0");
+            age = 0;
+        }
+
+        Student you = new Student(name, age, "Warsha 101");
+        System.out.println("Created: " + you.describe());
+        System.out.println("Superclass method getName() -> " + you.getName());
+        System.out.println("=== done, exit 0 ===");
+    }
+}
+`,
+  "Loop.java": `package app;
+
+public class Loop {
+    public static void main(String[] args) {
+        System.out.println("Loop: entering infinite loop, hit Stop...");
+        long i = 0;
+        while (true) {
+            i++;
+            if (i % 200000000L == 0) {
+                System.out.println("Loop: still alive, i=" + i);
+            }
+        }
+    }
+}
+`
+};
+
+// ---------------------------------------------------------------------------
+// Warsha runtime support, compiled together with the student's code.
+//   Bridge  -> native readLine() implemented in JS, installed as System.in
+//   Launcher-> installs stdin, then reflectively calls the real main class
+// ---------------------------------------------------------------------------
+const RUNTIME_SOURCES = {
+  "Bridge.java": `package warsha;
+
+import java.io.IOException;
+import java.io.InputStream;
+
+public class Bridge {
+    /** Implemented in JavaScript; resolves when the user submits a line. */
+    public static native String readLine();
+
+    public static void installStdin() {
+        System.setIn(new InputStream() {
+            private byte[] buf = new byte[0];
+            private int pos = 0;
+
+            /** Blocks (via the JS native) only when the buffer is empty. */
+            private boolean fill() throws IOException {
+                while (pos >= buf.length) {
+                    String line = readLine();
+                    if (line == null) return false; // EOF
+                    buf = (line + "\\n").getBytes("UTF-8");
+                    pos = 0;
+                }
+                return true;
+            }
+
+            @Override
+            public int read() throws IOException {
+                if (!fill()) return -1;
+                return buf[pos++] & 0xFF;
+            }
+
+            /**
+             * MUST be overridden. InputStream's default bulk read keeps calling
+             * read() until it has \`len\` bytes or hits EOF, so Scanner's 1024-byte
+             * request would block forever asking the user for more lines. Return
+             * just what is buffered instead — that is real console semantics.
+             */
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                if (len == 0) return 0;
+                if (!fill()) return -1;
+                int n = Math.min(len, buf.length - pos);
+                System.arraycopy(buf, pos, b, off, n);
+                pos += n;
+                return n;
+            }
+
+            @Override
+            public int available() {
+                return buf.length - pos;
+            }
+        });
+    }
+}
+`,
+  "Launcher.java": `package warsha;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
+public class Launcher {
+    public static void main(String[] args) throws Exception {
+        Bridge.installStdin();
+        String mainClass = args[0];
+        String[] rest = new String[args.length - 1];
+        System.arraycopy(args, 1, rest, 0, rest.length);
+        Method m = Class.forName(mainClass).getMethod("main", String[].class);
+        try {
+            m.invoke(null, (Object) rest);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            cause.printStackTrace();
+            System.out.flush();
+            System.err.flush();
+            throw new RuntimeException("program threw " + cause);
+        }
+    }
+}
+`
+};
+
+// ---------------------------------------------------------------------------
+// UI plumbing
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const logEl = $("log"), consoleEl = $("console");
+const t0 = performance.now();
+
+function log(msg, cls) {
+  const t = (performance.now() - t0).toFixed(0).padStart(6);
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = `[${t}ms] ${msg}\n`;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+  console.info("[spike]", msg);
+}
+
+$("srcDump").textContent = Object.keys(STUDENT_SOURCES).concat(Object.keys(RUNTIME_SOURCES)).join("\n");
+
+// --- stdin queue: JS side of warsha.Bridge.readLine ------------------------
+const stdinQueue = [];
+let stdinWaiter = null;      // pending resolve() when Java is blocked on a read
+let stdinWaiting = false;
+
+function setStdinState(s, cls) {
+  $("stdinState").textContent = s;
+  $("stdinState").className = cls || "";
+}
+
+function pushStdinLine(line) {
+  if (stdinWaiter) {
+    const r = stdinWaiter;
+    stdinWaiter = null;
+    stdinWaiting = false;
+    setStdinState("");
+    log(`stdin: delivering ${line === null ? "EOF" : JSON.stringify(line)} to blocked Java read`);
+    r(line);
+  } else {
+    stdinQueue.push(line);
+    log(`stdin: queued ${line === null ? "EOF" : JSON.stringify(line)} (Java not waiting yet)`);
+  }
+}
+
+function nextStdinLine() {
+  if (stdinQueue.length) {
+    const l = stdinQueue.shift();
+    log(`stdin: Java read -> ${l === null ? "EOF" : JSON.stringify(l)} (from queue)`);
+    return Promise.resolve(l);
+  }
+  stdinWaiting = true;
+  setStdinState("Java is blocked waiting for a line...", "warn");
+  log("stdin: Java blocked in native readLine(), awaiting user input");
+  return new Promise((res) => { stdinWaiter = res; });
+}
+
+$("stdin").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("btnSend").click(); }
+});
+$("btnSend").onclick = () => {
+  const v = $("stdin").value;
+  $("stdin").value = "";
+  pushStdinLine(v);
+};
+$("btnEof").onclick = () => pushStdinLine(null);
+
+// --- CheerpJ init ----------------------------------------------------------
+// ECJ (EPL-2.0) rather than a JDK tools.jar — see fetch-compiler.sh.
+const COMPILER_JAR = "/app/ecj.jar";
+const COMPILER_MAIN = "org.eclipse.jdt.internal.compiler.batch.Main";
+// javac will NOT create the -d directory (it errors "directory not found"), and
+// /files/ is read-only from JS, so we cannot mkdir it from here. /files/ itself
+// always exists, so classes land in /files/<package>/... — javac creates the
+// package subdirectories itself.
+const OUT = "/files/";
+let running = false;
+
+async function Java_warsha_Bridge_readLine(lib) {
+  return await nextStdinLine();
+}
+
+(async function init() {
+  log("calling cheerpjInit (CheerpJ 4.3 loader, default Java 8 runtime)");
+  const s = performance.now();
+  await cheerpjInit({
+    status: "none",
+    natives: { Java_warsha_Bridge_readLine }
+  });
+  log(`cheerpjInit resolved in ${(performance.now() - s).toFixed(0)}ms`);
+  log(`addStringFile API: cheerpOSAddStringFile=${typeof self.cheerpOSAddStringFile}, cheerpjAddStringFile=${typeof self.cheerpjAddStringFile}`);
+  log(`output dir for .class files: ${OUT}`);
+  $("btnRun").disabled = false;
+  $("btnLoop").disabled = false;
+})().catch((e) => log("cheerpjInit FAILED: " + e, "err"));
+
+// --- write sources into /str/ ---------------------------------------------
+function addFile(path, content) {
+  const bytes = new TextEncoder().encode(content);
+  const fn = self.cheerpOSAddStringFile || self.cheerpjAddStringFile;
+  fn(path, bytes);
+}
+
+function writeSources() {
+  const paths = [];
+  for (const [p, c] of Object.entries(RUNTIME_SOURCES)) { addFile("/str/" + p, c); paths.push("/str/" + p); }
+  for (const [p, c] of Object.entries(STUDENT_SOURCES)) { addFile("/str/" + p, c); paths.push("/str/" + p); }
+  return paths;
+}
+
+// --- compile + run --------------------------------------------------------
+async function compileAndRun(mainClass) {
+  if (running) return;
+  running = true;
+  $("btnRun").disabled = $("btnLoop").disabled = true;
+  $("btnStop").disabled = false;
+  consoleEl.textContent = "";
+  stdinQueue.length = 0; stdinWaiter = null;
+
+  try {
+    const paths = writeSources();
+    log(`wrote ${paths.length} sources into /str/`);
+
+    log(`compiling: cheerpjRunMain('${COMPILER_MAIN}', ...)`);
+    let s = performance.now();
+    const rc = await cheerpjRunMain(
+      COMPILER_MAIN,
+      COMPILER_JAR,
+      ...paths, "-d", OUT, "-g", "-1.8", "-proc:none", "-nowarn"
+    );
+    const compileMs = performance.now() - s;
+    log(`javac exit=${rc} in ${compileMs.toFixed(0)}ms`, rc === 0 ? null : "err");
+    if (rc !== 0) { log("COMPILE FAILED — not running", "err"); return; }
+
+    log(`running: warsha.Launcher ${mainClass} (classpath ${OUT})`);
+    s = performance.now();
+    const exit = await cheerpjRunMain("warsha.Launcher", OUT, mainClass);
+    log(`program exit=${exit} in ${(performance.now() - s).toFixed(0)}ms`, exit === 0 ? null : "warn");
+  } catch (e) {
+    log("EXCEPTION: " + (e && e.stack || e), "err");
+  } finally {
+    running = false;
+    $("btnRun").disabled = $("btnLoop").disabled = false;
+    $("btnStop").disabled = true;
+    setStdinState("");
+  }
+}
+
+$("btnRun").onclick = () => compileAndRun("app.Main");
+$("btnLoop").onclick = () => compileAndRun("app.Loop");
+$("btnStop").onclick = () => {
+  log("Stop clicked — on the main thread there is NO CheerpJ kill API.", "warn");
+  log("A Java loop that never yields freezes this tab; see worker.html for the real fix.", "warn");
+};
+</script>
+</body>
+</html>
