@@ -1,6 +1,8 @@
 import { templates, type Template } from '../templates'
 import { COPY } from '../copy'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
+import { IconArrowRight, IconClose } from './ui/Icons'
+import { LangBadge } from './FileBadge'
 import { LogoLockup } from './Logo'
 
 export interface WelcomeScreenProps {
@@ -10,41 +12,49 @@ export interface WelcomeScreenProps {
   onDismiss?: () => void
 }
 
+/**
+ * Shown when no project exists (spec §7.7). A single 480px column: lockup, one
+ * line of purpose, the two template cards from templates.ts, the escape hatch,
+ * then the first-run download warning — said *before* the wait, because an
+ * expected 38 MB download is a completely different experience from an
+ * unexplained hang.
+ */
 export function WelcomeScreen({ onPickTemplate, onEmptyFolder, onImportZip, onDismiss }: WelcomeScreenProps) {
   return (
-    <div className="scroller absolute inset-0 z-30 bg-surface-0">
-      <div className="mx-auto flex w-full max-w-[30rem] flex-col items-center gap-4 p-5">
-        {onDismiss ? (
-          <div className="flex w-full justify-end">
-            <Button variant="quiet" onClick={onDismiss} aria-label="Close">
-              ✕
-            </Button>
-          </div>
-        ) : null}
+    <div className="welcome scroller">
+      {onDismiss ? (
+        <div className="absolute right-2 top-2 z-10">
+          <IconButton label="Close" onClick={onDismiss}>
+            <IconClose />
+          </IconButton>
+        </div>
+      ) : null}
 
-        <LogoLockup />
+      <div className="welcome__col">
+        <div className="flex flex-col items-center gap-4">
+          <LogoLockup />
+          <p className="welcome__purpose">{COPY.welcomePurpose}</p>
+        </div>
 
-        <p className="text-center text-btn text-text-2">{COPY.welcomePurpose}</p>
-
-        <div className="flex w-full flex-col gap-3 min-[720px]:flex-row">
+        <div className="welcome__cards">
           {templates.map((t, i) => (
             <TemplateCard key={t.id} template={t} autoFocus={i === 0} onPick={() => onPickTemplate(t)} />
           ))}
         </div>
 
-        <Button variant="ghost" large className="w-full" onClick={onEmptyFolder}>
-          {COPY.welcomeEmptyFolder}
-        </Button>
+        <div className="flex flex-col gap-4">
+          <Button variant="ghost" onClick={onEmptyFolder}>
+            {COPY.welcomeEmptyFolder}
+          </Button>
 
-        {/* Said before the wait, not during it: an expected 38 MB download is a
-            very different experience from an unexplained hang. */}
-        <div className="w-full border-l-[3px] border-warn bg-surface-2 p-3">
-          <p className="text-meta leading-normal text-text-2">{COPY.welcomeFirstRunNote}</p>
+          <div className="note note--warn">
+            <p className="note__text">{COPY.welcomeFirstRunNote}</p>
+          </div>
         </div>
 
-        <p className="text-center text-micro text-text-3">
+        <p className="welcome__footer">
           {COPY.storageLocal}{' '}
-          <button type="button" onClick={onImportZip} className="tap text-accent underline">
+          <button type="button" onClick={onImportZip} className="link">
             {COPY.welcomeImport}
           </button>
         </p>
@@ -53,6 +63,11 @@ export function WelcomeScreen({ onPickTemplate, onEmptyFolder, onImportZip, onDi
   )
 }
 
+/**
+ * The whole card is one 88px+ target — no nested buttons. Its 1px
+ * --border-control edge does the work of separating it from the page, since
+ * surface-3 on surface-0 is only ~1.1:1 and invisible on a phone.
+ */
 function TemplateCard({
   template,
   autoFocus,
@@ -64,28 +79,14 @@ function TemplateCard({
 }) {
   const count = template.snapshot.files.length
   return (
-    <button
-      type="button"
-      autoFocus={autoFocus}
-      onClick={onPick}
-      // The whole card is one 88px+ target: no nested buttons. The 1px border
-      // does the work, since surface-3 on surface-0 is only ~1.1:1.
-      className="tap flex min-h-[5.5rem] w-full flex-col gap-2 rounded-lg border border-border-control bg-surface-3 p-4 text-left active:bg-surface-4"
-    >
-      <span className="flex items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={
-            'grid size-6 shrink-0 place-items-center rounded-sm font-code text-[11px] font-bold ' +
-            (template.lang === 'java' ? 'bg-warn-soft text-warn' : 'bg-info-soft text-info')
-          }
-        >
-          {template.lang === 'java' ? 'J' : 'Py'}
-        </span>
-        <span className="text-btn font-semibold text-text-1">{template.name}</span>
+    <button type="button" autoFocus={autoFocus} onClick={onPick} className="template-card">
+      <span className="template-card__head">
+        <LangBadge lang={template.lang} />
+        <span className="template-card__title">{template.name}</span>
+        <IconArrowRight className="template-card__go" size={18} />
       </span>
-      <span className="text-meta leading-normal text-text-2">{template.blurb}</span>
-      <span className="text-micro text-text-3">
+      <span className="template-card__blurb">{template.blurb}</span>
+      <span className="template-card__manifest">
         {count} files · {template.entry}
       </span>
     </button>

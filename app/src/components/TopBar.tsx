@@ -1,36 +1,42 @@
 import { useState } from 'react'
 import { Logo } from './Logo'
 import { IconButton } from './ui/Button'
+import { IconMenu, IconMore } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
 
 export interface TopBarProps {
   onToggleExplorer(): void
   menuItems: MenuItem[]
+  /** The file being edited. Rendered as the quiet top-bar title (spec §3.2). */
+  title?: string | null
 }
 
-export function TopBar({ onToggleExplorer, menuItems }: TopBarProps) {
+/**
+ * Chrome that is tapped rarely may live at the top (principle 4) — the hamburger
+ * and the overflow menu are the only two things up here. Run/Stop deliberately
+ * does not live in the top-right; see RunBar.
+ */
+export function TopBar({ onToggleExplorer, menuItems, title }: TopBarProps) {
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
 
   return (
-    <header
-      className="flex h-full items-center gap-1 border-b border-border-subtle bg-surface-0 px-1"
-      style={{
-        paddingLeft: 'max(var(--sp-1), env(safe-area-inset-left))',
-        paddingRight: 'max(var(--sp-1), env(safe-area-inset-right))',
-      }}
-    >
+    <header className="top-bar safe-x">
       <IconButton label="Files" onClick={onToggleExplorer}>
-        <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
-          <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
+        <IconMenu />
       </IconButton>
 
-      <span className="flex min-w-0 items-center gap-2 pl-1">
+      <span className="flex min-w-0 items-center gap-2">
         <Logo size={22} />
-        <span className="kb-hide truncate text-btn font-semibold text-text-1">Warsha</span>
+        <span className="top-bar__wordmark kb-hide">Warsha</span>
+        {title ? (
+          <>
+            <span aria-hidden="true" className="top-bar__sep kb-hide" />
+            <span className="top-bar__title kb-hide">{title}</span>
+          </>
+        ) : null}
       </span>
 
-      <div className="ml-auto flex items-center">
+      <div className="ml-auto flex items-center pl-2">
         <IconButton
           label="More"
           onClick={(e) => {
@@ -38,7 +44,7 @@ export function TopBar({ onToggleExplorer, menuItems }: TopBarProps) {
             setAnchor({ x: r.right, y: r.bottom + 4, fromRight: true })
           }}
         >
-          ⋯
+          <IconMore />
         </IconButton>
       </div>
 

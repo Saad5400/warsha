@@ -1,11 +1,26 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button } from './Button'
 
 /**
  * Native <dialog> so focus trapping, Escape and the backdrop come from the
- * platform rather than from us.
+ * platform rather than from us. Centred, raised, and never wider than a 390px
+ * phone minus its gutters.
+ *
+ * `dismissible` decides whether a tap on the backdrop closes it: true for a
+ * prompt or a picker, false for anything destructive, where a stray tap outside
+ * must not mean the same thing as "no".
  */
-function Modal({ children, onCancel }: { children: ReactNode; onCancel: () => void }) {
+export function Modal({
+  children,
+  onCancel,
+  dismissible = false,
+  labelledBy,
+}: {
+  children: ReactNode
+  onCancel: () => void
+  dismissible?: boolean
+  labelledBy?: string
+}) {
   const ref = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
@@ -23,9 +38,15 @@ function Modal({ children, onCancel }: { children: ReactNode; onCancel: () => vo
   return (
     <dialog
       ref={ref}
+      aria-labelledby={labelledBy}
+      // The card fills the element, so a hit on the <dialog> itself can only be
+      // a hit on the backdrop.
+      onPointerDown={(e) => {
+        if (dismissible && e.target === ref.current) onCancel()
+      }}
       className="m-auto w-[min(26rem,calc(100vw-var(--sp-6)))] bg-transparent p-0 backdrop:bg-[--scrim]"
     >
-      <div className="rounded-lg border border-border-subtle bg-surface-3 p-4 shadow-raised">{children}</div>
+      <div className="dlg scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))]">{children}</div>
     </dialog>
   )
 }
@@ -37,6 +58,8 @@ export interface PromptRequest {
   value?: string
   placeholder?: string
   okLabel?: string
+  /** Returns a student-facing problem, or null when the value is usable. */
+  validate?: (value: string) => string | null
   resolve: (value: string | null) => void
 }
 
@@ -63,6 +86,15 @@ export function DialogHost({ request }: { request: DialogRequest | null }) {
 function PromptDialog({ request }: { request: PromptRequest }) {
   const [value, setValue] = useState(request.value ?? '')
   const inputRef = useRef<HTMLInputElement>(null)
+  const titleId = useId()
+  const problemId = useId()
+
+  const trimmed = value.trim()
+  // Checked here rather than after the dialog closes: a name the student has to
+  // retype from memory because a toast rejected it is a worse experience than a
+  // line of red under the field they are already looking at.
+  const problem = trimmed ? (request.validate?.(trimmed) ?? null) : null
+  const canSubmit = trimmed.length > 0 && !problem
 
   useEffect(() => {
     const el = inputRef.current
@@ -73,16 +105,17 @@ function PromptDialog({ request }: { request: PromptRequest }) {
   }, [])
 
   return (
-    <Modal onCancel={() => request.resolve(null)}>
+    <Modal onCancel={() => request.resolve(null)} dismissible labelledBy={titleId}>
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          const trimmed = value.trim()
-          request.resolve(trimmed ? trimmed : null)
+          if (canSubmit) request.resolve(trimmed)
         }}
       >
-        <h2 className="mb-2 text-dlg-title font-semibold text-text-1">{request.title}</h2>
-        {request.label ? <p className="mb-2 text-meta text-text-3">{request.label}</p> : null}
+        <h2 id={titleId} className="dlg-title">
+          {request.title}
+        </h2>
+        {request.label ? <p className="dlg-label">{request.label}</p> : null}
         <input
           ref={inputRef}
           value={value}
@@ -91,13 +124,21 @@ function PromptDialog({ request }: { request: PromptRequest }) {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 font-code text-input text-text-1 focus:border-accent focus:outline-none"
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? problemId : undefined}
+          className={'dlg-input' + (problem ? ' border-danger' : '')}
         />
-        <div className="mt-4 flex justify-end gap-2">
+        {problem ? (
+          <p id={problemId} className="mt-2 flex gap-2 text-meta leading-normal text-danger">
+            <span aria-hidden="true">✕</span>
+            {problem}
+          </p>
+        ) : null}
+        <div className="dlg-actions">
           <Button variant="ghost" large onClick={() => request.resolve(null)}>
             Cancel
           </Button>
-          <Button variant="primary" large type="submit">
+          <Button variant="primary" large type="submit" disabled={!canSubmit}>
             {request.okLabel ?? 'OK'}
           </Button>
         </div>
@@ -107,18 +148,55 @@ function PromptDialog({ request }: { request: PromptRequest }) {
 }
 
 function ConfirmDialog({ request }: { request: ConfirmRequest }) {
-  return (
-    <Modal onCancel={() => request.resolve(false)}>
-      <h2 className="mb-2 text-dlg-title font-semibold text-text-1">{request.title}</h2>
-      {request.message ? <p className="text-meta leading-normal text-text-2">{request.message}</p> : null}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" large onClick={() => request.resolve(false)}>
+  const okRef = useRef<HTMLButtonElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+  const danger = !!request.danger
+
+  // A destructive action is never what a stray Enter or a reflex tap lands on:
+  // Cancel takes the focus, so Enter cancels. Anything harmless focuses its own
+  // confirm button, so Enter confirms.
+  useEffect(() => {
+    ;(danger ? cancelRef : okRef).current?.focus()
+  }, [danger])
+
+  const body = (
+    <>
+      <h2 id={titleId} className="dlg-title">
+        {request.title}
+      </h2>
+      {request.message ? <p className="dlg-msg">{request.message}</p> : null}
+      <div className="dlg-actions">
+        <Button ref={cancelRef} variant="ghost" large onClick={() => request.resolve(false)}>
           Cancel
         </Button>
-        <Button variant={request.danger ? 'danger' : 'primary'} large onClick={() => request.resolve(true)}>
+        <Button
+          ref={okRef}
+          variant={danger ? 'danger' : 'primary'}
+          large
+          type={danger ? 'button' : 'submit'}
+          onClick={() => request.resolve(true)}
+        >
           {request.okLabel ?? 'OK'}
         </Button>
       </div>
+    </>
+  )
+
+  return (
+    <Modal onCancel={() => request.resolve(false)} dismissible={!danger} labelledBy={titleId}>
+      {danger ? (
+        body
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            request.resolve(true)
+          }}
+        >
+          {body}
+        </form>
+      )}
     </Modal>
   )
 }

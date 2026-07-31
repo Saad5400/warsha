@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import type { Project, TreeNode } from '../fs/project'
 import { FileBadge } from './FileBadge'
-import { IconButton } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
+import { IconChevronRight, IconFolderOpen, IconFolderPlus, IconMore, IconPlus } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
 
 export interface ExplorerProps {
@@ -17,6 +18,11 @@ export interface ExplorerProps {
 
 const LONG_PRESS_MS = 500
 
+/** One visual row: a real node, or the "this folder is empty" line under one. */
+type VisualRow =
+  | { kind: 'node'; node: TreeNode; depth: number }
+  | { kind: 'empty-dir'; key: string; depth: number; dir: string }
+
 export function Explorer(props: ExplorerProps) {
   const { project, tree, activePath } = props
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
@@ -30,13 +36,19 @@ export function Explorer(props: ExplorerProps) {
       return next
     })
 
-  const rows: TreeNode[] = []
-  const depths = new Map<string, number>()
+  const rows: VisualRow[] = []
   const walk = (node: TreeNode, depth: number) => {
     for (const child of node.children) {
-      rows.push(child)
-      depths.set(child.path, depth)
-      if (child.kind === 'dir' && !collapsed.has(child.path)) walk(child, depth + 1)
+      rows.push({ kind: 'node', node: child, depth })
+      if (child.kind === 'dir' && !collapsed.has(child.path)) {
+        if (child.children.length === 0) {
+          // Empty folders are real here (FsSnapshot carries them), so they get a
+          // sentence rather than looking like a broken row (spec §7.5).
+          rows.push({ kind: 'empty-dir', key: `${child.path}::empty`, depth: depth + 1, dir: child.path })
+        } else {
+          walk(child, depth + 1)
+        }
+      }
     }
   }
   walk(tree, 0)
@@ -58,35 +70,46 @@ export function Explorer(props: ExplorerProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-2">
       <div className="flex h-bar shrink-0 items-center gap-2 border-b border-border-subtle pl-3 pr-1">
-        <span className="text-micro font-semibold uppercase tracking-wider text-text-3">Explorer</span>
-        <div className="ml-auto flex items-center">
+        <span className="panel-label">Explorer</span>
+        {/* gap-1 here would put two 44px targets 4px apart; §5.2 asks for ≥8px. */}
+        <div className="ml-auto flex items-center gap-1">
           <IconButton label="New file" onClick={() => props.onNewFile('')}>
-            +
+            <IconPlus />
           </IconButton>
           <IconButton label="New folder" onClick={() => props.onNewFolder('')}>
-            <FolderPlusGlyph />
+            <IconFolderPlus />
           </IconButton>
         </div>
       </div>
 
       <div className="scroller flex-1 py-1" role="tree" aria-label="Project files">
         {rows.length === 0 ? (
-          <p className="px-3 py-2 text-meta leading-normal text-text-3">
-            No files yet. Use + above to add one.
-          </p>
+          <div className="empty">
+            <IconFolderOpen size={32} className="empty__glyph" />
+            <p className="empty__body">This project has no files yet.</p>
+            <Button variant="ghost" onClick={() => props.onNewFile('')}>
+              New file
+            </Button>
+          </div>
         ) : (
-          rows.map((node) => (
-            <Row
-              key={node.path}
-              node={node}
-              depth={depths.get(node.path) ?? 0}
-              open={node.kind === 'dir' && !collapsed.has(node.path)}
-              active={node.kind === 'file' && activePath === node.path}
-              dirty={project.isDirty(node.path)}
-              onActivate={() => (node.kind === 'dir' ? toggle(node.path) : props.onOpenFile(node.path))}
-              onMenu={(anchor) => setMenu({ anchor, node })}
-            />
-          ))
+          rows.map((row) =>
+            row.kind === 'node' ? (
+              <Row
+                key={row.node.path}
+                node={row.node}
+                depth={row.depth}
+                open={row.node.kind === 'dir' && !collapsed.has(row.node.path)}
+                active={row.node.kind === 'file' && activePath === row.node.path}
+                dirty={project.isDirty(row.node.path)}
+                onActivate={() =>
+                  row.node.kind === 'dir' ? toggle(row.node.path) : props.onOpenFile(row.node.path)
+                }
+                onMenu={(anchor) => setMenu({ anchor, node: row.node })}
+              />
+            ) : (
+              <EmptyDirRow key={row.key} depth={row.depth} onNewFile={() => props.onNewFile(row.dir)} />
+            ),
+          )
         )}
       </div>
 
@@ -101,6 +124,25 @@ export function Explorer(props: ExplorerProps) {
     </div>
   )
 }
+
+/** Indent is 16px per level with a hairline guide, so depth reads at a glance. */
+function Guides({ depth }: { depth: number }) {
+  if (depth === 0) return null
+  return (
+    <>
+      {Array.from({ length: depth }, (_, i) => (
+        <span
+          key={i}
+          aria-hidden="true"
+          className="tree-row__guide"
+          style={{ left: `calc(var(--sp-3) + ${i} * var(--sp-4) + 9px)` }}
+        />
+      ))}
+    </>
+  )
+}
+
+const rowPadding = (depth: number) => ({ paddingLeft: `calc(var(--sp-3) + ${depth} * var(--sp-4))` })
 
 function Row({
   node,
@@ -134,15 +176,13 @@ function Row({
       aria-selected={active}
       aria-expanded={isDir ? open : undefined}
       tabIndex={0}
+      // The open file is marked by a 2px accent rule on the leading edge plus
+      // text-1 at weight 500, never by a fill change: adjacent surfaces are
+      // ~1.1:1 apart and invisible on a phone. See `.tree-row` in index.css.
       data-state={active ? 'open' : undefined}
       title={node.path}
-      // The open file is marked by a 2px accent rule on the leading edge, not by
-      // a fill change: adjacent surfaces are ~1.1:1 apart and invisible on a phone.
-      className={
-        'tap group flex min-h-touch cursor-pointer items-center gap-2 border-l-rail pr-1 ' +
-        (active ? 'border-accent bg-surface-2' : 'border-transparent hover:bg-surface-3')
-      }
-      style={{ paddingLeft: `calc(var(--sp-3) + ${depth} * var(--sp-4))` }}
+      className="tree-row"
+      style={rowPadding(depth)}
       onClick={onActivate}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -167,54 +207,42 @@ function Row({
       onTouchEnd={cancel}
       onTouchCancel={cancel}
     >
+      <Guides depth={depth} />
+
       {isDir ? (
-        <span
-          aria-hidden="true"
-          className="grid size-5 shrink-0 place-items-center text-text-3 transition-transform duration-[--dur-fast]"
-          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
-        >
-          ›
-        </span>
+        <IconChevronRight size={20} className="tree-row__chevron" />
       ) : (
         <FileBadge name={node.name} />
       )}
 
-      <span
-        className={
-          'flex-1 truncate text-row ' +
-          (active ? 'font-medium text-text-1' : isDir ? 'font-medium text-text-2' : 'text-text-2')
-        }
-      >
-        {node.name}
-      </span>
+      <span className={'tree-row__label' + (isDir ? ' tree-row__label--dir' : '')}>{node.name}</span>
 
-      {dirty ? <span aria-label="Unsaved changes" className="size-[6px] shrink-0 rounded-pill bg-accent" /> : null}
+      {dirty ? <span aria-label="Unsaved changes" className="dot-dirty" /> : null}
 
-      <button
-        type="button"
-        aria-label={`Actions for ${node.name}`}
-        className="tap grid size-touch shrink-0 place-items-center rounded-sm text-text-3 hover:bg-surface-4 hover:text-text-1"
+      <IconButton
+        label={`Actions for ${node.name}`}
+        className="tree-row__more"
         onClick={(e) => {
           e.stopPropagation()
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
           onMenu({ x: r.right, y: r.bottom + 4, fromRight: true })
         }}
       >
-        ⋯
-      </button>
+        <IconMore />
+      </IconButton>
     </div>
   )
 }
 
-function FolderPlusGlyph() {
+/** "This folder is empty." plus the one action that fixes it (spec §7.5). */
+function EmptyDirRow({ depth, onNewFile }: { depth: number; onNewFile(): void }) {
   return (
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
-      <path
-        d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3l1.5 2H16a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5v-9Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path d="M10 9.5v4M8 11.5h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
+    <div className="relative flex min-h-touch items-center gap-2 pr-1" style={rowPadding(depth)}>
+      <Guides depth={depth} />
+      <p className="text-meta italic text-text-3">This folder is empty.</p>
+      <Button variant="quiet" className="btn--compact" onClick={onNewFile}>
+        New file
+      </Button>
+    </div>
   )
 }

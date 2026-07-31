@@ -30,7 +30,11 @@ export const COPY = {
 
   // ---- console (§8) ----
   stdinHint: 'Your program is waiting for something — type below and press Enter.',
+  /** The same message, short enough for one line on a 390px phone. */
+  stdinHintShort: 'Waiting for you — type below, then Enter.',
   consoleEmpty: 'Output will appear here when you run your code.',
+  consoleEmptyHint: (shortcut: string) => `Press Run, or ${shortcut}.`,
+  consoleCleared: 'Cleared.',
   /** PLACEHOLDER */
   editorEmpty: 'Pick a file from the explorer to start editing.',
   truncated: 'Earlier output hidden (5000-line limit).',
@@ -38,6 +42,30 @@ export const COPY = {
   stdinQueued: 'Saved — your program has not asked for input yet.',
   /** PLACEHOLDER — for typing with nothing running. */
   stdinIdle: 'Nothing is running yet. Tap Run first.',
+  /** Input-row placeholders. The waiting one is asserted by the run harnesses. */
+  stdinWaitingPlaceholder: 'Type your answer, then press Enter',
+  stdinAheadPlaceholder: 'Type ahead — Enter sends it',
+  stdinIdlePlaceholder: 'Run your code to type here',
+
+  // ---- console status line: the current state, in words (§7.3 states) ----
+  statusIdle: 'Ready when you are — press Run.',
+  statusPreparing: 'Getting the language ready — the console will fill up shortly.',
+  statusPreparingShort: 'Getting the language ready…',
+  statusRunning: 'Your program is running.',
+  statusOk: 'Finished — exit code 0.',
+  statusFailed: (code: number) => `Stopped early — exit code ${code}. The red lines say why.`,
+  statusFailedShort: (code: number) => `Stopped early — exit code ${code}.`,
+  statusStopped: 'You stopped it. Your files are saved.',
+
+  // ---- transcript controls ----
+  copyOutput: 'Copy output',
+  copyOutputDone: 'Copied',
+  copyOutputFailed: 'Could not copy — select the text instead.',
+  clearOutput: 'Clear output',
+  newLines: (n: number) => `${n > 999 ? '999+' : n} new line${n === 1 ? '' : 's'}`,
+  jumpToLatest: 'Jump to latest',
+  showEarlier: (n: number) => `Show ${n.toLocaleString('en')} earlier lines`,
+  sendToProgram: 'Send this line to your program',
 
   // ---- entry point ----
   /** PLACEHOLDER */

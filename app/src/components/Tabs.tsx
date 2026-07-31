@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { Project } from '../fs/project'
 import { splitPath } from '../fs/project'
 import { FileBadge } from './FileBadge'
+import { IconClose } from './ui/Icons'
 
 export interface TabsProps {
   project: Project
@@ -14,7 +15,9 @@ export interface TabsProps {
 /**
  * Active tab carries three simultaneous signals (spec §7.2) — a 2px accent rule
  * on the bottom edge, weight 600, and text-1 — so it is unambiguous in greyscale
- * and in sunlight. The fill change carries none of the load.
+ * and in sunlight. The fill change to surface-1 makes the tab visually own the
+ * editor canvas below it, and carries none of the load. All of that lives in
+ * `.tab[data-state]` in index.css.
  */
 export function Tabs({ project, tabs, activePath, onSelect, onClose }: TabsProps) {
   const stripRef = useRef<HTMLDivElement>(null)
@@ -32,16 +35,10 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose }: TabsProps
     else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth
   }, [activePath, tabs.length])
 
-  if (tabs.length === 0) return <div className="h-bar shrink-0 border-b border-border-subtle bg-surface-2" />
+  if (tabs.length === 0) return <div className="tab-strip" />
 
   return (
-    <div
-      ref={stripRef}
-      role="tablist"
-      aria-label="Open files"
-      className="flex h-bar shrink-0 overflow-x-auto overflow-y-hidden border-b border-border-subtle bg-surface-2 [scrollbar-width:none] [&::-webkit-scrollbar]:h-0"
-      style={{ scrollSnapType: 'x proximity' }}
-    >
+    <div ref={stripRef} role="tablist" aria-label="Open files" className="tab-strip">
       {tabs.map((path) => {
         const { name } = splitPath(path)
         const active = path === activePath
@@ -55,36 +52,25 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose }: TabsProps
             data-state={active ? 'active' : 'inactive'}
             title={path}
             onClick={() => onSelect(path)}
-            className={
-              'tap flex h-full min-w-[6rem] max-w-[60vw] shrink-0 cursor-pointer items-center gap-2 ' +
-              'border-b-rail px-3 ' +
-              (active
-                ? 'border-accent bg-surface-1 text-text-1'
-                : 'border-transparent bg-surface-2 text-text-2 hover:bg-surface-3')
-            }
-            style={{ scrollSnapAlign: 'end' }}
+            className="tab"
           >
             <FileBadge name={name} />
-            <span className={'flex-1 truncate text-tab ' + (active ? 'font-semibold' : 'font-medium')}>{name}</span>
+            <span className="tab__label">{name}</span>
             {dirty ? (
-              <span aria-label="Unsaved changes" className="size-[6px] shrink-0 rounded-pill bg-accent" />
+              <span aria-label="Unsaved changes" className="dot-dirty" />
             ) : (
               // Close only on the active tab below 900px: an × on every tab in a
               // 390px strip is a mis-tap generator.
               <button
                 type="button"
                 aria-label={`Close ${name}`}
-                className={
-                  'tap grid size-touch shrink-0 place-items-center rounded-sm text-[14px] text-text-3 ' +
-                  'hover:text-text-1 active:bg-surface-4 ' +
-                  (active ? '' : 'hidden min-[900px]:grid')
-                }
+                className={'tab__close' + (active ? '' : ' hidden min-[900px]:grid')}
                 onClick={(e) => {
                   e.stopPropagation()
                   onClose(path)
                 }}
               >
-                ✕
+                <IconClose size={14} />
               </button>
             )}
           </div>

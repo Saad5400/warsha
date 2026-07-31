@@ -93,12 +93,31 @@ export function createEditor(
   let applying = false
   let fontSize = opts.fontSize
 
-  const themeFor = (px: number) =>
-    EditorView.theme({
+  /**
+   * Sizes that depend on the student's font-size preference, so they have to be
+   * recomputed rather than living in index.css.
+   *
+   * Two spec §3.1/§3.3 requirements ride on this: code carries an *explicit* px
+   * size on .cm-content (WebKit renders an unqualified `monospace` at ~81.25% of
+   * an inherited size, which shows up as "the code is a size too small, but only
+   * on iPad"), and the gutter's leading is stated in px rather than inherited —
+   * a unitless 1.6 against 13px line numbers is 20.8px against 24px code rows,
+   * and the gutter drifts a line by the bottom of a long file.
+   */
+  const themeFor = (px: number) => {
+    const leading = `${Math.round(px * 1.6)}px`
+    return EditorView.theme({
       '&': { fontSize: `${px}px`, height: '100%' },
-      // Room to scroll the last line clear of the console and the keyboard.
-      '.cm-content': { paddingBottom: '40vh' },
+      '.cm-content': {
+        fontSize: `${px}px`,
+        lineHeight: leading,
+        // Room to scroll the last line clear of the console and the keyboard.
+        paddingBottom: '40vh',
+      },
+      '.cm-gutters': { fontSize: '13px', lineHeight: leading },
+      '.cm-lineNumbers .cm-gutterElement': { lineHeight: leading },
     })
+  }
 
   const extensions = (lang: LangId | null) => [
     lineNumbers(),

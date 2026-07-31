@@ -3,11 +3,19 @@
  * Layer 1: Design's canonical tokens, read in place from docs/design/.
  * Layer 2: the Tailwind theme, mapped ONTO those tokens — every utility a
  *          component uses resolves to a custom property, never to a literal.
- * Layer 3: the handful of things Tailwind utilities cannot express (CodeMirror
- *          chrome, the keyboard-open layout state, scrollbars).
+ * Layer 3: the component layer. Anything that carries *design meaning* — a
+ *          state, the type scale, the amber signature rule — is a named class
+ *          here, keyed off the data-attributes ARCHITECTURE.md documents, rather
+ *          than a utility string in a .tsx. Two reasons: the spec's states are
+ *          compound (rule + weight + colour, never colour alone) and do not fit
+ *          in a utility, and Tailwind v4 removed the bare `[--var]` shorthand —
+ *          `bg-[--scrim]` compiles to `background-color:--scrim`, which is
+ *          invalid CSS the browser silently drops. That is how the active-tab
+ *          rule, the drawer scrim, the drawer transition and the 144px console
+ *          floor all went missing. Load-bearing values live in real CSS now.
  *
- * To restyle Warsha, change docs/design/tokens.css. Components should not need
- * to be touched. See ARCHITECTURE.md § "Restyling guide".
+ * To restyle Warsha, change docs/design/tokens.css first; then this file.
+ * See ARCHITECTURE.md § "Restyling guide".
  */
 
 @import '../../docs/design/tokens.css';
@@ -76,9 +84,10 @@
   --spacing-touch: var(--touch);
   --spacing-touch-lg: var(--touch-lg);
   --spacing-bar: var(--bar-top);
-  --spacing-rail: var(--rail);
   --spacing-explorer: var(--explorer-w);
   --spacing-drawer: var(--drawer-w);
+  --spacing-editor-min: var(--editor-min-h);
+  --spacing-console-min: var(--console-min-h-stdin);
 
   /* radii */
   --radius-sm: var(--r-sm);
@@ -105,11 +114,11 @@
     background: var(--surface-0);
     color: var(--text-1);
     font-family: var(--font-ui);
+    font-size: var(--fs-row);
     -webkit-tap-highlight-color: transparent;
     -webkit-text-size-adjust: 100%;
   }
 
-  /* Never below --fs-input (16px): iOS zooms the page on focus otherwise. */
   input,
   select,
   textarea,
@@ -118,11 +127,26 @@
     color: inherit;
   }
 
+  /* Never below --fs-input (16px): iOS zooms the page on focus otherwise. */
+  input,
+  textarea,
+  select {
+    font-size: var(--fs-input);
+  }
+
+  /* One ring, everywhere, on :focus-visible only — so it appears for a
+     hardware keyboard and never sticks after a tap. */
   :focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
 
+  /* Dark scrollbars. Firefox gets the standard properties, WebKit/Blink the
+     pseudo-elements; both stay inside the surface ramp. */
+  * {
+    scrollbar-color: var(--surface-4) transparent;
+    scrollbar-width: thin;
+  }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -130,15 +154,29 @@
   ::-webkit-scrollbar-thumb {
     background: var(--surface-4);
     border-radius: var(--r-pill);
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
-  ::-webkit-scrollbar-track {
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-control);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
     background: transparent;
+  }
+
+  ::selection {
+    background: var(--code-selection);
+    color: var(--text-1);
   }
 }
 
 @layer components {
-  /* The app shell is fixed and sized from --app-h (written by ui/viewport.ts),
-     so iOS cannot scroll the document out from under a focused input. */
+  /* ============================================================== shell ==== */
+
+  /* Fixed and sized from --app-h (written by ui/viewport.ts), so iOS cannot
+     scroll the document out from under a focused input. */
   .app-shell {
     position: fixed;
     inset: 0;
@@ -163,6 +201,9 @@
   }
 
   /* Keyboard-open compaction (spec §4.3): shed decoration, never content. */
+  html[data-kb='open'] {
+    --pad-panel: var(--sp-2);
+  }
   html[data-kb='open'] .app-shell {
     grid-template-rows: 40px 1fr;
   }
@@ -179,9 +220,1073 @@
   .tap {
     touch-action: manipulation;
   }
+
+  /* Behind the drawer and popovers. Written as real CSS because the utility
+     form of this silently produced `background-color:--scrim`. */
+  .scrim {
+    background: var(--scrim);
+  }
+
+  .safe-x {
+    padding-left: max(var(--sp-1), env(safe-area-inset-left));
+    padding-right: max(var(--sp-1), env(safe-area-inset-right));
+  }
+
+  /* ============================================================ top bar ==== */
+
+  .top-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    height: 100%;
+    min-width: 0;
+    background: var(--surface-0);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* Spec §11: the wordmark is only ever the UI font at 600. */
+  .top-bar__wordmark {
+    font-size: var(--fs-btn);
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--text-1);
+    letter-spacing: -0.01em;
+  }
+
+  /* Spec §3.2 "top-bar title": the quiet line that says which file you are in. */
+  .top-bar__title {
+    font-size: var(--fs-tab);
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    color: var(--text-3);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-bar__sep {
+    width: 1px;
+    height: 16px;
+    flex: none;
+    background: var(--border-subtle);
+  }
+
+  /* =========================================================== explorer ==== */
+
+  /* Spec §3.2 section label. */
+  .panel-label {
+    font-size: var(--fs-micro);
+    line-height: 1;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+  }
+
+  .tree-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: var(--touch);
+    padding-right: var(--sp-1);
+    cursor: pointer;
+    touch-action: manipulation;
+    /* The leading edge is reserved for the amber rule at all times, so a row
+       does not shift by 2px when it becomes the open file. */
+    border-left: var(--rail) solid transparent;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .tree-row:hover {
+    background: var(--surface-3);
+  }
+  .tree-row:active {
+    background: var(--surface-4);
+  }
+  /* Open file: 2px accent rule + text-1 + weight 500. Three signals, because a
+     surface change alone is ~1.1:1 and invisible on a phone (principle 2). */
+  .tree-row[data-state='open'] {
+    border-left-color: var(--accent);
+    background: var(--surface-2);
+  }
+  .tree-row[data-state='open'] .tree-row__label {
+    color: var(--text-1);
+    font-weight: 500;
+  }
+  .tree-row[data-state='open']:hover {
+    background: var(--surface-3);
+  }
+
+  .tree-row__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: var(--fs-row);
+    line-height: 1.2;
+    color: var(--text-2);
+  }
+  .tree-row__label--dir {
+    font-weight: 500;
+  }
+
+  /* Nesting guides: one hairline per level, so depth is readable without
+     counting indents. Drawn from the row so they tile into a continuous rule. */
+  .tree-row__guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--code-indent-guide);
+    pointer-events: none;
+  }
+
+  .tree-row__chevron {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 20px;
+    height: 20px;
+    color: var(--text-3);
+    transition: transform var(--dur-fast) var(--ease);
+  }
+  .tree-row[aria-expanded='true'] .tree-row__chevron {
+    transform: rotate(90deg);
+  }
+
+  /* The 6px amber dot for an unsaved file (spec §7.1). */
+  .dot-dirty {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: var(--accent);
+  }
+
+  /* The per-row ⋯ is noise when it is on every row at once. With a real
+     pointer it appears on hover/focus; on touch there is no hover, so it stays
+     visible (long-press is the alternative, and it must be discoverable). */
+  @media (hover: hover) and (pointer: fine) {
+    .tree-row__more {
+      opacity: 0;
+    }
+    .tree-row:hover .tree-row__more,
+    .tree-row:focus-within .tree-row__more,
+    .tree-row__more:focus-visible {
+      opacity: 1;
+    }
+  }
+
+  /* =============================================================== tabs ==== */
+
+  .tab-strip {
+    display: flex;
+    flex: none;
+    height: var(--bar-top);
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-subtle);
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .tab-strip::-webkit-scrollbar {
+    height: 0;
+  }
+
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex: none;
+    height: 100%;
+    min-width: 96px;
+    max-width: 60vw;
+    padding-inline: var(--sp-3);
+    cursor: pointer;
+    touch-action: manipulation;
+    scroll-snap-align: end;
+    background: var(--surface-2);
+    /* Reserved at all times so activating a tab never shifts its label. */
+    border-bottom: var(--rail) solid transparent;
+    box-shadow: inset -1px 0 0 0 var(--border-subtle);
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease);
+  }
+  .tab__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: var(--fs-tab);
+    line-height: 1.2;
+    font-weight: 500;
+    color: var(--text-2);
+  }
+  .tab:hover {
+    background: var(--surface-3);
+  }
+  .tab:active {
+    background: var(--surface-4);
+  }
+  /* Active tab: accent rule (7.92:1) + weight 600 + text-1 (13.19 vs 7.72).
+     The surface-1 fill matches the editor canvas so the tab owns it, and it
+     carries none of the load — the tab stays unambiguous in greyscale. */
+  .tab[data-state='active'] {
+    background: var(--surface-1);
+    border-bottom-color: var(--accent);
+    box-shadow:
+      inset 1px 0 0 0 var(--border-subtle),
+      inset -1px 0 0 0 var(--border-subtle);
+  }
+  .tab[data-state='active']:hover {
+    background: var(--surface-1);
+  }
+  .tab[data-state='active'] .tab__label {
+    color: var(--text-1);
+    font-weight: 600;
+  }
+
+  .tab__close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--touch);
+    height: var(--touch);
+    margin-right: calc(-1 * var(--sp-2));
+    border-radius: var(--r-sm);
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-3);
+    touch-action: manipulation;
+  }
+  .tab__close:hover {
+    color: var(--text-1);
+    background: var(--surface-4);
+  }
+  .tab__close:active {
+    color: var(--text-1);
+    background: var(--surface-4);
+    transform: scale(0.92);
+  }
+
+  /* ============================================================= editor ==== */
+
+  /* Spec §4.3 rule 5: do not shrink past 96px — let the editor scroll under the
+     console instead. */
+  .editor-pane {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: var(--editor-min-h);
+    overflow: hidden;
+    background: var(--surface-1);
+  }
+
+  /* ============================================================ console ==== */
+
+  .console-panel {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    background: var(--surface-2);
+    border-top: 1px solid var(--border-subtle);
+    /* The third home of the amber signature (principle 3): the leading edge of
+       a running process. Reserved always, coloured only while it runs. */
+    border-left: var(--rail) solid transparent;
+    transition: border-left-color var(--dur) var(--ease);
+  }
+  .console-panel[data-state='preparing'],
+  .console-panel[data-state='running'],
+  .console-panel[data-state='waiting'] {
+    border-left-color: var(--accent);
+  }
+
+  /* Spec §4.3 rule 4 — the single most important number in that section:
+     four output lines plus the input row stay visible while stdin is pending. */
+  .console-panel--open {
+    min-height: var(--console-min-h-stdin);
+  }
+
+  .console-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex: none;
+    height: var(--bar-console);
+    padding-inline: var(--sp-2);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-subtle);
+    padding-left: max(var(--sp-2), env(safe-area-inset-left));
+    padding-right: max(var(--sp-2), env(safe-area-inset-right));
+  }
+
+  /* A hairline before the trailing controls, so a wide console header reads as
+     a deliberate toolbar with two groups rather than two things and a void. */
+  .console-header__rule {
+    width: 1px;
+    height: 24px;
+    flex: none;
+    margin-inline: var(--sp-1);
+    background: var(--border-subtle);
+  }
+
+  .console-transcript {
+    flex: 1;
+    padding: var(--sp-2) var(--pad-panel);
+    font-family: var(--font-code);
+    /* Explicit px, never inherited: WebKit renders an unqualified `monospace`
+       at ~81.25% of the inherited size (spec §3.1). */
+    font-size: var(--fs-console);
+    line-height: var(--lh-console);
+  }
+
+  /* One transcript row. Each is a flex row: a 3px leading rule, then content.
+     stderr carries three differences from stdout — hue, the rule, and a row
+     tint — so it still separates in a greyscale screenshot. */
+  .console-row {
+    display: flex;
+    border-left: 3px solid transparent;
+    padding-left: var(--sp-2);
+  }
+  .console-row__text {
+    flex: 1;
+    min-width: 0;
+    /* Never horizontal-scroll the console: a wrapped stack trace is readable on
+       a phone, a sideways-scrolling one is not. Continuations indent 12px so a
+       wrap reads differently from a genuine new line. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+    padding-left: var(--sp-3);
+    text-indent: calc(-1 * var(--sp-3));
+    color: var(--text-1);
+  }
+  .console-row[data-kind='err'] {
+    border-left-color: var(--danger);
+    background: color-mix(in srgb, var(--danger-soft) 55%, transparent);
+  }
+  .console-row[data-kind='echo'] {
+    border-left-color: var(--info);
+  }
+  .console-row[data-kind='meta'] .console-row__text {
+    font-size: var(--fs-meta);
+    color: var(--text-3);
+    font-style: italic;
+  }
+
+  /* Per-segment colour, so `Your name: Saad` is one line in two colours. */
+  [data-seg='out'] {
+    color: var(--text-1);
+  }
+  [data-seg='err'] {
+    color: var(--danger);
+  }
+  [data-seg='echo'] {
+    color: var(--info);
+  }
+  [data-seg='meta'] {
+    color: var(--text-3);
+    font-style: italic;
+  }
+
+  /* The stdin row. Sticky so the keyboard can never cover it (§4.3 rule 1). */
+  .stdin-row {
+    position: sticky;
+    bottom: 0;
+    flex: none;
+    background: var(--surface-2);
+    border-top: 1px solid var(--border-subtle);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .stdin-hint {
+    padding: var(--sp-1) var(--pad-panel) 0;
+    font-size: var(--fs-micro);
+    line-height: 1.4;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--info);
+  }
+  .stdin-form {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--pad-panel);
+  }
+  .stdin-caret {
+    flex: none;
+    font-family: var(--font-code);
+    font-size: var(--fs-console);
+    color: var(--text-3);
+  }
+  .stdin-input {
+    flex: 1;
+    min-width: 0;
+    min-height: var(--touch);
+    padding-inline: var(--sp-3);
+    border-radius: var(--r-sm);
+    /* A visible control boundary (3.47:1 on surface-2), not a decorative one. */
+    border: 1px solid var(--border-control);
+    background: var(--surface-4);
+    font-family: var(--font-code);
+    font-size: var(--fs-input);
+    line-height: 1.4;
+    color: var(--text-1);
+  }
+  .stdin-input::placeholder {
+    color: var(--text-3);
+  }
+  /* Waiting for input is signalled by the border, the caret and the hint —
+     never by a fill change alone. */
+  .stdin-row[data-waiting='true'] .stdin-input {
+    border-color: var(--info);
+    box-shadow: inset 0 0 0 1px var(--info);
+  }
+  .stdin-row[data-waiting='true'] .stdin-caret {
+    color: var(--info);
+  }
+
+  /* ======================================================== status pill ==== */
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    flex: none;
+    height: 24px;
+    padding-inline: var(--sp-2);
+    border-radius: var(--r-pill);
+    font-size: var(--fs-micro);
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    /* Every state carries a glyph and a word, so the five run states are
+       distinguishable with no colour vision at all (spec §7.3). */
+  }
+  .pill__glyph {
+    display: grid;
+    place-items: center;
+    width: 10px;
+    font-size: 10px;
+    line-height: 1;
+  }
+  .pill[data-state='idle'] {
+    background: var(--surface-4);
+    color: var(--text-2);
+  }
+  .pill[data-state='preparing'],
+  .pill[data-state='running'],
+  .pill[data-state='ok'] {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .pill[data-state='waiting'] {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+  .pill[data-state='failed'] {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  /* Neutral, not red: the student stopped it on purpose, and reserving red for
+     genuine failure is what makes red mean something. */
+  .pill[data-state='stopped'] {
+    background: var(--neutral-soft);
+    color: var(--text-2);
+  }
+
+  /* The one continuous animation in the app: a 1.4s opacity pulse on a 6px
+     dot. Under reduced motion it goes static and the pill relies on its word. */
+  .pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: currentColor;
+    animation: warsha-pulse 1.4s var(--ease) infinite;
+  }
+
+  /* =========================================================== progress ==== */
+
+  .progress-block {
+    margin-bottom: var(--sp-2);
+    padding: var(--sp-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--surface-3);
+  }
+  .progress-block__title {
+    font-size: var(--fs-btn);
+    line-height: 1.35;
+    font-weight: 600;
+    color: var(--text-1);
+    font-family: var(--font-ui);
+  }
+  .progress-block__meta {
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: var(--text-3);
+  }
+  .progress-track {
+    position: relative;
+    flex: 1;
+    height: 4px;
+    overflow: hidden;
+    border-radius: var(--r-pill);
+    background: var(--surface-4);
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    /* Never animate it backwards. */
+    transition: width 200ms linear;
+  }
+  .progress-fill--sweep {
+    width: 30%;
+    animation: warsha-sweep 1.4s var(--ease) infinite;
+  }
+  .progress-pct {
+    font-variant-numeric: tabular-nums;
+    font-size: var(--fs-meta);
+    color: var(--text-2);
+    min-width: 4ch;
+    text-align: right;
+  }
+
+  /* A 16px spinner for the glyph slot of the Run control during bootstrap. */
+  .spinner {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border-radius: var(--r-pill);
+    border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-top-color: currentColor;
+    animation: warsha-spin 700ms linear infinite;
+  }
+
+  /* ============================================================ buttons ==== */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    min-height: var(--touch);
+    padding-inline: var(--sp-4);
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    font-family: var(--font-ui);
+    font-size: var(--fs-btn);
+    line-height: 1.2;
+    font-weight: 600;
+    user-select: none;
+    touch-action: manipulation;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease),
+      transform var(--dur-fast) var(--ease);
+  }
+  /* Run/Stop and primary dialog actions. min-width keeps the control the same
+     size across the Run→Stop swap so its neighbours never shift. */
+  .btn--lg {
+    min-height: var(--touch-lg);
+    min-width: 96px;
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  /* Still a 44px target, but visually secondary — for an action offered inside a
+     dense row (the "New file" beside an empty folder). */
+  .btn--compact {
+    padding-inline: var(--sp-2);
+    font-size: var(--fs-meta);
+  }
+  /* Disabled is a colour change, not a fade: opacity destroys the measured
+     contrast of everything underneath it. */
+  .btn:disabled {
+    background: var(--surface-4);
+    color: var(--text-disabled);
+    border-color: transparent;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn--primary {
+    background: var(--accent);
+    color: var(--accent-ink); /* 9.01 — never white on amber (1.99) */
+  }
+  .btn--primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .btn--primary:active:not(:disabled) {
+    background: var(--accent-press);
+  }
+
+  .btn--stop {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .btn--stop:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-soft) 70%, var(--danger) 12%);
+  }
+  .btn--stop:active:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-soft) 60%, var(--danger) 20%);
+  }
+
+  .btn--ghost {
+    background: transparent;
+    color: var(--text-2);
+    border-color: var(--border-control);
+  }
+  .btn--ghost:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
+  .btn--ghost:active:not(:disabled) {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
+
+  .btn--danger {
+    background: var(--danger-fill);
+    color: #ffffff; /* 7.49 on --danger-fill — the one white-on-fill in the app */
+  }
+  .btn--danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-fill) 88%, #ffffff);
+  }
+  .btn--danger:active:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-fill) 80%, #000000);
+  }
+
+  .btn--quiet {
+    background: transparent;
+    color: var(--text-2);
+    font-weight: 500;
+  }
+  .btn--quiet:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
+  .btn--quiet:active:not(:disabled) {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
+
+  /* Icon-only: a 44x44 box with a 20px glyph. The glyph is not the target. */
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: var(--touch);
+    height: var(--touch);
+    border-radius: var(--r-md);
+    font-size: 20px;
+    line-height: 1;
+    color: var(--text-2);
+    touch-action: manipulation;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease);
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
+  .icon-btn:active:not(:disabled) {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
+  .icon-btn:disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
+  }
+
+  /* A select styled as a control, not as a browser default. */
+  .field {
+    min-height: var(--touch);
+    max-width: 40vw;
+    padding-inline: var(--sp-2);
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-sm);
+    background: var(--surface-4);
+    color: var(--text-1);
+    font-family: var(--font-code);
+    font-size: var(--fs-meta);
+    touch-action: manipulation;
+  }
+
+  /* ======================================================= empty states ==== */
+
+  /* Spec §7.5: a 32px glyph, one 14px line, and at most one action. Placed at
+     ~40% of the height rather than dead centre, because dead centre is where
+     the keyboard goes. */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-3);
+    max-width: 32ch;
+    margin-inline: auto;
+    padding: var(--sp-5) var(--sp-4) 0;
+    text-align: center;
+  }
+  .empty--pane {
+    position: absolute;
+    inset: 0;
+    justify-content: flex-start;
+    padding-top: max(var(--sp-5), 28%);
+    background: var(--surface-1);
+  }
+  .empty__glyph {
+    font-size: 32px;
+    line-height: 1;
+    color: var(--text-3);
+  }
+  .empty__title {
+    font-size: var(--fs-btn);
+    line-height: 1.3;
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .empty__body {
+    font-size: var(--fs-row);
+    line-height: 1.55;
+    color: var(--text-3);
+  }
+
+  /* The console's own empty state is inline in the transcript, so it must not
+     re-centre the scroller. */
+  .empty--console {
+    align-items: flex-start;
+    padding: var(--sp-5) 0 0 var(--sp-2);
+    text-align: left;
+    margin-inline: 0;
+  }
+
+  /* ====================================================== welcome screen ==== */
+
+  .welcome {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    background: var(--surface-0);
+  }
+  .welcome__col {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-5);
+    width: 100%;
+    max-width: 480px;
+    margin-inline: auto;
+    /* Weighted above centre: the lockup lands in the upper third, which is
+       where the eye starts, and nothing important sits where a keyboard would. */
+    padding: var(--sp-6) var(--sp-5) var(--sp-6);
+  }
+
+  .lockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .lockup__word {
+    font-size: 28px;
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--text-1);
+  }
+  /* Real text, so the device's own Arabic font shapes and joins it (§7.7). */
+  .lockup__ar {
+    font-size: var(--fs-btn);
+    line-height: 1.6;
+    color: var(--text-3);
+  }
+
+  .welcome__purpose {
+    font-size: var(--fs-btn);
+    line-height: 1.5;
+    color: var(--text-2);
+    text-align: center;
+    margin: 0;
+  }
+
+  .welcome__cards {
+    display: grid;
+    gap: var(--sp-3);
+  }
+  @media (min-width: 720px) {
+    .welcome__cards {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  /* The whole card is one 88px+ target — no nested buttons. The 1px border does
+     the work, since surface-3 on surface-0 is only ~1.1:1. */
+  .template-card {
+    display: grid;
+    gap: var(--sp-2);
+    min-height: 88px;
+    padding: var(--sp-4);
+    text-align: left;
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-lg);
+    background: var(--surface-3);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      transform var(--dur-fast) var(--ease);
+  }
+  .template-card:hover {
+    background: var(--surface-4);
+    border-color: var(--text-3);
+  }
+  .template-card:active {
+    background: var(--surface-4);
+    transform: scale(0.99);
+  }
+  .template-card__head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .template-card__title {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-btn);
+    line-height: 1.3;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .template-card__blurb {
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: var(--text-2);
+  }
+  .template-card__manifest {
+    font-size: var(--fs-micro);
+    line-height: 1.4;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  /* A quiet arrow, so the card reads as something you go into. It is the only
+     decoration on the card and it inherits the accent on hover. */
+  .template-card__go {
+    flex: none;
+    color: var(--text-3);
+    transition: color var(--dur-fast) var(--ease);
+  }
+  .template-card:hover .template-card__go {
+    color: var(--accent);
+  }
+
+  /* A note with a 3px leading rule — the same anatomy as a console row, which
+     is what keeps the two halves of the app looking like one product. */
+  .note {
+    padding: var(--sp-3);
+    border-left: 3px solid var(--border-control);
+    background: var(--surface-2);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  }
+  .note--warn {
+    border-left-color: var(--warn);
+  }
+  .note--danger {
+    border-left-color: var(--danger);
+    background: var(--danger-soft);
+  }
+  .note__text {
+    font-size: var(--fs-meta);
+    line-height: 1.55;
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .welcome__footer {
+    font-size: var(--fs-micro);
+    line-height: 1.6;
+    color: var(--text-3);
+    text-align: center;
+    margin: 0;
+  }
+  .link {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    touch-action: manipulation;
+    border-radius: var(--r-sm);
+  }
+  .link:hover {
+    color: var(--accent-hover);
+  }
+
+  /* Two-letter language badge (§7.1): survives greyscale, faster to scan than a
+     colour-only icon. */
+  .badge {
+    display: grid;
+    place-items: center;
+    flex: none;
+    border-radius: var(--r-sm);
+    font-family: var(--font-code);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .badge--sm {
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+  }
+  .badge--md {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+  .badge--java {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .badge--py {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+  .badge--plain {
+    background: var(--surface-4);
+    color: var(--text-3);
+  }
+
+  /* ===================================================== menus + dialogs ==== */
+
+  .menu {
+    min-width: 13rem;
+    padding: var(--sp-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--surface-3);
+    box-shadow: var(--shadow-raised);
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: var(--touch);
+    padding-inline: var(--sp-3);
+    border-radius: var(--r-sm);
+    text-align: left;
+    font-size: var(--fs-row);
+    color: var(--text-1);
+    touch-action: manipulation;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .menu-item:hover {
+    background: var(--surface-4);
+  }
+  .menu-item:active {
+    background: var(--surface-4);
+  }
+  /* Destructive actions are never adjacent to frequent ones: Delete is last,
+     separated by an 8px gap and a divider (spec §5.2). */
+  .menu-item--danger {
+    color: var(--danger);
+  }
+  .menu-item--danger:hover,
+  .menu-item--danger:active {
+    background: var(--danger-soft);
+  }
+  .menu-sep {
+    margin: var(--sp-2) var(--sp-2);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .dlg {
+    padding: var(--sp-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-lg);
+    background: var(--surface-3);
+    box-shadow: var(--shadow-raised);
+  }
+  .dlg-title {
+    font-size: var(--fs-dlg-title);
+    line-height: 1.3;
+    font-weight: 600;
+    color: var(--text-1);
+    margin: 0 0 var(--sp-2);
+  }
+  .dlg-msg {
+    font-size: var(--fs-btn);
+    line-height: 1.5;
+    color: var(--text-2);
+    margin: 0;
+  }
+  .dlg-label {
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: var(--text-3);
+    margin: 0 0 var(--sp-2);
+  }
+  .dlg-input {
+    width: 100%;
+    min-height: var(--touch);
+    padding-inline: var(--sp-3);
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-sm);
+    background: var(--surface-4);
+    font-family: var(--font-code);
+    font-size: var(--fs-input);
+    color: var(--text-1);
+  }
+  .dlg-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    margin-top: var(--sp-4);
+  }
+
+  .toast {
+    max-width: min(32rem, 90vw);
+    padding: var(--sp-2) var(--sp-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--surface-3);
+    color: var(--text-1);
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    box-shadow: var(--shadow-raised);
+    animation: warsha-rise var(--dur) var(--ease) both;
+  }
+  .toast[data-kind='error'] {
+    border-color: var(--danger);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  /* ============================================================= drawer ==== */
+
+  .drawer {
+    transition: transform var(--dur) var(--ease);
+  }
+  .drawer[data-state='closed'] {
+    transform: translateX(-102%);
+  }
+  .drawer[data-state='open'] {
+    transform: translateX(0);
+  }
+  html[dir='rtl'] .drawer[data-state='closed'] {
+    transform: translateX(102%);
+  }
 }
 
-/* Indeterminate progress sweep (ProgressBlock, when Content-Length is unknown). */
+/* ============================================================== motion ==== */
+
 @keyframes warsha-sweep {
   0% {
     transform: translateX(-100%);
@@ -191,9 +1296,58 @@
   }
 }
 
+@keyframes warsha-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes warsha-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes warsha-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Short, few, skippable (spec §9). The running dot goes static and the pill
+   relies on its label; nothing else in the app animates continuously. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .pill .dot,
+  .progress-fill--sweep,
+  .spinner {
+    animation: none;
+  }
+  .progress-fill--sweep {
+    width: 100%;
+    opacity: 0.5;
+  }
+  .spinner {
+    border-top-color: currentColor;
+  }
+}
+
 /* ------------------------------------------------------- CodeMirror ------- */
 /* Overrides oneDark's chrome with Design's editor tokens; oneDark keeps its
-   syntax colours. Selectors are CodeMirror's own, so they live here. */
+   syntax colours. Selectors are CodeMirror's own, so they live here. Sizes that
+   depend on the user's font-size preference are set in editor/setup.ts instead,
+   because they have to be recomputed when it changes. */
 @layer components {
   .cm-editor {
     height: 100%;
@@ -208,6 +1362,13 @@
     line-height: var(--lh-code);
     -webkit-overflow-scrolling: touch;
   }
+  .cm-content {
+    /* iOS text-selection handles are large; without this the leading handle is
+       clipped at the gutter edge. */
+    padding-left: 4px;
+  }
+  /* Flat gutter: same fill as the canvas, no border. A filled gutter costs
+     horizontal pixels of perceived width on a 390px phone. */
   .cm-gutters {
     background: var(--code-gutter-bg);
     color: var(--code-gutter-fg);
@@ -223,6 +1384,7 @@
   .cm-cursor,
   .cm-dropCursor {
     border-left-color: var(--code-caret);
+    /* The 1px default is genuinely hard to find on a 3x phone display. */
     border-left-width: 2px;
   }
   .cm-selectionBackground,
@@ -232,11 +1394,41 @@
   }
   .cm-matchingBracket {
     background: var(--code-bracket) !important;
+    outline: 1px solid var(--border-control);
     color: inherit !important;
+  }
+  .cm-searchMatch {
+    background: var(--code-search-match);
+  }
+  .cm-searchMatch-selected {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .cm-tooltip {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--surface-3);
+    box-shadow: var(--shadow-raised);
+    overflow: hidden;
+  }
+  .cm-tooltip.cm-tooltip-autocomplete > ul {
+    font-family: var(--font-code);
+    max-height: 40vh;
   }
   .cm-tooltip.cm-tooltip-autocomplete > ul > li {
     min-height: var(--touch);
     display: flex;
     align-items: center;
+    gap: var(--sp-2);
+    padding-inline: var(--sp-3);
+    color: var(--text-2);
+  }
+  .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
+  .cm-completionIcon {
+    color: var(--text-3);
+    padding-right: 0;
   }
 }

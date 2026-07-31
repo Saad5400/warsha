@@ -1,5 +1,6 @@
 import type { RunStatus } from '../hooks/useRunner'
 import { Button, IconButton } from './ui/Button'
+import { IconChevronDown, IconChevronUp, IconClear, IconPlay, IconStop } from './ui/Icons'
 import { StatusPill } from './StatusPill'
 
 export interface RunBarProps {
@@ -29,9 +30,10 @@ export interface RunBarProps {
  */
 export function RunBar(props: RunBarProps) {
   const { status, exitCode, busy, candidates, entryPath, consoleOpen, canRun } = props
+  const preparing = status === 'preparing'
 
   return (
-    <div className="console-header flex h-bar shrink-0 items-center gap-2 border-b border-border-subtle bg-surface-2 px-2">
+    <div className="console-header">
       {/* Run/Stop — first in DOM order so it is the first tab stop and so
           data-hand="left" (row-reverse) puts it on the leading edge. */}
       <Button
@@ -39,25 +41,29 @@ export function RunBar(props: RunBarProps) {
         large
         data-state={status}
         disabled={!busy && !canRun}
+        aria-pressed={busy}
+        aria-label={preparing ? 'Stop preparing' : busy ? 'Stop' : 'Run'}
         onClick={busy ? props.onStop : props.onRun}
       >
-        <span aria-hidden="true" className="text-[12px]">
-          {busy ? '■' : '▶'}
-        </span>
-        {busy ? 'Stop' : 'Run'}
+        {/* Spec §7.4 asks for a 16px spinner in the glyph slot while the engine
+            loads. The label reports the phase; the control keeps its Stop role
+            rather than going disabled, because it is the only way to abort a
+            40 MB download and COPY.runtimeVerySlow tells students to use it. */}
+        {preparing ? <span className="spinner" /> : busy ? <IconStop /> : <IconPlay />}
+        {preparing ? 'Preparing…' : busy ? 'Stop' : 'Run'}
       </Button>
 
       <StatusPill status={status} exitCode={exitCode} />
 
-      <div className="ml-auto flex min-w-0 items-center gap-1">
+      <div className="ml-auto flex min-w-0 items-center gap-2">
         {candidates.length > 1 ? (
-          <label className="flex min-w-0 items-center gap-1">
-            <span className="kb-hide shrink-0 text-micro uppercase tracking-wider text-text-3">Start</span>
+          <label className="flex min-w-0 items-center gap-2">
+            <span className="panel-label kb-hide shrink-0">Start</span>
             <select
               value={entryPath ?? candidates[0]}
               onChange={(e) => props.onEntryChange(e.target.value)}
               aria-label="File to run"
-              className="tap min-h-touch min-w-0 max-w-[40vw] truncate rounded-sm border border-border-control bg-surface-4 px-2 font-code text-meta text-text-1"
+              className="field truncate"
             >
               {candidates.map((c) => (
                 <option key={c} value={c}>
@@ -68,8 +74,13 @@ export function RunBar(props: RunBarProps) {
           </label>
         ) : null}
 
-        <Button variant="ghost" onClick={props.onClear} className="kb-hide">
-          Clear
+        <span aria-hidden="true" className="console-header__rule kb-hide" />
+
+        {/* Keyboard open: the label goes, the icon and the 44px box stay
+            (spec §4.3 rule 3 — collapse decoration, never function). */}
+        <Button variant="quiet" onClick={props.onClear} aria-label="Clear output">
+          <IconClear />
+          <span className="kb-hide">Clear</span>
         </Button>
 
         <IconButton
@@ -77,7 +88,7 @@ export function RunBar(props: RunBarProps) {
           aria-expanded={consoleOpen}
           onClick={props.onToggleConsole}
         >
-          {consoleOpen ? '⌄' : '⌃'}
+          {consoleOpen ? <IconChevronDown /> : <IconChevronUp />}
         </IconButton>
       </div>
     </div>

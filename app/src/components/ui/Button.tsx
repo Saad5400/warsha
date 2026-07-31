@@ -1,22 +1,14 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ComponentPropsWithRef, ReactNode } from 'react'
 
 export type ButtonVariant = 'primary' | 'ghost' | 'danger' | 'stop' | 'quiet'
 
-const base =
-  'tap inline-flex items-center justify-center gap-2 rounded-md text-btn font-medium select-none ' +
-  'min-h-touch px-3 transition-colors duration-[--dur-fast] ' +
-  'disabled:bg-surface-4 disabled:text-text-disabled disabled:cursor-not-allowed active:scale-[.97]'
-
-/** Fills and inks come from DESIGN-SPEC §7.4. Never white text on --accent. */
-const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-accent-ink hover:bg-accent-hover active:bg-accent-press',
-  stop: 'bg-danger-soft text-danger border border-danger',
-  ghost: 'bg-transparent text-text-2 border border-border-control hover:text-text-1 hover:bg-surface-3',
-  danger: 'bg-danger-fill text-white',
-  quiet: 'bg-transparent text-text-2 hover:bg-surface-3 hover:text-text-1',
-}
-
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+/**
+ * Fills, inks and states come from DESIGN-SPEC §7.4 and live in index.css
+ * (`.btn`, `.btn--*`). Every variant has hover, active and focus-visible — a
+ * hover-only affordance is invisible on the target device, which has no hover.
+ * Never white text on --accent (1.99:1); amber fills take --accent-ink.
+ */
+export interface ButtonProps extends ComponentPropsWithRef<'button'> {
   variant?: ButtonVariant
   /** Run/Stop and primary dialog actions are 48px, not 44px. */
   large?: boolean
@@ -27,7 +19,7 @@ export function Button({ variant = 'quiet', large, className = '', children, ...
   return (
     <button
       type="button"
-      className={`${base} ${variants[variant]} ${large ? 'min-h-touch-lg px-4' : ''} ${className}`}
+      className={`btn btn--${variant}${large ? ' btn--lg' : ''}${className ? ' ' + className : ''}`}
       {...rest}
     >
       {children}
@@ -41,18 +33,13 @@ export function IconButton({
   className = '',
   children,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+}: ComponentPropsWithRef<'button'> & { label: string }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      className={
-        'tap inline-grid place-items-center size-touch shrink-0 rounded-md text-[20px] leading-none ' +
-        'text-text-2 hover:bg-surface-3 hover:text-text-1 active:bg-surface-4 ' +
-        'disabled:text-text-disabled disabled:cursor-not-allowed ' +
-        className
-      }
+      className={`icon-btn${className ? ' ' + className : ''}`}
       {...rest}
     >
       {children}

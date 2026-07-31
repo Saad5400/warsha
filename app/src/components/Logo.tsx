@@ -1,7 +1,7 @@
 /**
  * Inlined from docs/design/logo.svg so it recolours through --logo-ink and
  * --logo-accent. The amber bar is the brand signature — the same 2px accent rule
- * that sits under the active tab.
+ * that sits under the active tab and on the leading edge of a running process.
  */
 export function Logo({ size = 24, className = '' }: { size?: number; className?: string }) {
   return (
@@ -31,14 +31,15 @@ export function Logo({ size = 24, className = '' }: { size?: number; className?:
 /**
  * Welcome-screen lockup. Built in HTML rather than from logo-lockup.svg on
  * purpose (spec §7.7): the Arabic word must be real text so the device's own
- * Arabic font shapes and joins it.
+ * Arabic font shapes and joins it. An SVG <text> cannot be relied on for that,
+ * and tracing it to paths gives worse Arabic typography than the system font.
  */
 export function LogoLockup() {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="lockup">
       <Logo size={40} />
-      <div className="text-[28px] font-semibold leading-tight text-text-1">Warsha</div>
-      <div lang="ar" dir="rtl" className="text-[15px] text-text-3">
+      <div className="lockup__word">Warsha</div>
+      <div lang="ar" dir="rtl" className="lockup__ar">
         ورشة
       </div>
     </div>

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { createEditor, type EditorController } from '../editor/setup'
+import { Button } from './ui/Button'
+import { IconFileLines } from './ui/Icons'
 import { COPY } from '../copy'
 
 export interface EditorProps {
@@ -10,13 +12,15 @@ export interface EditorProps {
   onSave(): void
   /** Lets the shell drive the controller (rename, close) without re-mounting. */
   onController(controller: EditorController | null): void
+  /** The one action on the "no file open" empty state (spec §7.5). */
+  onBrowseFiles?: () => void
 }
 
 /**
  * A mount/unmount shell around CodeMirror. All the editor logic lives in
  * editor/setup.ts; React only decides which file is showing.
  */
-export function Editor({ path, content, fontSize, onChange, onSave, onController }: EditorProps) {
+export function Editor({ path, content, fontSize, onChange, onSave, onController, onBrowseFiles }: EditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<EditorController | null>(null)
   // Read handlers through refs: CodeMirror keeps its own long-lived callbacks,
@@ -51,14 +55,20 @@ export function Editor({ path, content, fontSize, onChange, onSave, onController
   }, [fontSize])
 
   return (
-    <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-surface-1">
+    <div className="editor-pane">
       <div ref={hostRef} className="h-full" data-empty={path ? undefined : 'true'} />
       {path ? null : (
-        <div className="absolute inset-0 grid place-items-center bg-surface-1 p-5 text-center">
-          <div>
-            <p className="text-btn text-text-2">No file open</p>
-            <p className="mt-1 text-meta text-text-3">{COPY.editorEmpty}</p>
-          </div>
+        // Sits at ~28% of the pane rather than dead centre: dead centre is where
+        // the software keyboard goes (spec §7.5).
+        <div className="empty empty--pane">
+          <IconFileLines size={32} className="empty__glyph" />
+          <p className="empty__title">No file open</p>
+          <p className="empty__body">{COPY.editorEmpty}</p>
+          {onBrowseFiles ? (
+            <Button variant="ghost" onClick={onBrowseFiles}>
+              Browse files
+            </Button>
+          ) : null}
         </div>
       )}
     </div>

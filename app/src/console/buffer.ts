@@ -44,6 +44,17 @@ const DROP_CHUNK = 500
 /** Upper bound on flush latency when requestAnimationFrame is throttled. */
 const FALLBACK_FLUSH_MS = 100
 
+/**
+ * The buffer the console header's "Copy output" reads.
+ *
+ * The app builds exactly one transcript (App.tsx holds it in a ref) and hands it
+ * to the Console; the header — a sibling component — needs the same text without
+ * the buffer being threaded through the layout that renders both. The newest
+ * instance wins, which is the only sensible answer when there is only ever one.
+ */
+let active: ConsoleBuffer | null = null
+export const activeBuffer = (): ConsoleBuffer | null => active
+
 export class ConsoleBuffer {
   private lines: ConsoleLine[] = []
   private truncated = false
@@ -52,6 +63,10 @@ export class ConsoleBuffer {
   private listeners = new Set<() => void>()
   private frame = 0
   private timer = 0
+
+  constructor() {
+    active = this
+  }
 
   subscribe = (fn: () => void): (() => void) => {
     this.listeners.add(fn)
@@ -114,6 +129,17 @@ export class ConsoleBuffer {
     this.lines = []
     this.truncated = false
     this.flush()
+  }
+
+  /**
+   * The whole transcript as plain text, newlines preserved — what "Copy output"
+   * puts on the clipboard so a student can paste an error to a friend
+   * (ACCEPTANCE §10.10). Reads the live lines, not the flushed snapshot, so a
+   * copy during a burst is not one frame stale.
+   */
+  toText(): string {
+    const body = this.lines.map((l) => l.segments.map((s) => s.text).join('')).join('\n')
+    return this.truncated ? `[earlier output hidden — ${MAX_LINES}-line limit]\n${body}` : body
   }
 
   private trim() {

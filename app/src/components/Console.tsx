@@ -3,6 +3,7 @@ import type { ConsoleBuffer, ConsoleLine, LineKind } from '../console/buffer'
 import type { LoadProgress } from '../runtime/types'
 import type { RunStatus } from '../hooks/useRunner'
 import { ProgressBlock } from './ProgressBlock'
+import { IconTerminal } from './ui/Icons'
 import { COPY } from '../copy'
 
 export interface ConsoleProps {
@@ -15,22 +16,12 @@ export interface ConsoleProps {
   onNotify(message: string, kind?: 'info' | 'error'): void
 }
 
-/** Row treatment: a leading rule and tint, not just a colour — survives greyscale (§7.3). */
-const rowClass: Record<LineKind, string> = {
-  out: 'border-transparent',
-  err: 'border-danger bg-danger-soft/55',
-  echo: 'border-info',
-  meta: 'border-transparent',
-}
-
-/** Per-segment text treatment, so an answer can differ from its prompt inline. */
-const segmentClass: Record<LineKind, string> = {
-  out: 'text-text-1',
-  err: 'text-danger',
-  echo: 'text-info',
-  meta: 'text-text-3 italic',
-}
-
+/**
+ * The console is a transcript, not a log viewer (spec §7.3). Row treatment —
+ * a 3px leading rule and a row tint, never colour alone — lives in
+ * `.console-row[data-kind]`; per-segment colour lives in `[data-seg]`, which is
+ * what lets `Your name: Saad` be one visual line in two colours.
+ */
 export function Console({
   buffer,
   status,
@@ -45,6 +36,7 @@ export function Console({
   const [value, setValue] = useState('')
   const stick = useRef(true)
   const waiting = status === 'waiting'
+  const cleared = useJustCleared(snapshot.lines.length)
 
   // Auto-scroll only when already near the bottom: a student reading a stack
   // trace mid-scroll must not be yanked away by late output.
@@ -72,14 +64,17 @@ export function Console({
     else if (result === 'ignored') onNotify(COPY.stdinIdle, 'error')
   }
 
+  const empty = snapshot.lines.length === 0 && !progress
+
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-state={status}>
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="scroller flex-1 px-panel py-2 font-code text-console"
+        className="scroller console-transcript"
         role="log"
         aria-live="polite"
+        aria-atomic="false"
         aria-label="Program output"
       >
         {progress ? <ProgressBlock progress={progress} /> : null}
@@ -88,28 +83,31 @@ export function Console({
           <Row kind="meta" segments={[{ kind: 'meta', text: COPY.truncated }]} />
         ) : null}
 
-        {snapshot.lines.length === 0 && !progress ? (
-          <p className="text-console text-text-3">{COPY.consoleEmpty}</p>
+        {empty ? (
+          <div className="empty empty--console">
+            <IconTerminal size={32} className="empty__glyph" />
+            <p className="empty__body">{cleared ? 'Cleared.' : COPY.consoleEmpty}</p>
+          </div>
         ) : (
           snapshot.lines.map((line) => <Row key={line.id} kind={line.kind} segments={line.segments} />)
         )}
       </div>
 
       {/* Sticky so the keyboard can never cover it (spec §4.3 rule 1). */}
-      <div className="sticky bottom-0 shrink-0 border-t border-border-subtle bg-surface-2">
+      <div className="stdin-row" data-waiting={waiting ? 'true' : 'false'}>
         {waiting ? (
-          <p className="px-panel pt-1 text-micro text-info" role="status">
+          <p className="stdin-hint" role="status">
             {COPY.stdinHint}
           </p>
         ) : null}
         <form
-          className="flex items-center gap-2 px-panel py-2"
+          className="stdin-form"
           onSubmit={(e) => {
             e.preventDefault()
             submit()
           }}
         >
-          <span aria-hidden="true" className={'font-code text-console ' + (waiting ? 'text-info' : 'text-text-3')}>
+          <span aria-hidden="true" className="stdin-caret">
             ›
           </span>
           <input
@@ -122,13 +120,7 @@ export function Console({
             autoCorrect="off"
             spellCheck={false}
             enterKeyHint="send"
-            // Waiting is signalled by an accent border plus the hint above, not
-            // by a fill change alone.
-            className={
-              'min-h-touch min-w-0 flex-1 rounded-sm border bg-surface-4 px-3 font-code text-input text-text-1 ' +
-              'placeholder:text-text-3 focus:outline-none ' +
-              (waiting ? 'border-info' : 'border-border-control')
-            }
+            className="stdin-input"
           />
         </form>
       </div>
@@ -136,16 +128,35 @@ export function Console({
   )
 }
 
+/**
+ * True for 3 seconds after the transcript goes from having lines to having none,
+ * so a cleared console says "Cleared." before falling back to the standing
+ * explanation (spec §7.5). View-level only — the buffer knows nothing about it.
+ */
+function useJustCleared(lineCount: number): boolean {
+  const [cleared, setCleared] = useState(false)
+  const previous = useRef(lineCount)
+
+  useEffect(() => {
+    const had = previous.current
+    previous.current = lineCount
+    if (lineCount !== 0 || had === 0) return
+    setCleared(true)
+    const id = window.setTimeout(() => setCleared(false), 3000)
+    return () => window.clearTimeout(id)
+  }, [lineCount])
+
+  return cleared && lineCount === 0
+}
+
 function Row({ kind, segments }: { kind: LineKind; segments: ConsoleLine['segments'] }) {
   return (
-    <div data-kind={kind} className={`flex border-l-[3px] pl-2 ${rowClass[kind]}`}>
-      {/* Wrapped continuations indent 12px so a wrap reads differently from a
-          genuine new line; never horizontal-scroll the console. */}
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words pl-3 -indent-3 [tab-size:4]">
+    <div data-kind={kind} className="console-row">
+      <span className="console-row__text">
         {segments.length === 0
           ? ' '
           : segments.map((seg, i) => (
-              <span key={i} data-seg={seg.kind} className={segmentClass[seg.kind]}>
+              <span key={i} data-seg={seg.kind}>
                 {seg.text}
               </span>
             ))}
