@@ -78,6 +78,13 @@ export const IconChevronUp = (p: IconProps) => (
   </Icon>
 )
 
+/** Collapse every folder: two chevrons folding toward the middle. */
+export const IconCollapseAll = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 4.75 10 8.75l4-4M6 15.25 10 11.25l4 4" />
+  </Icon>
+)
+
 export const IconClose = (p: IconProps) => (
   <Icon {...p}>
     <path d="M5.75 5.75l8.5 8.5M14.25 5.75l-8.5 8.5" />
@@ -140,5 +147,59 @@ export const IconFolderOpen = (p: IconProps) => (
   <Icon {...p}>
     <path d="M2.75 6A1.25 1.25 0 0 1 4 4.75h2.9l1.35 1.9H16A1.25 1.25 0 0 1 17.25 7.9v1.35" />
     <path d="M2.75 8.5h15L16 15.5H4.25L2.75 8.5Z" />
+  </Icon>
+)
+
+/* ---- menu glyphs. Same grid, same stroke as everything above. ------------- */
+
+/** Import: into the tray. */
+export const IconImport = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 3.75v7.5M6.75 8.25 10 11.5l3.25-3.25" />
+    <path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13" />
+  </Icon>
+)
+
+/** Export: out of the tray. */
+export const IconExport = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 11.5V4M6.75 7.25 10 4l3.25 3.25" />
+    <path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13" />
+  </Icon>
+)
+
+export const IconSave = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.75 4.25h7.75l3 3v8.5a.5.5 0 0 1-.5.5H5.25a.5.5 0 0 1-.5-.5V4.75a.5.5 0 0 1 .5-.5Z" />
+    <path d="M7.5 4.25v3.5h5M7.5 12.25h5" />
+  </Icon>
+)
+
+export const IconTextBigger = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 15 7.5 5l4 10M4.9 12h5.2" />
+    <path d="M15 8.75v4.5M12.75 11h4.5" />
+  </Icon>
+)
+
+export const IconTextSmaller = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 15 7.5 5l4 10M4.9 12h5.2" />
+    <path d="M12.75 11h4.5" />
+  </Icon>
+)
+
+/** Mirror Run/Stop to the other edge, for a left-handed student. */
+export const IconSwapSides = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7.5 6.25 4 9.75l3.5 3.5M12.5 6.25 16 9.75l-3.5 3.5" />
+    <path d="M4.25 9.75h11.5" />
+  </Icon>
+)
+
+export const IconTrash = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 6.5h11M8 6.5V5.25a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6.5" />
+    <path d="M6.25 6.5l.55 8.3a1 1 0 0 0 1 .95h4.4a1 1 0 0 0 1-.95l.55-8.3" />
   </Icon>
 )

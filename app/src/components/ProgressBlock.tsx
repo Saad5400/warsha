@@ -11,6 +11,10 @@ const phaseLabel: Record<LoadProgress['phase'], string> = {
 
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
+/** Does the engine's message already say what phase this is? */
+const namesThePhase = (message: string, phase: LoadProgress['phase']) =>
+  message.toLowerCase().includes(phaseLabel[phase].split(' ')[0].toLowerCase())
+
 /**
  * The first-run engine download (spec §7.6). Renders in the console, never in a
  * modal, so the student can keep reading their code while it happens.
@@ -28,13 +32,14 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
   const elapsed = useElapsedSeconds(phase, !determinate)
   const eta = useEta(phase, determinate ? loaded! : null, determinate ? total! : null)
 
+  // Phase first: naming the phase is what turns dead time into visible progress
+  // (spec §7.6), so it leads the line and the numbers qualify it.
   const detail = [
     typeof loaded === 'number'
       ? determinate
         ? `${mb(loaded)} of ${mb(total!)}`
         : mb(loaded)
       : null,
-    phaseLabel[phase],
     eta,
     elapsed !== null ? `${elapsed}s` : null,
   ].filter(Boolean)
@@ -57,7 +62,14 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
         {pct !== null ? <span className="progress-pct">{pct}%</span> : null}
       </div>
 
-      <p className="progress-block__meta mt-2">{detail.join(' · ')}</p>
+      <p className="progress-block__meta mt-2">
+        {/* The engine's own message usually names the phase ("Downloading
+            Python…"); repeating it under the bar reads as a stutter. */}
+        {namesThePhase(message, phase) ? null : (
+          <span className="font-semibold text-text-2">{phaseLabel[phase]}{detail.length > 0 ? ' · ' : null}</span>
+        )}
+        {detail.join(' · ')}
+      </p>
       <p className="progress-block__meta">{COPY.runtimeNextInstant}</p>
     </div>
   )
@@ -84,7 +96,10 @@ function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): numbe
     return () => window.clearInterval(id)
   }, [phase, active])
 
-  return active && elapsed > 0 ? elapsed : null
+  // From zero, not from one: the line under the bar must never be empty, or an
+  // engine that reports no bytes leaves an indeterminate bar with no numbers at
+  // all — which §7.6 forbids precisely because it is indistinguishable from a hang.
+  return active ? elapsed : null
 }
 
 /**

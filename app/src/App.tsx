@@ -6,7 +6,7 @@ import { prefs, setPrefs } from './fs/prefs'
 import type { FsSnapshot } from './fs/types'
 import { entryCandidates } from './runtime'
 import type { Template } from './templates'
-import { exportZip, importZip } from './zip'
+import { exportZip } from './zip'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
@@ -20,10 +20,22 @@ import { Explorer } from './components/Explorer'
 import { RunBar } from './components/RunBar'
 import { Tabs } from './components/Tabs'
 import { TopBar } from './components/TopBar'
-import { WelcomeScreen } from './components/WelcomeScreen'
+import { WelcomePanel } from './components/WelcomePanel'
+import { ImportZipDialog } from './components/ImportZipDialog'
 import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import type { MenuItem } from './components/ui/Menu'
+import {
+  IconExport,
+  IconImport,
+  IconPlus,
+  IconSave,
+  IconSwapSides,
+  IconTextBigger,
+  IconTextSmaller,
+  IconTrash,
+} from './components/ui/Icons'
+import { COPY, count } from './copy'
 
 const NARROW = '(max-width: 899px)'
 
@@ -48,7 +60,6 @@ function Ide({ report }: { report: CapabilityReport }) {
   const buffer = bufferRef.current
 
   const editorRef = useRef<EditorController | null>(null)
-  const zipInputRef = useRef<HTMLInputElement>(null)
 
   const initial = useMemo(() => prefs(), [])
   const [hydrated, setHydrated] = useState(false)
@@ -61,22 +72,23 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [hand, setHand] = useState<'right' | 'left'>(initial.hand)
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [welcomeOpen, setWelcomeOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
 
   const candidates = useMemo(() => entryCandidates(project.sourceFiles()), [project, revision])
   const runner = useRunner(project, buffer, entryPath)
 
   // ---- restore the workspace once the project has loaded ----
+  // An empty project is not a special mode and does not open anything: the
+  // editor area carries WelcomePanel until a file exists (see below).
   useEffect(() => {
     if (!ready || hydrated) return
-    if (project.isEmpty()) {
-      setWelcomeOpen(true)
-    } else {
-      const open = initial.openTabs.filter((p) => project.has(p))
-      const active = initial.activePath && open.includes(initial.activePath) ? initial.activePath : (open[0] ?? null)
-      setTabs(open)
-      setActivePath(active)
-    }
+    const open = initial.openTabs.filter((p) => project.has(p))
+    const active = initial.activePath && open.includes(initial.activePath) ? initial.activePath : (open[0] ?? null)
+    setTabs(open)
+    setActivePath(active)
+    // Nothing to run yet, so the console starts as a 44px header and the start
+    // panel gets the room. It auto-opens on Run, as it always has.
+    if (project.isEmpty()) setConsoleOpen(false)
     setHydrated(true)
   }, [ready, hydrated, project, initial])
 
@@ -140,6 +152,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     return null
   }
 
+  /** In-dialog validation, so a bad name is answered under the field the
+   *  student is already looking at rather than by a toast after it closes. */
+  const nameTaken = (dir: string, name: string): string | null => {
+    const path = dir ? `${dir}/${name}` : name
+    return project.has(path) || project.hasDir(path) ? `There is already a “${name}” here.` : null
+  }
+
   const starterContent = (path: string): string => {
     const { dir, name } = splitPath(path)
     if (name.endsWith('.java')) {
@@ -151,13 +170,18 @@ function Ide({ report }: { report: CapabilityReport }) {
     return ''
   }
 
-  const newFile = async (dir: string) => {
-    const name = await dialogs.prompt({
-      title: 'New file',
-      label: dir ? `Inside ${dir}/` : 'In the project root',
-      placeholder: 'Main.java',
-      okLabel: 'Create',
-    })
+  // `presetName` arrives from the explorer's inline create row; without one we
+  // fall back to the prompt dialog. Validation stays here either way.
+  const newFile = async (dir: string, presetName?: string) => {
+    const name =
+      presetName ??
+      (await dialogs.prompt({
+        title: 'New file',
+        label: dir ? `Inside ${dir}/` : 'In the project root',
+        placeholder: 'Main.java',
+        okLabel: 'Create',
+        validate: (v) => validName(v) ?? nameTaken(dir, v),
+      }))
     if (!name) return
     const problem = validName(name)
     if (problem) return notify(problem, 'error')
@@ -166,18 +190,24 @@ function Ide({ report }: { report: CapabilityReport }) {
     try {
       await project.createFile(path, starterContent(path))
       openFile(path)
+      // Creating a file is the start of typing in it, so the caret goes there
+      // rather than leaving the student to tap the canvas.
+      editorRef.current?.focus()
     } catch (e) {
       notify((e as Error).message, 'error')
     }
   }
 
-  const newFolder = async (dir: string) => {
-    const name = await dialogs.prompt({
-      title: 'New folder',
-      label: dir ? `Inside ${dir}/` : 'In the project root',
-      placeholder: 'models',
-      okLabel: 'Create',
-    })
+  const newFolder = async (dir: string, presetName?: string) => {
+    const name =
+      presetName ??
+      (await dialogs.prompt({
+        title: 'New folder',
+        label: dir ? `Inside ${dir}/` : 'In the project root',
+        placeholder: 'models',
+        okLabel: 'Create',
+        validate: (v) => validName(v) ?? nameTaken(dir, v),
+      }))
     if (!name) return
     const problem = validName(name)
     if (problem) return notify(problem, 'error')
@@ -188,13 +218,16 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }
 
-  const renameEntry = async (path: string, isDir: boolean) => {
+  const renameEntry = async (path: string, isDir: boolean, presetName?: string) => {
     const { dir, name } = splitPath(path)
-    const next = await dialogs.prompt({
-      title: isDir ? 'Rename folder' : 'Rename file',
-      value: name,
-      okLabel: 'Rename',
-    })
+    const next =
+      presetName ??
+      (await dialogs.prompt({
+        title: isDir ? 'Rename folder' : 'Rename file',
+        value: name,
+        okLabel: 'Rename',
+        validate: (v) => validName(v) ?? (v === name ? null : nameTaken(dir, v)),
+      }))
     if (!next || next === name) return
     const problem = validName(next)
     if (problem) return notify(problem, 'error')
@@ -231,54 +264,49 @@ function Ide({ report }: { report: CapabilityReport }) {
     await project.saveAll()
   }, [project])
 
-  // ---- templates + zip ----
+  // ---- starters + zip ----
+  // A starter populates the project you are already in. It is an action, not a
+  // mode: nothing about the app changes afterwards except which files exist.
   const replaceProject = async (snapshot: FsSnapshot, entry: string | null, label: string) => {
     await project.replaceAll(snapshot)
     editorRef.current?.closeFile(editorRef.current.currentPath() ?? '')
     setTabs(entry ? [entry] : [])
     setActivePath(entry)
     setEntryPath(entry)
-    setWelcomeOpen(false)
     buffer.clear()
-    notify(label)
+    notify(label, 'success')
   }
 
-  const confirmReplace = async (what: string) => {
+  const confirmReplace = async (title: string, what: string, okLabel: string) => {
     if (project.isEmpty()) return true
     return dialogs.confirm({
-      title: 'Replace what you have?',
-      message: `${what} removes the files now in Warsha. Export a .zip first if you want to keep them.`,
-      okLabel: 'Replace',
+      title,
+      message: `${what} removes the ${count(project.paths().length, 'file')} now in Warsha. Export a .zip first if you want to keep them.`,
+      okLabel,
       danger: true,
     })
   }
 
   const applyTemplate = async (t: Template) => {
-    if (!(await confirmReplace(`Starting "${t.name}"`))) return
-    await replaceProject(t.snapshot, t.entry, `${t.name} created`)
+    if (!(await confirmReplace('Replace what you have?', `Starting “${t.name}”`, 'Replace'))) return
+    await replaceProject(t.snapshot, t.entry, `${t.name} ready — ${count(t.snapshot.files.length, 'file')}.`)
   }
 
   const startEmpty = async () => {
-    if (!(await confirmReplace('Starting an empty folder'))) return
-    await replaceProject({ files: [], dirs: [] }, null, 'Empty project ready')
+    if (!(await confirmReplace('Empty this project?', 'Emptying this project', 'Empty it'))) return
+    await replaceProject({ files: [], dirs: [] }, null, 'Project emptied.')
   }
 
-  const onZipPicked = async (file: File) => {
-    try {
-      const snapshot = await importZip(file)
-      if (snapshot.files.length === 0) return notify('That .zip has no files in it.', 'error')
-      const ok = await dialogs.confirm({
-        title: 'Import this project?',
-        message: `${file.name} has ${snapshot.files.length} file(s). Importing replaces the files now in Warsha.`,
-        okLabel: 'Import',
-        danger: true,
-      })
-      if (!ok) return
-      const entry = entryCandidates(snapshot.files)[0] ?? snapshot.files[0]?.path ?? null
-      await replaceProject(snapshot, entry, `Imported ${snapshot.files.length} file(s)`)
-    } catch (e) {
-      notify(`That .zip could not be opened. (${(e as Error).message})`, 'error')
-    }
+  const onZipImported = async (snapshot: FsSnapshot, fileName: string) => {
+    setImportOpen(false)
+    const entry = entryCandidates(snapshot.files)[0] ?? snapshot.files[0]?.path ?? null
+    await replaceProject(snapshot, entry, COPY.imported(fileName, snapshot.files.length))
+  }
+
+  const exportProject = () => {
+    const name = 'warsha-project.zip'
+    exportZip(project.snapshot(), name)
+    notify(COPY.exported(name, project.paths().length), 'success')
   }
 
   // ---- keyboard shortcuts ----
@@ -315,22 +343,43 @@ function Ide({ report }: { report: CapabilityReport }) {
     return () => document.removeEventListener('visibilitychange', onHidden)
   }, [project])
 
+  const empty = project.isEmpty()
+  const mod = /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'
+
+  // Grouped, glyphed and 44px per row (spec §5.2). "Empty this project" is the
+  // only destructive item, so it sits last behind a divider and never near Save.
   const menuItems: MenuItem[] = [
-    { label: 'New project…', onSelect: () => setWelcomeOpen(true) },
+    { label: 'New file…', icon: <IconPlus size={18} />, onSelect: () => void newFile('') },
+    { label: 'Save all', icon: <IconSave size={18} />, hint: `${mod} S`, onSelect: () => void saveAll() },
+    { label: 'Import .zip…', icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
     {
       label: 'Export as .zip',
-      onSelect: () => {
-        exportZip(project.snapshot())
-        notify(`Exported ${project.paths().length} file(s)`)
-      },
+      icon: <IconExport size={18} />,
+      disabled: empty,
+      onSelect: exportProject,
     },
-    { label: 'Import .zip…', onSelect: () => zipInputRef.current?.click() },
-    { label: 'Save all', onSelect: () => void saveAll() },
-    { label: 'Bigger text', onSelect: () => setFontSize((s) => Math.min(26, s + 1)) },
-    { label: 'Smaller text', onSelect: () => setFontSize((s) => Math.max(11, s - 1)) },
+    {
+      label: 'Bigger text',
+      icon: <IconTextBigger size={18} />,
+      startsGroup: true,
+      onSelect: () => setFontSize((s) => Math.min(26, s + 1)),
+    },
+    {
+      label: 'Smaller text',
+      icon: <IconTextSmaller size={18} />,
+      onSelect: () => setFontSize((s) => Math.max(11, s - 1)),
+    },
     {
       label: hand === 'right' ? 'Run button on left' : 'Run button on right',
+      icon: <IconSwapSides size={18} />,
       onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
+    },
+    {
+      label: 'Empty this project…',
+      icon: <IconTrash size={18} />,
+      danger: true,
+      disabled: empty,
+      onSelect: () => void startEmpty(),
     },
   ]
 
@@ -342,6 +391,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       <TopBar
         onToggleExplorer={() => (narrow ? setDrawerOpen((v) => !v) : setExplorerDocked((v) => !v))}
         menuItems={menuItems}
+        title={activePath}
       />
 
       <div className="relative flex min-h-0 min-w-0 overflow-hidden">
@@ -353,8 +403,10 @@ function Ide({ report }: { report: CapabilityReport }) {
           className={
             'z-20 shrink-0 border-r border-border-subtle ' +
             (narrow
-              ? 'absolute inset-y-0 left-0 w-drawer shadow-raised transition-transform duration-[--dur] ' +
-                (drawerOpen ? 'translate-x-0' : '-translate-x-[102%]')
+              ? // `.drawer` owns the transform and the --dur transition: the
+                // utility form of both compiled to invalid CSS under Tailwind v4,
+                // so the drawer used to snap open with no animation at all.
+                'drawer absolute inset-y-0 left-0 w-drawer shadow-raised'
               : explorerDocked
                 ? 'w-explorer'
                 : 'hidden')
@@ -365,38 +417,63 @@ function Ide({ report }: { report: CapabilityReport }) {
             tree={tree}
             activePath={activePath}
             onOpenFile={openFile}
-            onNewFile={(dir) => void newFile(dir)}
-            onNewFolder={(dir) => void newFolder(dir)}
-            onRename={(p, isDir) => void renameEntry(p, isDir)}
+            onNewFile={(dir, name) => void newFile(dir, name)}
+            onNewFolder={(dir, name) => void newFolder(dir, name)}
+            onRename={(p, isDir, name) => void renameEntry(p, isDir, name)}
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
+            // The starters live in the workspace itself now, so from a drawer
+            // the useful move is to get out of the way and show them. Docked,
+            // they are already on screen and the button would be a no-op.
+            onUseTemplate={narrow ? () => setDrawerOpen(false) : undefined}
           />
         </aside>
 
         {narrow && drawerOpen ? (
-          <div className="absolute inset-0 z-10 bg-[--scrim]" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+          // `.scrim`, not `bg-[--scrim]`: the utility form compiles to
+          // `background-color:--scrim` under Tailwind v4 and the browser drops
+          // it, which left the open drawer with no scrim behind it at all.
+          <div className="scrim absolute inset-0 z-10" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         ) : null}
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
           <CapabilityBanner report={report} />
 
-          <Tabs
-            project={project}
-            tabs={tabs}
-            activePath={activePath}
-            onSelect={(p) => setActivePath(p)}
-            onClose={closeTab}
-          />
+          {/* An empty project has nothing to tab through and nothing to edit, so
+              the editor area carries the start panel instead. This is Warsha's
+              entire first-run experience: no gate, no route, no modal, and it is
+              gone for good the moment a file exists. */}
+          {empty ? (
+            <WelcomePanel
+              onNewFile={() => void newFile('')}
+              onPickTemplate={(t) => void applyTemplate(t)}
+              onImportZip={() => setImportOpen(true)}
+            />
+          ) : (
+            <>
+              <Tabs
+                project={project}
+                tabs={tabs}
+                activePath={activePath}
+                onSelect={(p) => setActivePath(p)}
+                onClose={closeTab}
+              />
 
-          <Editor
-            path={activePath}
-            content={activeContent}
-            fontSize={fontSize}
-            onChange={(p, c) => project.setContent(p, c)}
-            onSave={() => void saveAll()}
-            onController={(c) => {
-              editorRef.current = c
-            }}
-          />
+              <Editor
+                path={activePath}
+                content={activeContent}
+                fontSize={fontSize}
+                onChange={(p, c) => project.setContent(p, c)}
+                onSave={() => void saveAll()}
+                onController={(c) => {
+                  editorRef.current = c
+                }}
+                // Only offered where the explorer is hidden behind a drawer;
+                // docked, the files are already on screen and the button would be
+                // a no-op.
+                onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
+              />
+            </>
+          )}
 
           {/* Dragging a divider with a thumb on a 390px screen is not worth
               building, so resize is a ≥900px affordance only (spec §6). */}
@@ -407,10 +484,14 @@ function Ide({ report }: { report: CapabilityReport }) {
           <section
             aria-label="Console"
             data-state={runner.status}
-            className={
-              'console-lift flex shrink-0 flex-col border-t border-border-subtle bg-surface-2 ' +
-              (consoleOpen ? 'min-h-[--console-min-h-stdin]' : 'h-bar')
-            }
+            // `.console-panel` carries the fill, the top divider, the 144px
+            // stdin floor and the accent rule that marks a running process. The
+            // min-height here used to be a bare-custom-property utility, which
+            // Tailwind v4 compiles to invalid CSS — so the floor from spec §4.3
+            // rule 4 ("the single most important number in this section") was
+            // doing nothing at all. (Spelling that class name out in a comment
+            // is enough for Tailwind to emit it again, so it stays paraphrased.)
+            className={'console-panel console-lift ' + (consoleOpen ? 'console-panel--open' : 'h-bar')}
             style={consoleOpen ? { height: narrow ? '40%' : `${consoleHeight}px` } : undefined}
           >
             <RunBar
@@ -443,27 +524,15 @@ function Ide({ report }: { report: CapabilityReport }) {
           </section>
         </main>
 
-        {welcomeOpen ? (
-          <WelcomeScreen
-            onPickTemplate={(t) => void applyTemplate(t)}
-            onEmptyFolder={() => void startEmpty()}
-            onImportZip={() => zipInputRef.current?.click()}
-            onDismiss={project.isEmpty() ? undefined : () => setWelcomeOpen(false)}
-          />
-        ) : null}
       </div>
 
-      <input
-        ref={zipInputRef}
-        type="file"
-        accept=".zip,application/zip"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          e.target.value = ''
-          if (file) void onZipPicked(file)
-        }}
-      />
+      {importOpen ? (
+        <ImportZipDialog
+          currentFileCount={project.paths().length}
+          onCancel={() => setImportOpen(false)}
+          onImport={(snapshot, name) => void onZipImported(snapshot, name)}
+        />
+      ) : null}
     </div>
   )
 }

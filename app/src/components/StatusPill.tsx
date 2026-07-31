@@ -21,21 +21,23 @@ const pills: Record<RunStatus, { label: string; glyph: string }> = {
 
 export function StatusPill({ status, exitCode }: { status: RunStatus; exitCode: number | null }) {
   const pill = pills[status]
-  const label = status === 'failed' && exitCode !== null ? `${pill.label} · exit ${exitCode}` : pill.label
+  const detail = status === 'failed' && exitCode !== null ? ` · exit ${exitCode}` : null
   return (
-    <span data-state={status} className="pill">
+    // aria-label carries the exit code even when the visual suffix is dropped, so
+    // a screen reader never loses it to a breakpoint.
+    <span data-state={status} className="pill" aria-label={detail ? pill.label + detail : undefined}>
       {/* The one continuous animation in the app: a 1.4s pulse on a 6px dot,
           static under prefers-reduced-motion, where the word carries it. */}
-      {pill.glyph === 'dot' ? (
-        <span aria-hidden="true" className="pill__glyph">
-          <span className="dot" />
-        </span>
-      ) : (
-        <span aria-hidden="true" className="pill__glyph">
-          {pill.glyph}
-        </span>
-      )}
-      <span>{label}</span>
+      <span aria-hidden="true" className="pill__glyph">
+        {pill.glyph === 'dot' ? <span className="dot" /> : pill.glyph}
+      </span>
+      <span className="pill__label">
+        {pill.label}
+        {/* The exit code is the first thing that goes when the console header
+            runs out of room on a phone — the transcript states it in full a few
+            pixels below, so nothing is actually lost. */}
+        {detail ? <span className="hidden min-[900px]:inline">{detail}</span> : null}
+      </span>
     </span>
   )
 }

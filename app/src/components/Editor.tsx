@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { splitPath } from '../fs/project'
 import { createEditor, type EditorController } from '../editor/setup'
 import { Button } from './ui/Button'
 import { IconFileLines } from './ui/Icons'
@@ -54,21 +55,34 @@ export function Editor({ path, content, fontSize, onChange, onSave, onController
     controllerRef.current?.setFontSize(fontSize)
   }, [fontSize])
 
+  // A student with Warsha and their course notes in two tabs needs to be able to
+  // tell them apart, and the filename is what does that.
+  useEffect(() => {
+    document.title = path ? `${splitPath(path).name} — Warsha` : 'Warsha'
+  }, [path])
+
   return (
     <div className="editor-pane">
       <div ref={hostRef} className="h-full" data-empty={path ? undefined : 'true'} />
       {path ? null : (
-        // Sits at ~28% of the pane rather than dead centre: dead centre is where
-        // the software keyboard goes (spec §7.5).
-        <div className="empty empty--pane">
-          <IconFileLines size={32} className="empty__glyph" />
-          <p className="empty__title">No file open</p>
-          <p className="empty__body">{COPY.editorEmpty}</p>
-          {onBrowseFiles ? (
-            <Button variant="ghost" onClick={onBrowseFiles}>
-              Browse files
-            </Button>
-          ) : null}
+        // The backdrop is load-bearing, not decoration: `.empty--pane` is capped
+        // at 32ch, so as an inset-0 layer it only paints a narrow centred column
+        // and CodeMirror's gutter, line 1 and active-line band show through on
+        // either side of it. This is what actually covers the canvas, and it also
+        // stops a tap on the void reaching an editor with no file in it.
+        <div className="absolute inset-0 bg-surface-1">
+          {/* Sits at ~28% of the pane rather than dead centre: dead centre is
+              where the software keyboard goes (spec §7.5). */}
+          <div className="empty empty--pane">
+            <IconFileLines size={32} className="empty__glyph" />
+            <p className="empty__title">No file open</p>
+            <p className="empty__body">{COPY.editorEmpty}</p>
+            {onBrowseFiles ? (
+              <Button variant="ghost" onClick={onBrowseFiles}>
+                Browse files
+              </Button>
+            ) : null}
+          </div>
         </div>
       )}
     </div>

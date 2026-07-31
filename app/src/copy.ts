@@ -33,7 +33,6 @@ export const COPY = {
   /** The same message, short enough for one line on a 390px phone. */
   stdinHintShort: 'Waiting for you — type below, then Enter.',
   consoleEmpty: 'Output will appear here when you run your code.',
-  consoleEmptyHint: (shortcut: string) => `Press Run, or ${shortcut}.`,
   consoleCleared: 'Cleared.',
   /** PLACEHOLDER */
   editorEmpty: 'Pick a file from the explorer to start editing.',
@@ -49,12 +48,14 @@ export const COPY = {
 
   // ---- console status line: the current state, in words (§7.3 states) ----
   statusIdle: 'Ready when you are — press Run.',
+  statusIdleShortcut: (shortcut: string) => `Ready when you are — press Run, or ${shortcut}.`,
   statusPreparing: 'Getting the language ready — the console will fill up shortly.',
   statusPreparingShort: 'Getting the language ready…',
   statusRunning: 'Your program is running.',
   statusOk: 'Finished — exit code 0.',
   statusFailed: (code: number) => `Stopped early — exit code ${code}. The red lines say why.`,
   statusFailedShort: (code: number) => `Stopped early — exit code ${code}.`,
+  statusFailedNoCode: 'Stopped early — the red lines say why.',
   statusStopped: 'You stopped it. Your files are saved.',
 
   // ---- transcript controls ----
@@ -77,10 +78,33 @@ export const COPY = {
   // ---- storage (§8) ----
   storageLocal: 'Your files are saved in this browser on this device.',
 
-  // ---- welcome (§7.7) ----
+  // ---- the start panel (§7.7, adapted: there is no welcome page) ----
+  // Warsha opens straight into the workspace. When the project is empty, the
+  // editor area carries this instead of a blank canvas — so a starter is an
+  // action inside the IDE, never a gate in front of it, and the app never asks
+  // "which language?" (the file extension answers that).
   welcomePurpose: 'Write and run Java or Python. In your browser, on your phone.',
   welcomeFirstRunNote:
     'First time you run, Warsha downloads the language you picked — about 38 MB for Java, less for Python. It happens once per device, then it works offline.',
-  welcomeEmptyFolder: 'Start from an empty folder',
+  welcomeNewFile: 'New file',
+  welcomeNewFileBlurb: 'One empty file, named by you. Warsha reads the language from the name.',
+  welcomeNewFileManifest: '1 file · Main.java, main.py, anything',
   welcomeImport: 'Import a .zip',
+
+  // ---- zip import / export ----
+  importIntro: 'Pick a .zip of a project — one you exported from Warsha, or one a teacher gave you.',
+  importDropHint: 'Drop a .zip here, or',
+  importReplaces: (n: number) =>
+    `This replaces the ${count(n, 'file')} you have now. Export a .zip first if you want to keep them.`,
+  importNothingToReplace: 'Your project is empty, so nothing of yours gets replaced.',
+  importEmptyZip: 'That .zip has no files in it. Try another one.',
+  importNotZip: 'That one is not a .zip. Pick a file whose name ends in .zip.',
+  importUnreadable: (detail: string) => `That .zip could not be opened. (${detail})`,
+  imported: (name: string, n: number) => `Imported ${name} — ${count(n, 'file')}.`,
+  exported: (name: string, n: number) => `Exported ${name} — ${count(n, 'file')}.`,
 } as const
+
+/** "1 file" / "3 files" — a plural, not a "file(s)". */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
+}

@@ -55,7 +55,9 @@ Small and boring on purpose — roughly one file per box on screen.
 | `ConsoleDivider` | Drag-resize handle (≥900px only). |
 | `ProgressBlock` | First-run engine download (bar, byte counter, phase). |
 | `StatusPill` | The seven run states. |
-| `WelcomeScreen`, `CapabilityScreens` | Template picker; fatal screen + dismissible warning banner. |
+| `WelcomePanel` | The empty project's editor area, and the whole first-run experience: three start cards (New file / the two starters from `templates.ts`) plus Import .zip, the first-run download note and the storage line. Rendered by `App` **instead of** `Tabs` + `Editor` while `project.isEmpty()`, so there is no welcome page, no route and no language gate — a starter is an action inside the IDE, and language comes from file extensions. |
+| `ImportZipDialog` | One dialog for the whole import: drop zone or file picker, what the .zip contains, what it replaces, confirm. |
+| `CapabilityScreens` | Fatal screen + dismissible warning banner. |
 | `FileBadge`, `Logo` | Language badges; inlined logo that recolours via custom properties. |
 | `ui/Button`, `ui/Dialog`, `ui/DialogProvider`, `ui/Menu`, `ui/Toast` | shadcn-style primitives, hand-rolled on Tailwind. Native `<dialog>` for focus trapping and Escape. |
 

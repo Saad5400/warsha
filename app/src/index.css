@@ -200,10 +200,9 @@
     margin-bottom: var(--kb-inset, 0px);
   }
 
-  /* Keyboard-open compaction (spec §4.3): shed decoration, never content. */
-  html[data-kb='open'] {
-    --pad-panel: var(--sp-2);
-  }
+  /* Keyboard-open compaction (spec §4.3): shed decoration, never content.
+     The --pad-panel half of this lives OUTSIDE this layer — see the note above
+     the rule at the end of the file. */
   html[data-kb='open'] .app-shell {
     grid-template-rows: 40px 1fr;
   }
@@ -234,6 +233,11 @@
 
   /* ============================================================ top bar ==== */
 
+  /* Every fixed-height bar in the app draws its divider as an inset shadow, not a
+     border. With border-box sizing a 1px border comes out of the bar's own 44px,
+     leaving 43px of content for a 44px control — which overflows the bar by a
+     pixel and, in the console's case, pushed Run one pixel under the keyboard.
+     A shadow costs no layout, so 44px stays 44px. */
   .top-bar {
     display: flex;
     align-items: center;
@@ -241,7 +245,7 @@
     height: 100%;
     min-width: 0;
     background: var(--surface-0);
-    border-bottom: 1px solid var(--border-subtle);
+    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
   }
 
   /* Spec §11: the wordmark is only ever the UI font at 600. */
@@ -388,7 +392,11 @@
     overflow-x: auto;
     overflow-y: hidden;
     background: var(--surface-2);
-    border-bottom: 1px solid var(--border-subtle);
+    /* The bottom divider is an inset shadow, not a border. With border-box
+       sizing a 1px border eats into the strip's 44px, which left every tab 43px
+       tall and failed the 44px floor by one pixel — and a tab is one of the
+       most-tapped things in the app. A shadow costs no layout. */
+    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
     scroll-snap-type: x proximity;
     scrollbar-width: none;
   }
@@ -494,7 +502,9 @@
     flex: none;
     flex-direction: column;
     background: var(--surface-2);
-    border-top: 1px solid var(--border-subtle);
+    /* Divider as an inset shadow: a 1px border-top would come out of the
+       collapsed panel's 44px and push Run a pixel below the keyboard line. */
+    box-shadow: inset 0 1px 0 0 var(--border-subtle);
     /* The third home of the amber signature (principle 3): the leading edge of
        a running process. Reserved always, coloured only while it runs. */
     border-left: var(--rail) solid transparent;
@@ -520,7 +530,8 @@
     height: var(--bar-console);
     padding-inline: var(--sp-2);
     background: var(--surface-2);
-    border-bottom: 1px solid var(--border-subtle);
+    /* Inset shadow, so the 44px Run control gets all 44px of the bar. */
+    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
     padding-left: max(var(--sp-2), env(safe-area-inset-left));
     padding-right: max(var(--sp-2), env(safe-area-inset-right));
   }
@@ -533,6 +544,24 @@
     flex: none;
     margin-inline: var(--sp-1);
     background: var(--border-subtle);
+  }
+
+  /* Smallest phones (360px and the 320px iPhone SE): the header holds Run, the
+     status pill, Copy, Clear and the collapse control, and at 360px that is 16px
+     too wide — which pushed the collapse control off the screen entirely. Shed
+     the group divider and tighten the icon-only buttons to a square 44px box.
+     Decoration and padding go; every control stays, and stays 44px (§4.3 r3). */
+  @media (max-width: 460px) {
+    .console-header__rule {
+      display: none;
+    }
+    .console-header .btn {
+      padding-inline: var(--sp-2);
+      gap: var(--sp-1);
+    }
+    .console-header {
+      gap: var(--sp-1);
+    }
   }
 
   .console-transcript {
@@ -652,11 +681,17 @@
 
   /* ======================================================== status pill ==== */
 
+  /* Shrinkable on purpose: the pill is the only thing in the console header that
+     may give up width. On a 390px phone the header holds Run, the pill, Copy,
+     Clear and the collapse control, and if the pill refuses to yield the collapse
+     control is pushed off the screen entirely. Its label ellipsises; its glyph
+     and its first word never do. */
   .pill {
     display: inline-flex;
     align-items: center;
     gap: var(--sp-1);
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
     height: 24px;
     padding-inline: var(--sp-2);
     border-radius: var(--r-pill);
@@ -668,12 +703,20 @@
     /* Every state carries a glyph and a word, so the five run states are
        distinguishable with no colour vision at all (spec §7.3). */
   }
+  /* 12px: §3.2's floor applies to the glyph too, and "nothing below 12px ships"
+     is measured, not eyeballed. The box stays narrow so the pill does not grow. */
   .pill__glyph {
     display: grid;
     place-items: center;
-    width: 10px;
-    font-size: 10px;
+    flex: none;
+    width: 12px;
+    font-size: var(--fs-micro);
     line-height: 1;
+  }
+  .pill__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .pill[data-state='idle'] {
     background: var(--surface-4);
@@ -777,6 +820,9 @@
     align-items: center;
     justify-content: center;
     gap: var(--sp-2);
+    /* Controls never shrink — a squeezed button clips its own label. Anything
+       sharing a row with them gives up the width instead (see `.pill`). */
+    flex: none;
     min-height: var(--touch);
     padding-inline: var(--sp-4);
     border: 1px solid transparent;
@@ -962,12 +1008,23 @@
   }
 
   /* The console's own empty state is inline in the transcript, so it must not
-     re-centre the scroller. */
+     re-centre the scroller — and it lays the glyph out *beside* the text rather
+     than above it. A 32px glyph stacked over three lines is taller than the
+     console's 144px stdin floor, so the transcript's scroll-to-bottom pushed the
+     glyph out of sight and the empty state arrived decapitated. Sideways, the
+     whole thing fits in the shortest console we ever show. */
   .empty--console {
+    flex-direction: row;
     align-items: flex-start;
-    padding: var(--sp-5) 0 0 var(--sp-2);
+    gap: var(--sp-3);
+    max-width: 52ch;
+    padding: var(--sp-3) 0 0 var(--sp-2);
     text-align: left;
     margin-inline: 0;
+  }
+  .empty--console .empty__glyph {
+    flex: none;
+    margin-top: 2px;
   }
 
   /* ====================================================== welcome screen ==== */
@@ -1033,6 +1090,11 @@
      the work, since surface-3 on surface-0 is only ~1.1:1. */
   .template-card {
     display: grid;
+    /* head / blurb / manifest. The blurb takes the slack so the manifest lines
+       up along the bottom of all three cards even when one title wraps to two
+       lines and the blurbs differ in length — without it the cards read as three
+       unrelated boxes that happen to sit in a row. */
+    grid-template-rows: auto 1fr auto;
     gap: var(--sp-2);
     min-height: 88px;
     padding: var(--sp-4);
@@ -1141,15 +1203,20 @@
     font-weight: 700;
     line-height: 1;
   }
+  /* 12px, not the 10px this shipped with: §3.2 makes 12px the floor for
+     everything, and "nothing below 12px" is a checklist item an auditor
+     measures. "Py" still fits a 20px box at 12px/700. */
   .badge--sm {
     width: 20px;
     height: 20px;
-    font-size: 10px;
+    font-size: var(--fs-micro);
+    letter-spacing: -0.03em;
   }
   .badge--md {
     width: 24px;
     height: 24px;
-    font-size: 11px;
+    font-size: var(--fs-meta);
+    letter-spacing: -0.03em;
   }
   .badge--java {
     background: var(--warn-soft);
@@ -1205,6 +1272,25 @@
   .menu-sep {
     margin: var(--sp-2) var(--sp-2);
     border-top: 1px solid var(--border-subtle);
+  }
+
+  /* The scrim behind every native dialog, owned here rather than by a utility on
+     each <dialog>. `backdrop:bg-[--scrim]` compiles to an invalid declaration
+     under Tailwind v4 and leaves the backdrop fully transparent, so a modal
+     floats over a live-looking IDE with nothing dimming it. One rule, and no
+     call site can get it wrong. */
+  dialog::backdrop {
+    background: var(--scrim);
+  }
+
+  /* The <dialog> element is only the positioner; `.dlg` is the card. */
+  .dlg-host {
+    margin: auto;
+    width: min(26rem, calc(100vw - var(--sp-6)));
+    max-height: calc(var(--app-h, 100dvh) - var(--sp-6));
+    padding: 0;
+    background: transparent;
+    border: none;
   }
 
   .dlg {
@@ -1283,6 +1369,18 @@
   html[dir='rtl'] .drawer[data-state='closed'] {
     transform: translateX(102%);
   }
+}
+
+/* Deliberately unlayered, and it has to stay that way.
+ *
+ * tokens.css sets `--pad-panel` from an unlayered `@media (max-width: 899px) :root`
+ * rule, and unlayered CSS outranks *every* @layer regardless of specificity — so
+ * the same override written inside `@layer components` lost, and the spec §4.3
+ * rule 3 padding reduction (12px → 8px when the keyboard is up) silently did
+ * nothing on exactly the devices it exists for. Unlayered here, and
+ * `html[data-kb='open']` beats `:root` on specificity. */
+html[data-kb='open'] {
+  --pad-panel: var(--sp-2);
 }
 
 /* ============================================================== motion ==== */

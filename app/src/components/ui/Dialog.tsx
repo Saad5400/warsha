@@ -15,11 +15,15 @@ export function Modal({
   onCancel,
   dismissible = false,
   labelledBy,
+  onEnterOutsideButton,
 }: {
   children: ReactNode
   onCancel: () => void
   dismissible?: boolean
   labelledBy?: string
+  /** Enter pressed with nothing focusable focused — used to bind Enter to the
+   *  safe answer in a destructive dialog, which has no submitting form. */
+  onEnterOutsideButton?: () => void
 }) {
   const ref = useRef<HTMLDialogElement>(null)
 
@@ -40,11 +44,26 @@ export function Modal({
       ref={ref}
       aria-labelledby={labelledBy}
       // The card fills the element, so a hit on the <dialog> itself can only be
-      // a hit on the backdrop.
+      // a hit on the backdrop. When the dialog is not dismissible, swallow the
+      // press: otherwise it moves focus off the buttons onto the dialog and the
+      // student is left with a keyboard that does nothing.
       onPointerDown={(e) => {
-        if (dismissible && e.target === ref.current) onCancel()
+        if (e.target !== ref.current) return
+        if (dismissible) onCancel()
+        else e.preventDefault()
       }}
-      className="m-auto w-[min(26rem,calc(100vw-var(--sp-6)))] bg-transparent p-0 backdrop:bg-[--scrim]"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && onEnterOutsideButton && (e.target as HTMLElement).tagName !== 'BUTTON') {
+          e.preventDefault()
+          onEnterOutsideButton()
+        }
+      }}
+      // `.dlg-host` (index.css) is the positioner — centring, the 26rem/100vw-32
+      // width, the height cap — and `dialog::backdrop` there owns the scrim. It
+      // replaces a `backdrop:bg-[--scrim]` utility, which Tailwind v4 compiles to
+      // an invalid declaration and drops, leaving a modal with nothing dimming
+      // the IDE behind it.
+      className="dlg-host"
     >
       <div className="dlg scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))]">{children}</div>
     </dialog>
@@ -184,7 +203,14 @@ function ConfirmDialog({ request }: { request: ConfirmRequest }) {
   )
 
   return (
-    <Modal onCancel={() => request.resolve(false)} dismissible={!danger} labelledBy={titleId}>
+    <Modal
+      onCancel={() => request.resolve(false)}
+      dismissible={!danger}
+      labelledBy={titleId}
+      // Enter is bound to the safe answer in a destructive dialog, never to the
+      // destructive one — the same rule as a macOS alert.
+      onEnterOutsideButton={danger ? () => request.resolve(false) : undefined}
+    >
       {danger ? (
         body
       ) : (

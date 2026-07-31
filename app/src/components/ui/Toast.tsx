@@ -42,7 +42,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        className="pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 px-4"
+        // One corner, always: the trailing end of the top bar. Centred, a toast
+        // covers the active tab — the one thing that says which file you are in.
+        className="pointer-events-none fixed inset-x-0 z-50 flex flex-col items-end gap-2 px-4"
         style={{ top: 'calc(var(--bar-top) + var(--sp-2))' }}
         role="status"
         aria-live="polite"

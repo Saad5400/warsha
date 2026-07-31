@@ -20,6 +20,17 @@
     />
     <meta name="theme-color" content="#15171C" />
     <meta name="description" content="Warsha — write and run Java or Python in your browser." />
+    <!-- An SVG icon so the mark stays sharp at every size Chrome asks for. It is
+         the mark-only variant (DESIGN-SPEC §11): below 20px the rule under the W
+         is a smudge, so the favicon drops it and scales the W to fill the box.
+         Declaring an icon is also what stops the browser probing /favicon.ico,
+         which was a standing 404 in the console. -->
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- No webfont ships in v1 (DESIGN-SPEC §3.1): a 40 MB runtime download is
+         already the budget, and system-ui / ui-monospace resolve to San
+         Francisco + SF Mono on iPadOS and Roboto + Droid Sans Mono on Android.
+         Both are good, and neither costs a byte. -->
     <title>Warsha</title>
   </head>
   <body>

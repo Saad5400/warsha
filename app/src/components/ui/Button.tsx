@@ -19,7 +19,13 @@ export function Button({ variant = 'quiet', large, className = '', children, ...
   return (
     <button
       type="button"
-      className={`btn btn--${variant}${large ? ' btn--lg' : ''}${className ? ' ' + className : ''}`}
+      className={
+        // cursor: a <button> is `cursor: default` by default in every browser and
+        // Tailwind's preflight does not change it. Harmless on the target device,
+        // wrong on a laptop.
+        `btn btn--${variant} cursor-pointer disabled:cursor-not-allowed${large ? ' btn--lg' : ''}` +
+        (className ? ' ' + className : '')
+      }
       {...rest}
     >
       {children}
@@ -39,7 +45,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`icon-btn${className ? ' ' + className : ''}`}
+      className={`icon-btn cursor-pointer disabled:cursor-not-allowed${className ? ' ' + className : ''}`}
       {...rest}
     >
       {children}
