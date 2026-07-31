@@ -2,26 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- MUST be first, plain and synchronous, and MUST live in public/.
-         coi-serviceworker reads document.currentScript.src to register itself, so
-         async / defer / type=module / bundling all break it, and it has to run
-         before anything touches SharedArrayBuffer. It gives the page
-         COOP: same-origin + COEP on a static host that sends no headers of its own,
-         which is what makes crossOriginIsolated true — both engines need it.
-         Costs one automatic reload on a first visit. Vendored v0.1.7, unmodified;
-         see runtimes/python/INTEGRATION.md §3. -->
-    <script src="./coi-serviceworker.js"></script>
-    <!-- The first frame, before any CSS exists.
-         Measured on a real first visit (CDP screencast, fresh profile, 390x844):
-         frame 1 at 14ms was rgb(255,255,255) — a white flash — because nothing
-         set a background until the external stylesheet arrived. On a dark app
-         opened in a dark room that is the first thing a student sees.
-         These literals are unavoidable here (tokens.css has not loaded yet) and
-         are the same values as --surface-0 / --text-1 / --accent, on the same
-         justification as the documented fallbacks in Logo.tsx. Keep them in sync.
-         The mark doubles as a boot indicator: coi-serviceworker reloads once on a
-         first visit, and painting the same thing either side of that reload makes
-         it invisible. React replaces #boot on mount, so no JS is involved. -->
+    <!-- FIRST PAINT. These four lines come before the service-worker script on
+         purpose, and the order is load-bearing.
+         coi-serviceworker is a synchronous, parser-blocking script, so anything
+         after it is not parsed until it has been fetched and executed — which is
+         long enough for Chrome to composite one white frame. Measured on a real
+         first visit (CDP screencast, fresh profile, 390x844): with the style tag
+         placed after the script, frame 1 at 18ms was still rgb(255,255,255).
+         `color-scheme: dark` is the part that actually fixes it: it tells the UA
+         to paint its own default canvas dark before any author style applies.
+         Moving these above the script is safe — the shim reads
+         document.currentScript.src (unaffected by a preceding meta or style) and
+         only needs to run before anything touches SharedArrayBuffer, which a
+         stylesheet does not. Do not reorder without re-running the screencast.
+         The literals are unavoidable pre-CSS and equal --surface-0 / --text-1 /
+         --accent; keep them in sync with docs/design/tokens.css. -->
+    <meta name="color-scheme" content="dark" />
     <style>
       html {
         background: #15171c;
@@ -44,6 +40,15 @@
         }
       }
     </style>
+    <!-- MUST be the first SCRIPT, plain and synchronous, and MUST live in public/.
+         coi-serviceworker reads document.currentScript.src to register itself, so
+         async / defer / type=module / bundling all break it, and it has to run
+         before anything touches SharedArrayBuffer. It gives the page
+         COOP: same-origin + COEP on a static host that sends no headers of its own,
+         which is what makes crossOriginIsolated true — both engines need it.
+         Costs one automatic reload on a first visit. Vendored v0.1.7, unmodified;
+         see runtimes/python/INTEGRATION.md §3. -->
+    <script src="./coi-serviceworker.js"></script>
     <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
          student pinching into a stack trace. Double-tap zoom is killed per
          control with touch-action instead. See DESIGN-SPEC §4.2. -->

@@ -63,6 +63,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
         <p className="dlg-msg">{COPY.importIntro}</p>
 
         <div
+          data-over={over}
           onDragOver={(e) => {
             e.preventDefault()
             setOver(true)
@@ -74,16 +75,11 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
             const file = e.dataTransfer.files?.[0]
             if (file) void take(file)
           }}
-          className={
-            'mt-4 flex flex-col items-center gap-2 rounded-md border border-dashed p-4 text-center ' +
-            // duration-(--dur-fast), not duration-[--dur-fast]: Tailwind v4 reads
-            // the bare-variable form as an arbitrary value, emits an invalid
-            // declaration, and the browser drops it.
-            'transition-colors duration-(--dur-fast) ' +
-            (over ? 'border-accent bg-surface-4' : 'border-border-control bg-surface-2')
-          }
+          // `.dropzone` (index.css) owns the dashed border, the fills and the
+          // drag-over state, keyed off data-over.
+          className="dropzone mt-4"
         >
-          <IconFiles size={24} className={over ? 'text-accent' : 'text-text-3'} />
+          <IconFiles size={24} />
           {/* Drag-and-drop is a laptop affordance; the button is the one that
               matters on a phone, so it is never the small print. */}
           <p className="text-meta text-text-3">{COPY.importDropHint}</p>

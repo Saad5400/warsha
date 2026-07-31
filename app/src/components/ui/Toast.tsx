@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useKeyboardOpen } from '../../hooks/useMedia'
 import { IconClose } from './Icons'
 
 export type ToastKind = 'info' | 'success' | 'error'
@@ -28,6 +29,9 @@ export const useToast = () => useContext(ToastContext)
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([])
+  // The top bar compacts to --bar-top-kb with the keyboard up (spec §4.3 rule 3);
+  // the stack rides down with it rather than leaving a 4px gap.
+  const keyboardOpen = useKeyboardOpen()
 
   const dismiss = useCallback((id: number) => setItems((cur) => cur.filter((t) => t.id !== id)), [])
 
@@ -44,8 +48,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         // One corner, always: the trailing end of the top bar. Centred, a toast
         // covers the active tab — the one thing that says which file you are in.
-        className="pointer-events-none fixed inset-x-0 z-50 flex flex-col items-end gap-2 px-4"
-        style={{ top: 'calc(var(--bar-top) + var(--sp-2))' }}
+        // The offset tracks the top bar, which compacts to --bar-top-kb when the
+        // software keyboard is up.
+        className="pointer-events-none fixed inset-x-0 flex flex-col items-end gap-2 px-4"
+        style={{
+          zIndex: 'var(--z-toast)',
+          top: `calc(var(${keyboardOpen ? '--bar-top-kb' : '--bar-top'}) + var(--sp-2))`,
+        }}
         role="status"
         aria-live="polite"
       >
@@ -57,11 +66,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   )
 }
 
-/** Never colour alone: every kind carries a glyph as well (spec §10). */
+/** Never colour alone: every kind carries a glyph as well (spec §10). The border,
+ *  fill and glyph ink per kind all come from `.toast[data-kind]` in index.css. */
 const GLYPH: Record<ToastKind, string> = { info: 'i', success: '✓', error: '✕' }
-const INK: Record<ToastKind, string> = { info: 'text-info', success: 'text-success', error: 'text-danger' }
-/** error already has its border and fill in index.css (.toast[data-kind]). */
-const EDGE: Record<ToastKind, string> = { info: '', success: 'border-success', error: '' }
 
 function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
   const [dx, setDx] = useState(0)
@@ -87,7 +94,7 @@ function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) =
   return (
     <div
       data-kind={item.kind}
-      className={`toast pointer-events-auto flex min-h-touch w-full items-center gap-2 pr-1 ${EDGE[item.kind]}`}
+      className="toast pointer-events-auto w-full"
       style={{ transform: dx ? `translateX(${dx}px)` : undefined, opacity: gone ? 0 : 1, touchAction: 'pan-y' }}
       onPointerDown={(e) => {
         if (e.pointerType === 'mouse') return
@@ -102,17 +109,11 @@ function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) =
       onPointerUp={end}
       onPointerCancel={end}
     >
-      <span aria-hidden="true" className={`shrink-0 text-[13px] font-bold ${INK[item.kind]}`}>
+      <span aria-hidden="true" className="toast__glyph font-bold">
         {GLYPH[item.kind]}
       </span>
-      <p className="flex-1">{item.message}</p>
-      <button
-        type="button"
-        aria-label="Dismiss"
-        title="Dismiss"
-        onClick={close}
-        className="icon-btn size-touch cursor-pointer text-current"
-      >
+      <p className="toast__text">{item.message}</p>
+      <button type="button" aria-label="Dismiss" title="Dismiss" onClick={close} className="icon-btn text-current">
         <IconClose size={16} />
       </button>
     </div>

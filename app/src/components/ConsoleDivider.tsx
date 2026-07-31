@@ -71,7 +71,9 @@ export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(
         aria-hidden="true"
         className={
           'pointer-events-none absolute left-1/2 top-1/2 h-[3px] w-9 -translate-x-1/2 -translate-y-1/2 ' +
-          'rounded-pill transition-colors duration-[--dur-fast] ' +
+          // Parens, not brackets: Tailwind v4 reads the bracket form as an
+          // arbitrary value and emits an invalid declaration the browser drops.
+          'rounded-pill transition-colors duration-(--dur-fast) ' +
           'group-hover:bg-accent group-focus-visible:bg-accent group-data-[dragging=true]:bg-accent ' +
           'bg-border-control'
         }

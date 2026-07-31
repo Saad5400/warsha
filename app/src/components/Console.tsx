@@ -208,13 +208,8 @@ export function Console({
               scrollToBottom()
             }}
             title={COPY.jumpToLatest}
-            className={
-              'tap absolute bottom-3 right-3 z-10 inline-flex min-h-touch items-center gap-2 rounded-pill ' +
-              'border px-4 font-ui text-micro font-semibold shadow-raised active:scale-[.97] ' +
-              (unseen > 0
-                ? 'border-accent bg-accent-soft text-accent'
-                : 'border-border-control bg-surface-3 text-text-2 hover:text-text-1')
-            }
+            className="scroll-pill"
+            data-unseen={unseen > 0 ? 'true' : 'false'}
           >
             <IconChevronDown size={16} />
             {unseen > 0 ? COPY.newLines(unseen) : COPY.jumpToLatest}
@@ -259,7 +254,7 @@ export function Console({
             autoCorrect="off"
             spellCheck={false}
             enterKeyHint="send"
-            className="stdin-input disabled:cursor-not-allowed disabled:border-border-subtle disabled:bg-surface-2 disabled:text-text-disabled disabled:placeholder:text-text-disabled"
+            className="stdin-input"
           />
           {/* Enter submits; a 44px button is the discoverable half of that on a
               touch screen, where "press Enter" means finding it on a keyboard
@@ -269,13 +264,9 @@ export function Console({
             disabled={!busy}
             aria-label={COPY.sendToProgram}
             title={COPY.sendToProgram}
-            className={
-              'tap inline-grid size-touch shrink-0 place-items-center rounded-md border ' +
-              'disabled:cursor-not-allowed disabled:border-border-subtle disabled:bg-surface-2 disabled:text-text-disabled ' +
-              (waiting
-                ? 'border-info bg-info-soft text-info'
-                : 'border-border-control bg-surface-4 text-text-2 hover:text-text-1')
-            }
+            // `.stdin-row[data-waiting]` turns this --info alongside the input, so
+            // the two read as one waiting control.
+            className="stdin-send"
           >
             <IconArrowRight />
           </button>
@@ -285,15 +276,20 @@ export function Console({
   )
 }
 
-/** Per-state tone for the status line. Every state has a glyph and a word. */
-const statusTone: Record<RunStatus, { glyph: string; className: string; live: boolean }> = {
-  idle: { glyph: '○', className: 'text-text-3', live: false },
-  preparing: { glyph: '●', className: 'text-warn', live: true },
-  running: { glyph: '●', className: 'text-success', live: true },
-  waiting: { glyph: '▸', className: 'text-info font-semibold', live: true },
-  ok: { glyph: '✓', className: 'text-success', live: false },
-  failed: { glyph: '✕', className: 'text-danger', live: false },
-  stopped: { glyph: '■', className: 'text-text-2', live: false },
+/**
+ * Per-state glyph, and whether the state is a live one.
+ *
+ * No colours here: `.console-status[data-state]` owns the tone, so the palette
+ * stays in one file and the line can never drift from the pill beside it.
+ */
+const statusTone: Record<RunStatus, { glyph: string; live: boolean }> = {
+  idle: { glyph: '○', live: false },
+  preparing: { glyph: '●', live: true },
+  running: { glyph: '●', live: true },
+  waiting: { glyph: '▸', live: true },
+  ok: { glyph: '✓', live: false },
+  failed: { glyph: '✕', live: false },
+  stopped: { glyph: '■', live: false },
 }
 
 function statusText(status: RunStatus, exitCode: number | null, narrow: boolean): string {
@@ -343,22 +339,14 @@ function StatusLine({
   const tone = statusTone[status]
   const text = statusText(status, exitCode, narrow)
   return (
-    <p
-      role="status"
-      aria-live="polite"
-      data-state={status}
-      title={text}
-      className={'flex items-center gap-2 px-panel pt-1 font-ui text-micro leading-snug ' + tone.className}
-    >
+    <p role="status" aria-live="polite" data-state={status} title={text} className="console-status">
       <span
         aria-hidden="true"
-        // text-micro (12px), not 10px: §3.2 makes 12px the floor for everything
-        // in the app, and the review checklist measures it.
-        className={'shrink-0 text-micro leading-none ' + (tone.live ? 'animate-pulse motion-reduce:animate-none' : '')}
+        className={'console-status__glyph' + (tone.live ? ' animate-pulse motion-reduce:animate-none' : '')}
       >
         {tone.glyph}
       </span>
-      <span className="min-w-0 flex-1 truncate">{text}</span>
+      <span className="console-status__text">{text}</span>
     </p>
   )
 }
@@ -405,12 +393,11 @@ const Row = memo(function Row({ line }: { line: ConsoleLine }) {
       <span className="console-row__text">
         {line.segments.length === 0
           ? ' '
-          : line.segments.map((seg, i) => (
-              // An echoed answer that joined an open prompt ("Your name: Saad")
-              // shares its row with stdout, so the row's leading rule cannot
-              // separate them: italic is what keeps the student's own typing
-              // distinguishable there with no colour vision at all.
-              <span key={i} data-seg={seg.kind} className={seg.kind === 'echo' ? 'italic' : undefined}>
+          : // `[data-seg]` carries hue and, for an echoed answer, italic too — an
+            // answer that joined an open prompt ("Your name: Saad") shares its row
+            // with stdout, so the row's leading rule cannot separate the two.
+            line.segments.map((seg, i) => (
+              <span key={i} data-seg={seg.kind}>
                 {seg.text}
               </span>
             ))}

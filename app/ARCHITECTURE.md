@@ -236,6 +236,46 @@ literals** — the only hex in `src/components/` is the two `var(--logo-ink, #FF
 `var(--logo-accent, #F2A94B)` fallbacks inside `Logo.tsx`, copied from Design's own `logo.svg` so the
 mark is still correct if the custom properties are ever missing.
 
+### 4.1 Three ways CSS silently does nothing here
+
+Read this before debugging any style that "should work". Each of these has already cost real
+regressions in this codebase, and all three fail **silently** — no build error, nothing struck through
+in devtools.
+
+1. **Tailwind v4 removed the bare `[--var]` custom-property shorthand.** `bg-[ --scrim ]` (without the
+   spaces) compiles to `background-color:--scrim`, which is invalid CSS the browser discards. This is
+   how the active-tab accent rule, the drawer scrim, the drawer transition, the 144px console floor and
+   the modal backdrop all went missing while the source looked correct. Write `bg-(--scrim)`, or use a
+   class. Note that spelling the bad form verbatim in a *comment* is enough for Tailwind to emit the
+   dead class, so audit greps keep reporting hits after the real bug is fixed.
+2. **Unlayered CSS beats every `@layer`, at any specificity.** `tokens.css` sets `--pad-panel` from an
+   unlayered `@media` rule, so overriding it inside `@layer components` lost (§4.3's keyboard-open
+   padding reduction did nothing); CodeMirror mounts oneDark as an unlayered `StyleModule`, which made
+   a whole `.cm-*` block in `index.css` inert except for its two `!important` rules. Editor chrome
+   therefore lives in `editor/setup.ts`'s `chromeTheme`, where every selector is qualified with
+   `&.cm-editor` to outrank oneDark — and ordering does not help, because CodeMirror mounts collected
+   modules in reverse.
+3. **`focus:outline-none` outranks the global `:focus-visible` ring** and removes the keyboard focus
+   indicator entirely. Never use it.
+
+### 4.2 The design system's canonical recipes
+
+`src/index.css` opens with the authoritative list — focus ring, hit targets, bars, buttons, surfaces,
+borders, elevation, radii, motion, scrollbars, stacking, type. Read that header rather than
+re-deriving an answer; four people write this UI and two near-identical answers is what "generic"
+looks like. Highlights that are easy to get wrong:
+
+- **A fixed-height bar draws its divider as an `inset` box-shadow, never a border.** With border-box a
+  1px border comes out of the bar's own 44px, so its 44px child overflows by a pixel — which is how
+  tabs measured 43px and Run's bottom edge landed 1px *under* the keyboard.
+- **One stacking scale**, as tokens: `--z-scrim: 10`, `--z-drawer: 20`, `--z-raised: 30`,
+  `--z-menu: 40`, `--z-toast: 50`; native `<dialog>` uses the browser top layer above all of them.
+  Needing a number *between* two of these means a layout problem, not a new number.
+- **A panel with a persisted pixel height must be able to shrink.** `.console-panel--open` pairs
+  `min-height: var(--console-min-h-stdin)` with `flex-shrink: 1` rather than a hand-written
+  `max-height` calc: flexbox already knows its siblings' heights, and a calc enumerating them goes
+  stale the moment a row is added.
+
 There is a short, deliberate list of **pixel literals** — values the spec states directly and for
 which no token exists. If Design wants them tokenised, add the token and swap these:
 
@@ -246,10 +286,21 @@ which no token exists. If Design wants them tokenised, add the token and swap th
 | `[20px]` | `ui/Button.tsx` | icon-button glyph size (§5.2) |
 | `[14px]` | `Tabs.tsx` | the close × glyph (§7.2) |
 | `[12px]` | `RunBar.tsx` | the Run/Stop play/square glyph |
-| `[10px]` / `[11px]` | `FileBadge.tsx` | two-letter language badge type |
 | `[28px]` / `[15px]` | `Logo.tsx` | welcome lockup wordmark and the Arabic line (§7.7) |
 | `[1024px]` / `[900px]` | `WelcomePanel.tsx`, `Tabs.tsx` | breakpoints: start cards side by side, close × on all tabs |
-| `[13px]` | `ui/Toast.tsx` | the toast kind glyph (✓ / ✕ / i) |
+
+Most of that table used to be longer. The badge sizes, the console-line rule, the note blocks, the
+dots, the glyph sizes and the toast glyph now live in `index.css` as `.badge--sm/md`, `.console-row`,
+`.note`, `.dot-dirty`, `.icon-btn` and `.toast__glyph`, so components no longer carry them. Two
+literals were also *wrong* against the spec and were raised to the §3.2 floor: the language badge was
+10px and the status-pill glyph 10px, where 12px (`--fs-micro`) is the smallest type the app ships.
+
+`app/index.html` carries three unavoidable colour literals — `#15171c`, `#E8EBF0`, `#F2A94B` in the
+first-paint style and the `#boot` splash mark. They run before any stylesheet exists, equal
+`--surface-0` / `--text-1` / `--accent`, and must be kept in sync by hand. They sit **above** the
+`coi-serviceworker` script deliberately: that script is parser-blocking, so anything after it is not
+parsed until it has executed, and `color-scheme: dark` is what makes the UA paint its default canvas
+dark in the meantime. Do not reorder that head without re-running a first-paint screencast.
 
 **How state is exposed.** Every stateful surface publishes a `data-` attribute, so a stylesheet can
 target states without reading component code:
@@ -276,8 +327,28 @@ and stderr each carry an accent rule or border in addition to any fill.
 There are no inline `style` attributes except where a value is computed at runtime (drawer transform,
 console height, progress bar width, explorer indent, toast keyboard offset).
 
-CodeMirror is the one place utilities cannot reach: its chrome is styled by `.cm-*` rules at the
-bottom of `src/index.css`, all reading `--code-*` tokens. oneDark supplies only syntax colours.
+CodeMirror is the one place utilities cannot reach, **and its chrome is not in `index.css`** — see
+§4.1 rule 2. It lives in `editor/setup.ts`'s `chromeTheme`, reading the same `--code-*` tokens;
+oneDark supplies only syntax colours. Sizes that depend on the student's font-size preference (code
+size, and the gutter leading that has to match it exactly or the gutter drifts) are computed there too,
+because they are recomputed when the preference changes.
+
+### 4.3 Verification
+
+The design work is asserted, not eyeballed. Three Playwright suites drive local Chrome against the
+built `dist/` (screenshots and scripts under the session scratchpad):
+
+| Script | What it proves |
+| --- | --- |
+| `overlap.mjs` | The **overlap sweep**: 20 scenarios across 1280/1024/768/430/390px, console dragged to min and max plus live handle drags, collapsed/open, keyboard-open at two widths, long filenames, the 900px drawer breakpoint, live progress, and a toast with the keyboard up. Detects four classes — a child spilling a fixed-size parent, in-flow siblings overlapping within one stacking root, content lost to a non-scrollable `overflow: hidden`, and named invariants (transcript vs stdin row, drag handle vs Run, tabs vs top bar, everything vs `--kb-inset`). |
+| `audit.mjs` | The DESIGN-SPEC numbers in the real DOM: fills, the type scale, gutter leading, 44px targets, the 16px input floor, the 12px floor, iPad content attributes, the 144px/96px floors, cold-boot progress ticking, stderr's three-way distinction, and the Python template end to end. |
+| `motion.mjs` | `prefers-reduced-motion` at both settings, the drawer's 180ms transform, and the keyboard-open layout measured against a simulated 336px inset. |
+
+Two lessons about the harness itself, both of which produced false results before being fixed: measure
+console-internal elements only with the console **open** (it starts collapsed on an empty project, so
+the subtree is unmounted and checks silently pass over it), and scope any "dismiss" selector to the
+banner — a loose `/Dismiss|Close/` also matches a tab's "Close Main.java" button and quietly closes the
+tab later assertions depend on.
 
 ---
 

@@ -55,13 +55,19 @@ export function RunBar(props: RunBarProps) {
         data-state={status}
         disabled={!busy && !canRun}
         aria-pressed={busy}
-        aria-label={preparing ? 'Stop preparing' : busy ? 'Stop' : 'Run'}
+        // Exactly "Run" or "Stop", never a variation: this is a contract-level
+        // test selector (ARCHITECTURE §4), and during `preparing` the visible
+        // label reads "Preparing…" while the control's action is still Stop — so
+        // the nuance goes in the tooltip, where nothing depends on it.
+        aria-label={busy ? 'Stop' : 'Run'}
         title={
-          busy
-            ? `Stop the program (${shortcut})`
-            : canRun
-              ? `Run ${entry ?? 'your code'} (${shortcut})`
-              : COPY.noEntry
+          preparing
+            ? `Stop getting the language ready (${shortcut})`
+            : busy
+              ? `Stop the program (${shortcut})`
+              : canRun
+                ? `Run ${entry ?? 'your code'} (${shortcut})`
+                : COPY.noEntry
         }
         className="min-w-[104px]"
         onClick={busy ? props.onStop : props.onRun}

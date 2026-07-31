@@ -60,9 +60,10 @@ export function Modal({
       }}
       // `.dlg-host` (index.css) is the positioner — centring, the 26rem/100vw-32
       // width, the height cap — and `dialog::backdrop` there owns the scrim. It
-      // replaces a `backdrop:bg-[--scrim]` utility, which Tailwind v4 compiles to
-      // an invalid declaration and drops, leaving a modal with nothing dimming
-      // the IDE behind it.
+      // replaces a `backdrop:bg-[ --scrim ]` utility (brackets spaced on purpose:
+      // written tight, Tailwind scans this comment and emits the dead class
+      // again), which v4 compiles to an invalid declaration and drops, leaving a
+      // modal with nothing dimming the IDE behind it.
       className="dlg-host"
     >
       <div className="dlg scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))]">{children}</div>
@@ -155,11 +156,13 @@ function PromptDialog({ request }: { request: PromptRequest }) {
           spellCheck={false}
           aria-invalid={problem ? true : undefined}
           aria-describedby={problem ? problemId : undefined}
-          className={'dlg-input' + (problem ? ' border-danger' : '')}
+          className="dlg-input"
         />
         {problem ? (
-          <p id={problemId} className="mt-2 flex gap-2 text-meta leading-normal text-danger">
-            <span aria-hidden="true">✕</span>
+          <p id={problemId} className="dlg-error">
+            <span aria-hidden="true" className="dlg-error__glyph">
+              ✕
+            </span>
             {problem}
           </p>
         ) : null}

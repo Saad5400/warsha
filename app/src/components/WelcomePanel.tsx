@@ -29,9 +29,9 @@ export interface WelcomePanelProps {
 export function WelcomePanel({ onNewFile, onPickTemplate, onImportZip }: WelcomePanelProps) {
   return (
     <div className="editor-pane">
-      {/* z-0, not `.welcome`'s own z-30: this panel belongs to the editor pane,
-          and must stay *under* the explorer drawer (z-20) on a phone. */}
-      <div className="welcome scroller z-0 bg-surface-1" role="region" aria-label="Start a project">
+      {/* `.welcome` is in-flow now (eng-design removed its absolute/z-30, which
+          used to paint this panel over the explorer drawer and its scrim). */}
+      <div className="welcome scroller" role="region" aria-label="Start a project">
         {/* Tighter than the old full-page welcome: this column shares the height
             with the console, so the rhythm drops from 24px to 16px. */}
         <div className="welcome__col max-w-[30rem] gap-4 py-5 min-[1024px]:max-w-[46rem]">

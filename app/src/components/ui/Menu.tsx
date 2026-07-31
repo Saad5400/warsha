@@ -1,6 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 
 export interface MenuItem {
+  /** Reconciliation key. Give one whenever the label can repeat — project names
+   *  are user-typed, so two rows really can read "Homework". Falls back to the
+   *  label, which is stable for the fixed rows. */
+  id?: string
   label: string
   onSelect: () => void
   /** Destructive: red ink, sorted last, behind a divider (spec §5.2). */
@@ -122,7 +126,7 @@ export function Menu({
         }}
       >
         {ordered.map((item, i) => (
-          <div key={item.label}>
+          <div key={item.id ?? item.label}>
             {i > 0 && (item.startsGroup || i === firstDanger) ? <div className="menu-sep" role="separator" /> : null}
             <MenuButton
               item={item}
@@ -157,16 +161,15 @@ function MenuButton({
         onClose()
         item.onSelect()
       }}
-      className={
-        'menu-item cursor-pointer gap-3 disabled:cursor-not-allowed disabled:text-text-disabled' +
-        (item.danger ? ' menu-item--danger' : '')
-      }
+      className={'menu-item' + (item.danger ? ' menu-item--danger' : '')}
     >
-      <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center text-text-3">
+      {/* The icon slot is reserved whether or not this row has one, so labels do
+          not step in and out as the eye runs down the menu. */}
+      <span aria-hidden="true" className="menu-item__icon">
         {item.icon}
       </span>
-      <span className="flex-1 truncate">{item.label}</span>
-      {item.hint ? <span className="shrink-0 text-micro text-text-3">{item.hint}</span> : null}
+      <span className="menu-item__label">{item.label}</span>
+      {item.hint ? <span className="menu-item__hint">{item.hint}</span> : null}
     </button>
   )
 }

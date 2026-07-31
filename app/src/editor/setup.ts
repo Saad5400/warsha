@@ -10,7 +10,7 @@ import {
   highlightSpecialChars,
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { indentOnInput, bracketMatching, indentUnit, type LanguageSupport } from '@codemirror/language'
+import { indentOnInput, bracketMatching, indentUnit, language, type LanguageSupport } from '@codemirror/language'
 import {
   autocompletion,
   closeBrackets,
@@ -262,6 +262,31 @@ export function createEditor(
     })
   }
 
+  /**
+   * Everything that depends on which language a file is in: the Lezer grammar
+   * (which is what produces syntax colours) and the completion sources. They live
+   * in one compartment so a single reconfigure keeps them in step — before this
+   * was a unit, a file that gained a `.py` extension could get Python colours
+   * while still being offered Java's snippets.
+   */
+  const languageExtensions = (lang: LangId | null) => {
+    const support = lang ? langCache.get(lang) : undefined
+    return [
+      support ? [support] : [],
+      autocompletion({
+        override: completionSources(lang, projectWords),
+        // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
+        // what a student who has used an IDE before will reach for.
+        activateOnTyping: true,
+        selectOnOpen: true,
+        // Enough to scroll through, few enough that the popup cannot swallow a
+        // 390px screen. The list is ranked, so the tail is rarely what you want.
+        maxRenderedOptions: 30,
+        icons: true,
+      }),
+    ]
+  }
+
   const extensions = (lang: LangId | null) => [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -277,17 +302,6 @@ export function createEditor(
     // Python's control flow *is* its indentation, and line wrapping makes the
     // eye lose the column. One hairline per level puts it back.
     indentGuides(4),
-    autocompletion({
-      override: completionSources(lang, projectWords),
-      // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
-      // what a student who has used an IDE before will reach for.
-      activateOnTyping: true,
-      selectOnOpen: true,
-      // Enough to scroll through, few enough that the popup cannot swallow a
-      // 390px screen. The list is ranked, so the tail is rarely what you want.
-      maxRenderedOptions: 30,
-      icons: true,
-    }),
     // Wrap rather than scroll horizontally: a wrapped line is readable on a
     // phone, a horizontally-scrolling one is not.
     EditorView.lineWrapping,
@@ -322,7 +336,7 @@ export function createEditor(
     oneDark,
     chromeTheme,
     fontTheme.of(themeFor(fontSize)),
-    langConf.of(lang && langCache.has(lang) ? [langCache.get(lang)!] : []),
+    langConf.of(languageExtensions(lang)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && path && !applying) opts.onChange(path, u.state.doc.toString())
     }),
@@ -333,12 +347,38 @@ export function createEditor(
 
   const view = new EditorView({ parent, state: stateFor('', '') })
 
-  const ensureLanguage = (p: string) => {
+  /**
+   * Point the editor at the grammar `p`'s extension calls for, whatever it was
+   * pointed at before. Called on every file the editor shows.
+   *
+   * This has to compare against what the *state* actually has, not against what
+   * has been downloaded. The previous version returned early as soon as the
+   * grammar was in `langCache`, on the assumption that a cached grammar means the
+   * open state already uses it — and that is false for any state built before the
+   * download finished. Two ways a student hit it, and the first is a one-gesture
+   * bug: rename `notes.txt` to `notes.py` and the state keeps the no-language
+   * configuration it was created with, so the file renders with no syntax colours
+   * at all until the tab is closed and reopened. Second, on a slow connection,
+   * open a .py and switch tabs before its grammar lands: the late `.then` sees a
+   * different file, skips the reconfigure, and the state is cached uncoloured for
+   * the rest of the session.
+   */
+  const syncLanguage = (p: string) => {
     const lang = langForPath(p)
-    if (!lang || langCache.has(lang)) return
-    void loadLanguage(lang).then((support) => {
-      if (path === p) view.dispatch({ effects: langConf.reconfigure([support]) })
-    })
+    const support = lang ? langCache.get(lang) : undefined
+    if (lang && !support) {
+      void loadLanguage(lang).then(() => {
+        // Only if this is still the file on screen; any other file gets its own
+        // reconfigure from its own open(), which now always runs.
+        if (path === p) view.dispatch({ effects: langConf.reconfigure(languageExtensions(lang)) })
+      })
+      return
+    }
+    // Reconfiguring re-parses the document, so only do it when it would change
+    // something — every file switch would otherwise pay for a re-parse.
+    if ((support?.language ?? null) !== view.state.facet(language)) {
+      view.dispatch({ effects: langConf.reconfigure(languageExtensions(lang)) })
+    }
   }
 
   return {
@@ -361,7 +401,7 @@ export function createEditor(
       view.setState(next)
       applying = false
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(fontSize)) })
-      ensureLanguage(p)
+      syncLanguage(p)
     },
     closeFile(p) {
       states.delete(p)
@@ -378,7 +418,13 @@ export function createEditor(
         states.delete(from)
         states.set(to, st)
       }
-      if (path === from) path = to
+      if (path === from) {
+        path = to
+        // A rename can change the language — `notes.txt` becoming `notes.py` is
+        // how a student discovers extensions — so the grammar has to be re-read
+        // here. Nothing else in the shell would ever ask again for this file.
+        syncLanguage(to)
+      }
     },
     setFontSize(px) {
       fontSize = px
