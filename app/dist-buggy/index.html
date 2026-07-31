@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- FIRST PAINT. These four lines come before the service-worker script on
+         purpose, and the order is load-bearing.
+         coi-serviceworker is a synchronous, parser-blocking script, so anything
+         after it is not parsed until it has been fetched and executed — which is
+         long enough for Chrome to composite one white frame. Measured on a real
+         first visit (CDP screencast, fresh profile, 390x844): with the style tag
+         placed after the script, frame 1 at 18ms was still rgb(255,255,255).
+         `color-scheme: dark` is the part that actually fixes it: it tells the UA
+         to paint its own default canvas dark before any author style applies.
+         Moving these above the script is safe — the shim reads
+         document.currentScript.src (unaffected by a preceding meta or style) and
+         only needs to run before anything touches SharedArrayBuffer, which a
+         stylesheet does not. Do not reorder without re-running the screencast.
+         The literals are unavoidable pre-CSS and equal --surface-0 / --text-1 /
+         --accent; keep them in sync with docs/design/tokens.css. -->
+    <meta name="color-scheme" content="dark" />
+    <style>
+      html {
+        background: #15171c;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #15171c;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        #boot > svg {
+          animation: boot-in 240ms cubic-bezier(0.2, 0, 0.2, 1) both;
+        }
+        @keyframes boot-in {
+          from {
+            opacity: 0;
+          }
+        }
+      }
+    </style>
+    <!-- MUST be the first SCRIPT, plain and synchronous, and MUST live in public/.
+         coi-serviceworker reads document.currentScript.src to register itself, so
+         async / defer / type=module / bundling all break it, and it has to run
+         before anything touches SharedArrayBuffer. It gives the page
+         COOP: same-origin + COEP on a static host that sends no headers of its own,
+         which is what makes crossOriginIsolated true — both engines need it.
+         Costs one automatic reload on a first visit. Vendored v0.1.7, unmodified;
+         see runtimes/python/INTEGRATION.md §3. -->
+    <script src="./coi-serviceworker.js"></script>
+    <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
+         student pinching into a stack trace. Double-tap zoom is killed per
+         control with touch-action instead. See DESIGN-SPEC §4.2. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#15171C" />
+    <meta name="description" content="Warsha — write and run Java or Python in your browser." />
+    <!-- An SVG icon so the mark stays sharp at every size Chrome asks for. It is
+         the mark-only variant (DESIGN-SPEC §11): below 20px the rule under the W
+         is a smudge, so the favicon drops it and scales the W to fill the box.
+         Declaring an icon is also what stops the browser probing /favicon.ico,
+         which was a standing 404 in the console. -->
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- No webfont ships in v1 (DESIGN-SPEC §3.1): a 40 MB runtime download is
+         already the budget, and system-ui / ui-monospace resolve to San
+         Francisco + SF Mono on iPadOS and Roboto + Droid Sans Mono on Android.
+         Both are good, and neither costs a byte. -->
+    <title>Warsha</title>
+    <script type="module" crossorigin src="./assets/index-ByB3HYI9.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CbLhsRza.css">
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M3.25 4.5 L8.5 15 L12 8.5 L15.5 15 L20.75 4.5"
+            stroke="#E8EBF0"
+            stroke-width="2.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M4.75 19.5 H19.25" stroke="#F2A94B" stroke-width="2.6" stroke-linecap="round" />
+        </svg>
+      </div>
+    </div>
+  </body>
+</html>
