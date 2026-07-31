@@ -1,0 +1,18 @@
+{
+  "name": "@warsha/qa",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser QA suites: drive a SERVED BUILD of app/dist in local Chrome and assert real behaviour",
+  "scripts": {
+    "python": "node verify.mjs",
+    "java": "node verify-java.mjs",
+    "projects": "node verify-projects.mjs",
+    "migration": "node verify-migration.mjs",
+    "timings": "node measure-java.mjs",
+    "all": "node verify.mjs && node verify-java.mjs && node verify-projects.mjs && node verify-migration.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

@@ -1,7 +1,21 @@
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
+import { mkdtempSync, mkdirSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
+
+/* Overridable so this runs anywhere:
+ *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
+ *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
+ *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
+ *
+ * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
+ * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
+mkdirSync(SHOTS, { recursive: true })
+
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(),'jmeas-')), {
-  executablePath: '/usr/bin/google-chrome', headless: true, viewport: { width: 1280, height: 900 } })
+  executablePath: CHROME, headless: true, viewport: { width: 1280, height: 900 } })
 const page = ctx.pages()[0]
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
@@ -30,7 +44,7 @@ function analyse(s) {
     texts: [...new Set(prep.filter(x=>x.present).map(x=>x.text))] }
 }
 
-await page.goto('http://localhost:8086/', { waitUntil: 'load' })
+await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 })
 await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
 await page.waitForSelector('[role="tab"]')

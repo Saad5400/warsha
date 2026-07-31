@@ -1,15 +1,27 @@
 /* End-to-end verification of the real CheerpJ Java runtime in the built Warsha app,
  * plus a Python regression check in the SAME build (both engines registered).
  *
- * Drives LOCAL Google Chrome against http://localhost:8086 (secure context, so the
+ * Drives LOCAL Google Chrome against a served build (see WARSHA_URL below) (secure context, so the
  * app's coi-serviceworker works for Python; Java needs no isolation of its own). */
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const URL_ = 'http://localhost:8086/'
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+/* Overridable so this runs anywhere:
+ *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
+ *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
+ *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
+ *
+ * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
+ * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
+mkdirSync(SHOTS, { recursive: true })
+
+
 const profile = mkdtempSync(join(tmpdir(), 'warsha-java-'))
 
 const results = []
@@ -19,7 +31,7 @@ const fail = (n, d = '') => { results.push(['FAIL', n, d]); console.log(`FAIL  $
 const info = (m) => console.log(`      ${m}`)
 
 const ctx = await chromium.launchPersistentContext(profile, {
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: CHROME,
   headless: true,
   viewport: { width: 1280, height: 900 },
 })
@@ -83,7 +95,7 @@ function analyse(samples) {
 }
 
 // ============================================================ A. cold Java run
-await page.goto(URL_, { waitUntil: 'load' })
+await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 })
   .then(() => info('page is cross-origin isolated (Python needs it; Java does not)'))
   .catch(() => info('NOT isolated — Java should still work'))
