@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warsha - Java runtime harness</title>
+<!-- No coi-serviceworker and no COOP/COEP headers here, unlike the Python
+     harness: this runtime blocks the JVM with an async CheerpJ native rather
+     than Atomics.wait, so it needs no SharedArrayBuffer and no cross-origin
+     isolation. It DOES need a server that honours HTTP Range (serve.mjs). -->
+<style>
+  :root { color-scheme: light dark; --bd:#8884; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { padding:8px 12px; border-bottom:1px solid var(--bd); display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  #prog, #stat, #summary, #timing, #noise { font:12px ui-monospace,monospace; padding:2px 6px; border-radius:4px; }
+  .ok { background:#0a02; color:#0a7; } .bad { background:#f002; color:#c33; }
+  #stat, #prog, #timing, #noise { opacity:.8; }
+  main { flex:1; display:flex; min-height:0; }
+  .pane { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .pane + .pane { border-left:1px solid var(--bd); }
+  .bar { padding:6px 10px; border-bottom:1px solid var(--bd); display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .bar .lbl { font-size:12px; opacity:.6; margin-right:2px; }
+  button { font:inherit; padding:4px 12px; border:1px solid var(--bd); border-radius:5px; background:#8881; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.pri { background:#2563eb; color:#fff; border-color:#2563eb; }
+  button.dan { background:#dc2626; color:#fff; border-color:#dc2626; }
+  button.tab { font-size:12px; padding:3px 8px; }
+  button.tab[aria-selected=true] { background:#8883; font-weight:600; }
+  #files { flex:1; overflow:auto; padding:6px 10px 20px; }
+  .fname { font:12px ui-monospace,monospace; opacity:.65; margin:8px 0 2px; }
+  .fbody { font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; white-space:pre-wrap; }
+  #out { flex:1; margin:0; padding:10px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+         font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #out .err { color:#e5534b; }
+  #out .in { color:#3b82f6; font-weight:600; }
+  #out .sys { opacity:.55; font-style:italic; }
+  #inrow { border-top:1px solid var(--bd); padding:8px 10px; display:flex; gap:6px; align-items:center; }
+  #inrow[hidden] { display:none; }
+  #stdin { flex:1; min-width:60px; font:13px ui-monospace,monospace; padding:5px 8px; border:1px solid var(--bd); border-radius:5px; background:transparent; color:inherit; }
+  #report { border-top:1px solid var(--bd); max-height:34vh; overflow:auto; padding:6px 10px;
+            font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #report .row { white-space:pre-wrap; }
+  #report .pass { color:#0a7; } #report .fail { color:#e5534b; font-weight:600; }
+  #internal { border-top:1px solid var(--bd); max-height:16vh; overflow:auto; padding:6px 10px; margin:0;
+              white-space:pre-wrap; opacity:.55; font:11px/1.45 ui-monospace,monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Warsha &mdash; Java runtime harness</h1>
+  <span id="prog">not loaded</span>
+  <span id="stat">idle</span>
+  <span id="timing"></span>
+  <span style="flex:1"></span>
+  <span id="summary"></span>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="bar">
+      <span class="lbl">scenario</span>
+      <span id="scenarios" style="display:flex;gap:4px;flex-wrap:wrap"></span>
+    </div>
+    <div id="files"></div>
+  </section>
+
+  <section class="pane">
+    <div class="bar">
+      <button id="run" class="pri">Run</button>
+      <button id="stop" class="dan" disabled>Stop</button>
+      <button id="clear">Clear</button>
+      <span style="flex:1"></span>
+      <button id="selftest">Run self-test (all scenarios)</button>
+    </div>
+    <pre id="out"></pre>
+    <div id="inrow" hidden>
+      <span style="font:13px ui-monospace,monospace;opacity:.8">&rsaquo;</span>
+      <input id="stdin" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button id="send" class="pri">Send</button>
+      <button id="eof">Send EOF</button>
+    </div>
+    <div id="report"></div>
+    <div class="bar" style="border-top:1px solid var(--bd);border-bottom:none">
+      <span id="noise">CheerpJ console: 0 lines</span>
+    </div>
+    <pre id="internal"></pre>
+  </section>
+</main>
+
+<script type="module" src="build/harness.js"></script>
+</body>
+</html>
