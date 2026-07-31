@@ -1,4 +1,4 @@
-import type { RunIO, RunSession, Runtime, SourceFile } from './types'
+import type { LoadPhase, ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
 
 /** Bytes reserved in the shared buffer for one stdin line (matches the worker). */
 const STDIN_CAPACITY = 64 * 1024
@@ -10,7 +10,7 @@ const STATE_LINE = 1
 const STATE_EOF = 2
 
 type FromWorker =
-  | { type: 'progress'; text: string }
+  | { type: 'progress'; phase: LoadPhase; message: string; loaded?: number; total?: number }
   | { type: 'ready'; version: string; bootMs: number }
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
@@ -70,8 +70,8 @@ export class PythonRuntime implements Runtime {
   /** In-flight or settled boot of the current worker. null = no worker yet. */
   private booting: Promise<void> | null = null
   private bootSettle: { resolve: () => void; reject: (e: Error) => void } | null = null
-  private readonly progressListeners = new Set<(msg: string) => void>()
-  private lastProgress: string | null = null
+  private readonly progressListeners = new Set<(p: ProgressReport) => void>()
+  private lastProgress: ProgressReport | null = null
 
   private active: Active | null = null
 
@@ -93,7 +93,7 @@ export class PythonRuntime implements Runtime {
    * gets the progress messages of whichever boot is in flight, including the
    * silent respawn started by `kill()`.
    */
-  async load(onProgress: (msg: string) => void): Promise<void> {
+  async load(onProgress: (p: ProgressReport) => void): Promise<void> {
     this.progressListeners.add(onProgress)
     if (this.booting && this.lastProgress) onProgress(this.lastProgress)
     const boot = this.booting ?? (this.booting = this.spawn())
@@ -189,10 +189,20 @@ export class PythonRuntime implements Runtime {
 
   private onMessage(msg: FromWorker): void {
     switch (msg.type) {
-      case 'progress':
-        this.lastProgress = msg.text
-        for (const listener of this.progressListeners) listener(msg.text)
+      case 'progress': {
+        // The worker reports the structured shape (phase + optional byte counts);
+        // forward it as-is so the shell can draw a determinate bar. Rebuilt rather
+        // than passed through so no worker-internal field leaks into the contract.
+        const report: ProgressReport = {
+          phase: msg.phase,
+          message: msg.message,
+          ...(typeof msg.loaded === 'number' ? { loaded: msg.loaded } : {}),
+          ...(typeof msg.total === 'number' ? { total: msg.total } : {}),
+        }
+        this.lastProgress = report
+        for (const listener of this.progressListeners) listener(report)
         return
+      }
 
       case 'ready':
         this.version = msg.version

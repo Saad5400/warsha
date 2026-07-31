@@ -11,7 +11,7 @@
  *   { type: "init", sab, indexURL?, isatty? }
  *   { type: "run", files: { [path]: content }, entry: string }
  * (worker -> main thread):
- *   { type: "progress", text }              boot progress, human-readable
+ *   { type: "progress", phase, message, loaded?, total? }   boot progress
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
  *   { type: "stdout" | "stderr", text }     one message per Python write
  *   { type: "stdin-request" }               parked in input()
@@ -93,16 +93,101 @@ function emit(type, decoder, buf) {
   return buf.length
 }
 
+// --- download progress ------------------------------------------------------
+
+/* Pyodide's loader has no progress hook, so the only way to give a student a
+ * real percentage for the ~11.6 MiB payload is to count the bytes as they
+ * arrive. Wrapping fetch does that without downloading anything twice (a
+ * prefetch-then-let-Pyodide-refetch scheme depends on the HTTP cache and doubles
+ * the transfer whenever that misses). Any failure inside the wrapper falls back
+ * to the untouched response: instrumentation must never break the boot. */
+
+/** Measured payload floor: pyodide.asm.wasm 9.15 MiB + python_stdlib.zip 2.43 MiB. */
+const EXPECTED_TOTAL_BYTES = 12_150_000
+const PROGRESS_INTERVAL_MS = 100
+
+const DOWNLOAD_MESSAGE = 'Downloading Python (11 MB, one-time)...'
+
+let bytesLoaded = 0
+let bytesAnnounced = 0
+let lastProgressAt = 0
+
+function postDownloadProgress(force) {
+  const now = performance.now()
+  if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
+  lastProgressAt = now
+  self.postMessage({
+    type: 'progress',
+    phase: 'download',
+    message: DOWNLOAD_MESSAGE,
+    loaded: bytesLoaded,
+    // bytesAnnounced only grows as each Content-Length is seen, so clamp with
+    // the measured floor to keep the bar from jumping backwards.
+    total: Math.max(EXPECTED_TOTAL_BYTES, bytesAnnounced, bytesLoaded),
+  })
+}
+
+function installFetchProgress() {
+  const original = self.fetch.bind(self)
+
+  self.fetch = async (input, init) => {
+    const response = await original(input, init)
+    try {
+      const url = typeof input === 'string' ? input : input && input.url ? input.url : String(input)
+      if (!url.startsWith(indexURL) || !response.ok || !response.body) return response
+
+      const declared = Number(response.headers.get('content-length') || 0)
+      if (declared > 0) bytesAnnounced += declared
+
+      const reader = response.body.getReader()
+      const counted = new ReadableStream({
+        async pull(controller) {
+          const { done, value } = await reader.read()
+          if (done) {
+            postDownloadProgress(true)
+            controller.close()
+            return
+          }
+          bytesLoaded += value.byteLength
+          postDownloadProgress(false)
+          controller.enqueue(value)
+        },
+        cancel: (reason) => reader.cancel(reason),
+      })
+
+      // Headers are carried over so Content-Type stays application/wasm and
+      // WebAssembly.instantiateStreaming still accepts the response.
+      return new Response(counted, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      })
+    } catch {
+      return response
+    }
+  }
+
+  return () => {
+    self.fetch = original
+  }
+}
+
 // --- boot -------------------------------------------------------------------
 
 async function boot() {
   const t0 = performance.now()
 
-  self.postMessage({ type: 'progress', text: 'Downloading Python (11 MB, one-time)...' })
-  const { loadPyodide } = await import(indexURL + 'pyodide.mjs')
-  pyodide = await loadPyodide({ indexURL })
+  self.postMessage({ type: 'progress', phase: 'download', message: DOWNLOAD_MESSAGE })
+  const restoreFetch = installFetchProgress()
+  try {
+    const { loadPyodide } = await import(indexURL + 'pyodide.mjs')
+    pyodide = await loadPyodide({ indexURL })
+  } finally {
+    // Student code should see a plain fetch.
+    restoreFetch()
+  }
 
-  self.postMessage({ type: 'progress', text: 'Starting Python...' })
+  self.postMessage({ type: 'progress', phase: 'boot', message: 'Starting Python...' })
 
   // isatty:false on purpose. With isatty:true CPython takes its readline path
   // and writes input() prompts to *stderr*, which paints every student prompt

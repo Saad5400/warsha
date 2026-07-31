@@ -33,7 +33,12 @@ const registry: Record<LangId, Runtime> = {
 
 `PythonRuntime` structurally satisfies `app/src/runtime/types.ts`, so no cast and
 no adapter. `src/types.ts` is a copy of that contract kept here so this module
-doesn't reach into `app/`; if the contract changes, change both.
+doesn't reach into `app/`; if the contract changes, change **all three** —
+`types.ts`, the `FromWorker` union in `pythonRuntime.ts`, and `worker.js`. The
+progress upgrade landed in `types.ts` + `worker.js` only, leaving
+`pythonRuntime.ts` forwarding a `msg.text` the worker had stopped sending, so
+every progress report arrived as `undefined` and the progress block silently never
+rendered. `onMessage` is the one place the worker protocol meets the contract.
 
 One instance per app is right: it owns one worker and reuses it across runs.
 
@@ -119,8 +124,10 @@ Pyodide npm dependency (the assets come from jsDelivr, which already sends
 ```ts
 const python = new PythonRuntime()          // optionally { indexURL } to self-host
 
-await python.load((msg) => setLoadingText(msg))
-//   "Downloading Python (11 MB, one-time)..."   then   "Starting Python..."
+await python.load((p) => setLoadingProgress(p))
+//   { phase: 'download', message: 'Downloading Python (11 MB, one-time)...',
+//     loaded: 2_547_136, total: 12_150_000 }   repeatedly, ~10x/second
+//   then { phase: 'boot', message: 'Starting Python...' }   (no byte counts)
 
 const session = await python.run(files, 'main.py', {
   onStdout: (text) => console.append(text),      // chunks, not lines

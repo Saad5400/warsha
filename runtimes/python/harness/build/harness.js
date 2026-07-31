@@ -109,10 +109,17 @@ var PythonRuntime = class {
   }
   onMessage(msg) {
     switch (msg.type) {
-      case "progress":
-        this.lastProgress = msg.text;
-        for (const listener of this.progressListeners) listener(msg.text);
+      case "progress": {
+        const report2 = {
+          phase: msg.phase,
+          message: msg.message,
+          ...typeof msg.loaded === "number" ? { loaded: msg.loaded } : {},
+          ...typeof msg.total === "number" ? { total: msg.total } : {}
+        };
+        this.lastProgress = report2;
+        for (const listener of this.progressListeners) listener(report2);
         return;
+      }
       case "ready":
         this.version = msg.version;
         this.lastProgress = null;
@@ -428,12 +435,14 @@ var io = {
     settle("exit", code);
   }
 };
+var mib = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 async function load() {
   setStatus("loading...");
-  await runtime.load((msg) => {
-    state.progress.push(msg);
-    el("prog").textContent = msg;
-    log(`[${msg}]
+  await runtime.load((report2) => {
+    state.progress.push(report2);
+    const text = typeof report2 === "string" ? report2 : report2.total ? `${report2.message} (${mib(report2.loaded)} / ${mib(report2.total)})` : report2.message;
+    el("prog").textContent = text;
+    log(`[${text}]
 `, "sys");
   });
   state.loaded = true;

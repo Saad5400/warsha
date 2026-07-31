@@ -282,7 +282,8 @@ and live only in the generated file.
 
 ## 6. Known gaps
 
-- Both runtimes are `FakeRuntime`; no real compilation or execution yet.
+- Python is real: `python` maps to `PythonRuntime` from `runtimes/python/src` (Pyodide 314.0.3 /
+  CPython 3.14), verified end-to-end against the built `dist/`. Java is still `FakeRuntime`.
 - Visual implementation of DESIGN-SPEC is deliberately **not** done — this hand-off is
   plain-but-token-correct, and the design engineer owns the styling pass.
 - Progress escalation covers 8s / 25s / 60s as console notes; the spec's separate `Cancel` /

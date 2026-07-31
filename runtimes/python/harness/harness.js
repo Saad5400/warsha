@@ -132,12 +132,22 @@ const io = {
 
 // --- load / run / stop ------------------------------------------------------
 
+const mib = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+
 async function load() {
   setStatus('loading...')
-  await runtime.load((msg) => {
-    state.progress.push(msg)
-    el('prog').textContent = msg
-    log(`[${msg}]\n`, 'sys')
+  await runtime.load((report) => {
+    state.progress.push(report)
+    // Progress is a LoadProgress object; the string arm is still accepted, so
+    // render both rather than stringifying an object into "[object Object]".
+    const text =
+      typeof report === 'string'
+        ? report
+        : report.total
+          ? `${report.message} (${mib(report.loaded)} / ${mib(report.total)})`
+          : report.message
+    el('prog').textContent = text
+    log(`[${text}]\n`, 'sys')
   })
   state.loaded = true
   el('prog').textContent = `Python ${runtime.version} ready`

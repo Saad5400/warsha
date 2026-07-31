@@ -1,15 +1,19 @@
 import type { Runtime, SourceFile } from './types'
 import { FakeRuntime } from './fake'
+import { PythonRuntime } from '../../../runtimes/python/src'
 
 export type LangId = 'java' | 'python'
 
 /**
  * The single place that maps a language to its engine.
  * To plug in a real engine: implement Runtime, then swap the value here.
+ *
+ * One PythonRuntime instance per app is correct: it owns a single Pyodide worker
+ * and reuses it across runs (see runtimes/python/INTEGRATION.md §1).
  */
 const registry: Record<LangId, Runtime> = {
   java: new FakeRuntime('java'),
-  python: new FakeRuntime('python'),
+  python: new PythonRuntime(),
 }
 
 export function runtimeFor(entryPath: string): Runtime | null {
