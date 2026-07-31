@@ -2,3 +2,10 @@ node_modules
 dist
 *.local
 .DS_Store
+
+# Build-time assets, produced by `npm run assets` (the prebuild/predev step).
+# Neither is a source of truth: the worker is a verbatim copy of
+# runtimes/java/src/jvm.worker.js, and ecj.jar is fetched + sha256-verified by
+# runtimes/java/fetch-compiler.sh (*.jar is gitignored repo-wide for licensing).
+public/warsha-jvm.worker.js
+public/ecj.jar

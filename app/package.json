@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prebuild": "npm run assets",
+    "predev": "npm run assets",
+    "assets": "cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && ../runtimes/java/fetch-compiler.sh public"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",

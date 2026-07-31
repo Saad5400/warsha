@@ -1,6 +1,6 @@
 import type { Runtime, SourceFile } from './types'
-import { FakeRuntime } from './fake'
 import { PythonRuntime } from '../../../runtimes/python/src'
+import { JavaRuntime } from '../../../runtimes/java/src'
 
 export type LangId = 'java' | 'python'
 
@@ -8,11 +8,17 @@ export type LangId = 'java' | 'python'
  * The single place that maps a language to its engine.
  * To plug in a real engine: implement Runtime, then swap the value here.
  *
- * One PythonRuntime instance per app is correct: it owns a single Pyodide worker
- * and reuses it across runs (see runtimes/python/INTEGRATION.md §1).
+ * One instance each per app is correct: each owns a single worker and reuses it
+ * across runs (see the INTEGRATION.md of each runtime).
+ *
+ * The two engines need opposite worker types and Vite's `worker.format` is one
+ * global setting, so Java's worker deliberately bypasses Vite's worker pipeline:
+ * `npm run assets` copies it into `public/` and it is loaded from there by URL as
+ * a CLASSIC script, which CheerpJ's loader requires. Python's is a module worker
+ * that Vite bundles normally. See runtimes/java/INTEGRATION.md §2.
  */
 const registry: Record<LangId, Runtime> = {
-  java: new FakeRuntime('java'),
+  java: new JavaRuntime({ workerUrl: new URL('warsha-jvm.worker.js', document.baseURI).href }),
   python: new PythonRuntime(),
 }
 

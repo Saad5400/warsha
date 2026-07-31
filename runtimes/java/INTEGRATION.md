@@ -30,17 +30,19 @@ timings as a pessimistic floor rather than a promise: the LAN hop adds latency t
 every one of the many HTTP Range requests CheerpJ makes against `ecj.jar`, which
 is exactly the traffic that dominates a cold compile.
 
-Three things are **not** verified and are called out again where they matter:
+Three things were **not** verified in that pass. **Two have since been closed** by
+wiring this runtime into the app for real (Vite 8.2 production build, `dist/` served
+on `localhost`, Chrome 150/Linux, 31/31 in-app checks):
 
-- **No Vite build and no `vite dev` run.** Unlike `runtimes/python/INTEGRATION.md`,
-  §1–§2 below describe wiring that has not been executed yet — `app/` still
-  registers `FakeRuntime` for Java and `app/public/` holds no Java assets. The
-  Vite reasoning is derived from the Python runtime's verified experience plus
-  Vite's documented behaviour, not from a build of this module.
-- **No truly cross-origin-isolated context** (§4). The browser reached the
-  harness over plain HTTP on a LAN address, which is not a secure context, so
-  COOP/COEP are not enforced there however they are sent.
-- **No iPad.** Chrome/desktop only, the same gap the spike had.
+- ~~**No Vite build and no `vite dev` run.**~~ **CLOSED.** §1–§2 have now been
+  executed against a real Vite 8.2 build and drive the real app. The wiring below
+  is what shipped; three findings are folded in and marked **VERIFIED** /
+  **DEVIATION** where they sit.
+- ~~**No truly cross-origin-isolated context** (§4).~~ **CLOSED.** The app serves
+  `coi-serviceworker` for Python's sake, so the page really is
+  `crossOriginIsolated === true` over `localhost`, and this runtime boots and runs
+  there unharmed under `COEP: require-corp` — see §4.
+- **No iPad.** Chrome/desktop only, the same gap the spike had. Still open.
 
 ## 1. Wire it into the registry
 
@@ -88,8 +90,8 @@ the file stays a classic script and `worker.format: 'es'` (which Python needs)
 never touches it. The worker has no imports of its own, so it does not need
 bundling.
 
-`app/package.json` has **no** asset step today; it needs one (this is the part
-that has not been run yet):
+`app/package.json` needed an asset step. **VERIFIED — this is now in `app/package.json`
+exactly as written and runs on every build:**
 
 ```jsonc
 // app/package.json
@@ -99,6 +101,25 @@ that has not been run yet):
   "assets": "cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && ../runtimes/java/fetch-compiler.sh public"
 }
 ```
+
+Both products of that step are **gitignored** (`app/.gitignore` lists
+`public/warsha-jvm.worker.js` and `public/ecj.jar`): the worker is a verbatim copy
+of `src/jvm.worker.js`, so committing it would let a stale duplicate drift out of
+sync with the source of truth, and `*.jar` is gitignored repo-wide for licensing.
+`fetch-compiler.sh` is idempotent — it re-verifies the sha256 and skips the
+download when the jar is already correct, so `prebuild` costs nothing after the
+first run.
+
+**DEVIATION from the last paragraph of this section (harmless, worth knowing).**
+Vite emits the worker **twice**. The `public/` copy lands at `dist/warsha-jvm.worker.js`
+as intended, and Vite *additionally* emits `dist/assets/jvm.worker-<hash>.js` because
+`DEFAULT_WORKER_URL`'s `new URL('./jvm.worker.js', import.meta.url)` is statically
+analysable, so Rollup follows it as an asset reference even though nothing loads it.
+Verified with `cmp`: that emitted file is **byte-identical** to the source, i.e. Vite
+passed it through untouched rather than running it through the worker pipeline — which
+also confirms this section's claim that the default `workerUrl` would work under Vite.
+The cost of the duplicate is 16 kB of dead weight in `dist/`; the explicit `workerUrl`
+is still preferred because it does not depend on that heuristic holding.
 
 `app/vite.config.ts` already carries both settings this needs, for Python's sake:
 `worker: { format: 'es' }` (harmless here, since the Java worker bypasses the
@@ -142,6 +163,10 @@ against a server that ignores `Range` it logs `HTTP server does not support the
 'Range' header. CheerpJ cannot run.` and then refetches the whole jar, making
 every compile look seconds slower. S3, Cloudflare Pages, Netlify and GitHub Pages
 all support it. `python3 -m http.server` does **not** — hence `serve.mjs`.
+`vite preview` does, verified against the built `dist/`: a
+`Range: bytes=100-199` request for `/ecj.jar` answers
+`206 Partial Content` + `Content-Range: bytes 100-199/3133846`. So the app's own
+preview server is a faithful stand-in for a real static host here.
 
 Licensing: ECJ is EPL-2.0 (redistributable); CheerpJ is used under its Community
 Licence, which covers FOSS projects and requires attribution, and **forbids
@@ -168,13 +193,24 @@ cross-origin-resource-policy: cross-origin      # on loader.js, cj3.js and cj3.w
 ```
 
 So the loader, the engine and `ecj.jar` (same-origin) should all load under
-isolation. **This was not confirmed end to end**: the verification browser
-reached the harness over plain HTTP on a LAN address, so it was never a secure
-context and COOP/COEP were inert. `serve.mjs 8085 --coi` sends
-`COOP: same-origin` + `COEP: require-corp` so that whoever can serve the harness
-over `localhost` or HTTPS can close this gap in one run; with the headers present
-but isolation inactive, `load()` still completed normally (init 39 ms + compile
-9.6 s), which at least rules out the headers themselves breaking asset delivery.
+isolation. **CONFIRMED end to end.** Serving the app's `dist/` on `localhost` (a
+secure context) with its `coi-serviceworker` active gives
+`crossOriginIsolated === true`, and in that page the Java runtime booted, compiled
+and ran the template interactively with no asset blocked — alongside Python's
+module worker in the same page. COEP does not trouble this runtime in practice:
+`importScripts` fetches the loader no-cors, but the shim rewrites the CDN response
+headers and CheerpJ's CDN sends `cross-origin-resource-policy: cross-origin`
+anyway.
+
+One piece of expected noise, so nobody mistakes it for a fault: CheerpJ probes a
+handful of optional JVM filesystem paths that do not exist on its CDN
+(`/etc/localtime`, `/8/lib/ext`, `/8/jre/lib`, `/8/lib/endorsed`,
+`/8/lib/currency.properties`), which fail and produce ~38 `Network error for null:
+TypeError: Failed to fetch` **console** errors per session. They are re-emitted by
+this module's own console hook (`jvm.worker.js`, the `console[level]` wrapper), are
+forwarded to `onInternalLog`, and — as the Bridge-channel design guarantees —
+never reach the student's output pane. Verified: the student console stayed clean
+through all of it.
 
 ## 5. Using it
 
@@ -243,6 +279,19 @@ bootstrap is compiled in the browser, see "Deviations"). So a warm reload does
 show one progress line for ~7–10 s: budget a spinner or elapsed timer for it, and
 do not treat "no progress events" as anything but an already-booted runtime.
 
+**The elapsed timer turned out to be mandatory, and the app now has one.** Measured
+in-app before it existed: the progress block was continuously on screen (blank for
+at most 400 ms, during the handover between phases) but its text did not change for
+**7.2–10.0 s** while the bootstrap compiled, because `compile` reports no byte
+counts and fires once. A frozen string under a looping CSS sweep is
+indistinguishable from a hang and breaks DESIGN-SPEC §7.6's "something numeric
+changes at least every two seconds". `app/src/components/ProgressBlock.tsx` now
+counts the seconds of the current phase whenever there is no determinate bar
+(`useElapsedSeconds`), which cut the longest static stretch to **900 ms**. Any other
+shell consuming this runtime needs the same thing — the runtime cannot supply it,
+since there is genuinely nothing to report between "compile started" and "compile
+finished".
+
 ## Behaviour notes for the console UI
 
 **Engine size is ~1.0 MB, not tens of MB.** Verified byte-exact by fetching them:
@@ -270,6 +319,20 @@ the real cost here.
 | `kill()`, ~14 s of thinking time, then Run → finished run | **4.4 s** |
 | 2000 × `System.out.println` | **1.01 s** of run time, 4000 `onStdout` calls |
 | Whole 43-check self-test suite | **56–75 s** |
+
+**Measured again in the real app**, `dist/` served over `localhost` (Chrome
+150/Linux, no LAN hop, quiet machine) — the same shape, roughly half the wall clock,
+which is what dropping the LAN latency on CheerpJ's many Range requests buys:
+
+| In-app step | Measured |
+|---|---|
+| Cold: Run click → first `Scanner` prompt | **10.7–13.6 s** |
+| Second run in the same session → first prompt | **2.6–2.8 s** (no progress block at all) |
+| Warm reload (engine cached, fresh worker) → output | **7.4–7.6 s** |
+| Student compile error → diagnostics on screen | **3.3 s** |
+| `kill()`, Run pressed at once → finished run | **4.2–5.1 s** |
+| Python cold in the same session, after Java | **2.1–2.6 s** |
+| Java again after Python ran | **2.5–2.7 s** |
 
 The dominant cost is ECJ, not the download and not the student's code. Two
 readings of that table are worth internalising:

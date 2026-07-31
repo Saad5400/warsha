@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
 
@@ -20,6 +21,7 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
   const { loaded, total, phase, message } = progress
   const determinate = typeof loaded === 'number' && typeof total === 'number' && total > 0
   const pct = determinate ? Math.min(100, Math.round((loaded! / total!) * 100)) : null
+  const elapsed = useElapsedSeconds(phase, !determinate)
 
   return (
     <div data-phase={phase} className="mb-2 rounded-md border border-border-subtle bg-surface-3 p-3">
@@ -47,8 +49,34 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
             ? `${mb(loaded)} of ${mb(total!)} · ${phaseLabel[phase]}`
             : `${mb(loaded)} · ${phaseLabel[phase]}`
           : phaseLabel[phase]}
+        {elapsed !== null ? <span className="tabular-nums"> · {elapsed}s</span> : null}
       </p>
       <p className="text-meta text-text-3">{COPY.runtimeNextInstant}</p>
     </div>
   )
+}
+
+/**
+ * Seconds since the current phase began, or null when there is nothing worth
+ * counting.
+ *
+ * A phase with no byte counts can last a long time with nothing to report:
+ * Java's in-browser bootstrap compile measured 7 s warm and up to 20 s cold
+ * (runtimes/java/INTEGRATION.md), during which `message` never changes. A frozen
+ * string under a looping CSS sweep reads as a hang, and §7.6 asks for something
+ * numeric to change at least every two seconds — so count the seconds. Suppressed
+ * while a determinate bar is doing that job.
+ */
+function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): number | null {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    setElapsed(0)
+    if (!active) return
+    const started = Date.now()
+    const id = window.setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000)
+    return () => window.clearInterval(id)
+  }, [phase, active])
+
+  return active && elapsed > 0 ? elapsed : null
 }

@@ -65,19 +65,27 @@ Small and boring on purpose — roughly one file per box on screen.
 
 **Two files, and only one of them is required.**
 
-1. **Write the engine** — a new file beside `src/runtime/fake.ts`, e.g. `src/runtime/java.ts`, exporting
-   a class that `implements Runtime` from `./types`.
-2. **Register it** — in `src/runtime/index.ts`, swap the entry:
+1. **Write the engine** — a class that `implements Runtime` from `./types`. Both real engines live
+   outside `app/`, under `runtimes/<lang>/src/`, each keeping its own mirror of the contract so it
+   never imports from `app/`.
+2. **Register it** — in `src/runtime/index.ts`, which is the whole seam:
 
 ```ts
 const registry: Record<LangId, Runtime> = {
-  java: new CheerpJRuntime(),   // was: new FakeRuntime('java')
-  python: new FakeRuntime('python'),
+  java: new JavaRuntime({ workerUrl: new URL('warsha-jvm.worker.js', document.baseURI).href }),
+  python: new PythonRuntime(),
 }
 ```
 
-That is the whole seam. Nothing in `src/components/` or `src/App.tsx` imports a concrete runtime —
-they only ever call `runtimeFor(entryPath)`.
+Nothing in `src/components/` or `src/App.tsx` imports a concrete runtime — they only ever call
+`runtimeFor(entryPath)`.
+
+**The one cross-engine constraint:** Vite's `worker.format` is a single global setting, and the two
+engines need opposite worker types — Pyodide needs a module worker, CheerpJ's loader only works as a
+**classic** one. So `worker: { format: 'es' }` serves Python, and Java's worker sidesteps Vite's
+worker pipeline entirely: `npm run assets` (wired to `prebuild`/`predev`) copies it into `public/`
+and it is loaded from there by URL. That script also fetches `ecj.jar` into `public/`; both are
+gitignored build products. See `runtimes/java/INTEGRATION.md` §2–§3.
 
 ### What the shell guarantees
 
@@ -282,8 +290,13 @@ and live only in the generated file.
 
 ## 6. Known gaps
 
-- Python is real: `python` maps to `PythonRuntime` from `runtimes/python/src` (Pyodide 314.0.3 /
-  CPython 3.14), verified end-to-end against the built `dist/`. Java is still `FakeRuntime`.
+- Both runtimes are real and verified end-to-end against the built `dist/`: `python` →
+  `PythonRuntime` (Pyodide 314.0.3 / CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.26,
+  Java 8 only). `src/runtime/fake.ts` is now unreferenced — kept because it is the fastest way to
+  demo or test the shell without an engine, and it documents the contract by example.
+- Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours) and its
+  bootstrap compile costs 7–20 s on a fresh worker. Both are flagged for Product in
+  `runtimes/java/INTEGRATION.md`.
 - Visual implementation of DESIGN-SPEC is deliberately **not** done — this hand-off is
   plain-but-token-correct, and the design engineer owns the styling pass.
 - Progress escalation covers 8s / 25s / 60s as console notes; the spec's separate `Cancel` /
