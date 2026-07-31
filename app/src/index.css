@@ -1,0 +1,242 @@
+/* Warsha stylesheet.
+ *
+ * Layer 1: Design's canonical tokens, read in place from docs/design/.
+ * Layer 2: the Tailwind theme, mapped ONTO those tokens — every utility a
+ *          component uses resolves to a custom property, never to a literal.
+ * Layer 3: the handful of things Tailwind utilities cannot express (CodeMirror
+ *          chrome, the keyboard-open layout state, scrollbars).
+ *
+ * To restyle Warsha, change docs/design/tokens.css. Components should not need
+ * to be touched. See ARCHITECTURE.md § "Restyling guide".
+ */
+
+@import '../../docs/design/tokens.css';
+@import 'tailwindcss';
+
+@theme inline {
+  /* surfaces */
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+
+  /* text */
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-disabled: var(--text-disabled);
+
+  /* accent */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-press: var(--accent-press);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  /* semantic */
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-fill: var(--danger-fill);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-neutral-soft: var(--neutral-soft);
+
+  /* borders */
+  --color-border-subtle: var(--border-subtle);
+  --color-border-control: var(--border-control);
+
+  /* type */
+  --font-ui: var(--font-ui);
+  --font-code: var(--font-code);
+  --text-code: var(--fs-code);
+  --text-code--line-height: var(--lh-code);
+  --text-console: var(--fs-console);
+  --text-console--line-height: var(--lh-console);
+  --text-input: var(--fs-input);
+  --text-tab: var(--fs-tab);
+  --text-row: var(--fs-row);
+  --text-btn: var(--fs-btn);
+  --text-meta: var(--fs-meta);
+  --text-micro: var(--fs-micro);
+  --text-dlg-title: var(--fs-dlg-title);
+
+  /* spacing — p-1..p-6 map exactly onto --sp-1..--sp-6 */
+  --spacing-1: var(--sp-1);
+  --spacing-2: var(--sp-2);
+  --spacing-3: var(--sp-3);
+  --spacing-4: var(--sp-4);
+  --spacing-5: var(--sp-5);
+  --spacing-6: var(--sp-6);
+  --spacing-panel: var(--pad-panel);
+  --spacing-touch: var(--touch);
+  --spacing-touch-lg: var(--touch-lg);
+  --spacing-bar: var(--bar-top);
+  --spacing-rail: var(--rail);
+  --spacing-explorer: var(--explorer-w);
+  --spacing-drawer: var(--drawer-w);
+
+  /* radii */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-pill: var(--r-pill);
+
+  /* motion + elevation */
+  --shadow-raised: var(--shadow-raised);
+  --ease-standard: var(--ease);
+}
+
+/* ---------------------------------------------------------------- base ---- */
+@layer base {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-1);
+    font-family: var(--font-ui);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Never below --fs-input (16px): iOS zooms the page on focus otherwise. */
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-4);
+    border-radius: var(--r-pill);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* The app shell is fixed and sized from --app-h (written by ui/viewport.ts),
+     so iOS cannot scroll the document out from under a focused input. */
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    height: var(--app-h, 100dvh);
+    padding-bottom: env(safe-area-inset-bottom);
+    display: grid;
+    grid-template-rows: var(--bar-top) 1fr;
+    grid-template-columns: 100%;
+    overflow: hidden;
+  }
+
+  .scroller {
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Console sits above the software keyboard on iPadOS, where the layout
+     viewport does not shrink. On Android --kb-inset stays 0. */
+  .console-lift {
+    margin-bottom: var(--kb-inset, 0px);
+  }
+
+  /* Keyboard-open compaction (spec §4.3): shed decoration, never content. */
+  html[data-kb='open'] .app-shell {
+    grid-template-rows: 40px 1fr;
+  }
+  html[data-kb='open'] .kb-hide {
+    display: none;
+  }
+
+  /* Left-handed students get Run/Stop on the leading edge (spec §5.3). */
+  html[data-hand='left'] .console-header {
+    flex-direction: row-reverse;
+  }
+
+  /* Touch affordances: kill double-tap zoom on controls, never on the editor. */
+  .tap {
+    touch-action: manipulation;
+  }
+}
+
+/* Indeterminate progress sweep (ProgressBlock, when Content-Length is unknown). */
+@keyframes warsha-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(333%);
+  }
+}
+
+/* ------------------------------------------------------- CodeMirror ------- */
+/* Overrides oneDark's chrome with Design's editor tokens; oneDark keeps its
+   syntax colours. Selectors are CodeMirror's own, so they live here. */
+@layer components {
+  .cm-editor {
+    height: 100%;
+    background: var(--code-bg);
+    font-family: var(--font-code);
+  }
+  .cm-editor.cm-focused {
+    outline: none;
+  }
+  .cm-scroller {
+    font-family: var(--font-code);
+    line-height: var(--lh-code);
+    -webkit-overflow-scrolling: touch;
+  }
+  .cm-gutters {
+    background: var(--code-gutter-bg);
+    color: var(--code-gutter-fg);
+    border: none;
+  }
+  .cm-activeLineGutter {
+    background: var(--code-active-line);
+    color: var(--code-gutter-fg-active);
+  }
+  .cm-activeLine {
+    background: var(--code-active-line);
+  }
+  .cm-cursor,
+  .cm-dropCursor {
+    border-left-color: var(--code-caret);
+    border-left-width: 2px;
+  }
+  .cm-selectionBackground,
+  .cm-editor .cm-selectionBackground,
+  .cm-content ::selection {
+    background: var(--code-selection) !important;
+  }
+  .cm-matchingBracket {
+    background: var(--code-bracket) !important;
+    color: inherit !important;
+  }
+  .cm-tooltip.cm-tooltip-autocomplete > ul > li {
+    min-height: var(--touch);
+    display: flex;
+    align-items: center;
+  }
+}
