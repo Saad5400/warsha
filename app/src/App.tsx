@@ -30,6 +30,7 @@ import type { MenuItem } from './components/ui/Menu'
 import {
   IconExport,
   IconFileLines,
+  IconFiles,
   IconFolderOpen,
   IconFolderPlus,
   IconImport,
@@ -619,8 +620,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (let n = 2; used.has(label); n++) label = `${p.name} (${n})`
       used.add(label)
       return {
+        // `id` keys the row, so two projects a student names the same thing
+        // cannot collide in React's reconciliation. The label is still made
+        // unique above, for the reader rather than for React.
+        id: `project:${p.id}`,
         label,
-        icon: isOpen ? <IconFolderOpen size={18} /> : undefined,
+        // Every row carries a glyph, open or not: a closed folder for the ones
+        // you can switch to, an open one for the project you are in. A blank slot
+        // on some rows and not others left the column ragged.
+        icon: isOpen ? <IconFolderOpen size={18} /> : <IconFiles size={18} />,
         hint: isOpen ? 'Open' : undefined,
         disabled: isOpen,
         onSelect: () => void switchToProject(p.id),
@@ -739,15 +747,27 @@ function Ide({ report }: { report: CapabilityReport }) {
           <section
             aria-label="Console"
             data-state={runner.status}
-            // `.console-panel` carries the fill, the top divider, the 144px
-            // stdin floor and the accent rule that marks a running process. The
-            // min-height here used to be a bare-custom-property utility, which
-            // Tailwind v4 compiles to invalid CSS — so the floor from spec §4.3
-            // rule 4 ("the single most important number in this section") was
-            // doing nothing at all. (Spelling that class name out in a comment
-            // is enough for Tailwind to emit it again, so it stays paraphrased.)
-            className={'console-panel console-lift ' + (consoleOpen ? 'console-panel--open' : 'h-bar')}
-            style={consoleOpen ? { height: narrow ? '40%' : `${consoleHeight}px` } : undefined}
+            // `.console-panel` carries the fill, the top divider, the stdin floor
+            // and the accent rule that marks a running process. The min-height
+            // here used to be a bare-custom-property utility, which Tailwind v4
+            // compiles to invalid CSS — so the floor from spec §4.3 rule 4 ("the
+            // single most important number in this section") was doing nothing at
+            // all. (Spelling that class name out in a comment is enough for
+            // Tailwind to emit it again, so it stays paraphrased.)
+            className={'console-panel ' + (consoleOpen ? 'console-panel--open' : 'h-bar')}
+            // No inline height while a software keyboard is up on a narrow screen.
+            // 40% of a keyboard-shrunk viewport is ~160px, and once the panel's own
+            // 44px header and its 83px stdin block are inside that, the transcript
+            // is ~33px — one and a half output lines, against the four rule 4 asks
+            // for. Handing the height to CSS lets `--console-floor-stdin` claim what
+            // the panel actually needs; the editor keeps its own floor and yields
+            // the rest. The panel being typed into should win the space, not hold a
+            // fixed fraction.
+            style={
+              consoleOpen && !(narrow && keyboardOpen)
+                ? { height: narrow ? '40%' : `${consoleHeight}px` }
+                : undefined
+            }
           >
             <RunBar
               status={runner.status}

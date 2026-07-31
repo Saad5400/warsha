@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Logo } from './Logo'
 import { IconButton } from './ui/Button'
 import { IconMenu, IconMore } from './ui/Icons'
@@ -9,6 +9,12 @@ export interface TopBarProps {
   menuItems: MenuItem[]
   /** The file being edited. Rendered as the quiet top-bar title (spec §3.2). */
   title?: string | null
+  /**
+   * The current project's name, as a control. Rendered between the wordmark and
+   * the file title, and styled by `.top-bar__project` — pass the button, keep the
+   * menu and its state in your own component.
+   */
+  projectSlot?: ReactNode
 }
 
 /**
@@ -16,7 +22,7 @@ export interface TopBarProps {
  * and the overflow menu are the only two things up here. Run/Stop deliberately
  * does not live in the top-right; see RunBar.
  */
-export function TopBar({ onToggleExplorer, menuItems, title }: TopBarProps) {
+export function TopBar({ onToggleExplorer, menuItems, title, projectSlot }: TopBarProps) {
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
 
   return (
@@ -25,9 +31,15 @@ export function TopBar({ onToggleExplorer, menuItems, title }: TopBarProps) {
         <IconMenu />
       </IconButton>
 
-      <span className="flex min-w-0 items-center gap-2">
+      <span className="top-bar__identity">
         <Logo size={22} />
         <span className="top-bar__wordmark kb-hide">Warsha</span>
+        {projectSlot ? (
+          <>
+            <span aria-hidden="true" className="top-bar__sep" />
+            {projectSlot}
+          </>
+        ) : null}
         {title ? (
           <>
             <span aria-hidden="true" className="top-bar__sep kb-hide" />
