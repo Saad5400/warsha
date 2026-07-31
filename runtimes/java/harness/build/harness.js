@@ -460,6 +460,8 @@ var JavaRuntime = class {
   lastProgress = null;
   active = null;
   runCounter = 0;
+  /** A run() that has been accepted but has not reached the worker yet. */
+  starting = false;
   /**
    * True when the JVM in this worker can no longer be trusted -- the student's
    * own code called System.exit(), which takes the shared JVM down with it. The
@@ -496,9 +498,17 @@ var JavaRuntime = class {
     }
   }
   async run(files, entryPath, io2) {
-    if (this.active && !this.active.ended) {
+    if (this.starting || this.active && !this.active.ended) {
       throw new Error("A Java program is already running; kill() it before running another.");
     }
+    this.starting = true;
+    try {
+      return await this.startRun(files, entryPath, io2);
+    } finally {
+      this.starting = false;
+    }
+  }
+  async startRun(files, entryPath, io2) {
     const entry = normalizePath(entryPath);
     const payload = files.map((file) => ({ path: normalizePath(file.path), content: file.content }));
     if (!payload.some((file) => file.path === entry)) {
@@ -525,10 +535,18 @@ var JavaRuntime = class {
     };
     return session2;
   }
-  /** Terminate the worker without any run in flight (e.g. leaving the page). */
+  /**
+   * Give up this runtime's JVM for good: the page is closing, or the shell is
+   * switching to another language.
+   *
+   * A live session is reported as killed first, then the worker is terminated
+   * WITHOUT a replacement -- unlike kill(), which respawns because the student is
+   * expected to press Run again. Respawning here would leave a fresh JVM booting
+   * behind a runtime nobody is using. A later load() or run() spawns one again.
+   */
   dispose() {
-    if (this.active && !this.active.ended) this.killSession(this.active);
-    else this.teardown();
+    this.finish(null);
+    this.teardown();
   }
   // --- worker lifecycle -----------------------------------------------------
   spawn() {

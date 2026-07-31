@@ -82,6 +82,9 @@ export class JavaRuntime implements Runtime {
   private active: Active | null = null
   private runCounter = 0
 
+  /** A run() that has been accepted but has not reached the worker yet. */
+  private starting = false
+
   /**
    * True when the JVM in this worker can no longer be trusted -- the student's
    * own code called System.exit(), which takes the shared JVM down with it. The
@@ -123,10 +126,24 @@ export class JavaRuntime implements Runtime {
   }
 
   async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
-    if (this.active && !this.active.ended) {
+    // `starting` closes a window that `active` alone cannot: this method awaits
+    // load(), and on a cold start that await lasts ~20 seconds during which
+    // `active` is still null. Two run() calls in that window would both get past
+    // the guard and both post a 'run' to the worker, which compiles them
+    // concurrently against one shared phase-status slot -- the first session then
+    // never receives onExit and its console stays disabled forever.
+    if (this.starting || (this.active && !this.active.ended)) {
       throw new Error('A Java program is already running; kill() it before running another.')
     }
+    this.starting = true
+    try {
+      return await this.startRun(files, entryPath, io)
+    } finally {
+      this.starting = false
+    }
+  }
 
+  private async startRun(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
     const entry = normalizePath(entryPath)
     const payload = files.map((file) => ({ path: normalizePath(file.path), content: file.content }))
     if (!payload.some((file) => file.path === entry)) {
@@ -159,10 +176,18 @@ export class JavaRuntime implements Runtime {
     return session
   }
 
-  /** Terminate the worker without any run in flight (e.g. leaving the page). */
+  /**
+   * Give up this runtime's JVM for good: the page is closing, or the shell is
+   * switching to another language.
+   *
+   * A live session is reported as killed first, then the worker is terminated
+   * WITHOUT a replacement -- unlike kill(), which respawns because the student is
+   * expected to press Run again. Respawning here would leave a fresh JVM booting
+   * behind a runtime nobody is using. A later load() or run() spawns one again.
+   */
   dispose(): void {
-    if (this.active && !this.active.ended) this.killSession(this.active)
-    else this.teardown()
+    this.finish(null)
+    this.teardown()
   }
 
   // --- worker lifecycle -----------------------------------------------------

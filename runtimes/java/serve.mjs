@@ -15,6 +15,15 @@
  * server ROOT -- that is where ecj.jar has to be, not next to the page.
  *
  *   node serve.mjs [port]        default 8085 -> http://localhost:8085/harness/
+ *   node serve.mjs [port] --coi  same, but cross-origin ISOLATED (COOP+COEP)
+ *
+ * --coi exists to reproduce the app's environment rather than the harness's. This
+ * runtime needs no cross-origin isolation of its own, but the Python runtime does
+ * (Atomics.wait), and the app turns it on globally with coi-serviceworker -- which
+ * means this worker ends up running under `COEP: require-corp` whether it wants to
+ * or not. Under that policy `importScripts` of CheerpJ's cross-origin loader is
+ * blocked unless the CDN answers with `Cross-Origin-Resource-Policy`. It does, so
+ * this passes; the flag is here so that stays a measured fact and not a hope.
  */
 
 import { createReadStream, statSync } from 'node:fs'
@@ -23,7 +32,9 @@ import { dirname, extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(import.meta.url))
-const port = Number(process.argv[2] || 8085)
+const args = process.argv.slice(2)
+const coi = args.includes('--coi')
+const port = Number(args.find((arg) => !arg.startsWith('--')) || 8085)
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -60,6 +71,12 @@ createServer((request, response) => {
     // caching it here keeps the harness's warm timings honest. Everything else
     // is no-store, so an edit plus reload is always the file on disk.
     'cache-control': isJar ? 'public, max-age=3600' : 'no-store',
+    ...(coi
+      ? {
+          'cross-origin-opener-policy': 'same-origin',
+          'cross-origin-embedder-policy': 'require-corp',
+        }
+      : {}),
   }
 
   const range = /^bytes=(\d*)-(\d*)$/.exec((request.headers.range || '').trim())
@@ -97,5 +114,8 @@ createServer((request, response) => {
   if (request.method === 'HEAD') return response.end()
   createReadStream(target, { start, end }).pipe(response)
 }).listen(port, () => {
-  console.log(`harness: http://localhost:${port}/harness/  (HTTP Range supported)`)
+  console.log(
+    `harness: http://localhost:${port}/harness/  (HTTP Range supported` +
+      (coi ? ', cross-origin isolated)' : ')'),
+  )
 })

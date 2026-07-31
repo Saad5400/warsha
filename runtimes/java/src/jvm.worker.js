@@ -31,8 +31,9 @@ const COMPILER_MAIN = 'org.eclipse.jdt.internal.compiler.batch.Main'
  * 2 ms against 208 ms for the first one.
  *
  * The byte SIZES have to be hardcoded. The CDN sends
- * `access-control-allow-origin: *` but does not expose `Content-Length` to
- * cross-origin script (no `Access-Control-Expose-Headers`), so
+ * `access-control-allow-origin: *` and even lists content-length in
+ * `access-control-expose-headers`, but it never actually SENDS a Content-Length
+ * (responses are gzip/chunked; verified with `Accept-Encoding: identity` too), so
  * `response.headers.get('content-length')` is null and there is no way to learn
  * the total from the response itself. These are the measured sizes of the
  * PINNED 4.3 assets; if they are ever wrong the code below falls back to
