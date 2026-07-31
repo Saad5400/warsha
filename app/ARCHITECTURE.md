@@ -241,14 +241,15 @@ which no token exists. If Design wants them tokenised, add the token and swap th
 
 | Value | Where | What it is |
 | --- | --- | --- |
-| `[3px]` | `Console.tsx`, `CapabilityScreens.tsx` ×2, `WelcomeScreen.tsx` | the leading rule on console lines and note blocks (§7.3) |
+| `[3px]` | `Console.tsx`, `CapabilityScreens.tsx` ×2 | the leading rule on console lines and note blocks (§7.3) |
 | `[6px]` | `Tabs.tsx`, `Explorer.tsx` | the dirty/modified dot (§7.1, §7.2) |
 | `[20px]` | `ui/Button.tsx` | icon-button glyph size (§5.2) |
 | `[14px]` | `Tabs.tsx` | the close × glyph (§7.2) |
 | `[12px]` | `RunBar.tsx` | the Run/Stop play/square glyph |
-| `[10px]` / `[11px]` | `FileBadge.tsx`, `WelcomeScreen.tsx` | two-letter language badge type |
+| `[10px]` / `[11px]` | `FileBadge.tsx` | two-letter language badge type |
 | `[28px]` / `[15px]` | `Logo.tsx` | welcome lockup wordmark and the Arabic line (§7.7) |
-| `[720px]` / `[900px]` | `WelcomeScreen.tsx`, `Tabs.tsx` | breakpoints: side-by-side cards, close × on all tabs |
+| `[1024px]` / `[900px]` | `WelcomePanel.tsx`, `Tabs.tsx` | breakpoints: start cards side by side, close × on all tabs |
+| `[13px]` | `ui/Toast.tsx` | the toast kind glyph (✓ / ✕ / i) |
 
 **How state is exposed.** Every stateful surface publishes a `data-` attribute, so a stylesheet can
 target states without reading component code:

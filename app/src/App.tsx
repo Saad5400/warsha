@@ -3,15 +3,17 @@ import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
 import { prefs, setPrefs } from './fs/prefs'
+import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { entryCandidates } from './runtime'
-import type { Template } from './templates'
+import { templates, type Template } from './templates'
 import { exportZip } from './zip'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
 import type { EditorController } from './editor/setup'
+import { wordsInSource } from './editor/completions'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
 import { Console } from './components/Console'
 import { ConsoleDivider } from './components/ConsoleDivider'
@@ -27,6 +29,9 @@ import { useToast } from './components/ui/Toast'
 import type { MenuItem } from './components/ui/Menu'
 import {
   IconExport,
+  IconFileLines,
+  IconFolderOpen,
+  IconFolderPlus,
   IconImport,
   IconPlus,
   IconSave,
@@ -39,6 +44,15 @@ import { COPY, count } from './copy'
 
 const NARROW = '(max-width: 899px)'
 
+/** A project name as a file name: "My first project" → "my-first-project". */
+function slug(name: string | undefined): string {
+  return (name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+}
+
 export function App() {
   const report = useMemo(() => checkCapabilities(), [])
   useEffect(() => installViewport(), [])
@@ -49,7 +63,19 @@ export function App() {
 }
 
 function Ide({ report }: { report: CapabilityReport }) {
-  const { project, ready, revision, tree } = useProject()
+  const {
+    project,
+    ready,
+    revision,
+    tree,
+    projects,
+    current: currentProject,
+    migration,
+    createProject,
+    openProject,
+    renameProject,
+    deleteProject,
+  } = useProject()
   const dialogs = useDialogs()
   const notify = useToast()
   const narrow = useMedia(NARROW)
@@ -75,6 +101,15 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [importOpen, setImportOpen] = useState(false)
 
   const candidates = useMemo(() => entryCandidates(project.sourceFiles()), [project, revision])
+
+  // Identifiers from every file, for editor completion. Recomputed on `revision`
+  // (structure or dirty changes) rather than per keystroke — the editor scans the
+  // buffer being typed in on its own, so this only has to cover the other files.
+  const projectWords = useMemo(() => {
+    const words = new Set<string>()
+    for (const file of project.sourceFiles()) for (const word of wordsInSource(file.content)) words.add(word)
+    return [...words]
+  }, [project, revision])
   const runner = useRunner(project, buffer, entryPath)
 
   // ---- restore the workspace once the project has loaded ----
@@ -116,6 +151,14 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!entryPath || !candidates.includes(entryPath)) setEntryPath(candidates[0])
   }, [candidates, entryPath])
 
+  // Language is per file, never per app: the file you are looking at is the file
+  // Run starts, as long as it is runnable. Otherwise the last choice stands.
+  // Without this, a student with Main.java and main.py both open could press Run
+  // and have Warsha start the one they are not looking at. (ui-console's request.)
+  useEffect(() => {
+    if (activePath && candidates.includes(activePath)) setEntryPath(activePath)
+  }, [activePath, candidates])
+
   // The drawer is never the thing being typed into (spec §4.3 rule 2).
   useEffect(() => {
     if (keyboardOpen && narrow) setDrawerOpen(false)
@@ -143,6 +186,20 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     [tabs, activePath],
   )
+
+  // Focusing the editor cannot be done at the moment a file is created: on an
+  // empty project the Editor is not even mounted yet (the start panel holds that
+  // slot), so `editorRef` is still null, and after a template the mount happens a
+  // render later. So we record what to focus and do it once that file is actually
+  // the open one.
+  const focusOnOpen = useRef<string | null>(null)
+  useEffect(() => {
+    const wanted = focusOnOpen.current
+    if (!wanted || activePath !== wanted) return
+    focusOnOpen.current = null
+    // One frame, so CodeMirror has been created and had its content set.
+    requestAnimationFrame(() => editorRef.current?.focus())
+  }, [activePath, revision])
 
   const validName = (name: string): string | null => {
     if (!name) return 'That name is empty.'
@@ -189,10 +246,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (project.has(path)) return notify(`${path} already exists.`, 'error')
     try {
       await project.createFile(path, starterContent(path))
-      openFile(path)
       // Creating a file is the start of typing in it, so the caret goes there
-      // rather than leaving the student to tap the canvas.
-      editorRef.current?.focus()
+      // rather than leaving the student to tap the canvas. Deferred, because on
+      // the first file of an empty project the editor does not exist yet.
+      focusOnOpen.current = path
+      openFile(path)
     } catch (e) {
       notify((e as Error).message, 'error')
     }
@@ -273,12 +331,21 @@ function Ide({ report }: { report: CapabilityReport }) {
     setTabs(entry ? [entry] : [])
     setActivePath(entry)
     setEntryPath(entry)
+    // Put the caret in the entry file on a laptop, but NOT on a phone: a starter
+    // is something you read and then Run, and focusing CodeMirror there summons
+    // the on-screen keyboard over the code the student just asked to see.
+    if (entry && !narrow) focusOnOpen.current = entry
     buffer.clear()
     notify(label, 'success')
   }
 
   const confirmReplace = async (title: string, what: string, okLabel: string) => {
-    if (project.isEmpty()) return true
+    // Guarded on FILES, not on `isEmpty()` (which is also false for a project
+    // holding nothing but an empty folder or a freshly migrated manifest). A
+    // first-time student's very first tap on a starter must apply it, never open
+    // a destructive confirm about work that does not exist — that reads as "the
+    // card is dead", which is the single loudest complaint we have had.
+    if (project.paths().length === 0) return true
     return dialogs.confirm({
       title,
       message: `${what} removes the ${count(project.paths().length, 'file')} now in Warsha. Export a .zip first if you want to keep them.`,
@@ -287,9 +354,28 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
   }
 
+  /** "Python starter", then "Python starter 2" if that name is already used. */
+  const uniqueProjectName = (base: string): string => {
+    let name = base
+    for (let n = 2; projects.some((p) => p.name === name && p.id !== currentProject?.id); n++) name = `${base} ${n}`
+    return name
+  }
+
   const applyTemplate = async (t: Template) => {
-    if (!(await confirmReplace('Replace what you have?', `Starting “${t.name}”`, 'Replace'))) return
-    await replaceProject(t.snapshot, t.entry, `${t.name} ready — ${count(t.snapshot.files.length, 'file')}.`)
+    // The start panel only ever shows on an empty project, and a starter picked
+    // there fills *that* project in and takes its name, rather than creating a
+    // second project beside it — otherwise a first visit always leaves an empty
+    // "My project" behind, which is exactly the clutter multi-project is meant to
+    // avoid. Either way the student ends up with a named project they can switch
+    // back to, which is the point.
+    if (project.isEmpty()) {
+      await replaceProject(t.snapshot, t.entry, `${t.name} ready — ${count(t.snapshot.files.length, 'file')}.`)
+      if (currentProject) await renameProject(currentProject.id, uniqueProjectName(t.name))
+      return
+    }
+    // Reached only if a starter is ever offered from a project that has files:
+    // making a new project is the non-destructive answer.
+    return newProject(t)
   }
 
   const startEmpty = async () => {
@@ -304,9 +390,104 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const exportProject = () => {
-    const name = 'warsha-project.zip'
+    const name = `${slug(currentProject?.name) || 'warsha-project'}.zip`
     exportZip(project.snapshot(), name)
     notify(COPY.exported(name, project.paths().length), 'success')
+  }
+
+  // ---- projects ----
+  // Switching, creating or deleting a project is the one operation that
+  // invalidates the whole workspace, because tabs, the console transcript and the
+  // editor's per-file state all belong to the project being left.
+  const adoptProject = (leavingTabs: string[]) => {
+    // Every path the old project had open is dropped from the editor's state
+    // cache by name. Two projects can both contain a "main.py", and without this
+    // the cached document from the old one is shown for the new one's file.
+    for (const path of leavingTabs) editorRef.current?.closeFile(path)
+    const entry = entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
+    setTabs(entry ? [entry] : [])
+    setActivePath(entry)
+    setEntryPath(entry)
+    buffer.clear()
+    // An empty project gives its room back to the start panel, exactly as on a
+    // first visit.
+    if (project.isEmpty()) setConsoleOpen(false)
+  }
+
+  /** A program from the project being left must not outlive it. */
+  const stopIfRunning = () => {
+    if (runner.busy) runner.stop()
+  }
+
+  const projectNameTaken = (name: string, exceptId?: string): string | null =>
+    projects.some((p) => p.id !== exceptId && p.name.trim() === name.trim())
+      ? 'You already have a project with that name.'
+      : null
+
+  const switchToProject = async (id: string) => {
+    if (id === currentProject?.id) return
+    stopIfRunning()
+    const leaving = tabs
+    await openProject(id)
+    adoptProject(leaving)
+  }
+
+  const newProject = async (template?: Template) => {
+    const suggested = template ? template.name : nextProjectName(projects)
+    const name = await dialogs.prompt({
+      title: template ? `New project from “${template.name}”` : 'New project',
+      label: 'Project name',
+      value: suggested,
+      okLabel: 'Create',
+      validate: (v) => (v.trim() ? projectNameTaken(v) : 'Give the project a name.'),
+    })
+    if (!name) return
+    stopIfRunning()
+    const leaving = tabs
+    const meta = await createProject(name, template?.snapshot)
+    if (!meta) return notify('Warsha could not create that project.', 'error')
+    adoptProject(leaving)
+    notify(
+      template
+        ? `“${meta.name}” ready — ${count(template.snapshot.files.length, 'file')}.`
+        : `“${meta.name}” ready.`,
+      'success',
+    )
+  }
+
+  const renameCurrentProject = async () => {
+    if (!currentProject) return
+    const name = await dialogs.prompt({
+      title: 'Rename project',
+      label: 'Project name',
+      value: currentProject.name,
+      okLabel: 'Rename',
+      validate: (v) => (v.trim() ? projectNameTaken(v, currentProject.id) : 'Give the project a name.'),
+    })
+    if (!name || name === currentProject.name) return
+    await renameProject(currentProject.id, name)
+  }
+
+  const deleteCurrentProject = async () => {
+    if (!currentProject) return
+    const files = project.paths().length
+    const ok = await dialogs.confirm({
+      title: `Delete “${currentProject.name}”?`,
+      message: `${
+        files ? `The ${count(files, 'file')} in it will be removed. ` : ''
+      }This cannot be undone. Export a .zip first if you want to keep them.`,
+      okLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
+    stopIfRunning()
+    const leaving = tabs
+    const gone = currentProject.name
+    // The last project cannot be deleted into nothing: the hook opens the next
+    // most recent one, or a fresh empty project if that was the only one.
+    await deleteProject(currentProject.id)
+    adoptProject(leaving)
+    notify(`“${gone}” deleted.`)
   }
 
   // ---- keyboard shortcuts ----
@@ -343,12 +524,55 @@ function Ide({ report }: { report: CapabilityReport }) {
     return () => document.removeEventListener('visibilitychange', onHidden)
   }, [project])
 
+  // Files from a single-workspace build become a real project on first load. Said
+  // out loud, because otherwise the student's work appears to have moved by
+  // itself — and if the copy could not be verified, that they still have the
+  // original matters far more than tidiness.
+  useEffect(() => {
+    if (!migration) return
+    if (migration.kind === 'migrated') {
+      notify(`Your ${count(migration.files, 'file')} are now in a project you can name and switch between.`)
+    } else if (migration.kind === 'migration-kept-original') {
+      notify('Warsha could not finish moving your files into a project, so it left them exactly where they were.', 'error')
+    }
+  }, [migration, notify])
+
   const empty = project.isEmpty()
   const mod = /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'
 
-  // Grouped, glyphed and 44px per row (spec §5.2). "Empty this project" is the
-  // only destructive item, so it sits last behind a divider and never near Save.
-  const menuItems: MenuItem[] = [
+  // Grouped, glyphed and 44px per row (spec §5.2). Destructive items sit last
+  // behind a divider (Menu enforces that) and never near Save.
+  //
+  // The projects come first: this is the menu the top bar labels "Project menu",
+  // and switching between projects is now its main job.
+  const projectActions: MenuItem[] = [
+    {
+      label: 'New project…',
+      icon: <IconFolderPlus size={18} />,
+      startsGroup: true,
+      onSelect: () => void newProject(),
+    },
+    ...templates.map((t) => ({
+      label: `New ${t.name} project…`,
+      icon: <IconFolderPlus size={18} />,
+      onSelect: () => void newProject(t),
+    })),
+    {
+      label: 'Rename this project…',
+      icon: <IconFileLines size={18} />,
+      disabled: !currentProject,
+      onSelect: () => void renameCurrentProject(),
+    },
+    {
+      label: 'Delete this project…',
+      icon: <IconTrash size={18} />,
+      danger: true,
+      disabled: !currentProject,
+      onSelect: () => void deleteCurrentProject(),
+    },
+  ]
+
+  const fileActions: MenuItem[] = [
     { label: 'New file…', icon: <IconPlus size={18} />, onSelect: () => void newFile('') },
     { label: 'Save all', icon: <IconSave size={18} />, hint: `${mod} S`, onSelect: () => void saveAll() },
     { label: 'Import .zip…', icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
@@ -382,6 +606,29 @@ function Ide({ report }: { report: CapabilityReport }) {
       onSelect: () => void startEmpty(),
     },
   ]
+
+  // One row per project, most recently opened first, with the open one marked
+  // and unselectable. Labels are made unique because `Menu` keys its rows by
+  // label, and a project may be named anything — including the same thing as
+  // another project, or as one of the actions above.
+  const projectRows: MenuItem[] = (() => {
+    const used = new Set([...projectActions, ...fileActions].map((i) => i.label))
+    return projects.map((p) => {
+      const isOpen = p.id === currentProject?.id
+      let label = p.name
+      for (let n = 2; used.has(label); n++) label = `${p.name} (${n})`
+      used.add(label)
+      return {
+        label,
+        icon: isOpen ? <IconFolderOpen size={18} /> : undefined,
+        hint: isOpen ? 'Open' : undefined,
+        disabled: isOpen,
+        onSelect: () => void switchToProject(p.id),
+      }
+    })
+  })()
+
+  const menuItems: MenuItem[] = [...projectRows, ...projectActions, ...fileActions]
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
@@ -424,18 +671,25 @@ function Ide({ report }: { report: CapabilityReport }) {
             // The starters live in the workspace itself now, so from a drawer
             // the useful move is to get out of the way and show them. Docked,
             // they are already on screen and the button would be a no-op.
-            onUseTemplate={narrow ? () => setDrawerOpen(false) : undefined}
+            onShowStarters={narrow ? () => setDrawerOpen(false) : undefined}
           />
         </aside>
 
         {narrow && drawerOpen ? (
-          // `.scrim`, not `bg-[--scrim]`: the utility form compiles to
+          // `.scrim`, not the bare-bracket custom-property form: that utility
+          // compiles to
           // `background-color:--scrim` under Tailwind v4 and the browser drops
           // it, which left the open drawer with no scrim behind it at all.
           <div className="scrim absolute inset-0 z-10" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         ) : null}
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
+        {/* overflow-hidden is a layout guard, not decoration: it is the backstop
+            that stops any panel inside from painting outside the work area. The
+            console's height comes from a persisted pixel pref, and an oversized
+            one used to push its own transcript straight through the bottom of the
+            layout. `.console-panel--open` now bounds itself in CSS as well —
+            belt and braces, because this is the collision the founder saw. */}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-1">
           <CapabilityBanner report={report} />
 
           {/* An empty project has nothing to tab through and nothing to edit, so
@@ -471,6 +725,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // docked, the files are already on screen and the button would be
                 // a no-op.
                 onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
+                projectWords={projectWords}
               />
             </>
           )}
@@ -515,6 +770,10 @@ function Ide({ report }: { report: CapabilityReport }) {
               <Console
                 buffer={buffer}
                 status={runner.status}
+                // The console's status line names the exit code in plain English
+                // ("Finished — exit code 0"); without this it falls back to the
+                // vaguer wording. Requested by ui-console, who cannot reach here.
+                exitCode={runner.exitCode}
                 progress={runner.progress}
                 bindStdinFocus={runner.bindStdinFocus}
                 onSubmitStdin={runner.submitStdin}

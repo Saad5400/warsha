@@ -97,6 +97,17 @@ export function Console({
   }, [buffer])
 
   useLayoutEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    // While the engine boots, the progress block IS the content: its heading
+    // carries the "this happens once" promise and the bar carries the numbers,
+    // and both are taller than the transcript half of a 220px console — so
+    // pinning the bottom would show a student the reassurance line and cut off
+    // the thing that proves the app is not frozen. Top, until output arrives.
+    if (progress) {
+      el.scrollTop = 0
+      return
+    }
     if (stick.current) scrollToBottom()
   }, [snapshot, progress, showAll, scrollToBottom])
 
@@ -124,7 +135,10 @@ export function Console({
     setPausedAt(null)
     let cancelled = false
     void afterViewportSettles().then(() => {
-      if (!cancelled) scrollToBottom()
+      // Still only if they have not scrolled away in the meantime: the viewport
+      // can settle a keyboard-animation later, and a scroll that lands then would
+      // yank a reader who went back up to re-read the question.
+      if (!cancelled && stick.current) scrollToBottom()
     })
     return () => {
       cancelled = true

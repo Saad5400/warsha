@@ -108,11 +108,15 @@ function PromptDialog({ request }: { request: PromptRequest }) {
   const titleId = useId()
   const problemId = useId()
 
+  const [attempted, setAttempted] = useState(false)
+
   const trimmed = value.trim()
   // Checked here rather than after the dialog closes: a name the student has to
   // retype from memory because a toast rejected it is a worse experience than a
   // line of red under the field they are already looking at.
-  const problem = trimmed ? (request.validate?.(trimmed) ?? null) : null
+  const problem =
+    (trimmed ? (request.validate?.(trimmed) ?? null) : null) ??
+    (attempted && !trimmed ? 'Give it a name first — Main.java and main.py both work.' : null)
   const canSubmit = trimmed.length > 0 && !problem
 
   useEffect(() => {
@@ -126,8 +130,14 @@ function PromptDialog({ request }: { request: PromptRequest }) {
   return (
     <Modal onCancel={() => request.resolve(null)} dismissible labelledBy={titleId}>
       <form
+        // Create stays ENABLED at all times and answers every press. A disabled
+        // primary swallows both the click and the Enter key (HTML skips implicit
+        // submission when the default button is disabled), so an empty field used
+        // to make the dialog feel dead — press Enter, nothing happens, no reason
+        // given. Now an empty submit says what is missing instead.
         onSubmit={(e) => {
           e.preventDefault()
+          setAttempted(true)
           if (canSubmit) request.resolve(trimmed)
         }}
       >
@@ -157,7 +167,7 @@ function PromptDialog({ request }: { request: PromptRequest }) {
           <Button variant="ghost" large onClick={() => request.resolve(null)}>
             Cancel
           </Button>
-          <Button variant="primary" large type="submit" disabled={!canSubmit}>
+          <Button variant="primary" large type="submit">
             {request.okLabel ?? 'OK'}
           </Button>
         </div>

@@ -1,25 +1,146 @@
-/* Warsha stylesheet.
+/* ========================================================================== *
+ *  Warsha — the design system.  ONE language, four authors.
+ * ========================================================================== *
  *
- * Layer 1: Design's canonical tokens, read in place from docs/design/.
+ * Structure
+ * ---------
+ * Layer 1: Design's canonical tokens, read in place from docs/design/tokens.css.
  * Layer 2: the Tailwind theme, mapped ONTO those tokens — every utility a
  *          component uses resolves to a custom property, never to a literal.
- * Layer 3: the component layer. Anything that carries *design meaning* — a
- *          state, the type scale, the amber signature rule — is a named class
- *          here, keyed off the data-attributes ARCHITECTURE.md documents, rather
- *          than a utility string in a .tsx. Two reasons: the spec's states are
- *          compound (rule + weight + colour, never colour alone) and do not fit
- *          in a utility, and Tailwind v4 removed the bare `[--var]` shorthand —
- *          `bg-[--scrim]` compiles to `background-color:--scrim`, which is
- *          invalid CSS the browser silently drops. That is how the active-tab
- *          rule, the drawer scrim, the drawer transition and the 144px console
- *          floor all went missing. Load-bearing values live in real CSS now.
+ * Layer 3: the component layer. Anything carrying *design meaning* — a state,
+ *          the type scale, the amber signature rule — is a named class here,
+ *          keyed off the data-attributes ARCHITECTURE.md documents, not a utility
+ *          string in a .tsx. The spec's states are compound (rule + weight +
+ *          colour, never colour alone) and do not fit in one utility.
+ *
+ *
+ * ------------------------------ READ THIS FIRST ---------------------------- *
+ * TAILWIND v4 DROPPED THE BARE `[--var]` SHORTHAND. `bg-[ --scrim ]` compiles to
+ * `background-color:--scrim` — invalid CSS, silently discarded, no warning at
+ * build or in devtools. It is the single most expensive bug class in this
+ * codebase: it is how the active-tab rule, the drawer scrim, the drawer
+ * transition, the 144px console floor and the modal backdrop all went missing
+ * while the source looked correct. Write `bg-(--scrim)`, or use a class here.
+ * Grep your own files for a bracket immediately followed by two dashes
+ * before you call anything done:  grep -rn -- '-\[ --' src   (without the space).
+ *
+ * Corollary, same family: UNLAYERED CSS BEATS EVERY `@layer`, at any specificity.
+ * tokens.css sets --pad-panel unlayered, so overriding it inside
+ * `@layer components` lost; CodeMirror mounts oneDark unlayered, which made a
+ * whole `.cm-*` block here inert. Both are documented at their sites below.
+ *
+ * And: `focus:outline-none` outranks the global `:focus-visible` ring, so it
+ * removes the keyboard focus indicator entirely. Never use it.
+ * -------------------------------------------------------------------------- *
+ *
+ *
+ * CANONICAL RECIPES — reuse these, do not re-invent them
+ * -----------------------------------------------------
+ * Four people are writing this UI. Anything below that has a name is the agreed
+ * answer; if you need a variant, ask for it here rather than approximating it in
+ * a component, because two near-identical answers is exactly what "generic" looks
+ * like.
+ *
+ * FOCUS RING      Do nothing. `:focus-visible` in @layer base gives every
+ *                 focusable element `outline: 2px solid var(--focus-ring)` at
+ *                 `outline-offset: 2px`. It is :focus-visible only, so it appears
+ *                 for keyboards and never sticks after a tap. Do not add your own,
+ *                 and never `outline-none`. For an element clipped by a scroll
+ *                 parent, add `outline-offset: -2px` so the ring stays inside.
+ *
+ * HIT TARGETS     44px minimum on everything interactive (`--touch`), 48px for
+ *                 primary dialog actions (`--touch-lg`). ≥8px between adjacent
+ *                 targets. Icon-only controls: use `.icon-btn` (44x44 box, 20px
+ *                 glyph). Never put a 48px control in a 44px bar — see BARS.
+ *
+ * BARS            A fixed-height bar draws its divider as an `inset` box-shadow,
+ *                 NOT a border: with border-box a 1px border comes out of the
+ *                 bar's own 44px and its 44px child then overflows by a pixel.
+ *                 `.top-bar`, `.tab-strip`, `.console-header` all do this.
+ *
+ * BUTTONS         `.btn` + `.btn--primary|stop|ghost|danger|quiet`, `.btn--lg`
+ *                 for 48px, `.btn--compact` for a dense row. Every variant has
+ *                 hover, active AND focus-visible. Disabled is a COLOUR change,
+ *                 never opacity — opacity destroys measured contrast.
+ *
+ * SURFACES        Panels `--surface-2`, raised/cards/menus `--surface-3`, inputs
+ *                 and pressed `--surface-4`. Adjacent surfaces are only ~1.1:1
+ *                 apart, so A STATE MAY NEVER BE SIGNALLED BY FILL ALONE — add a
+ *                 rule, a border, a weight change or a glyph. This is principle 2
+ *                 and it is what the greyscale review check tests.
+ *
+ * BORDERS         Dividers/decoration `--border-subtle`. Anything that is a
+ *                 CONTROL boundary (inputs, cards, the console input) must be
+ *                 `--border-control` — it is the one that clears 3:1.
+ *
+ * ELEVATION       `box-shadow: var(--shadow-raised)` — menus, dialogs, the open
+ *                 drawer, floating pills. There is exactly one elevation.
+ *
+ * RADII           `--r-sm` badges/inputs, `--r-md` buttons/menu items, `--r-lg`
+ *                 dialogs/cards, `--r-pill` pills and bars.
+ *
+ * MOTION          `--dur-fast` 120ms press/hover, `--dur` 180ms drawer/menu/
+ *                 dialog, `--dur-slow` 240ms console. Easing `--ease`. Animate
+ *                 ONLY transform and opacity (plus the progress bar's width).
+ *                 There IS a global `@media (prefers-reduced-motion: reduce)`
+ *                 block at the end of this file that kills animation and
+ *                 transition durations app-wide, so you do not need
+ *                 `motion-reduce:` variants — but they are harmless.
+ *
+ * SCROLLBARS      Styled globally in @layer base (`scrollbar-color` for Firefox,
+ *                 `::-webkit-scrollbar*` for Blink/WebKit). Use `.scroller` for
+ *                 any scrolling region: it adds `overscroll-behavior: contain`
+ *                 and momentum scrolling. Do not restyle scrollbars locally.
+ *
+ * STACKING        Use these, and nothing else. Numbers exist so no one has to
+ *                 invent one: scrim `--z-scrim` 10, drawer `--z-drawer` 20,
+ *                 raised in-flow `--z-raised` 30, menus `--z-menu` 40, toasts
+ *                 `--z-toast` 50. Native <dialog> uses the browser top layer and
+ *                 beats all of them, which is correct. If you need something in
+ *                 between, that is a layout problem — say so rather than picking
+ *                 a number.
+ *
+ * TYPE            Never set a code/console font-size in em or leave it inherited:
+ *                 WebKit renders an unqualified `monospace` at ~81.25% of the
+ *                 inherited size. Always explicit px. 16px is a hard floor on
+ *                 every focusable input (below it iOS zooms on focus); 12px
+ *                 (`--fs-micro`) is the floor for everything else.
  *
  * To restyle Warsha, change docs/design/tokens.css first; then this file.
  * See ARCHITECTURE.md § "Restyling guide".
- */
+ * ========================================================================== */
 
 @import '../../docs/design/tokens.css';
 @import 'tailwindcss';
+
+/* Additions beyond tokens.css v1. They live here rather than in Design's
+   canonical file so that file stays the published v1 contract. */
+:root {
+  /* The top bar compacts when the software keyboard is up (spec §4.3 rule 3).
+     Named so anything pinned below the bar can track it instead of repeating 40. */
+  --bar-top-kb: 40px;
+  /* ...and the two icon buttons inside it compact with it. §4.3 rule 3 (drop the
+     bar to 40px) and §5.2 (44px targets) are in direct conflict for exactly these
+     two controls, and leaving both literal meant 44px buttons spilling 2px out of
+     a 40px bar and over the tab strip — a real overlap, found in the sweep.
+     Resolved in favour of the bar, narrowly: the hamburger and the overflow menu
+     are the two rarest taps in the app (§5.2 itself puts rarely-tapped chrome at
+     the top), 40px still clears WCAG 2.2 AA's 24px comfortably, and it applies
+     only while the student is actually typing. Everything tapped often — Run,
+     tabs, file rows, the console input — stays 44px in every state. */
+  --touch-kb: 40px;
+
+  /* One stacking scale for the whole app. See STACKING above. */
+  --z-scrim: 10;
+  --z-drawer: 20;
+  --z-raised: 30;
+  --z-menu: 40;
+  --z-toast: 50;
+
+  /* Edge fade for a horizontally scrolling strip, so "there is more this way" is
+     visible once its scrollbar is hidden. Consumed by `.fade-edge`. */
+  --fade-surface-2: linear-gradient(to right, var(--surface-2), transparent);
+}
 
 @theme inline {
   /* surfaces */
@@ -204,10 +325,17 @@
      The --pad-panel half of this lives OUTSIDE this layer — see the note above
      the rule at the end of the file. */
   html[data-kb='open'] .app-shell {
-    grid-template-rows: 40px 1fr;
+    grid-template-rows: var(--bar-top-kb) 1fr;
   }
   html[data-kb='open'] .kb-hide {
     display: none;
+  }
+  /* The bar and the controls in it compact together, or the controls overflow it
+     and land on the tab strip. See --touch-kb for why this trade is acceptable
+     for these two buttons and nothing else. */
+  html[data-kb='open'] .top-bar .icon-btn {
+    width: var(--touch-kb);
+    height: var(--touch-kb);
   }
 
   /* Left-handed students get Run/Stop on the leading edge (spec §5.3). */
@@ -224,6 +352,12 @@
      form of this silently produced `background-color:--scrim`. */
   .scrim {
     background: var(--scrim);
+    z-index: var(--z-scrim);
+  }
+  /* The drawer and its scrim are the only two things in the shell that stack, and
+     they take their numbers from the one scale (see STACKING in the header). */
+  .drawer {
+    z-index: var(--z-drawer);
   }
 
   .safe-x {
@@ -404,6 +538,27 @@
     height: 0;
   }
 
+  /* The strip hides its scrollbar (10px out of a 44px row is not affordable), so
+     an edge fade is the only thing left to say "there are more tabs that way".
+     Rendered only when the strip actually scrolls. Non-interactive by definition:
+     it sits over a tab, so it must never eat the tap. */
+  .fade-edge {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    pointer-events: none;
+    z-index: var(--z-raised);
+    background: var(--fade-surface-2);
+  }
+  .fade-edge--start {
+    left: 0;
+  }
+  .fade-edge--end {
+    right: 0;
+    transform: scaleX(-1);
+  }
+
   .tab {
     display: flex;
     align-items: center;
@@ -517,9 +672,38 @@
   }
 
   /* Spec §4.3 rule 4 — the single most important number in that section:
-     four output lines plus the input row stay visible while stdin is pending. */
+     four output lines plus the input row stay visible while stdin is pending.
+     Rule 5's 96px editor floor is the same constraint from the other side, so
+     both live here as one min/max pair.
+
+     The max-height is a P0 fix, not a nicety. The console's height comes from a
+     persisted pixel pref, and nothing in the layout bounded it: with a large
+     stored value the panel rendered 4000px tall inside an 816px main, the
+     transcript ran 3336px past the stdin row, and the input and Run were pushed
+     off-screen entirely. ConsoleDivider clamps the live *drag*, but a pref
+     written on a big monitor and reopened on a phone (or after a rotate) never
+     went through that clamp. Bounding it in CSS means no caller can get it wrong,
+     and it enforces the editor floor for free.
+
+     The mechanism is `flex-shrink: 1`, deliberately, and NOT a max-height. The
+     panel is `flex: none` by default so its pixel height is honoured exactly; the
+     moment that height does not fit, it has to be the thing that yields. A
+     hand-written `max-height: calc(100% - var(--editor-min-h))` looked right and
+     was wrong — it reserved the editor's floor but knew nothing about the 44px tab
+     strip, the 12px drag handle or the capability banner above it, so the panel
+     still overflowed by exactly their combined height (measured: 56px, panel
+     bottom 916 against a container bottom of 860). Flexbox already knows the
+     sibling heights; enumerating them in a calc is a guess that goes stale the
+     moment anyone adds a row.
+
+     With the editor at `flex: 1 1 0%` its basis is 0, so shrinking distributes
+     entirely onto this panel until `min-height` stops it — the console gives up
+     space, the editor keeps its 96px floor, and the stdin row never leaves the
+     screen. min-height beating flex-shrink is the priority we want: in a viewport
+     too short for both floors, the input stays visible. */
   .console-panel--open {
     min-height: var(--console-min-h-stdin);
+    flex-shrink: 1;
   }
 
   .console-header {
@@ -615,8 +799,12 @@
   [data-seg='err'] {
     color: var(--danger);
   }
+  /* Italic as well as coloured: a typed answer shares a row with its prompt
+     ("Your name: Saad"), so hue is the only thing separating them — and hue alone
+     vanishes in the greyscale check. Italic survives it. */
   [data-seg='echo'] {
     color: var(--info);
+    font-style: italic;
   }
   [data-seg='meta'] {
     color: var(--text-3);
@@ -669,6 +857,49 @@
   .stdin-input::placeholder {
     color: var(--text-3);
   }
+  /* Nothing running: a colour change, never opacity (§7.4). The row still reads
+     as a real control that is simply not accepting input yet. */
+  .stdin-input:disabled {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
+  }
+  .stdin-input:disabled::placeholder {
+    color: var(--text-disabled);
+  }
+  /* Submit, for a touch keyboard whose Enter is not obvious. 44px, trailing. */
+  .stdin-send {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: var(--touch);
+    height: var(--touch);
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-2);
+    touch-action: manipulation;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease);
+  }
+  .stdin-send:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
+  .stdin-send:active:not(:disabled) {
+    background: var(--surface-4);
+  }
+  .stdin-send:disabled {
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
+  }
+  /* While the program is actually asking, the send button joins the input in
+     wearing --info, so the two read as one waiting control. */
+  .stdin-row[data-waiting='true'] .stdin-send {
+    border-color: var(--info);
+    color: var(--info);
+  }
   /* Waiting for input is signalled by the border, the caret and the hint —
      never by a fill change alone. */
   .stdin-row[data-waiting='true'] .stdin-input {
@@ -677,6 +908,93 @@
   }
   .stdin-row[data-waiting='true'] .stdin-caret {
     color: var(--info);
+  }
+
+  /* The console status line: one sentence above the stdin row that names what the
+     program just did, per run state. Requested by ui-console; it supersedes
+     `.stdin-hint`, which only ever covered the waiting case. Tone comes from
+     [data-state] so the component sets no colours. */
+  .console-status {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-1) var(--pad-panel) 0;
+    font-family: var(--font-ui);
+    font-size: var(--fs-micro);
+    line-height: 1.45;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+  }
+  .console-status__glyph {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 12px;
+    font-size: var(--fs-micro);
+    line-height: 1;
+  }
+  .console-status__text {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .console-status[data-state='preparing'],
+  .console-status[data-state='running'],
+  .console-status[data-state='ok'] {
+    color: var(--success);
+  }
+  .console-status[data-state='waiting'] {
+    color: var(--info);
+  }
+  .console-status[data-state='failed'] {
+    color: var(--danger);
+  }
+  .console-status[data-state='stopped'] {
+    color: var(--text-2);
+  }
+
+  /* "↓ 12 new lines" — floats bottom-trailing inside the transcript when the
+     reader has scrolled up and output is still arriving. Amber while there is
+     something unseen, quiet otherwise. Its parent needs `position: relative`. */
+  .scroll-pill {
+    position: absolute;
+    right: var(--sp-3);
+    bottom: var(--sp-3);
+    z-index: var(--z-raised);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: var(--touch);
+    padding-inline: var(--sp-4);
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    box-shadow: var(--shadow-raised);
+    font-family: var(--font-ui);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-2);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      transform var(--dur-fast) var(--ease);
+  }
+  .scroll-pill:hover {
+    color: var(--text-1);
+    background: var(--surface-4);
+  }
+  .scroll-pill:active {
+    transform: scale(0.97);
+  }
+  .scroll-pill[data-unseen='true'] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
   }
 
   /* ======================================================== status pill ==== */
@@ -847,6 +1165,27 @@
   .btn:active {
     transform: scale(0.97);
   }
+  /* Tailwind v4's preflight sets no cursor on <button>, so the UA default
+     `cursor: default` applied to every button in the app — Run/Stop, every icon
+     button, menu items, dialog actions, the start cards. Rows and tabs already
+     had it, which is precisely why those felt alive and the buttons felt dead.
+     Owned here so no component has to remember it. (Found by ui-files.) */
+  .btn,
+  .icon-btn,
+  .menu-item,
+  .template-card,
+  .tab__close,
+  .link,
+  .stdin-send {
+    cursor: pointer;
+  }
+  .btn:disabled,
+  .icon-btn:disabled,
+  .menu-item:disabled,
+  .stdin-send:disabled,
+  .stdin-input:disabled {
+    cursor: not-allowed;
+  }
   /* Still a 44px target, but visually secondary — for an action offered inside a
      dense row (the "New file" beside an empty folder). */
   .btn--compact {
@@ -978,17 +1317,29 @@
     flex-direction: column;
     align-items: center;
     gap: var(--sp-3);
-    max-width: 32ch;
+    max-width: var(--empty-measure, 32ch);
     margin-inline: auto;
     padding: var(--sp-5) var(--sp-4) 0;
     text-align: center;
   }
+  /* A full-pane empty state (the editor with no file open). The measure moves off
+     the layer itself and onto its text: with `max-width: 32ch` on the same
+     element as `inset: 0`, max-width wins, so this layer computed to a 256px
+     centred column and its background only painted that strip — leaving
+     CodeMirror's gutter, line number and active-line band visible on both sides
+     of the placeholder. It read as a half-drawn screen, which is the opposite of
+     what an empty state is for. (Found by ui-files, measured in the built app.) */
   .empty--pane {
     position: absolute;
     inset: 0;
+    --empty-measure: none;
     justify-content: flex-start;
     padding-top: max(var(--sp-5), 28%);
     background: var(--surface-1);
+  }
+  .empty--pane > .empty__title,
+  .empty--pane > .empty__body {
+    max-width: 32ch;
   }
   .empty__glyph {
     font-size: 32px;
@@ -1029,11 +1380,17 @@
 
   /* ====================================================== welcome screen ==== */
 
+  /* The start panel. This used to be a full-page gate (`position: absolute;
+     inset: 0; z-index: 30`) and is now an in-pane empty state living inside
+     `.editor-pane` — the app opens straight into the IDE. The old z-30 made it
+     paint OVER the explorer drawer (z-20) and its scrim on a phone, which is a
+     collision, so the stacking context goes away entirely rather than being
+     renumbered: an in-flow panel cannot collide with anything. */
   .welcome {
-    position: absolute;
-    inset: 0;
-    z-index: 30;
-    background: var(--surface-0);
+    position: relative;
+    z-index: 0;
+    height: 100%;
+    background: var(--surface-1);
   }
   .welcome__col {
     display: flex;
@@ -1273,9 +1630,91 @@
     margin: var(--sp-2) var(--sp-2);
     border-top: 1px solid var(--border-subtle);
   }
+  /* A 20px leading glyph slot and an optional trailing shortcut hint. The slot is
+     reserved whether or not an item has an icon, so labels line up down the menu
+     instead of stepping in and out. */
+  .menu-item {
+    gap: var(--sp-3);
+  }
+  .menu-item__icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 20px;
+    height: 20px;
+    color: var(--text-3);
+  }
+  .menu-item:hover .menu-item__icon {
+    color: var(--text-2);
+  }
+  .menu-item__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .menu-item__hint {
+    flex: none;
+    margin-left: var(--sp-4);
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+  .menu-item:disabled {
+    color: var(--text-disabled);
+    background: transparent;
+  }
+  .menu-item:disabled .menu-item__icon,
+  .menu-item:disabled .menu-item__hint {
+    color: var(--text-disabled);
+  }
+
+  /* The .zip drop target. The only dashed border in the app — dashed reads as
+     "put something here", which is exactly the one place we mean it. */
+  .dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-5) var(--sp-4);
+    border: 1px dashed var(--border-control);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    color: var(--text-3);
+    text-align: center;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease);
+  }
+  .dropzone[data-over='true'] {
+    border-color: var(--accent);
+    border-style: solid;
+    background: var(--surface-4);
+    color: var(--text-2);
+  }
+
+  /* Inline validation under a dialog field: answered where the student is already
+     looking, rather than by a toast after the dialog closes. */
+  .dlg-input[aria-invalid='true'] {
+    border-color: var(--danger);
+  }
+  .dlg-error {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+    margin-top: var(--sp-2);
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: var(--danger);
+  }
+  .dlg-error__glyph {
+    flex: none;
+    line-height: 1.5;
+  }
 
   /* The scrim behind every native dialog, owned here rather than by a utility on
-     each <dialog>. `backdrop:bg-[--scrim]` compiles to an invalid declaration
+     each <dialog>. `backdrop:bg-[ --scrim ]` compiles to an invalid declaration
      under Tailwind v4 and leaves the backdrop fully transparent, so a modal
      floats over a live-looking IDE with nothing dimming it. One rule, and no
      call site can get it wrong. */
@@ -1348,6 +1787,36 @@
     line-height: 1.5;
     box-shadow: var(--shadow-raised);
     animation: warsha-rise var(--dur) var(--ease) both;
+  }
+  /* A toast is a row: kind glyph, message, dismiss. Laid out here so all three
+     kinds share one geometry. */
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: var(--touch);
+    padding-right: var(--sp-1);
+  }
+  .toast__glyph {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    font-size: var(--fs-meta);
+    line-height: 1;
+  }
+  .toast__text {
+    min-width: 0;
+    flex: 1;
+  }
+  .toast[data-kind='success'] {
+    border-color: var(--success);
+  }
+  .toast[data-kind='success'] .toast__glyph {
+    color: var(--success);
+  }
+  .toast[data-kind='info'] .toast__glyph {
+    color: var(--info);
   }
   .toast[data-kind='error'] {
     border-color: var(--danger);
@@ -1442,91 +1911,23 @@ html[data-kb='open'] {
 }
 
 /* ------------------------------------------------------- CodeMirror ------- */
-/* Overrides oneDark's chrome with Design's editor tokens; oneDark keeps its
-   syntax colours. Selectors are CodeMirror's own, so they live here. Sizes that
-   depend on the user's font-size preference are set in editor/setup.ts instead,
-   because they have to be recomputed when it changes. */
-@layer components {
-  .cm-editor {
-    height: 100%;
-    background: var(--code-bg);
-    font-family: var(--font-code);
-  }
-  .cm-editor.cm-focused {
-    outline: none;
-  }
-  .cm-scroller {
-    font-family: var(--font-code);
-    line-height: var(--lh-code);
-    -webkit-overflow-scrolling: touch;
-  }
-  .cm-content {
-    /* iOS text-selection handles are large; without this the leading handle is
-       clipped at the gutter edge. */
-    padding-left: 4px;
-  }
-  /* Flat gutter: same fill as the canvas, no border. A filled gutter costs
-     horizontal pixels of perceived width on a 390px phone. */
-  .cm-gutters {
-    background: var(--code-gutter-bg);
-    color: var(--code-gutter-fg);
-    border: none;
-  }
-  .cm-activeLineGutter {
-    background: var(--code-active-line);
-    color: var(--code-gutter-fg-active);
-  }
-  .cm-activeLine {
-    background: var(--code-active-line);
-  }
-  .cm-cursor,
-  .cm-dropCursor {
-    border-left-color: var(--code-caret);
-    /* The 1px default is genuinely hard to find on a 3x phone display. */
-    border-left-width: 2px;
-  }
-  .cm-selectionBackground,
-  .cm-editor .cm-selectionBackground,
-  .cm-content ::selection {
-    background: var(--code-selection) !important;
-  }
-  .cm-matchingBracket {
-    background: var(--code-bracket) !important;
-    outline: 1px solid var(--border-control);
-    color: inherit !important;
-  }
-  .cm-searchMatch {
-    background: var(--code-search-match);
-  }
-  .cm-searchMatch-selected {
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-  .cm-tooltip {
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
-    background: var(--surface-3);
-    box-shadow: var(--shadow-raised);
-    overflow: hidden;
-  }
-  .cm-tooltip.cm-tooltip-autocomplete > ul {
-    font-family: var(--font-code);
-    max-height: 40vh;
-  }
-  .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-    min-height: var(--touch);
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    padding-inline: var(--sp-3);
-    color: var(--text-2);
-  }
-  .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-    background: var(--surface-4);
-    color: var(--text-1);
-  }
-  .cm-completionIcon {
-    color: var(--text-3);
-    padding-right: 0;
-  }
-}
+/* Deliberately EMPTY, and this note is why.
+ *
+ * The editor's chrome is themed in `src/editor/setup.ts` (its `chromeTheme`), not
+ * here. A ~50-line `.cm-*` block used to live at this spot and was almost
+ * entirely inert: CodeMirror mounts oneDark as an *unlayered* StyleModule, and
+ * unlayered CSS outranks everything inside an `@layer` no matter how specific it
+ * is — so only the two rules that carried `!important` ever applied. Measured
+ * consequences while it looked authoritative: the canvas and gutter rendered
+ * oneDark's #282c34 instead of --surface-1, the active line was oneDark's blue,
+ * the caret was 1px blue instead of 2px amber, and the 4px `.cm-content`
+ * padding-left that keeps iOS selection handles off the gutter never applied.
+ *
+ * Ordering cannot fix it either — CodeMirror mounts collected style modules in
+ * reverse, so an extension listed after oneDark lands earlier in the sheet and
+ * still loses. The theme therefore qualifies every selector with `&.cm-editor`,
+ * one class more specific than oneDark's own, and wins wherever it sits.
+ *
+ * So: do not re-add `.cm-*` rules here. They will look like they work and won't.
+ * Editor chrome tokens (--code-*) are still defined in tokens.css and consumed by
+ * that theme. Diagnosed by ui-files. */

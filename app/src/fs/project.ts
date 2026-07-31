@@ -1,6 +1,6 @@
 import type { SourceFile } from '../runtime/types'
 import type { FsSnapshot, ProjectStore } from './types'
-import { createStore } from './opfs'
+import { MemoryStore } from './opfs'
 
 export interface TreeNode {
   name: string
@@ -27,7 +27,14 @@ export class Project {
   private structureListeners: Listener[] = []
   private dirtyListeners: Listener[] = []
 
-  constructor(store: ProjectStore = createStore()) {
+  /**
+   * Starts on an empty in-memory store and is pointed at real storage by
+   * `switchStore` once the project to open has been resolved. That indirection
+   * is what keeps the constructor from touching OPFS: reaching for a directory
+   * handle with `create: true` would recreate the pre-multi-project root before
+   * the migration in fs/projects.ts had a chance to look for it.
+   */
+  constructor(store: ProjectStore = new MemoryStore()) {
     this.store = store
   }
 
@@ -53,6 +60,21 @@ export class Project {
   }
   private emitDirty() {
     for (const cb of [...this.dirtyListeners]) cb()
+  }
+
+  /**
+   * Point this instance at another project's storage and load it.
+   *
+   * Pending edits are flushed to the *old* store first, so switching away from a
+   * project mid-keystroke cannot drop the last 350 ms of typing — and cannot
+   * write it into the project being switched to either. The instance identity is
+   * kept deliberately: React holds this object, and replacing it would remount
+   * the editor and the runner for what is, to them, the same open project.
+   */
+  async switchStore(store: ProjectStore): Promise<void> {
+    await this.saveAll()
+    this.store = store
+    await this.load()
   }
 
   async load(): Promise<void> {

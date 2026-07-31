@@ -10,6 +10,12 @@ export interface Prefs {
   entryPath: string | null
   /** Which edge Run/Stop sits on — see DESIGN-SPEC §5.3 handedness. */
   hand: 'right' | 'left'
+  /**
+   * Which project to reopen on the next visit. The tab/entry prefs above stay
+   * global on purpose: they are filtered against the project that actually
+   * loads, so paths belonging to another project simply drop out.
+   */
+  currentProjectId: string | null
 }
 
 const defaults: Prefs = {
@@ -20,6 +26,7 @@ const defaults: Prefs = {
   activePath: null,
   entryPath: null,
   hand: 'right',
+  currentProjectId: null,
 }
 
 let cache: Prefs | null = null

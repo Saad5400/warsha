@@ -17,27 +17,18 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   acceptCompletion,
-  type CompletionContext,
-  type CompletionResult,
 } from '@codemirror/autocomplete'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { langForPath, type LangId } from '../runtime'
 import { indentGuides } from './indentGuides'
+import { completionSources } from './completions'
 
 /**
  * CodeMirror wiring, kept out of the React component so the component stays a
- * ~40-line mount/unmount shell. Editor *chrome* colours come from Design's
- * tokens via .cm-* rules in index.css; oneDark supplies only syntax colours.
+ * ~40-line mount/unmount shell. Editor chrome colours come from `chromeTheme`
+ * below; oneDark supplies only syntax colours. The completion sources and the
+ * snippet library live in ./completions.ts.
  */
-
-const JAVA_WORDS =
-  'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null String System out println print Scanner ArrayList HashMap List Map Integer Double Boolean Object Exception Override toString equals hashCode length size get set add'.split(
-    ' ',
-  )
-const PY_WORDS =
-  'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield print input len range str int float bool list dict set tuple enumerate zip sum min max abs round sorted open self __init__ super'.split(
-    ' ',
-  )
 
 /**
  * Editor chrome in Design's tokens (§2.6). This has to be a CodeMirror theme
@@ -117,11 +108,19 @@ const chromeTheme = EditorView.theme(
       boxShadow: 'var(--shadow-raised)',
       overflow: 'hidden',
     },
+    // The completion popup. Width is capped against the *viewport*, not the
+    // editor, because at 390px an uncapped popup runs off the screen edge and
+    // takes its scrollbar with it.
+    '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete': {
+      maxWidth: 'calc(100vw - 2 * var(--sp-3))',
+    },
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul': {
       fontFamily: 'var(--font-code)',
-      maxHeight: '40vh',
+      maxHeight: 'min(40vh, 320px)',
+      maxWidth: '100%',
     },
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      // 44px rows: this list is tapped, not just arrowed through (§5.2).
       minHeight: 'var(--touch)',
       display: 'flex',
       alignItems: 'center',
@@ -129,36 +128,70 @@ const chromeTheme = EditorView.theme(
       paddingInline: 'var(--sp-3)',
       color: 'var(--text-2)',
     },
+    // Selected row carries a 2px accent rule as well as a fill, because the fill
+    // alone is ~1.1:1 against the panel and invisible on a phone (principle 2).
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
       backgroundColor: 'var(--surface-4)',
       color: 'var(--text-1)',
+      boxShadow: 'inset 2px 0 0 0 var(--accent)',
+    },
+    '&.cm-editor .cm-completionLabel': {
+      flex: '1',
+      minWidth: '0',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    },
+    '&.cm-editor .cm-completionMatchedText': {
+      textDecoration: 'none',
+      color: 'var(--accent)',
+      fontWeight: '600',
+    },
+    // The plain-English gloss ("count from 0"). Kept at every width — measured at
+    // 390px it still fits beside the label, and it is the part that teaches. The
+    // label ellipsizes first if something has to give.
+    '&.cm-editor .cm-completionDetail': {
+      flex: 'none',
+      marginLeft: 'var(--sp-3)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: 'var(--fs-micro)',
+      fontStyle: 'normal',
+      color: 'var(--text-3)',
+    },
+    // CodeMirror's default type icons are 𝑥 (U+1D465), 𝐶, 𝑡, ∪, ▢ and a key
+    // emoji. Those are exactly the glyphs §3.1 warns about: outside the BMP or
+    // outside the common OEM Android fonts, so they arrive as tofu boxes or as
+    // colour emoji on the target device. Replaced with plain ASCII in the code
+    // font, which every platform has.
+    '&.cm-editor .cm-completionIcon': {
+      width: '1.4em',
+      paddingRight: 'var(--sp-1)',
+      fontFamily: 'var(--font-code)',
+      fontSize: '90%',
+      opacity: '1',
+      color: 'var(--text-3)',
+      textAlign: 'center',
+    },
+    // Snippets are the headline of this feature, so they get the accent.
+    '&.cm-editor .cm-completionIcon-snippet': { color: 'var(--accent)' },
+    '&.cm-editor .cm-completionIcon-snippet::after': { content: "'{}'" },
+    '&.cm-editor .cm-completionIcon-keyword::after': { content: "'#'" },
+    '&.cm-editor .cm-completionIcon-function::after': { content: "'f'" },
+    '&.cm-editor .cm-completionIcon-method::after': { content: "'f'" },
+    '&.cm-editor .cm-completionIcon-class::after': { content: "'C'" },
+    '&.cm-editor .cm-completionIcon-variable::after': { content: "'x'" },
+    '&.cm-editor .cm-completionIcon-text::after': { content: "'a'" },
+    // The "no matches" line, and the info panel if a completion ever carries one.
+    '&.cm-editor .cm-tooltip.cm-completionInfo': {
+      maxWidth: 'min(32ch, calc(100vw - 2 * var(--sp-3)))',
+      padding: 'var(--sp-2) var(--sp-3)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: 'var(--fs-meta)',
+      color: 'var(--text-2)',
     },
   },
   { dark: true },
 )
-
-const WORD = /[A-Za-z_$][\w$]*/g
-
-function wordCompletions(words: string[]) {
-  return (ctx: CompletionContext): CompletionResult | null => {
-    const before = ctx.matchBefore(/[\w$]+/)
-    if (!before || (before.from === before.to && !ctx.explicit)) return null
-    const seen = new Set<string>()
-    const doc = ctx.state.doc.sliceString(0)
-    let m: RegExpExecArray | null
-    WORD.lastIndex = 0
-    while ((m = WORD.exec(doc))) if (m[0].length > 2) seen.add(m[0])
-    for (const w of words) seen.add(w)
-    seen.delete(before.text)
-    return {
-      from: before.from,
-      options: [...seen].map((label) => ({ label, type: words.includes(label) ? 'keyword' : 'variable' })),
-      validFor: /^[\w$]*$/,
-    }
-  }
-}
-
-const wordsFor = (lang: LangId | null) => (lang === 'java' ? JAVA_WORDS : lang === 'python' ? PY_WORDS : [])
 
 /** Lezer grammars are the bulk of the bundle, so they load on demand. */
 const langCache = new Map<LangId, LanguageSupport>()
@@ -183,7 +216,17 @@ export interface EditorController {
 
 export function createEditor(
   parent: HTMLElement,
-  opts: { fontSize: number; onChange(path: string, content: string): void; onSave(): void },
+  opts: {
+    fontSize: number
+    onChange(path: string, content: string): void
+    onSave(): void
+    /**
+     * Identifiers from every *other* file in the project, for completion. Read
+     * through a function rather than passed as an array so the view never has to
+     * be rebuilt when a file changes; the caller memoises it.
+     */
+    projectWords?(): readonly string[]
+  },
 ): EditorController {
   const fontTheme = new Compartment()
   const langConf = new Compartment()
@@ -191,6 +234,7 @@ export function createEditor(
   let path: string | null = null
   let applying = false
   let fontSize = opts.fontSize
+  const projectWords = () => opts.projectWords?.() ?? []
 
   /**
    * Sizes that depend on the student's font-size preference, so they have to be
@@ -233,7 +277,17 @@ export function createEditor(
     // Python's control flow *is* its indentation, and line wrapping makes the
     // eye lose the column. One hairline per level puts it back.
     indentGuides(4),
-    autocompletion({ override: [wordCompletions(wordsFor(lang))], activateOnTyping: true, maxRenderedOptions: 24 }),
+    autocompletion({
+      override: completionSources(lang, projectWords),
+      // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
+      // what a student who has used an IDE before will reach for.
+      activateOnTyping: true,
+      selectOnOpen: true,
+      // Enough to scroll through, few enough that the popup cannot swallow a
+      // 390px screen. The list is ranked, so the tail is rarely what you want.
+      maxRenderedOptions: 30,
+      icons: true,
+    }),
     // Wrap rather than scroll horizontally: a wrapped line is readable on a
     // phone, a horizontally-scrolling one is not.
     EditorView.lineWrapping,

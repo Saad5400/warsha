@@ -1,18 +1,36 @@
 import type { FsSnapshot, ProjectStore } from './types'
 
-const ROOT = 'warsha-project'
+/**
+ * The pre-multi-project root: one hardwired workspace, files at its top level.
+ * Still read (and then retired) by the migration in ./projects.ts.
+ */
+export const LEGACY_ROOT = 'warsha-project'
 
 /** Origin Private File System store. Chrome/Edge/Safari 16.4+, secure contexts only. */
 export class OpfsStore implements ProjectStore {
   readonly kind = 'opfs'
+
+  /**
+   * Directory segments this store is rooted at, e.g.
+   * `['warsha', 'projects', '<id>', 'files']`. Everything below is the student's
+   * own tree, which is why a project's manifest.json lives one level *above*
+   * `files/` — inside it, it would show up in the explorer as a project file.
+   */
+  private readonly segments: readonly string[]
+
+  constructor(segments: readonly string[] = [LEGACY_ROOT]) {
+    if (segments.length === 0) throw new Error('OpfsStore needs at least one path segment')
+    this.segments = segments
+  }
 
   static available(): boolean {
     return typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
   }
 
   private async root(): Promise<FileSystemDirectoryHandle> {
-    const base = await navigator.storage.getDirectory()
-    return base.getDirectoryHandle(ROOT, { create: true })
+    let dir = await navigator.storage.getDirectory()
+    for (const segment of this.segments) dir = await dir.getDirectoryHandle(segment, { create: true })
+    return dir
   }
 
   private async dirFor(path: string, create: boolean): Promise<FileSystemDirectoryHandle | null> {
@@ -84,9 +102,15 @@ export class OpfsStore implements ProjectStore {
   }
 
   async replaceAll(snap: FsSnapshot): Promise<void> {
-    const base = await navigator.storage.getDirectory()
+    // Only this store's own leaf is wiped, never an ancestor: a project's
+    // manifest.json is a sibling of `files/`, and other projects live alongside.
+    let parent = await navigator.storage.getDirectory()
+    for (const segment of this.segments.slice(0, -1)) {
+      parent = await parent.getDirectoryHandle(segment, { create: true })
+    }
+    const leaf = this.segments[this.segments.length - 1]
     try {
-      await base.removeEntry(ROOT, { recursive: true })
+      await parent.removeEntry(leaf, { recursive: true })
     } catch {
       /* first run */
     }
@@ -134,9 +158,23 @@ export class MemoryStore implements ProjectStore {
   }
 }
 
-export function createStore(): ProjectStore {
-  return OpfsStore.available() ? new OpfsStore() : new MemoryStore()
+/**
+ * A store for one project's files. `segments` addresses it inside OPFS; the
+ * memory fallback keeps one store per distinct address for the session, so
+ * switching projects and switching back does not lose what was typed.
+ */
+export function createStore(segments?: readonly string[]): ProjectStore {
+  if (OpfsStore.available()) return new OpfsStore(segments)
+  const key = (segments ?? [LEGACY_ROOT]).join('/')
+  let store = memoryStores.get(key)
+  if (!store) {
+    store = new MemoryStore()
+    memoryStores.set(key, store)
+  }
+  return store
 }
+
+const memoryStores = new Map<string, MemoryStore>()
 
 function splitPath(path: string) {
   const i = path.lastIndexOf('/')

@@ -27,8 +27,12 @@ export interface ExplorerProps {
   onNewFolder(parentDir: string, name?: string): void
   onRename(path: string, isDir: boolean, name?: string): void
   onDelete(path: string, isDir: boolean): void
-  /** Empty-project state offers the template picker (the welcome flow). */
-  onUseTemplate?(): void
+  /**
+   * Reveals the start panel behind the drawer. Only passed below 900px — docked,
+   * the starters are already on screen and the button would be a no-op, so the
+   * empty state drops to "New file" alone.
+   */
+  onShowStarters?(): void
 }
 
 const LONG_PRESS_MS = 500
@@ -178,13 +182,17 @@ export function Explorer(props: ExplorerProps) {
             <p className="empty__body">
               Create a file to start. A name ending in .py or .java is all Warsha needs to know how to run it.
             </p>
+            {/* Both ghost: beside the start panel's cards, an amber button here
+                would be the loudest thing on a screen whose actual starting
+                points are the cards. The explorer keeps the action, the
+                workspace keeps the lead. */}
             <div className="flex w-full flex-col gap-2">
-              <Button variant="primary" onClick={() => startDraft('', 'file')}>
+              <Button variant="ghost" onClick={() => startDraft('', 'file')}>
                 New file
               </Button>
-              {props.onUseTemplate ? (
-                <Button variant="ghost" onClick={props.onUseTemplate}>
-                  Use a template
+              {props.onShowStarters ? (
+                <Button variant="ghost" onClick={props.onShowStarters}>
+                  Show starters
                 </Button>
               ) : null}
             </div>

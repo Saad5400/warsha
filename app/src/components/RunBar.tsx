@@ -127,7 +127,10 @@ export function RunBar(props: RunBarProps) {
               onClick={props.onClear}
               aria-label={COPY.clearOutput}
               title={COPY.clearOutput}
-              className="shrink-0"
+              // The ≤460px rule tightens .console-header .btn padding to 8px,
+              // which takes an icon-only button down to 38px wide. Height was
+              // never the problem; the box is the target, so floor the width.
+              className="min-w-touch shrink-0"
             >
               <IconClear />
               <span className="kb-hide hidden min-[900px]:inline">Clear</span>
@@ -182,7 +185,12 @@ function CopyOutputButton() {
       aria-label={label}
       title={label}
       data-state={state}
-      className="shrink-0"
+      // The result has to be visible, not only in the tooltip: a copy that
+      // silently failed is worse than no button.
+      className={
+        'min-w-touch shrink-0 ' +
+        (state === 'done' ? 'text-success' : state === 'failed' ? 'text-danger' : '')
+      }
     >
       {state === 'done' ? <IconCheck /> : <IconCopy />}
       <span className="kb-hide hidden min-[1100px]:inline">{state === 'done' ? COPY.copyOutputDone : 'Copy'}</span>

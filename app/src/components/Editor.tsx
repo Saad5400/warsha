@@ -15,19 +15,34 @@ export interface EditorProps {
   onController(controller: EditorController | null): void
   /** The one action on the "no file open" empty state (spec §7.5). */
   onBrowseFiles?: () => void
+  /**
+   * Identifiers from every file in the project, so completion reaches past the
+   * file being edited. Recompute it only when the project changes — it is read
+   * on every keystroke that opens the popup.
+   */
+  projectWords?: readonly string[]
 }
 
 /**
  * A mount/unmount shell around CodeMirror. All the editor logic lives in
  * editor/setup.ts; React only decides which file is showing.
  */
-export function Editor({ path, content, fontSize, onChange, onSave, onController, onBrowseFiles }: EditorProps) {
+export function Editor({
+  path,
+  content,
+  fontSize,
+  onChange,
+  onSave,
+  onController,
+  onBrowseFiles,
+  projectWords,
+}: EditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<EditorController | null>(null)
   // Read handlers through refs: CodeMirror keeps its own long-lived callbacks,
   // so the view must not be rebuilt when a prop identity changes.
-  const handlers = useRef({ onChange, onSave })
-  handlers.current = { onChange, onSave }
+  const handlers = useRef({ onChange, onSave, projectWords })
+  handlers.current = { onChange, onSave, projectWords }
 
   useEffect(() => {
     const host = hostRef.current
@@ -36,6 +51,7 @@ export function Editor({ path, content, fontSize, onChange, onSave, onController
       fontSize,
       onChange: (p, c) => handlers.current.onChange(p, c),
       onSave: () => handlers.current.onSave(),
+      projectWords: () => handlers.current.projectWords ?? [],
     })
     controllerRef.current = controller
     onController(controller)

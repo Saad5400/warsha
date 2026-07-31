@@ -11,6 +11,39 @@
          Costs one automatic reload on a first visit. Vendored v0.1.7, unmodified;
          see runtimes/python/INTEGRATION.md §3. -->
     <script src="./coi-serviceworker.js"></script>
+    <!-- The first frame, before any CSS exists.
+         Measured on a real first visit (CDP screencast, fresh profile, 390x844):
+         frame 1 at 14ms was rgb(255,255,255) — a white flash — because nothing
+         set a background until the external stylesheet arrived. On a dark app
+         opened in a dark room that is the first thing a student sees.
+         These literals are unavoidable here (tokens.css has not loaded yet) and
+         are the same values as --surface-0 / --text-1 / --accent, on the same
+         justification as the documented fallbacks in Logo.tsx. Keep them in sync.
+         The mark doubles as a boot indicator: coi-serviceworker reloads once on a
+         first visit, and painting the same thing either side of that reload makes
+         it invisible. React replaces #boot on mount, so no JS is involved. -->
+    <style>
+      html {
+        background: #15171c;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #15171c;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        #boot > svg {
+          animation: boot-in 240ms cubic-bezier(0.2, 0, 0.2, 1) both;
+        }
+        @keyframes boot-in {
+          from {
+            opacity: 0;
+          }
+        }
+      }
+    </style>
     <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
          student pinching into a stack trace. Double-tap zoom is killed per
          control with touch-action instead. See DESIGN-SPEC §4.2. -->
@@ -34,7 +67,20 @@
     <title>Warsha</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M3.25 4.5 L8.5 15 L12 8.5 L15.5 15 L20.75 4.5"
+            stroke="#E8EBF0"
+            stroke-width="2.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M4.75 19.5 H19.25" stroke="#F2A94B" stroke-width="2.6" stroke-linecap="round" />
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
