@@ -44,11 +44,24 @@ const hasOut = (s, t = 240000) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle), s, { timeout: t })
 const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
 
-/** Open the top-bar overflow menu and list its rows. */
+/**
+ * Project actions live in the sidebar's project switcher now (LAYOUT-VSCODE
+ * §2), not the top bar's "More" overflow menu -- that one only holds New
+ * file / Save all / Import .zip / Format file / Share as image / text size.
+ * `aside[aria-label="Files"] button[aria-haspopup="menu"]` is the Explorer's
+ * project row; at >=900px with the Explorer docked (the default, and this
+ * suite never touches the dock toggle) it is the only ProjectSwitcher in the
+ * DOM -- the title-bar twin only mounts when the Explorer is undocked, so
+ * there is nothing to disambiguate here.
+ */
+const projectSwitcher = () => page.locator('aside[aria-label="Files"] button[aria-haspopup="menu"]')
+const projectMenu = () => page.locator('[role="menu"][aria-label="Project menu"]')
+
+/** Open the sidebar project switcher's menu and list its rows. */
 async function openMenu() {
-  await page.getByRole('button', { name: 'More', exact: true }).click()
-  await page.waitForSelector('[role="menu"]', { timeout: 5000 })
-  return page.locator('[role="menuitem"]').allInnerTexts()
+  await projectSwitcher().click()
+  await page.waitForSelector('[role="menu"][aria-label="Project menu"]', { timeout: 5000 })
+  return projectMenu().getByRole('menuitem').allInnerTexts()
 }
 async function menuRows() {
   const rows = await openMenu()
@@ -58,7 +71,7 @@ async function menuRows() {
 }
 async function clickMenu(nameRe) {
   await openMenu()
-  await page.getByRole('menuitem').filter({ hasText: nameRe }).first().click()
+  await projectMenu().getByRole('menuitem').filter({ hasText: nameRe }).first().click()
   await page.waitForTimeout(400)
 }
 /** The prompt/confirm dialogs are native <dialog>. */

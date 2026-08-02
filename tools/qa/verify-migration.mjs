@@ -83,9 +83,14 @@ for (const [label, needle] of [['main.py', 'main.py'], ['helpers/', 'helpers'], 
   else fail(`migrated file present: ${label}`, files.join(', '))
 }
 
-await page.getByRole('button', { name: 'More', exact: true }).click()
-await page.waitForSelector('[role="menu"]')
-const rows = (await page.locator('[role="menuitem"]').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
+// The project's name/Open badge lives in the sidebar's project switcher menu
+// (LAYOUT-VSCODE §2), not the top bar's "More" overflow -- that one only ever
+// held file actions (New file / Save all / Import .zip / Format file / Share
+// as image / text size), even before this assertion started failing, so this
+// was reading the wrong menu, not a stale item list.
+await page.locator('aside[aria-label="Files"] button[aria-haspopup="menu"]').click()
+await page.waitForSelector('[role="menu"][aria-label="Project menu"]')
+const rows = (await page.locator('[role="menu"][aria-label="Project menu"] [role="menuitem"]').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
 await page.keyboard.press('Escape')
 info(`menu after upgrade: ${JSON.stringify(rows.slice(0, 3))}`)
 if (rows.some((r) => /^My project.*Open$/.test(r))) pass('legacy workspace became a real, named project', 'My project')
