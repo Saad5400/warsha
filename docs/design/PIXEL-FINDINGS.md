@@ -35,9 +35,9 @@ Measurements are at 1280x900 unless stated. Colours are the resolved values:
 | Severity | Found | Fixed here | Routed | Not a defect |
 | --- | --- | --- | --- | --- |
 | P0 — founder ruling | 1 | 1 | — | — |
-| P1 — visible break in a surface | 4 | 3 | 1 | — |
-| P2 — measurable misalignment | 5 | 2 | 3 | — |
-| P3 — minor / sub-pixel | 3 | — | 3 | — |
+| P1 — visible break in a surface | 6 | 5 | 1 | — |
+| P2 — measurable misalignment | 5 | 4 | 1 | — |
+| P3 — minor / sub-pixel | 3 | 1 | 2 | — |
 | Checked, clean | 9 | — | — | 9 |
 
 The founder's four reported defects: **one reproduced** (activity-bar icon
@@ -268,7 +268,7 @@ Caveat: ui-layout changed the bar from 44px to **52px** while this pass was
 running. Everything above was measured against the 44px bar. Re-run
 `WARSHA_ONLY='titlebar|corner' node pixel-crops.mjs` after that lands.
 
-### F-05 · P1 · The activity bar's right divider has a 48px hole at the active icon → ui-layout
+### F-05 · P1 · The activity bar's right divider has a 48px hole at the active icon · fixed
 **Region** `1280-activitybar-explorer`, `1280-activitybar-search`, `1280-activitybar-full`
 
 This is the founder's "inconsistent activity-bar icon borders", and it is real.
@@ -292,7 +292,7 @@ Cheapest fix: inset the active fill by the divider (`w-[47px]`, or a 1px
 transparent right border on `.activity-btn`), or move the edge to the sidebar's
 left rather than the rail's right.
 
-### F-06 · P1 · The amber active rail starts 4px below the top of the screen → ui-layout
+### F-06 · P1 · The amber active rail starts 4px below the top of the screen · fixed
 **Region** `1280-corner-topleft`, `1280-activitybar-full`
 
 The founder's "stray amber sliver". A vertical cut at x=1:
@@ -311,18 +311,112 @@ Same 4px is the reason the first icon does not line up with the title bar: the
 folder glyph's centre is y=28 against the Warsha mark's y=22 — **6px apart**, in
 the one place where two elements are most obviously compared.
 
+**Both fixed** in `ActivityBar.tsx`: `RAIL` lost its `padding: 4px 0 0`, so the
+first button is flush with the top of the screen and its accent rule reads as an
+edge marker rather than a floating chip; and `SLOT` lost the
+`data-[state=active]:bg-surface-2` fill, which is what had been painting over the
+rail's inset-shadow divider for the active button's 48px (F-05). The comparison
+in F-06's last paragraph no longer exists to be got wrong — §1b removed the mark.
 
-### F-08 · P2 · Indent guides vanish on hover → ui-layout
-**Region** `1280-explorer-row-nested`, `1280-explorer-guides`
+**But the F-05 fix silently disabled the indicator it left behind — see F-14.**
 
-At rest the guide is there and very quiet — 1px of `rgb(39,44,52)` at x=71
+
+### F-08 · P2 · Indent guides vanish on hover · fixed
+**Region** `1280-explorer-row-nested`, `1280-explorer-guides`, `1280-explorer-row-hover`
+
+At rest the guide was there and very quiet — 1px of `rgb(39,44,52)` at x=71
 against `--surface-2` `rgb(31,35,42)`, a channel delta of ~8. On a hovered row
-the fill lifts to `rgb(38,43,51)` and the delta drops to **~1**: the guide is
-gone exactly while the pointer is on the row it belongs to. Either lift the
-guide with the row or give it a colour that clears the hover fill.
+the fill lifts to `rgb(38,43,51)` and the delta dropped to **~1**: the guide was
+gone exactly while the pointer was on the row it belongs to.
 
-### F-09 · P3 · Console resize handle's hairline lands on a half pixel → eng-terminal
-**Region** `1280-console-divider` · `components/ConsoleDivider.tsx`
+**Fix** `index.css` — `.tree-row__guide` takes `--border-subtle` instead of
+`--code-indent-guide`. The two options were "lift the guide with the row" or
+"give it a colour that clears the hover fill", and only the second one works: a
+per-state colour lights the hovered row's 44px and leaves the rest of the line
+dim, which turns one continuous rule into a segmented one — a worse artefact
+than the one being fixed. The editor's guides keep `--code-indent-guide`, since
+they only ever sit on a single fill.
+
+**After**, measured on `helpers/shapes.py` at rest and hovered:
+
+```
+rest    guide rgb(42,47,56)  over --surface-2 rgb(31,35,42)   delta 11,12,14   (was 8)
+hover   guide rgb(42,47,56)  over            rgb(38,43,51)    delta  4, 4, 5   (was 1)
+```
+
+### F-14 · P1 · The activity bar's active accent rule is 2px in the cascade and 0px on screen
+**Region** `1280-activitybar-explorer`, `1280-activitybar-search`, `1280-corner-topleft`
+
+Found while re-shooting F-05/F-06 to confirm them fixed. The rail's active
+section had no marker at all — brighter ink and nothing else, which is a
+principle-2 break (a state may never be signalled by colour alone) on the one
+control that says which panel you are looking at.
+
+The computed style is the whole story, and it is a liar's answer:
+
+```
+active   border = 0px solid rgb(232,235,240) … rgb(242,169,75)
+                  ^ width                        ^ left colour: --accent, correct
+```
+
+The amber is right there in the cascade, applied to a border that is **0px
+wide**. `SLOT` asked for the width with `border-l-[var(--rail)]`, and on a
+`border-l-` utility an arbitrary value of unknown type is read as a COLOUR, so
+Tailwind emitted `border-left-color: var(--rail)` — promptly overridden by
+`data-[state=active]:border-l-accent` — and never emitted a width at all. The
+previous spelling, `border-l-rail`, fails the same way for the same reason: v4
+has no border-width theme namespace, so the name resolves against the colour
+one. Two spellings, both plausible, both silently nothing — this is ARCHITECTURE
+§4.1's bug class with a third member.
+
+**Fix** `ActivityBar.tsx` — `border-l-[length:var(--rail)]`. The data-type hint
+is the only form that survives; everywhere else in the app the rule is a literal
+(`border-l-[3px]`), which is unambiguous and needs no hint.
+
+**After**:
+
+```
+active     border = 0px 0px 0px 2px solid … rgb(242,169,75)     <- 2px, amber
+inactive   border = 0px 0px 0px 2px solid … rgba(0,0,0,0)       <- 2px, reserved
+```
+
+The inactive slots reserve the same 2px, so the glyph does not shift when a
+section becomes active. Crops: `crops/1280-corner-topleft.png` (no rule) →
+`crops-after/1280-corner-topleft.png` (the amber edge marker, flush to the top
+of the screen).
+
+### F-12 · P1 · Console header's Run button had zero vertical clearance in its 44px bar · fixed
+**Region** `1280-console-header-left`, `1280-console-header` · **Owner** ui-finish2 (Console zone, vacant since the outage)
+
+`spacing.mjs`'s BARS check, before this fix:
+
+```
+FAIL  6. BARS — console header / Run :: bar 44 control 44 clearance 0/0 border-bottom 0 inset-shadow true
+```
+
+The exact class of defect the title bar was fixed for (`TopBar.tsx`'s own
+comment): a 44px Run button flush in a 44px header, its 10px radius running
+straight into the header's divider. `RunBar.tsx`'s `HEADER` already carried a
+comment explaining the 44px choice was a deliberate compromise with the bar's
+height rather than the button growing to spec's 48px — the header just never
+grew to give that 44px button room the way the title bar's did.
+
+**Fix** `index.css` — `--bar-console` (44px, `tokens.css`) now gets the same
+`calc(var(--touch) + var(--sp-1) + var(--sp-1))` override `--bar-title` already
+had, in the same `@media (min-width: 900px)` block, so `h-bar-console` on
+`RunBar.tsx`'s header picks it up with no component change. Scoped to ≥900px
+only, unlike the title bar: this Run button is on screen at *every* width
+(the title bar's copy of it is ≥900px-only), and a phone console has no
+vertical budget to give it — §4.3 rule 4's 144px floor is "the single most
+important number" in that section, and `--console-floor` derives from
+`--bar-console` so it absorbs the extra 8px automatically at the widths where
+it's free.
+
+**After**: `bar 52 control 44 clearance 4/4 border-bottom 0 inset-shadow true`.
+`spacing.mjs`: 11/11.
+
+### F-09 · P3 · Console resize handle's hairline lands on a half pixel · fixed
+**Region** `1280-console-divider` · `components/ConsoleDivider.tsx` · **Owner** ui-finish2 (Console zone, vacant since the outage)
 
 `absolute inset-x-0 top-1/2 h-px -translate-y-1/2` inside an `h-3` (12px) box
 puts a 1px line at css 5.5..6.5 — straddling a device-pixel boundary, so at 3x
@@ -334,18 +428,55 @@ css 17.67 .. 18.33  rgb(42,47,56)
 css 18.33 .. 18.67  rgb(34,37,45)
 ```
 
-`top-[6px]` with no translate gives 6.0..7.0 and a crisp line. The grab pill
-itself is correctly centred (handle 646.33..649.67 in a divider of 642..654).
+**Fix** `top-[6px]` with no translate, exactly the fix this finding already
+named. Gives 6.0..7.0 and a crisp line. The grab pill itself was already
+correctly centred (handle 646.33..649.67 in a divider of 642..654) and is
+unaffected.
 
-### F-10 · P3 · The console's top rule is covered by the Run button → eng-terminal
+### F-10 · P3 · The console's top rule is covered by the Run button → console owner (still open)
 **Region** `1280-console-divider-seam` · `.console-panel`
 
-`.console-panel` draws `box-shadow: inset 0 1px 0 0 var(--border-subtle)`. Run is
-44px tall in a 44px header at the panel's top edge, and a child's background
-paints over an inset shadow — so the rule is interrupted for the button's 104px.
-Low severity only because the resize handle's own hairline 6px above it reads as
-the real separator; if F-09 is fixed and this is not, there will be one crisp
-rule and one broken one 6px apart.
+`.console-panel` draws `box-shadow: inset 0 1px 0 0 var(--border-subtle)`. The
+console header sits at the panel's top edge with its own opaque `bg-surface-2`
+fill spanning the header's full width — not just Run's 104px, on closer
+reading — and a child's background paints over a parent's inset shadow, so the
+rule is interrupted for the header's whole width, at every viewport.
+
+**Why this is lower priority at ≥900px, and NOT at every width.** At ≥900px the
+resize handle (F-09, now crisp) sits directly above this seam and reads as the
+real separator, so the covered rule costs nothing there. **Below 900px there is
+no resize handle at all**, and the editor/console boundary is then marked only
+by the surface-1→surface-2 tone change — which DESIGN-SPEC principle 2 is
+explicit is "invisible on a phone in daylight" and exists to be backed by a
+rule, not relied on alone. So on phone this is a real, if minor, gap against
+principle 2, not just a cosmetic nicety. Left open rather than patched under
+time pressure: the header cannot simply take its own top inset-shadow, because
+on phone the header is still 44px around a 44px Run (F-12's fix is ≥900px-only
+by design, for the vertical-budget reason above), so a top shadow there would
+just be covered by Run in turn. A real fix needs the rule to live on the
+*editor's* bottom edge instead, where nothing paints over it — untried here.
+
+### F-15 · P2 · The console panel has three different left insets → eng-terminal
+**Region** `1280-console-header-left`, `1280-console-row-stdout`, `1280-console-foot`
+
+The founder named "console spacing" as a hot area, and this is what is in it.
+The panel starts at x=290 and the three things stacked inside it each begin
+somewhere else:
+
+| Element | Box | Inset | Ink starts at |
+| --- | --- | --- | --- |
+| Console header controls | x=290 | `padding: 0 8px` | **298** |
+| Status foot text (`.console-foot`) | x=290 | `padding: 4px 16px` | **306** |
+| Transcript row text (`[data-kind]`) | x=298 | 3px rule + `padding-left: 8px` | **309** |
+
+11px of rag down one 990px-wide panel, in the surface a student watches for the
+whole of a run. The 3px on the transcript row is the §7.3 leading rule and has
+to stay; the honest fix is to pick one ink column and let each element reach it
+by its own route — 8px on the header, 8px on the foot, and the row's 8px measured
+from after its rule — which would put all three on 298.
+
+Not touched here: `Console.tsx` / `RunBar.tsx` belong to the console owner. The
+numbers are `measurements.json`'s, so the fix can be checked the same way.
 
 ### F-11 · P3 · Tab lead-in and trail-out are optically unequal → eng-tailwind / eng-pixel
 **Region** `1280-tab-active`

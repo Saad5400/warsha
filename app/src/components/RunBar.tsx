@@ -14,7 +14,15 @@ import { COPY } from '../copy'
  * `hand-left` mirrors the row so left-handed students get Run/Stop on the
  * leading edge (spec §5.3). At ≤460px only decoration goes: the inter-control
  * gap tightens and the group divider hides, which is what keeps the collapse
- * control on screen on a 360px phone. */
+ * control on screen on a 360px phone.
+ *
+ * `h-bar-console` is 44px below 900px and 52px at and above it (index.css) —
+ * PIXEL-FINDINGS F-12: this header held the SAME 0px-clearance defect the
+ * title bar was fixed for (a 44px Run flush in a 44px bar, its 10px radius
+ * running into the divider). Scoped to ≥900px, unlike the title bar's fix,
+ * because this Run is on screen at every width and a phone console has no
+ * vertical budget to spare for it (§4.3 rule 4's floor is "the single most
+ * important number" in that section); Run itself stays 44px throughout. */
 /* `console-header` carries no styling — tools/qa reads it. */
 const HEADER =
   'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
@@ -60,8 +68,11 @@ export function RunBar(props: RunBarProps) {
     <div className={HEADER}>
       {/* Run/Stop — first in DOM order so it is the first tab stop and so
           data-hand="left" (row-reverse) puts it on the leading edge. 44px, not
-          the spec's 48px: the header itself is --bar-console (44px), and a 48px
-          button inside it overflows its own bar top and bottom.
+          the spec's 48px, at every width: the header is 44px below 900px, so a
+          48px button would overflow its own bar top and bottom there — and 44px
+          stays consistent with the title bar's copy of the same control above
+          900px rather than being a second size to keep in sync (see F-12 above
+          for why the header itself grows to 52px there instead).
           The title bar renders the same control at ≥900px; see RunControl. */}
       <RunControl run={run} placement="console" />
 

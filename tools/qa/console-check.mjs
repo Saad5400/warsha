@@ -259,25 +259,41 @@ if (/Warsha console check/.test(selClip) && !/ValueError/.test(selClip))
   pass('right-click copies just the selection', JSON.stringify(selClip.trim()))
 else fail('right-click copies the selection', JSON.stringify(selClip.slice(0, 80)))
 // Selection has to be visible, not the browser's default on a dark surface.
+//
+// The source writes this with native CSS nesting
+// (`.console-transcript { &::selection, & ::selection { ... } } }`), but the two
+// ways this suite has served the app disagree about what survives to the CSSOM:
+//   - `vite --port` (dev): the nesting reaches the browser as-is, and Chrome
+//     reports the nested rule's `selectorText` VERBATIM, `&` and all — never
+//     re-qualified to `.console-transcript::selection`. A regex requiring the
+//     literal text "console-transcript" on the matched rule can never match, so
+//     ancestry has to be tracked instead: once inside a rule whose OWN selector
+//     IS `.console-transcript`, a descendant mentioning `::selection` is it.
+//   - `vite build` + `preview` (production, what actually ships): Tailwind's
+//     own pipeline flattens the nesting before the browser ever sees it, into
+//     plain top-level rules like `.console-transcript::selection{...}` — which
+//     DOES carry the literal text, but is no longer a descendant of anything,
+//     so ancestry-tracking alone finds nothing here.
+// Checking both — literal substring OR ancestry — is what makes this correct
+// regardless of which of the two this suite happens to be pointed at.
 const selStyle = await page.evaluate(() => {
-  // Recursive: the app's rules live inside `@layer components`, so the interesting
-  // rules are children of a CSSLayerBlockRule and never appear at sheet top level.
-  const walk = (rules) => {
+  const walk = (rules, insideTranscript) => {
     for (const r of rules) {
+      const here = insideTranscript || r.selectorText === '.console-transcript'
+      const looksRight = r.selectorText && /::selection/.test(r.selectorText) && (here || /console-transcript/.test(r.selectorText))
       // cssText, not style.backgroundColor: the rule is written as the `background`
       // shorthand with a var() inside, and the CSSOM cannot decompose that into a
       // longhand — it hands back an empty string and the check reads as missing.
-      if (r.selectorText && /console-transcript[^,]*::selection/.test(r.selectorText) && r.style.cssText)
-        return r.style.cssText
+      if (looksRight && r.style.cssText) return r.style.cssText
       if (r.cssRules) {
-        const hit = walk(r.cssRules)
+        const hit = walk(r.cssRules, here)
         if (hit) return hit
       }
     }
     return null
   }
   for (const sheet of document.styleSheets) {
-    try { const hit = walk(sheet.cssRules); if (hit) return hit } catch { /* cross-origin */ }
+    try { const hit = walk(sheet.cssRules, false); if (hit) return hit } catch { /* cross-origin */ }
   }
   return null
 })

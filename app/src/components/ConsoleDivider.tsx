@@ -61,9 +61,13 @@ export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(
     >
       {/* The 24px grab band, upward into the editor: never over the header. */}
       <span aria-hidden="true" className="absolute inset-x-0 -top-3 h-6 cursor-row-resize" />
+      {/* PIXEL-FINDINGS F-09: `top-1/2` + `-translate-y-1/2` in a 12px (`h-3`) box
+          put the 1px line at css 5.5..6.5 — straddling a device-pixel boundary,
+          so at 2x/3x it rendered as ~1.33px of soft grey instead of a crisp
+          rule. A literal `top-[6px]` with no translate lands exactly on 6.0..7.0. */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-subtle"
+        className="pointer-events-none absolute inset-x-0 top-[6px] h-px bg-border-subtle"
       />
       {/* A grabber you can see: a hairline alone is invisible until you find it
           with the cursor, which is how a resizable panel reads as fixed. */}
