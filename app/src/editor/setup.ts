@@ -67,7 +67,22 @@ const chromeTheme = EditorView.theme(
       // The 1px default is genuinely hard to find on a 3x phone display.
       borderLeftWidth: '2px',
     },
-    '&.cm-editor .cm-activeLine': { backgroundColor: 'var(--code-active-line)' },
+    '&.cm-editor .cm-activeLine': {
+      backgroundColor: 'var(--code-active-line)',
+      // The active-line band used to break for 4px between the gutter and the
+      // line: `.cm-gutters` ends where `.cm-content` begins, and the 4px
+      // paddingLeft above holds the line itself off that edge, so the two
+      // highlights never met. Measured at 1280: gutter right 311.61, active line
+      // left 315.61 — a 4px stripe of bare canvas down the middle of the
+      // highlighted row.
+      //
+      // A shadow rather than a negative margin because `.cm-line`'s own
+      // paddingLeft is dynamic (indentGuides.ts rewrites it per line), so
+      // anything that has to stay in step with it will drift. This paints into
+      // the content's existing padding, costs no layout, and leaves the iOS
+      // selection-handle clearance the padding is there for.
+      boxShadow: '-4px 0 0 0 var(--code-active-line)',
+    },
     // Flat gutter: same fill as the canvas, no border. A filled gutter costs
     // horizontal pixels of perceived width on a 390px phone.
     '&.cm-editor .cm-gutters': {
@@ -226,6 +241,12 @@ export function createEditor(
      * be rebuilt when a file changes; the caller memoises it.
      */
     projectWords?(): readonly string[]
+    /**
+     * Caret position, 1-based, for the status bar (LAYOUT-VSCODE §3). Called
+     * only when it actually moves — the alternative is a React render per
+     * keystroke for a number that usually did not change.
+     */
+    onCursor?(line: number, col: number): void
   },
 ): EditorController {
   const fontTheme = new Compartment()
@@ -235,6 +256,18 @@ export function createEditor(
   let applying = false
   let fontSize = opts.fontSize
   const projectWords = () => opts.projectWords?.() ?? []
+
+  let reported = ''
+  const reportCursor = (state: EditorState) => {
+    if (!opts.onCursor) return
+    const head = state.selection.main.head
+    const line = state.doc.lineAt(head)
+    const col = head - line.from + 1
+    const key = `${line.number}:${col}`
+    if (key === reported) return
+    reported = key
+    opts.onCursor(line.number, col)
+  }
 
   /**
    * Sizes that depend on the student's font-size preference, so they have to be
@@ -339,6 +372,7 @@ export function createEditor(
     langConf.of(languageExtensions(lang)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && path && !applying) opts.onChange(path, u.state.doc.toString())
+      if (u.docChanged || u.selectionSet) reportCursor(u.state)
     }),
   ]
 
@@ -402,6 +436,10 @@ export function createEditor(
       applying = false
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(fontSize)) })
       syncLanguage(p)
+      // `setState` swaps the whole state rather than dispatching a selection, so
+      // the update listener does not see the new file's caret. Switching tabs has
+      // to move the status bar's Ln:Col, so say it here.
+      reportCursor(view.state)
     },
     closeFile(p) {
       states.delete(p)

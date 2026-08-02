@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Project, TreeNode } from '../fs/project'
 import { FileBadge } from './FileBadge'
 import { Button, IconButton } from './ui/Button'
@@ -28,6 +28,13 @@ export interface ExplorerProps {
   onRename(path: string, isDir: boolean, name?: string): void
   onDelete(path: string, isDir: boolean): void
   /**
+   * The project row that sits between the EXPLORER label and the tree
+   * (LAYOUT-VSCODE §2) — VSCode's folder row, and the home of project actions.
+   * A slot rather than props, so the explorer stays a file tree and knows
+   * nothing about projects.
+   */
+  projectSlot?: ReactNode
+  /**
    * Reveals the start panel behind the drawer. Only passed below 900px — docked,
    * the starters are already on screen and the button would be a no-op, so the
    * empty state drops to "New file" alone.
@@ -36,6 +43,20 @@ export interface ExplorerProps {
 }
 
 const LONG_PRESS_MS = 500
+
+/* The sidebar's own header bar. See the note at its call site for why the
+ * divider is a shadow and the leading padding is --sp-3. */
+const HEADER =
+  'flex h-bar shrink-0 items-center gap-2 pl-3 pr-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
+
+/* Spec §3.2 section label. `panel-label` carries no styling — tools/qa reads it. */
+const PANEL_LABEL = 'panel-label text-micro leading-none font-semibold uppercase tracking-[0.06em] text-text-3'
+
+/* VSCode's folder row, between the EXPLORER label and the tree
+ * (LAYOUT-VSCODE §2). 4px of padding around a 44px control makes the row 52px,
+ * matching the title bar above it. `sidebar-project-row` is a tools/qa hook. */
+const PROJECT_ROW =
+  'sidebar-project-row flex-none p-1 pl-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 
 /** One visual row: a real node, the "empty folder" line, or a name being typed. */
 type VisualRow =
@@ -156,9 +177,17 @@ export function Explorer(props: ExplorerProps) {
     // select-none on the chrome: dragging across rows must not paint a text
     // selection. The editor and the console keep their text selectable.
     <div className="flex h-full min-h-0 select-none flex-col bg-surface-2">
-      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-border-subtle pl-3 pr-1">
-        <span className="panel-label">Explorer</span>
-        {/* gap-1 here would put two 44px targets 4px apart; §5.2 asks for ≥8px. */}
+      {/* The divider is an inset shadow, not `border-b`: with border-box a 1px
+          border comes out of the bar's own 44px, leaving 43px for the 44px icon
+          buttons inside it — the exact defect the BARS recipe exists to prevent,
+          and it was here. pl-3 matches the title bar's leading padding, so the
+          logo mark above and this label start on one vertical grid line. */}
+      <div className={HEADER}>
+        <span className={PANEL_LABEL}>Explorer</span>
+        {/* 4px between these, not the 8px §5.2 asks for: a 240px sidebar cannot
+            hold a 66px label plus three 44px targets at 8px gaps (that needs
+            242px). Measured, not guessed — see the spacing sweep. The trade is
+            gap, never target size; every box here is still a full 44px. */}
         <div className="ml-auto flex items-center gap-1">
           {hasFolders ? (
             <IconButton label="Collapse folders" onClick={() => setCollapsed(allFolders(tree))}>
@@ -173,6 +202,8 @@ export function Explorer(props: ExplorerProps) {
           </IconButton>
         </div>
       </div>
+
+      {props.projectSlot ? <div className={PROJECT_ROW}>{props.projectSlot}</div> : null}
 
       <div ref={treeRef} className="scroller flex-1 py-1" role="tree" aria-label="Project files">
         {rows.length === 0 ? (

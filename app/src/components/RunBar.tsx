@@ -2,11 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import type { RunStatus } from '../hooks/useRunner'
 import { useMedia } from '../hooks/useMedia'
 import { activeBuffer } from '../console/buffer'
-import { runShortcutLabel } from '../ui/shortcut'
 import { Button, IconButton } from './ui/Button'
-import { IconChevronDown, IconChevronUp, IconClear, IconPlay, IconStop } from './ui/Icons'
+import { IconChevronDown, IconChevronUp, IconClear } from './ui/Icons'
+import { RunControl, resolveEntry, type RunControlState } from './RunControl'
 import { StatusPill } from './StatusPill'
 import { COPY } from '../copy'
+
+/* The console header. Its divider is an inset shadow, not a border: a 1px
+ * border comes out of the bar's own 44px, and the 44px Run control inside it
+ * then overflows by a pixel — which once pushed Run under the keyboard line.
+ * `hand-left` mirrors the row so left-handed students get Run/Stop on the
+ * leading edge (spec §5.3). At ≤460px only decoration goes: the inter-control
+ * gap tightens and the group divider hides, which is what keeps the collapse
+ * control on screen on a 360px phone. */
+/* `console-header` carries no styling — tools/qa reads it. */
+const HEADER =
+  'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
+  'shadow-[inset_0_-1px_0_0_var(--border-subtle)] hand-left:flex-row-reverse ' +
+  'pl-[max(var(--sp-2),env(safe-area-inset-left))] pr-[max(var(--sp-2),env(safe-area-inset-right))]'
 
 export interface RunBarProps {
   status: RunStatus
@@ -39,46 +52,18 @@ export interface RunBarProps {
  */
 export function RunBar(props: RunBarProps) {
   const { status, exitCode, busy, candidates, entryPath, consoleOpen, canRun } = props
-  const preparing = status === 'preparing'
   const narrow = useMedia('(max-width: 899px)')
-  const shortcut = runShortcutLabel()
-  const entry = entryPath && candidates.includes(entryPath) ? entryPath : (candidates[0] ?? null)
+  const entry = resolveEntry(entryPath, candidates)
+  const run: RunControlState = { status, busy, canRun, entry, onRun: props.onRun, onStop: props.onStop }
 
   return (
-    <div className="console-header">
+    <div className={HEADER}>
       {/* Run/Stop — first in DOM order so it is the first tab stop and so
           data-hand="left" (row-reverse) puts it on the leading edge. 44px, not
           the spec's 48px: the header itself is --bar-console (44px), and a 48px
-          button inside it overflows its own bar top and bottom. */}
-      <Button
-        variant={busy ? 'stop' : 'primary'}
-        data-state={status}
-        disabled={!busy && !canRun}
-        aria-pressed={busy}
-        // Exactly "Run" or "Stop", never a variation: this is a contract-level
-        // test selector (ARCHITECTURE §4), and during `preparing` the visible
-        // label reads "Preparing…" while the control's action is still Stop — so
-        // the nuance goes in the tooltip, where nothing depends on it.
-        aria-label={busy ? 'Stop' : 'Run'}
-        title={
-          preparing
-            ? `Stop getting the language ready (${shortcut})`
-            : busy
-              ? `Stop the program (${shortcut})`
-              : canRun
-                ? `Run ${entry ?? 'your code'} (${shortcut})`
-                : COPY.noEntry
-        }
-        className="min-w-[104px]"
-        onClick={busy ? props.onStop : props.onRun}
-      >
-        {/* Spec §7.4 asks for a 16px spinner in the glyph slot while the engine
-            loads. The label reports the phase; the control keeps its Stop role
-            rather than going disabled, because it is the only way to abort a
-            40 MB download and COPY.runtimeVerySlow tells students to use it. */}
-        {preparing ? <span className="spinner" /> : busy ? <IconStop /> : <IconPlay />}
-        {preparing ? 'Preparing…' : busy ? 'Stop' : 'Run'}
-      </Button>
+          button inside it overflows its own bar top and bottom.
+          The title bar renders the same control at ≥900px; see RunControl. */}
+      <RunControl run={run} placement="console" />
 
       {/* What Run will start. Two candidates or more and it is a picker; one and
           it is a label, because a select with a single option is a lie. Either
@@ -124,7 +109,10 @@ export function RunBar(props: RunBarProps) {
         {/* Transcript actions only while there is a transcript on screen. */}
         {consoleOpen ? (
           <>
-            <span aria-hidden="true" className="console-header__rule kb-hide" />
+            {/* A hairline before the trailing controls, so a wide header reads
+                as a deliberate toolbar with two groups rather than two things
+                and a void. */}
+            <span aria-hidden="true" className="kb-hide w-px h-[24px] flex-none mx-1 bg-border-subtle max-[460px]:hidden" />
             <CopyOutputButton />
             {/* Keyboard open: the label goes, the icon and the 44px box stay
                 (spec §4.3 rule 3 — collapse decoration, never function). */}

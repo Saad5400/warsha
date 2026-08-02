@@ -1,10 +1,26 @@
 import type { ReactNode } from 'react'
 import { COPY } from '../copy'
 import { templates, type Template } from '../templates'
-import { LangBadge } from './FileBadge'
+import { badgeClass, LangBadge } from './FileBadge'
 import { LogoLockup } from './Logo'
 import { Button } from './ui/Button'
 import { IconArrowRight, IconPlus } from './ui/Icons'
+
+/* Same pane geometry as Editor's — this panel occupies the editor canvas.
+ * `editor-pane` and `template-card` below carry no styling; they are contract
+ * selectors tools/qa reads. */
+const EDITOR_PANE = 'editor-pane relative flex-1 min-w-0 min-h-editor-min overflow-hidden bg-surface-1'
+
+/* The whole card is one 88px+ target — no nested buttons. The 1px
+ * --border-control edge does the work, since surface-3 on surface-1 is only
+ * ~1.1:1 and invisible on a phone. The rows are head / blurb / manifest with
+ * the blurb taking the slack, so the manifest lines up along the bottom of all
+ * three cards even when one title wraps. */
+const CARD =
+  'template-card group grid grid-rows-[auto_1fr_auto] gap-2 min-h-[88px] p-4 text-left border border-border-control ' +
+  'rounded-lg bg-surface-3 cursor-pointer touch-manipulation ' +
+  'transition-[background-color,border-color,transform] duration-(--dur-fast) ease-standard ' +
+  'hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
 
 export interface WelcomePanelProps {
   onNewFile(): void
@@ -28,16 +44,18 @@ export interface WelcomePanelProps {
  */
 export function WelcomePanel({ onNewFile, onPickTemplate, onImportZip }: WelcomePanelProps) {
   return (
-    <div className="editor-pane">
-      {/* `.welcome` is in-flow now (eng-design removed its absolute/z-30, which
-          used to paint this panel over the explorer drawer and its scrim). */}
-      <div className="welcome scroller" role="region" aria-label="Start a project">
-        {/* Tighter than the old full-page welcome: this column shares the height
-            with the console, so the rhythm drops from 24px to 16px. */}
-        <div className="welcome__col max-w-[30rem] gap-4 py-5 min-[1024px]:max-w-[46rem]">
+    <div className={EDITOR_PANE}>
+      {/* In-flow, never a full-page gate: as an absolute z-30 layer this panel
+          painted OVER the explorer drawer (z-20) and its scrim on a phone. */}
+      <div className="scroller relative z-0 h-full bg-surface-1" role="region" aria-label="Start a project">
+        {/* Weighted above centre — the lockup lands in the upper third, where
+            the eye starts, and nothing important sits where a keyboard would.
+            Tighter than the old full-page welcome: this column shares the
+            height with the console, so the rhythm drops from 24px to 16px. */}
+        <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-4 mx-auto px-5 py-5 min-[1024px]:max-w-[46rem]">
           <div className="flex flex-col items-center gap-4">
             <LogoLockup />
-            <p className="welcome__purpose">{COPY.welcomePurpose}</p>
+            <p className="m-0 text-center text-btn leading-normal text-text-2">{COPY.welcomePurpose}</p>
           </div>
 
           {/* Three cards, stacked on a phone and in one row on a laptop. Same
@@ -47,7 +65,7 @@ export function WelcomePanel({ onNewFile, onPickTemplate, onImportZip }: Welcome
             <StartCard
               autoFocus
               badge={
-                <span aria-hidden="true" className="badge badge--md badge--plain">
+                <span aria-hidden="true" className={badgeClass('md', 'plain')}>
                   <IconPlus size={14} />
                 </span>
               }
@@ -75,23 +93,18 @@ export function WelcomePanel({ onNewFile, onPickTemplate, onImportZip }: Welcome
 
             {/* Said before the wait, not during it: an expected 38 MB download is
                 a completely different experience from an unexplained hang. */}
-            <div className="note note--warn">
+            <div className="note border-l-warn">
               <p className="note__text">{COPY.welcomeFirstRunNote}</p>
             </div>
           </div>
 
-          <p className="welcome__footer">{COPY.storageLocal}</p>
+          <p className="m-0 text-center text-micro leading-[1.6] text-text-3">{COPY.storageLocal}</p>
         </div>
       </div>
     </div>
   )
 }
 
-/**
- * The whole card is one 88px+ target — no nested buttons. Its 1px
- * --border-control edge does the work of separating it from the canvas, since
- * surface-3 on surface-1 is only ~1.1:1 and invisible on a phone.
- */
 function StartCard({
   badge,
   title,
@@ -108,14 +121,20 @@ function StartCard({
   onPick(): void
 }) {
   return (
-    <button type="button" autoFocus={autoFocus} onClick={onPick} className="template-card">
-      <span className="template-card__head">
+    <button type="button" autoFocus={autoFocus} onClick={onPick} className={CARD}>
+      <span className="flex items-center gap-2">
         {badge}
-        <span className="template-card__title">{title}</span>
-        <IconArrowRight className="template-card__go" size={18} />
+        <span className="min-w-0 flex-1 text-btn leading-[1.3] font-semibold text-text-1">{title}</span>
+        {/* A quiet arrow, so the card reads as something you go into. It is the
+            only decoration on the card and it takes the accent on hover. */}
+        <IconArrowRight
+          size={18}
+          className="flex-none text-text-3 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
+        />
       </span>
-      <span className="template-card__blurb">{blurb}</span>
-      <span className="template-card__manifest">{manifest}</span>
+      <span className="text-meta leading-normal text-text-2">{blurb}</span>
+      {/* Tabular figures so three cards' counts line up down the column. */}
+      <span className="text-micro leading-[1.4] tabular-nums text-text-3">{manifest}</span>
     </button>
   )
 }

@@ -24,7 +24,7 @@ export class OpfsStore implements ProjectStore {
   }
 
   static available(): boolean {
-    return typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
+    return !opfsDisabled && typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
   }
 
   private async root(): Promise<FileSystemDirectoryHandle> {
@@ -163,6 +163,40 @@ export class MemoryStore implements ProjectStore {
  * memory fallback keeps one store per distinct address for the session, so
  * switching projects and switching back does not lose what was typed.
  */
+/**
+ * Set by `probeOpfs()` when the API is present but does not actually work —
+ * Safari private browsing being the case that matters, where
+ * `navigator.storage.getDirectory` exists and every call to it rejects. Feature
+ * *detection* says yes and the feature says no, so the only honest test is to
+ * use it once. Everything downstream then routes to `MemoryStore` instead of
+ * failing one write at a time forever.
+ */
+let opfsDisabled = false
+
+/** True once OPFS has been proven usable (or proven not to be). */
+export async function probeOpfs(): Promise<boolean> {
+  if (opfsDisabled) return false
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+    opfsDisabled = true
+    return false
+  }
+  try {
+    const root = await navigator.storage.getDirectory()
+    // A directory handle alone proves little; Safari hands one out and then
+    // refuses the write. Round-trip a probe file and delete it.
+    const dir = await root.getDirectoryHandle('.warsha-probe', { create: true })
+    const handle = await dir.getFileHandle('w', { create: true })
+    const writable = await handle.createWritable()
+    await writable.write('ok')
+    await writable.close()
+    await root.removeEntry('.warsha-probe', { recursive: true })
+    return true
+  } catch {
+    opfsDisabled = true
+    return false
+  }
+}
+
 export function createStore(segments?: readonly string[]): ProjectStore {
   if (OpfsStore.available()) return new OpfsStore(segments)
   const key = (segments ?? [LEGACY_ROOT]).join('/')

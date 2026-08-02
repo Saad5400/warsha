@@ -15,6 +15,40 @@ export interface TabsProps {
 
 const LONG_PRESS_MS = 500
 
+/* The strip's bottom divider is an inset shadow, not a border: with border-box
+ * sizing a 1px border eats into its 44px and every tab comes out 43px tall,
+ * one pixel under the touch floor. A shadow costs no layout. The scrollbar is
+ * hidden because 10px out of a 44px row is not affordable — Tabs renders an
+ * edge fade instead when the strip actually scrolls. */
+const STRIP =
+  'tab-strip flex flex-none h-bar overflow-x-auto overflow-y-hidden bg-surface-2 ' +
+  'shadow-[inset_0_-1px_0_0_var(--border-subtle)] snap-x snap-proximity ' +
+  '[scrollbar-width:none] [&::-webkit-scrollbar]:h-0'
+
+/* Active tab: accent rule (7.92:1) + weight 600 + text-1 (13.19 vs 7.72). The
+ * surface-1 fill matches the editor canvas so the tab owns it, and it carries
+ * none of the load — the tab stays unambiguous in greyscale (principle 2). The
+ * 2px bottom rule is reserved at all times so activating never shifts a label. */
+const TAB =
+  'group flex items-center gap-2 flex-none h-full min-w-[96px] max-w-[60vw] px-3 cursor-pointer ' +
+  'touch-manipulation snap-end bg-surface-2 border-b-2 border-b-transparent ' +
+  'shadow-[inset_-1px_0_0_0_var(--border-subtle)] transition-[background-color,color] ' +
+  'duration-(--dur-fast) ease-standard hover:bg-surface-3 active:bg-surface-4 ' +
+  'data-[state=active]:bg-surface-1 data-[state=active]:border-b-accent ' +
+  'data-[state=active]:shadow-[inset_1px_0_0_0_var(--border-subtle),inset_-1px_0_0_0_var(--border-subtle)] ' +
+  'data-[state=active]:hover:bg-surface-1'
+
+/* `tab-strip`, `tab__label` and `tab__close` are styling-free — tools/qa
+ * selects all three, so they stayed behind when their rules became utilities. */
+const TAB_LABEL =
+  'tab__label flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-tab leading-[1.2] ' +
+  'font-medium text-text-2 group-data-[state=active]:text-text-1 group-data-[state=active]:font-semibold'
+
+const TAB_CLOSE =
+  'tab__close grid place-items-center flex-none size-touch -mr-2 rounded-sm text-[14px] leading-none text-text-3 ' +
+  'touch-manipulation cursor-pointer hover:text-text-1 hover:bg-surface-4 ' +
+  'active:text-text-1 active:bg-surface-4 active:scale-92'
+
 /**
  * Active tab carries three simultaneous signals (spec §7.2) — a 2px accent rule
  * on the bottom edge, weight 600, and text-1 — so it is unambiguous in greyscale
@@ -98,11 +132,11 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose }: TabsProps
     ]
   }
 
-  if (tabs.length === 0) return <div className="tab-strip" />
+  if (tabs.length === 0) return <div className={STRIP} />
 
   return (
     <div className="relative flex-none">
-      <div ref={stripRef} role="tablist" aria-label="Open files" className="tab-strip select-none">
+      <div ref={stripRef} role="tablist" aria-label="Open files" className={STRIP + ' select-none'}>
         {tabs.map((path) => {
           const { name } = splitPath(path)
           const active = path === activePath
@@ -182,7 +216,7 @@ function Tab({
       aria-selected={active}
       data-state={active ? 'active' : 'inactive'}
       title={path}
-      className="tab group"
+      className={TAB}
       onClick={onSelect}
       // Middle-click closes. mousedown has to be swallowed too, or Windows
       // Chrome starts its autoscroll and the strip jumps.
@@ -212,7 +246,7 @@ function Tab({
       onTouchCancel={cancel}
     >
       <FileBadge name={name} />
-      <span className="tab__label">{name}</span>
+      <span className={TAB_LABEL}>{name}</span>
       {/* One 44px slot, always present, so activating or dirtying a tab never
           shifts its label. Unsaved shows the amber dot; reaching for the slot
           turns it into the ×. Below 900px the × is on the active tab only — an ×
@@ -220,7 +254,7 @@ function Tab({
       <button
         type="button"
         aria-label={dirty ? `Close ${name} (unsaved)` : `Close ${name}`}
-        className={'tab__close' + (active ? '' : ' hidden min-[900px]:grid')}
+        className={TAB_CLOSE + (active ? '' : ' hidden min-[900px]:grid')}
         onClick={(e) => {
           e.stopPropagation()
           onClose()

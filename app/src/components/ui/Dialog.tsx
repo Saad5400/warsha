@@ -1,10 +1,22 @@
+import * as RDialog from '@radix-ui/react-dialog'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button } from './Button'
 
 /**
- * Native <dialog> so focus trapping, Escape and the backdrop come from the
- * platform rather than from us. Centred, raised, and never wider than a 390px
- * phone minus its gutters.
+ * Radix Dialog underneath, a real `<dialog>` element on top.
+ *
+ * Radix owns what the platform used to: the focus trap, Escape, the portal and
+ * the outside-press decision. What it does NOT own is the element — `asChild`
+ * renders the card as a `<dialog open>` rather than Radix's div, because two QA
+ * suites select `dialog input`. It is a non-modal `<dialog>` now, so the
+ * browser's top layer and `::backdrop` are gone: the overlay below draws the
+ * same `--scrim`, and `--z-dialog` (index.css STACKING) puts the pair where the
+ * top layer had them.
+ *
+ * Note `bg-(--scrim)` and not the bracket form. Tailwind v4 dropped that
+ * shorthand; it compiles to an invalid declaration that is silently discarded,
+ * and a transparent scrim over a live-looking IDE is exactly how this went
+ * wrong before (index.css §"READ THIS FIRST").
  *
  * `dismissible` decides whether a tap on the backdrop closes it: true for a
  * prompt or a picker, false for anything destructive, where a stray tap outside
@@ -16,6 +28,7 @@ export function Modal({
   dismissible = false,
   labelledBy,
   onEnterOutsideButton,
+  open = true,
 }: {
   children: ReactNode
   onCancel: () => void
@@ -24,52 +37,97 @@ export function Modal({
   /** Enter pressed with nothing focusable focused — used to bind Enter to the
    *  safe answer in a destructive dialog, which has no submitting form. */
   onEnterOutsideButton?: () => void
+  /** Drive the exit animation. A caller that unmounts the Modal outright (the
+   *  default, and what ImportZipDialog does) simply gets no exit — the element
+   *  is gone before it could play. DialogHost holds the request one beat longer
+   *  and flips this instead. */
+  open?: boolean
 }) {
-  const ref = useRef<HTMLDialogElement>(null)
-
+  const cardRef = useRef<HTMLDialogElement>(null)
+  // Whatever had focus before the dialog opened. Radix aims its own restore at
+  // a trigger, and these dialogs have none — they are opened from a menu item
+  // that is gone by the time the dialog closes.
+  const returnTo = useRef<Element | null>(null)
   useEffect(() => {
-    const dlg = ref.current
-    if (!dlg) return
-    if (!dlg.open) dlg.showModal()
-    const onNativeCancel = (e: Event) => {
-      e.preventDefault()
-      onCancel()
+    returnTo.current = document.activeElement
+    return () => {
+      const el = returnTo.current
+      if (el instanceof HTMLElement && el.isConnected) el.focus()
     }
-    dlg.addEventListener('cancel', onNativeCancel)
-    return () => dlg.removeEventListener('cancel', onNativeCancel)
-  }, [onCancel])
+  }, [])
 
   return (
-    <dialog
-      ref={ref}
-      aria-labelledby={labelledBy}
-      // The card fills the element, so a hit on the <dialog> itself can only be
-      // a hit on the backdrop. When the dialog is not dismissible, swallow the
-      // press: otherwise it moves focus off the buttons onto the dialog and the
-      // student is left with a keyboard that does nothing.
-      onPointerDown={(e) => {
-        if (e.target !== ref.current) return
-        if (dismissible) onCancel()
-        else e.preventDefault()
+    <RDialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel()
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && onEnterOutsideButton && (e.target as HTMLElement).tagName !== 'BUTTON') {
-          e.preventDefault()
-          onEnterOutsideButton()
-        }
-      }}
-      // `.dlg-host` (index.css) is the positioner — centring, the 26rem/100vw-32
-      // width, the height cap — and `dialog::backdrop` there owns the scrim. It
-      // replaces a `backdrop:bg-[ --scrim ]` utility (brackets spaced on purpose:
-      // written tight, Tailwind scans this comment and emits the dead class
-      // again), which v4 compiles to an invalid declaration and drops, leaving a
-      // modal with nothing dimming the IDE behind it.
-      className="dlg-host"
     >
-      <div className="dlg scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))]">{children}</div>
-    </dialog>
+      <RDialog.Portal>
+        <RDialog.Overlay className="fixed inset-0 z-(--z-dialog) bg-(--scrim) data-[state=closed]:animate-fade-out data-[state=open]:animate-fade-in" />
+        <RDialog.Content
+          asChild
+          // Radix only sets aria-labelledby when a Dialog.Title is present, and
+          // these dialogs bring their own <h2 id>. Nothing to undo.
+          aria-labelledby={labelledBy}
+          aria-describedby={undefined}
+          onOpenAutoFocus={(e) => {
+            // Children mount before this fires, so a dialog that placed its own
+            // focus (the prompt's field, the confirm's safe button) has already
+            // done it — leave that alone. One that did not gets Radix's
+            // first-tabbable, which is what showModal used to give it.
+            const card = cardRef.current
+            const active = document.activeElement
+            if (card && active !== card && active instanceof HTMLElement && card.contains(active)) e.preventDefault()
+          }}
+          onPointerDownOutside={(e) => {
+            if (!dismissible) e.preventDefault()
+          }}
+          onInteractOutside={(e) => {
+            if (!dismissible) e.preventDefault()
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && onEnterOutsideButton && (e.target as HTMLElement).tagName !== 'BUTTON') {
+              e.preventDefault()
+              onEnterOutsideButton()
+            }
+          }}
+        >
+          {/* `open` is what makes a <dialog> render at all; it is deliberately
+              NOT showModal(), so Radix stays in charge of modality. The card
+              centres itself the way the UA centres a modal one — pinned to all
+              four edges with `m-auto` against a height that is not `auto` — and
+              it must stay a DIRECT child of the portal: Radix wraps each portal
+              child in its own Presence, so a wrapper of ours carrying no
+              animation would be dropped the instant the dialog closes, taking
+              the exit with it. */}
+          <dialog
+            ref={cardRef}
+            open
+            className="fixed inset-0 z-(--z-dialog) m-auto h-fit max-h-[calc(var(--app-h,100dvh)-var(--sp-6))] w-[min(26rem,calc(100vw-var(--sp-6)))] border-none bg-transparent p-0 data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in"
+          >
+            <div className="scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))] rounded-lg border border-border-subtle bg-surface-3 p-4 shadow-raised">
+              {children}
+            </div>
+          </dialog>
+        </RDialog.Content>
+      </RDialog.Portal>
+    </RDialog.Root>
   )
 }
+
+/* The card's own type and layout, as utilities.
+ *
+ * `.dlg-title`, `.dlg-msg`, `.dlg-input` and `.dlg-actions` still exist in
+ * index.css, but only because ImportZipDialog, CapabilityScreens, CrashScreen
+ * and Explorer's inline rename still write them by hand — call sites outside
+ * this directory, which this refactor may not touch. These constants are the
+ * same declarations as utilities. They are named and kept together so that when
+ * those four call sites convert, deleting the recipe classes is one search, and
+ * so a change to one side is visibly a change to only one side. */
+const TITLE = 'mb-2 text-dlg-title leading-[1.3] font-semibold text-text-1'
+const MESSAGE = 'text-btn leading-normal text-text-2'
+const ACTIONS = 'mt-4 flex justify-end gap-2'
 
 export interface PromptRequest {
   kind: 'prompt'
@@ -94,16 +152,40 @@ export interface ConfirmRequest {
 
 export type DialogRequest = PromptRequest | ConfirmRequest
 
+/** Long enough for the 90ms exit plus a frame; short enough that a student
+ *  pressing Create twice cannot get between the two. */
+const EXIT_MS = 130
+
 export function DialogHost({ request }: { request: DialogRequest | null }) {
-  if (!request) return null
-  return request.kind === 'prompt' ? (
-    <PromptDialog key="prompt" request={request} />
+  // The request is gone the instant it resolves, and an unmounted dialog cannot
+  // animate out. So the last one is held here, closed, for the length of its
+  // exit — Radix keeps the card mounted while `data-state="closed"` plays.
+  const [shown, setShown] = useState<DialogRequest | null>(request)
+  const exit = useRef(0)
+
+  // Adjusted during render, not in an effect: an effect would first commit one
+  // frame with nothing on screen, which unmounts the card and loses the very
+  // animation this exists for.
+  if (request && request !== shown) setShown(request)
+
+  useEffect(() => {
+    clearTimeout(exit.current)
+    if (request || !shown) return
+    exit.current = window.setTimeout(() => setShown(null), EXIT_MS)
+    return () => clearTimeout(exit.current)
+  }, [request, shown])
+
+  if (!shown) return null
+  const open = request !== null
+
+  return shown.kind === 'prompt' ? (
+    <PromptDialog key="prompt" request={shown} open={open} />
   ) : (
-    <ConfirmDialog key="confirm" request={request} />
+    <ConfirmDialog key="confirm" request={shown} open={open} />
   )
 }
 
-function PromptDialog({ request }: { request: PromptRequest }) {
+function PromptDialog({ request, open }: { request: PromptRequest; open: boolean }) {
   const [value, setValue] = useState(request.value ?? '')
   const inputRef = useRef<HTMLInputElement>(null)
   const titleId = useId()
@@ -129,7 +211,7 @@ function PromptDialog({ request }: { request: PromptRequest }) {
   }, [])
 
   return (
-    <Modal onCancel={() => request.resolve(null)} dismissible labelledBy={titleId}>
+    <Modal open={open} onCancel={() => request.resolve(null)} dismissible labelledBy={titleId}>
       <form
         // Create stays ENABLED at all times and answers every press. A disabled
         // primary swallows both the click and the Enter key (HTML skips implicit
@@ -142,12 +224,16 @@ function PromptDialog({ request }: { request: PromptRequest }) {
           if (canSubmit) request.resolve(trimmed)
         }}
       >
-        <h2 id={titleId} className="dlg-title">
+        <h2 id={titleId} className={TITLE}>
           {request.title}
         </h2>
-        {request.label ? <p className="dlg-label">{request.label}</p> : null}
+        {request.label ? <p className="mb-2 text-meta leading-normal text-text-3">{request.label}</p> : null}
         <input
           ref={inputRef}
+          // Spelled out even though it is the default: `.dlg-input` used to be
+          // how tooling found this field, and `input[type="text"]` is what it
+          // reaches for now that the styling is utilities.
+          type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={request.placeholder}
@@ -156,17 +242,17 @@ function PromptDialog({ request }: { request: PromptRequest }) {
           spellCheck={false}
           aria-invalid={problem ? true : undefined}
           aria-describedby={problem ? problemId : undefined}
-          className="dlg-input"
+          className="min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 font-code text-input text-text-1 aria-[invalid=true]:border-danger"
         />
         {problem ? (
-          <p id={problemId} className="dlg-error">
-            <span aria-hidden="true" className="dlg-error__glyph">
+          <p id={problemId} className="mt-2 flex items-start gap-2 text-meta leading-normal text-danger">
+            <span aria-hidden="true" className="flex-none leading-normal">
               ✕
             </span>
             {problem}
           </p>
         ) : null}
-        <div className="dlg-actions">
+        <div className={ACTIONS}>
           <Button variant="ghost" large onClick={() => request.resolve(null)}>
             Cancel
           </Button>
@@ -179,7 +265,7 @@ function PromptDialog({ request }: { request: PromptRequest }) {
   )
 }
 
-function ConfirmDialog({ request }: { request: ConfirmRequest }) {
+function ConfirmDialog({ request, open }: { request: ConfirmRequest; open: boolean }) {
   const okRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const titleId = useId()
@@ -194,11 +280,11 @@ function ConfirmDialog({ request }: { request: ConfirmRequest }) {
 
   const body = (
     <>
-      <h2 id={titleId} className="dlg-title">
+      <h2 id={titleId} className={TITLE}>
         {request.title}
       </h2>
-      {request.message ? <p className="dlg-msg">{request.message}</p> : null}
-      <div className="dlg-actions">
+      {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
+      <div className={ACTIONS}>
         <Button ref={cancelRef} variant="ghost" large onClick={() => request.resolve(false)}>
           Cancel
         </Button>
@@ -217,6 +303,7 @@ function ConfirmDialog({ request }: { request: ConfirmRequest }) {
 
   return (
     <Modal
+      open={open}
       onCancel={() => request.resolve(false)}
       dismissible={!danger}
       labelledBy={titleId}

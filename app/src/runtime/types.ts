@@ -45,6 +45,18 @@ export interface Runtime {
   readonly id: 'java' | 'python'
   load(onProgress: (p: ProgressReport) => void): Promise<void>   // heavy engine bootstrap, idempotent
   run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession>
+  /**
+   * OPTIONAL. Throw the engine away: report any live session as killed,
+   * terminate the worker and start nothing in its place. A later load()/run()
+   * boots from scratch.
+   *
+   * The shell calls this when it has lost faith in the engine — a Stop that
+   * produced no onExit, or the page going away — because there is no platform
+   * event for "your worker died", and a worker the shell cannot prove is alive
+   * must not be the reason Run stays disabled. An engine that does not
+   * implement it simply keeps the worker it has; both runtimes do implement it.
+   */
+  dispose?(): void
 }
 
 /** Accepts either shape, so an engine may report a plain string. */

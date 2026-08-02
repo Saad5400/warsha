@@ -41,6 +41,27 @@ export interface ConsoleSnapshot {
 
 const MAX_LINES = 5000
 const DROP_CHUNK = 500
+
+/**
+ * A cap on the transcript in characters, not just in lines.
+ *
+ * 5,000 lines is not a bound on memory. The Python worker stops forwarding at
+ * 2 MiB per run, but **the Java runtime has no output cap at all** (its
+ * INTEGRATION.md says so), so `while (true) System.out.print("x");` is 5,000
+ * lines' worth of nothing and one line that grows until the tab dies. Both caps
+ * are needed: lines bound the reconciliation cost, characters bound the heap.
+ */
+const MAX_CHARS = 4 * 1024 * 1024
+
+/**
+ * How long one line may get before it is closed against its will.
+ *
+ * A program printing without newlines appends to a single string forever, and
+ * every append reallocates it — so this is a rendering cost (one DOM text node
+ * of megabytes) and a GC cost long before it is a memory cost. Wrapping is
+ * cosmetically wrong for a terminal and correct for everything else here.
+ */
+const MAX_LINE_CHARS = 16 * 1024
 /** Upper bound on flush latency when requestAnimationFrame is throttled. */
 const FALLBACK_FLUSH_MS = 100
 
@@ -59,6 +80,8 @@ export class ConsoleBuffer {
   private lines: ConsoleLine[] = []
   private truncated = false
   private nextId = 1
+  /** Running total of characters held, so `trim()` costs O(1) per write. */
+  private chars = 0
   private snapshot: ConsoleSnapshot = { lines: [], truncated: false }
   private listeners = new Set<() => void>()
   private frame = 0
@@ -89,6 +112,14 @@ export class ConsoleBuffer {
       const text = parts[i]
       const closes = i < parts.length - 1
       const last = this.lines[this.lines.length - 1]
+      // An open line long enough to be a problem is closed here, so the chunk
+      // below starts a fresh one. The student sees a wrap; the alternative is a
+      // single multi-megabyte text node.
+      const openAndFull = last && !last.complete && lineLength(last) + text.length > MAX_LINE_CHARS
+      if (openAndFull) last.complete = true
+
+      this.chars += text.length + (closes ? 1 : 0)
+
       if (last && !last.complete) {
         // New objects rather than mutation: the view keys off identity to
         // re-render just this row.
@@ -128,6 +159,7 @@ export class ConsoleBuffer {
   clear() {
     this.lines = []
     this.truncated = false
+    this.chars = 0
     this.flush()
   }
 
@@ -143,9 +175,18 @@ export class ConsoleBuffer {
   }
 
   private trim() {
-    if (this.lines.length <= MAX_LINES) return
-    this.lines.splice(0, DROP_CHUNK)
-    this.truncated = true
+    if (this.lines.length > MAX_LINES) {
+      for (const dropped of this.lines.splice(0, DROP_CHUNK)) this.chars -= lineLength(dropped) + 1
+      this.truncated = true
+    }
+    // Character budget. Dropped in chunks for the same reason as lines: a
+    // one-at-a-time shift on every write of a tight print loop is itself the
+    // jank the batching exists to avoid.
+    while (this.chars > MAX_CHARS && this.lines.length > DROP_CHUNK) {
+      for (const dropped of this.lines.splice(0, DROP_CHUNK)) this.chars -= lineLength(dropped) + 1
+      this.truncated = true
+    }
+    if (this.chars < 0) this.chars = 0
   }
 
   private schedule() {
@@ -176,6 +217,12 @@ export class ConsoleBuffer {
     this.snapshot = { lines: this.lines.slice(), truncated: this.truncated }
     for (const fn of this.listeners) fn()
   }
+}
+
+function lineLength(line: ConsoleLine): number {
+  let n = 0
+  for (const s of line.segments) n += s.text.length
+  return n
 }
 
 /** Merges into the trailing segment when the kind matches, else appends one. */

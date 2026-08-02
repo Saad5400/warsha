@@ -1,5 +1,5 @@
 import type { FsSnapshot, ProjectStore } from './types'
-import { LEGACY_ROOT, OpfsStore, createStore } from './opfs'
+import { LEGACY_ROOT, OpfsStore, createStore, probeOpfs } from './opfs'
 
 /**
  * Multiple projects, minimally.
@@ -211,6 +211,13 @@ export type MigrationOutcome =
   | { kind: 'first-run' }
   | { kind: 'migrated'; files: number }
   | { kind: 'migration-kept-original'; files: number }
+  /** Storage refused to work at all; this session is in memory only. */
+  | { kind: 'storage-unavailable'; detail: string }
+  /**
+   * The project prefs pointed at is gone — the iOS eviction case, or a second
+   * tab deleting it. We opened something else rather than showing nothing.
+   */
+  | { kind: 'reopened-elsewhere'; wanted: string }
 
 export interface OpenedProjects {
   projects: ProjectsStore
@@ -227,7 +234,31 @@ export interface OpenedProjects {
  * exists, otherwise the most recently opened one does.
  */
 export async function openProjects(preferredId: string | null): Promise<OpenedProjects> {
-  const projects = createProjects()
+  // OPFS is probed rather than feature-detected: Safari private browsing
+  // exposes the whole API and rejects every call, and the old code turned that
+  // into a rejected boot promise — the app rendered its shell with `ready`
+  // stuck false and no message at all. See probeOpfs().
+  const opfsWorks = await probeOpfs()
+  try {
+    const opened = await openWith(createProjects(), preferredId)
+    // Falling back to memory must not be silent. `capabilities.ts` cannot catch
+    // this case: it feature-detects `navigator.storage.getDirectory`, which
+    // Safari private browsing provides and then refuses to honour — so the
+    // capability warning stays quiet while every write goes to a Map that dies
+    // with the tab. This is the only place that knows the difference.
+    if (!opfsWorks || opened.projects.kind === 'memory') {
+      return { ...opened, migration: { kind: 'storage-unavailable', detail: 'OPFS is not usable in this browser' } }
+    }
+    return opened
+  } catch (error) {
+    // Anything at all went wrong with real storage. A session in memory with a
+    // banner is a usable IDE; a thrown promise here is a dead app.
+    const fallback = await openWith(new MemoryProjects(), preferredId)
+    return { ...fallback, migration: { kind: 'storage-unavailable', detail: String(error) } }
+  }
+}
+
+async function openWith(projects: ProjectsStore, preferredId: string | null): Promise<OpenedProjects> {
   let list = await projects.list()
   let migration: MigrationOutcome = { kind: 'none' }
 
@@ -252,7 +283,23 @@ export async function openProjects(preferredId: string | null): Promise<OpenedPr
     list = await projects.list()
   }
 
-  const current = list.find((p) => p.id === preferredId) ?? list[0]
+  let current = list.find((p) => p.id === preferredId)
+  if (!current) {
+    // The remembered project is not there. On iOS that is eviction, not a bug:
+    // Safari clears OPFS for sites that are not installed to the home screen.
+    // Open the next most recent one and say so, rather than crash-looping on an
+    // id that will never come back.
+    if (preferredId && list.length > 0) migration = { kind: 'reopened-elsewhere', wanted: preferredId }
+    current = list[0]
+  }
+  // `create` can itself fail on a store that lies about being writable, which
+  // would otherwise leave `current` undefined and the next line throwing on
+  // `.id`. One more create, then give up to the caller's fallback.
+  if (!current) {
+    current = await projects.create(DEFAULT_FIRST_NAME)
+    list = await projects.list()
+    if (list.length === 0) list = [current]
+  }
   await projects.touch(current.id)
   return { projects, list, current, migration }
 }

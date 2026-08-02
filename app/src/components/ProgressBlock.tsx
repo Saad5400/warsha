@@ -11,6 +11,23 @@ const phaseLabel: Record<LoadProgress['phase'], string> = {
 
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
+/* A transcript block, not a card. It used to be a rounded --surface-3 panel,
+ * which read as a dialog that had wandered into the output; flush with the rows
+ * on the same left grid, with the same 3px leading rule `.console-row` uses,
+ * boot progress looks like the first thing the program printed. */
+const BLOCK =
+  'progress-block mb-2 px-3 pt-1 pb-2 border-l-[3px] border-l-accent ' +
+  'bg-[color-mix(in_srgb,var(--accent-soft)_45%,transparent)]'
+
+/* The numbers change every tick; without tabular figures the whole line
+ * twitches sideways each second, which is the opposite of reassuring. */
+const META = 'font-code text-meta leading-normal tabular-nums text-text-3'
+
+/* `progress-block` and `progress-track` carry no styling — tools/qa reads them. */
+const TRACK = 'progress-track relative flex-1 h-1 overflow-hidden rounded-pill bg-surface-4'
+const FILL = 'h-full rounded-pill bg-accent transition-[width] duration-200 ease-linear'
+const SWEEP = 'w-[30%] animate-sweep motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
+
 /** Does the engine's message already say what phase this is? */
 const namesThePhase = (message: string, phase: LoadProgress['phase']) =>
   message.toLowerCase().includes(phaseLabel[phase].split(' ')[0].toLowerCase())
@@ -45,24 +62,26 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
   ].filter(Boolean)
 
   return (
-    <div data-phase={phase} className="progress-block">
-      <p className="progress-block__title">{message}</p>
+    <div data-phase={phase} className={BLOCK}>
+      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{message}</p>
 
       <div className="mt-2 flex items-center gap-2">
-        <div className="progress-track">
+        <div className={TRACK}>
           {determinate ? (
-            <div className="progress-fill" style={{ width: `${pct}%` }} />
+            <div className={FILL} style={{ width: `${pct}%` }} />
           ) : (
             // A 30%-wide sweep, and the counter below carries the real
             // information: an indeterminate bar alone is indistinguishable
             // from a hang.
-            <div className="progress-fill progress-fill--sweep" />
+            <div className={FILL + ' ' + SWEEP} />
           )}
         </div>
-        {pct !== null ? <span className="progress-pct">{pct}%</span> : null}
+        {pct !== null ? (
+          <span className="min-w-[4ch] text-right text-meta tabular-nums text-text-2">{pct}%</span>
+        ) : null}
       </div>
 
-      <p className="progress-block__meta mt-2">
+      <p className={META + ' mt-2'}>
         {/* The engine's own message usually names the phase ("Downloading
             Python…"); repeating it under the bar reads as a stutter. */}
         {namesThePhase(message, phase) ? null : (
@@ -70,7 +89,7 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
         )}
         {detail.join(' · ')}
       </p>
-      <p className="progress-block__meta">{COPY.runtimeNextInstant}</p>
+      <p className={META}>{COPY.runtimeNextInstant}</p>
     </div>
   )
 }

@@ -50,7 +50,7 @@ Small and boring on purpose — roughly one file per box on screen.
 | `Explorer` | Tree, long-press/⋯ menu, create/rename/delete. |
 | `Tabs` | Horizontal strip, dirty dot, close. |
 | `Editor` | ~40-line shell around `editor/setup.ts`. |
-| `Console` | Transcript + sticky stdin row. |
+| `Console` | The transcript, the live stdin line inside it, and the sticky status foot. |
 | `RunBar` | The console header: Run/Stop, status pill, entry picker, Clear, collapse. |
 | `ConsoleDivider` | Drag-resize handle (≥900px only). |
 | `ProgressBlock` | First-run engine download (bar, byte counter, phase). |
@@ -97,7 +97,7 @@ gitignored build products. See `runtimes/java/INTEGRATION.md` §2–§3.
 - `run(files, entryPath, io)` gets **all** project files, saved first. Paths are project-relative,
   `/`-separated, no leading slash (`app/Main.java`, `helpers/shapes.py`).
 - `onStdout`/`onStderr` take **raw chunks**; partial lines are expected and render immediately
-  (`System.out.print("Your name: ")` puts the input row on the same visual line).
+  (`System.out.print("Your name: ")` puts the live input on the same visual line as the prompt).
 - `onExit(code)`: `0`/`n` for a real exit, `null` for killed. The shell shows *Finished*, *Stopped
   early* or *Stopped by you* accordingly — and "stopped by you" is deliberately neutral, not an error.
 - After `kill()`, send exactly one `onExit(null)`. Output from a superseded run is discarded by a run
@@ -205,8 +205,12 @@ a newline. Row-level styling uses the line's kind, which becomes `err` if *any* 
 `ui/viewport.ts` is the whole answer to DESIGN-SPEC §4. `100dvh` is correct on Android and wrong on
 iPadOS, where the layout viewport does not shrink for the software keyboard — so `visualViewport`
 drives `--app-h` and `--kb-inset`, and `html[data-kb="open"]` switches on the compact layout. The
-console carries `.console-lift` (`margin-bottom: var(--kb-inset)`) and its stdin row is
-`position: sticky; bottom: 0`, so the input can never end up under the keyboard.
+console's status foot is `position: sticky; bottom: 0` so the state sentence can never end up under
+the keyboard, and the live stdin line — which now lives inside the scrolling transcript — is kept in
+view by a `ResizeObserver` on the transcript that re-sticks it to the bottom whenever the panel
+changes size. There is deliberately **no** `.console-lift`: `--app-h` is `visualViewport.height`,
+which is already the height above the keyboard, so subtracting `--kb-inset` again double-counts it
+(index.css says this at length, with the measurements).
 
 ---
 
@@ -316,7 +320,39 @@ target states without reading component code:
 | `aside[data-state]` | `open` / `closed` | explorer / drawer |
 | `[data-kind]` | `out` `err` `echo` `meta` | console row (the leading rule and row tint) |
 | `[data-seg]` | `out` `err` `echo` `meta` | a styled span *within* a row — this is what makes `Your name: Saad` one line, two colours |
+| `.stdin-row[data-waiting]` | `true` / `false` | the live line — `true` only while the program is blocked on a read |
 | `[data-phase]` | `download` `unpack` `boot` `compile` | progress block |
+
+**The console has one surface, and no standing input.** This is a hard behavioural contract, not a
+style choice, and re-adding an always-visible input bar is a regression:
+
+- While the program is **not** reading stdin there is **no input in the DOM at all** — not a disabled
+  one, not a greyed one. `[aria-label="Program input"]` has a count of zero at idle, while streaming,
+  and after exit.
+- When the program blocks on a read, an input appears **inside the transcript scroller**, at the
+  position a terminal cursor would occupy. If the program left the last line open
+  (`input("Your name: ")`), the input joins that row, so the prompt and the answer are one visual
+  line; if the last line was closed, the live line opens with the same `› ` marker `buffer.echo()`
+  will write a moment later. Either way it is a `.console-row`, on the transcript's own grid.
+- It survives Enter by ~900 ms (`LIVE_GRACE_MS`). Two reads in a row (`input(); input()`) would
+  otherwise unmount and remount the element between them, and the blur in that gap slams a phone's
+  software keyboard shut and reopens it. During the grace the element carries no placeholder and
+  `data-waiting="false"`; anything typed goes through the runner's type-ahead queue.
+- The only permanent chrome under the transcript is `.console-foot`, which holds the status line —
+  sticky, so §4.3 rule 1 still holds for the sentence that says the program is waiting.
+
+The stable handles, all relied on by `tools/qa`: `aria-label="Program output"` (the scroller),
+`aria-label="Program input"` (the live input), the placeholder string
+**`Type your answer, then press Enter`** verbatim, `.stdin-row` / `.stdin-input` (kept from the old
+input bar — it is the same thing, moved into the stream), `.console-foot`, `.console-transcript`,
+`section[aria-label="Console"][data-state]`, and the exact button names `Run` / `Stop`.
+
+**Console keyboard and pointer behaviour**, also asserted: `Ctrl+L` clears (the handler is on the
+console panel, so the browser's own Ctrl+L is untouched everywhere else); right-click with a
+selection copies just that selection and suppresses the native menu, with nothing selected the
+native menu opens as usual; a click anywhere in the console while it is waiting focuses the live
+input (on `click`, not `pointerup` — the transcript is focusable for Ctrl+L, and the browser moves
+focus to it on the mousedown that follows a tap). The transcript is `tabindex="0"`.
 
 **Two rules from Design that the code obeys and a restyle must keep.** Never put white text on
 `--accent` (1.99:1 — amber fills take `--accent-ink`). Never signal a state by surface colour alone
@@ -340,15 +376,28 @@ built `dist/` (screenshots and scripts under the session scratchpad):
 
 | Script | What it proves |
 | --- | --- |
-| `overlap.mjs` | The **overlap sweep**: 20 scenarios across 1280/1024/768/430/390px, console dragged to min and max plus live handle drags, collapsed/open, keyboard-open at two widths, long filenames, the 900px drawer breakpoint, live progress, and a toast with the keyboard up. Detects four classes — a child spilling a fixed-size parent, in-flow siblings overlapping within one stacking root, content lost to a non-scrollable `overflow: hidden`, and named invariants (transcript vs stdin row, drag handle vs Run, tabs vs top bar, everything vs `--kb-inset`). |
+| `overlap.mjs` | The **overlap sweep**: 20 scenarios across 1280/1024/768/430/390px, console dragged to min and max plus live handle drags, collapsed/open, keyboard-open at two widths, long filenames, the 900px drawer breakpoint, live progress, and a toast with the keyboard up. Detects four classes — a child spilling a fixed-size parent, in-flow siblings overlapping within one stacking root, content lost to a non-scrollable `overflow: hidden`, and named invariants (transcript vs the console's status foot, drag handle vs Run, tabs vs top bar, everything vs `--kb-inset`). |
 | `audit.mjs` | The DESIGN-SPEC numbers in the real DOM: fills, the type scale, gutter leading, 44px targets, the 16px input floor, the 12px floor, iPad content attributes, the 144px/96px floors, cold-boot progress ticking, stderr's three-way distinction, and the Python template end to end. |
 | `motion.mjs` | `prefers-reduced-motion` at both settings, the drawer's 180ms transform, and the keyboard-open layout measured against a simulated 336px inset. |
 
-Two lessons about the harness itself, both of which produced false results before being fixed: measure
-console-internal elements only with the console **open** (it starts collapsed on an empty project, so
-the subtree is unmounted and checks silently pass over it), and scope any "dismiss" selector to the
-banner — a loose `/Dismiss|Close/` also matches a tab's "Close Main.java" button and quietly closes the
-tab later assertions depend on.
+`console-check.mjs` (the console end to end at 1280 and 390, against real CPython) and
+`console-kb.mjs` (the 390px keyboard-open geometry) are the two suites that own the console contract
+above; between them they assert the absence of an idle input, the prompt and input sharing a line,
+the 44px/16px live input, Ctrl+L, right-click copy, tap-to-focus and the keyboard geometry.
+
+Three lessons about the harness itself, all of which produced false results before being fixed:
+
+1. Measure console-internal elements only with the console **open** — it starts collapsed on an empty
+   project, so the subtree is unmounted and checks silently pass over it.
+2. Scope any "dismiss" selector to the banner — a loose `/Dismiss|Close/` also matches a tab's
+   "Close Main.java" button and quietly closes the tab later assertions depend on.
+3. **Simulate the software keyboard at its source, by shadowing `visualViewport.height`, never by
+   writing `--kb-inset` / `--app-h` / `data-kb` by hand.** Writing the variables is self-cancelling:
+   shrinking the shell fires a visualViewport event, `ui/viewport.ts`'s `sync()` reads the real
+   un-shrunk viewport and writes them all back, and React's `data-kb` observer follows — so the suite
+   measures a half-reverted layout with the phone inline height still applied. `--app-h: <full window>`
+   is wrong for the same reason it is wrong in the app. This cost a full false failure in
+   `console-kb.mjs` and four in `motion.mjs` and `overlap.mjs`; all three now shadow the property.
 
 ---
 

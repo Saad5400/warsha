@@ -1,6 +1,7 @@
 import type { SourceFile } from '../runtime/types'
 import type { FsSnapshot, ProjectStore } from './types'
 import { MemoryStore } from './opfs'
+import { toStorageProblem, type StorageProblem } from './health'
 
 export interface TreeNode {
   name: string
@@ -26,6 +27,8 @@ export class Project {
   private timers = new Map<string, number>()
   private structureListeners: Listener[] = []
   private dirtyListeners: Listener[] = []
+  private storageListeners: Listener[] = []
+  private problem: StorageProblem | null = null
 
   /**
    * Starts on an empty in-memory store and is pointed at real storage by
@@ -55,11 +58,54 @@ export class Project {
       this.dirtyListeners = this.dirtyListeners.filter((l) => l !== cb)
     }
   }
+  /**
+   * Fires when a write to storage failed, and again when one finally succeeds.
+   * The shell turns this into the persistent banner: a student who cannot save
+   * has to be told while they can still export a .zip, not when they reopen the
+   * tab tomorrow and the work is gone.
+   */
+  onStorageProblem(cb: Listener): () => void {
+    this.storageListeners.push(cb)
+    return () => {
+      this.storageListeners = this.storageListeners.filter((l) => l !== cb)
+    }
+  }
   private emitStructure() {
     for (const cb of [...this.structureListeners]) cb()
   }
   private emitDirty() {
     for (const cb of [...this.dirtyListeners]) cb()
+  }
+  private emitStorage() {
+    for (const cb of [...this.storageListeners]) cb()
+  }
+
+  /** Null while storage is healthy. */
+  get storageProblem(): StorageProblem | null {
+    return this.problem
+  }
+
+  private setProblem(next: StorageProblem | null) {
+    const before = this.problem?.fault ?? null
+    this.problem = next
+    if (before !== (next?.fault ?? null)) this.emitStorage()
+  }
+
+  /**
+   * Every path from this class to the store goes through here. A rejected write
+   * used to escape as an unhandled rejection from a `setTimeout`, which is
+   * invisible to a student and to `try/catch` at the call site alike; now it
+   * becomes state the UI can render, and the caller learns whether it worked.
+   */
+  private async attempt(op: () => Promise<void>, path?: string): Promise<boolean> {
+    try {
+      await op()
+      this.setProblem(null)
+      return true
+    } catch (error) {
+      this.setProblem(toStorageProblem(error, path))
+      return false
+    }
   }
 
   /**
@@ -78,7 +124,14 @@ export class Project {
   }
 
   async load(): Promise<void> {
-    const snap = await this.store.snapshot()
+    // A store that cannot even be read is reported, not thrown: the caller is a
+    // startup path, and an exception there leaves the app with no project at all
+    // and no way to say why. An empty tree plus a banner is recoverable; a
+    // rejected boot promise is a blank screen.
+    let snap: FsSnapshot = { files: [], dirs: [] }
+    await this.attempt(async () => {
+      snap = await this.store.snapshot()
+    })
     this.files.clear()
     this.dirs.clear()
     this.dirty.clear()
@@ -138,25 +191,38 @@ export class Project {
     )
   }
 
-  private async flush(path: string) {
+  /**
+   * A file that would not write stays **dirty**. That is deliberate: the amber
+   * dot is the one honest signal left, the next flush retries it for free, and
+   * `saveAll()` can then tell Run that the engine would be reading stale bytes.
+   */
+  private async flush(path: string): Promise<boolean> {
     const content = this.files.get(path)
-    if (content === undefined) return
-    await this.store.writeFile(path, content)
-    if (this.dirty.delete(path)) this.emitDirty()
+    if (content === undefined) return true
+    const ok = await this.attempt(() => this.store.writeFile(path, content), path)
+    if (ok && this.dirty.delete(path)) this.emitDirty()
+    return ok
   }
 
-  /** Run() calls this so the engine always sees what's on screen. */
-  async saveAll(): Promise<void> {
+  /**
+   * Run() calls this so the engine always sees what's on screen. Returns false
+   * when something could not be written, so the caller can say so rather than
+   * running last-known-good bytes and blaming the student's code.
+   */
+  async saveAll(): Promise<boolean> {
     for (const [, t] of this.timers) clearTimeout(t)
     this.timers.clear()
-    await Promise.all([...this.dirty].map((p) => this.flush(p)))
+    const results = await Promise.all([...this.dirty].map((p) => this.flush(p)))
+    return results.every(Boolean)
   }
 
   async createFile(path: string, content = ''): Promise<void> {
     if (this.files.has(path)) throw new Error(`"${path}" already exists`)
     this.files.set(path, content)
     for (const d of ancestors(path)) this.dirs.add(d)
-    await this.store.writeFile(path, content)
+    // In memory first, then storage: a create that cannot reach disk still gives
+    // the student the file they asked for, marked dirty, with the banner up.
+    if (!(await this.attempt(() => this.store.writeFile(path, content), path))) this.markDirty(path)
     this.emitStructure()
   }
 
@@ -164,15 +230,22 @@ export class Project {
     if (this.dirs.has(path)) throw new Error(`"${path}" already exists`)
     this.dirs.add(path)
     for (const d of ancestors(path)) this.dirs.add(d)
-    await this.store.mkdir(path)
+    await this.attempt(() => this.store.mkdir(path), path)
     this.emitStructure()
+  }
+
+  private markDirty(path: string) {
+    if (!this.dirty.has(path)) {
+      this.dirty.add(path)
+      this.emitDirty()
+    }
   }
 
   async remove(path: string): Promise<void> {
     for (const k of [...this.files.keys()]) if (k === path || k.startsWith(path + '/')) this.files.delete(k)
     for (const k of [...this.dirs]) if (k === path || k.startsWith(path + '/')) this.dirs.delete(k)
     for (const k of [...this.dirty]) if (k === path || k.startsWith(path + '/')) this.dirty.delete(k)
-    await this.store.remove(path)
+    await this.attempt(() => this.store.remove(path), path)
     this.emitStructure()
     this.emitDirty()
   }
@@ -195,7 +268,7 @@ export class Project {
     const nextDirty = new Set<string>()
     for (const d of this.dirty) nextDirty.add(remap(d, from, to))
     this.dirty = nextDirty
-    await this.store.move(from, to)
+    await this.attempt(() => this.store.move(from, to), to)
     this.emitStructure()
     return mapping
   }
@@ -211,7 +284,12 @@ export class Project {
       this.files.set(f.path, f.content)
       for (const d of ancestors(f.path)) this.dirs.add(d)
     }
-    await this.store.replaceAll(this.snapshot())
+    const snapshot = this.snapshot()
+    if (!(await this.attempt(() => this.store.replaceAll(snapshot)))) {
+      // An import or a starter that could not be written is still on screen and
+      // still runnable; every file is marked dirty so the next save retries it.
+      for (const f of snapshot.files) this.dirty.add(f.path)
+    }
     this.emitStructure()
     this.emitDirty()
   }

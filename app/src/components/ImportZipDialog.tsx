@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from 'react'
 import { COPY, count } from '../copy'
 import type { FsSnapshot } from '../fs/types'
-import { importZip } from '../zip'
+import { importZip, ZipImportError, type ZipImportResult } from '../zip'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
 import { IconFiles } from './ui/Icons'
@@ -15,6 +15,12 @@ export interface ImportZipDialogProps {
 
 const isZip = (f: File) => /\.zip$/i.test(f.name) || f.type === 'application/zip'
 
+const DROPZONE =
+  'mt-4 flex flex-col items-center gap-2 px-4 py-5 border border-dashed border-border-control rounded-md ' +
+  'bg-surface-2 text-text-3 text-center transition-[background-color,border-color] ' +
+  'duration-(--dur-fast) ease-standard data-[over=true]:border-accent data-[over=true]:border-solid ' +
+  'data-[over=true]:bg-surface-4 data-[over=true]:text-text-2'
+
 /**
  * One dialog for the whole import: choose or drop the .zip, see what is in it,
  * see what it costs, confirm. The warning is stated *before* the file is picked
@@ -24,7 +30,7 @@ const isZip = (f: File) => /\.zip$/i.test(f.name) || f.type === 'application/zip
  */
 export function ImportZipDialog({ currentFileCount, onCancel, onImport }: ImportZipDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [picked, setPicked] = useState<{ name: string; snapshot: FsSnapshot } | null>(null)
+  const [picked, setPicked] = useState<{ name: string; result: ZipImportResult } | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const [over, setOver] = useState(false)
@@ -36,12 +42,18 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
     setProblem(null)
     if (!isZip(file)) return setProblem(COPY.importNotZip)
     setReading(true)
+    // Yield a frame first: `unzipSync` blocks the main thread, and without this
+    // the "Reading…" label never paints, so a slow archive looks like a dead
+    // button rather than work in progress.
+    await new Promise((r) => requestAnimationFrame(r))
     try {
-      const snapshot = await importZip(file)
-      if (snapshot.files.length === 0) setProblem(COPY.importEmptyZip)
-      else setPicked({ name: file.name, snapshot })
+      const result = await importZip(file)
+      if (result.snapshot.files.length === 0) setProblem(COPY.importEmptyZip)
+      else setPicked({ name: file.name, result })
     } catch (e) {
-      setProblem(COPY.importUnreadable((e as Error).message))
+      // A refusal we made on purpose already reads as a sentence; anything else
+      // is the decoder's own words and needs the wrapper.
+      setProblem(e instanceof ZipImportError ? e.message : COPY.importUnreadable((e as Error).message))
     } finally {
       setReading(false)
     }
@@ -54,7 +66,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (picked) onImport(picked.snapshot, picked.name)
+          if (picked) onImport(picked.result.snapshot, picked.name)
         }}
       >
         <h2 id={titleId} className="dlg-title">
@@ -75,9 +87,10 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
             const file = e.dataTransfer.files?.[0]
             if (file) void take(file)
           }}
-          // `.dropzone` (index.css) owns the dashed border, the fills and the
-          // drag-over state, keyed off data-over.
-          className="dropzone mt-4"
+          // The only dashed border in the app — dashed reads as "put something
+          // here", which is exactly the one place we mean it. It goes solid
+          // amber while a file is over it.
+          className={DROPZONE}
         >
           <IconFiles size={24} />
           {/* Drag-and-drop is a laptop affordance; the button is the one that
@@ -105,8 +118,17 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
               ✓
             </span>
             <span>
-              <span className="font-code">{picked.name}</span> — {count(picked.snapshot.files.length, 'file')} ready to
-              import.
+              <span className="font-code">{picked.name}</span> — {count(picked.result.snapshot.files.length, 'file')}{' '}
+              ready to import.
+              {/* Named, not silent: a project that arrives missing the one file
+                  the exercise needed is worse than an import that did not
+                  happen, because nothing says so. */}
+              {picked.result.skipped.length > 0 ? (
+                <>
+                  {' '}
+                  <span className="text-text-3">{COPY.importSkipped(picked.result.skipped.length)}</span>
+                </>
+              ) : null}
             </span>
           </p>
         ) : null}
@@ -118,7 +140,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
           </p>
         ) : null}
 
-        <div className={'mt-4 note ' + (replaces ? 'note--warn' : '')}>
+        <div className={'mt-4 note ' + (replaces ? 'border-l-warn' : '')}>
           <p className="note__text">{replaces ? COPY.importReplaces(currentFileCount) : COPY.importNothingToReplace}</p>
         </div>
 

@@ -7,22 +7,43 @@
  * Layer 1: Design's canonical tokens, read in place from docs/design/tokens.css.
  * Layer 2: the Tailwind theme, mapped ONTO those tokens — every utility a
  *          component uses resolves to a custom property, never to a literal.
- * Layer 3: the component layer. Anything carrying *design meaning* — a state,
- *          the type scale, the amber signature rule — is a named class here,
- *          keyed off the data-attributes ARCHITECTURE.md documents, not a utility
- *          string in a .tsx. The spec's states are compound (rule + weight +
- *          colour, never colour alone) and do not fit in one utility.
+ * Layer 3: nothing. Components style themselves with Tailwind utilities in the
+ *          .tsx — including their states, which are compound (rule + weight +
+ *          colour, never colour alone) and become variant prefixes:
+ *          `data-[state=active]:border-b-accent`, `aria-expanded:bg-surface-4`,
+ *          `group-data-[state=active]:font-semibold`, `motion-reduce:animate-none`.
+ *          A component with several variants keeps them in one `const` at the
+ *          top of its own file, next to the reasoning, rather than in a class
+ *          here that its reader has to go and look up.
+ *
+ * WHAT MAY STILL LIVE IN THIS FILE, and nothing else:
+ *   - the @theme mapping (Layer 2) — extend it when you need a token;
+ *   - @custom-variant for the two <html> state attributes (see below);
+ *   - @layer base: preflight additions, the focus ring, scrollbars, selection;
+ *   - @keyframes, consumed through `--animate-*` utilities;
+ *   - dialog::backdrop, which no utility can reach;
+ *   - third-party DOM we do not render — and in practice that is only the note
+ *     at the very bottom about CodeMirror.
+ * A new `.some-component` class here is a bug, not a shortcut. If a utility
+ * cannot express it, say so out loud rather than reaching for the escape hatch.
  *
  *
  * ------------------------------ READ THIS FIRST ---------------------------- *
- * TAILWIND v4 DROPPED THE BARE `[--var]` SHORTHAND. `bg-[ --scrim ]` compiles to
+ * TAILWIND v4 DROPPED THE BARE SQUARE-BRACKET-AROUND-A-BARE-CUSTOM-PROPERTY
+ * SHORTHAND — a `bg-` prefix, an opening bracket, then `--scrim` with no
+ * `var()` around it. (Spelled out in words on purpose: the class scanner reads
+ * this file too, and writing the broken form even inside a comment is enough to
+ * emit it.) It compiles to
  * `background-color:--scrim` — invalid CSS, silently discarded, no warning at
  * build or in devtools. It is the single most expensive bug class in this
  * codebase: it is how the active-tab rule, the drawer scrim, the drawer
  * transition, the 144px console floor and the modal backdrop all went missing
- * while the source looked correct. Write `bg-(--scrim)`, or use a class here.
- * Grep your own files for a bracket immediately followed by two dashes
- * before you call anything done:  grep -rn -- '-\[ --' src   (without the space).
+ * while the source looked correct. Write `bg-(--scrim)`, `duration-(--dur-fast)`,
+ * `min-h-(--console-floor)` — parentheses, every time. Inside a bracketed
+ * arbitrary value the `var()` is spelled in full: `pt-[max(var(--sp-5),28%)]`.
+ * Before you call anything done, grep your own files for a bracket immediately
+ * followed by two dashes. Build the pattern so the grep itself does not contain
+ * one:   grep -rnE -- "-\[$(printf '%s' --)" src
  *
  * Corollary, same family: UNLAYERED CSS BEATS EVERY `@layer`, at any specificity.
  * tokens.css sets --pad-panel unlayered, so overriding it inside
@@ -36,32 +57,50 @@
  *
  * CANONICAL RECIPES — reuse these, do not re-invent them
  * -----------------------------------------------------
- * Four people are writing this UI. Anything below that has a name is the agreed
- * answer; if you need a variant, ask for it here rather than approximating it in
- * a component, because two near-identical answers is exactly what "generic" looks
- * like.
+ * Several people are writing this UI, now in utilities rather than in classes,
+ * so the design language is only as consistent as this list. These are the
+ * agreed spellings. If you need one that is not here, add it here first — two
+ * near-identical answers is exactly what "generic" looks like.
  *
  * FOCUS RING      Do nothing. `:focus-visible` in @layer base gives every
  *                 focusable element `outline: 2px solid var(--focus-ring)` at
  *                 `outline-offset: 2px`. It is :focus-visible only, so it appears
  *                 for keyboards and never sticks after a tap. Do not add your own,
  *                 and never `outline-none`. For an element clipped by a scroll
- *                 parent, add `outline-offset: -2px` so the ring stays inside.
+ *                 parent, add `focus-visible:outline-[-2px]`'s equivalent —
+ *                 `focus-visible:[outline-offset:-2px]` — so the ring stays inside.
  *
- * HIT TARGETS     44px minimum on everything interactive (`--touch`), 48px for
- *                 primary dialog actions (`--touch-lg`). ≥8px between adjacent
- *                 targets. Icon-only controls: use `.icon-btn` (44x44 box, 20px
- *                 glyph). Never put a 48px control in a 44px bar — see BARS.
+ * HIT TARGETS     44px minimum on everything interactive: `min-h-touch` (and
+ *                 `min-w-touch` when the label may be one glyph — height was
+ *                 never the problem, an icon-only button going 38px wide was).
+ *                 A square icon control is `size-touch`. 48px (`min-h-touch-lg`)
+ *                 for primary dialog actions. ≥8px between adjacent targets
+ *                 (`gap-2`). Never put a 48px control in a 44px bar — see BARS.
  *
- * BARS            A fixed-height bar draws its divider as an `inset` box-shadow,
- *                 NOT a border: with border-box a 1px border comes out of the
- *                 bar's own 44px and its 44px child then overflows by a pixel.
- *                 `.top-bar`, `.tab-strip`, `.console-header` all do this.
+ * BARS            A fixed-height bar draws its divider as an INSET SHADOW, not a
+ *                 border: with border-box a 1px border comes out of the bar's own
+ *                 44px and its 44px child then overflows by a pixel.
+ *                   shadow-[inset_0_-1px_0_0_var(--border-subtle)]   (bottom edge)
+ *                   shadow-[inset_0_1px_0_0_var(--border-subtle)]    (top edge)
+ *                 The top bar, the tab strip and the console header all do this.
  *
- * BUTTONS         `.btn` + `.btn--primary|stop|ghost|danger|quiet`, `.btn--lg`
- *                 for 48px, `.btn--compact` for a dense row. Every variant has
- *                 hover, active AND focus-visible. Disabled is a COLOUR change,
- *                 never opacity — opacity destroys measured contrast.
+ * BUTTONS         components/ui/Button.tsx — `variant` + `large`. Every variant
+ *                 has hover, active AND focus-visible. Disabled is a COLOUR
+ *                 change, never opacity — opacity destroys measured contrast, so
+ *                 `disabled:opacity-*` is banned; use `disabled:text-text-disabled`
+ *                 with `disabled:bg-surface-4`.
+ *
+ * STATES          Compound, never colour alone (see SURFACES). Spell them as
+ *                 variants on the element that owns the attribute:
+ *                   data-[state=active]:…   aria-expanded:…   data-[tone=danger]:…
+ *                 and reach a child with `group` + `group-data-[state=active]:…`.
+ *                 Two <html>-level states have custom variants defined below the
+ *                 @theme block: `kb-open:` (software keyboard up) and
+ *                 `hand-left:` (left-handed layout).
+ *
+ * TRANSITIONS     Name the properties, never `transition-all`:
+ *                   transition-[background-color,color] duration-(--dur-fast) ease-standard
+ *                 Note the PARENTHESES on the duration — see READ THIS FIRST.
  *
  * SURFACES        Panels `--surface-2`, raised/cards/menus `--surface-3`, inputs
  *                 and pressed `--surface-4`. Adjacent surfaces are only ~1.1:1
@@ -73,24 +112,35 @@
  *                 CONTROL boundary (inputs, cards, the console input) must be
  *                 `--border-control` — it is the one that clears 3:1.
  *
- * ELEVATION       `box-shadow: var(--shadow-raised)` — menus, dialogs, the open
- *                 drawer, floating pills. There is exactly one elevation.
+ * ELEVATION       `shadow-raised` — menus, dialogs, the open drawer, floating
+ *                 pills. There is exactly one elevation.
  *
- * RADII           `--r-sm` badges/inputs, `--r-md` buttons/menu items, `--r-lg`
- *                 dialogs/cards, `--r-pill` pills and bars.
+ * RADII           `rounded-sm` badges/inputs, `rounded-md` buttons/menu items,
+ *                 `rounded-lg` dialogs/cards, `rounded-pill` pills and bars.
  *
- * MOTION          `--dur-fast` 120ms press/hover, `--dur` 180ms drawer/menu/
- *                 dialog, `--dur-slow` 240ms console. Easing `--ease`. Animate
- *                 ONLY transform and opacity (plus the progress bar's width).
- *                 There IS a global `@media (prefers-reduced-motion: reduce)`
- *                 block at the end of this file that kills animation and
- *                 transition durations app-wide, so you do not need
- *                 `motion-reduce:` variants — but they are harmless.
+ * MOTION          `duration-(--dur-fast)` 120ms press/hover, `duration-(--dur)`
+ *                 180ms drawer/menu/dialog, `duration-(--dur-slow)` 240ms
+ *                 console; easing `ease-standard`. Animate ONLY transform and
+ *                 opacity (plus the progress bar's width).
+ *                 A looping animation is an `--animate-*` token in @theme, used
+ *                 as `animate-dot-pulse` / `animate-sweep` / `animate-spinner`,
+ *                 and it MUST carry `motion-reduce:animate-none`. The global
+ *                 `@media (prefers-reduced-motion: reduce)` block at the end of
+ *                 this file only clamps durations app-wide; anything that also
+ *                 needs a different resting appearance (the sweep goes to
+ *                 `motion-reduce:w-full motion-reduce:opacity-50`) says so at
+ *                 the call site, because that is where the reader is.
  *
  * SCROLLBARS      Styled globally in @layer base (`scrollbar-color` for Firefox,
  *                 `::-webkit-scrollbar*` for Blink/WebKit). Use `.scroller` for
  *                 any scrolling region: it adds `overscroll-behavior: contain`
  *                 and momentum scrolling. Do not restyle scrollbars locally.
+ *
+ * TRUNCATION      `min-w-0` on the flex child FIRST — without it the child's
+ *                 auto min-width refuses to shrink and the ellipsis never
+ *                 appears — then `overflow-hidden text-ellipsis whitespace-nowrap`.
+ *                 (`truncate` is the same three, but spelling them out is what
+ *                 keeps the `min-w-0` next to them where it gets remembered.)
  *
  * STACKING        Use these, and nothing else. Numbers exist so no one has to
  *                 invent one: scrim `--z-scrim` 10, drawer `--z-drawer` 20,
@@ -130,12 +180,44 @@
      tabs, file rows, the console input — stays 44px in every state. */
   --touch-kb: 40px;
 
+  /* VSCode's floor plan (docs/design/LAYOUT-VSCODE.md), both ≥900px only.
+     The activity bar is the plan's stated 48px. The status bar is 26px — the
+     middle of the plan's 24-28px band, and the one surface in the app that is
+     deliberately under the 44px target floor: it renders only on pointer
+     layouts, and its single interactive item (the text-size stepper) keeps a
+     44px row in the overflow menu as well, so no function lives only in a small
+     target. See StatusBar.tsx. */
+  --activity-w: 48px;
+  --bar-status: 26px;
+
+  /* The TITLE bar is the one bar that is not --bar-top, and it has to be its own
+     token rather than a literal because the toast pins itself under it.
+     Why 52 and not 44 at ≥900px: the title bar is the only bar that holds a
+     FILLED control (Run). At 44px a 44px button is flush top and bottom, so its
+     10px radius runs straight into the bar's 1px divider — measured at exactly
+     0px clearance, which at loupe zoom reads as the button hanging out of its
+     own bar (founder, 2026-08-02). 44 + 4 + 4 keeps the control at its 44px
+     touch size, centres it, and gives the divider something to clear. Below
+     900px there is no Run up here and the bar stays 44. */
+  --bar-title: var(--bar-top);
+}
+@media (min-width: 900px) {
+  :root {
+    --bar-title: calc(var(--touch) + var(--sp-1) + var(--sp-1));
+  }
+
   /* One stacking scale for the whole app. See STACKING above. */
   --z-scrim: 10;
   --z-drawer: 20;
   --z-raised: 30;
   --z-menu: 40;
   --z-toast: 50;
+  /* Dialogs used to need no number: a native <dialog> opened with showModal()
+     rides the browser's top layer, above every z-index there is. The Radix
+     dialog is an ordinary element in the page, so the top layer has to be
+     spelled out. It is the TOP of the scale, not a number wedged between two
+     of the others — the rule above still holds. */
+  --z-dialog: 60;
 
   /* Edge fade for a horizontally scrolling strip, so "there is more this way" is
      visible once its scrollbar is hidden. Consumed by `.fade-edge`. */
@@ -149,17 +231,22 @@
      own sum — 4 output lines + the input row + padding — but §4.3 rule 4 wrote it
      as the floor for the *console*, and the panel also contains its own 44px
      header. So 144 was always short by a header, and short again by the status
-     line the console grew above its input row. Measured consequence with a
-     keyboard up: a 17px transcript, well under the one line, where the rule asks
-     for four. Derived here so it cannot drift from --bar-console again. */
+     line. Measured consequence with a keyboard up: a 17px transcript, well under
+     the one line, where the rule asks for four. Derived here so it cannot drift
+     from --bar-console again.
+
+     The --touch term is still here now that the input has moved into the
+     transcript: it is the 44px live line the student types on, which is inside
+     the transcript rather than under it but still has to fit on screen with the
+     four output lines above it. */
   --console-floor: calc(
     var(--bar-console) + (4 * var(--console-line)) + var(--touch) + var(--sp-4)
   );
-  /* Stdin pending: the status line above the input row is on screen too, and this
+  /* Stdin pending: the status line under the transcript is on screen too, and this
      is the case rule 4 actually legislates for.
      The trailing --sp-1 is slack, not padding, and it is deliberate: the status
-     line is 21.4px (its own 17.4px line box plus 4px of lead-in), and the stdin
-     row carries a 1px top border. Budgeting the status line as exactly one output
+     line is 21.4px (its own 17.4px line box plus 4px of lead-in) and the foot that
+     holds it carries a 1px divider. Budgeting the status line as exactly one output
      line left the transcript at 82px against the 84px four lines need — measured.
      A floor computed to the pixel is a floor that fails on the next rounding, so
      this one rounds up rather than encoding another component's line-height. */
@@ -228,7 +315,12 @@
   --spacing-panel: var(--pad-panel);
   --spacing-touch: var(--touch);
   --spacing-touch-lg: var(--touch-lg);
+  --spacing-touch-kb: var(--touch-kb);
   --spacing-bar: var(--bar-top);
+  --spacing-bar-title: var(--bar-title);
+  --spacing-bar-console: var(--bar-console);
+  --spacing-bar-status: var(--bar-status);
+  --spacing-activity: var(--activity-w);
   --spacing-explorer: var(--explorer-w);
   --spacing-drawer: var(--drawer-w);
   --spacing-editor-min: var(--editor-min-h);
@@ -243,7 +335,49 @@
   /* motion + elevation */
   --shadow-raised: var(--shadow-raised);
   --ease-standard: var(--ease);
+
+  /* The app's three animations, named so components write `animate-dot-pulse`
+     rather than re-spelling the keyframes + duration + easing at each call
+     site. The keyframes themselves are at the end of this file. */
+  --animate-dot-pulse: warsha-pulse 1.4s var(--ease) infinite;
+  --animate-sweep: warsha-sweep 1.4s var(--ease) infinite;
+  --animate-spinner: warsha-spin 700ms linear infinite;
+
+  /* Overlay motion, for the Radix primitives in components/ui. Enter is the
+     180ms drawer/menu/dialog step, or the 120ms one for a panel that appears
+     under the pointer that asked for it; exit is 90ms everywhere, because an
+     overlay leaving should be half-noticed and every duration in tokens.css is
+     long enough to be noticed. Transform and opacity only, per MOTION above.
+     `both` fill so the first frame is the from-state rather than a flash of the
+     finished panel. Written as theme keys so a call site says
+     `data-[state=open]:animate-dialog-in` instead of respelling the keyframe,
+     the duration and the easing — and so the reduced-motion block at the end of
+     this file, which forces every animation-duration to 1ms, still reaches
+     them. */
+  --animate-fade-in: warsha-fade-in 180ms var(--ease) both;
+  --animate-fade-out: warsha-fade-out 90ms var(--ease) both;
+  --animate-dialog-in: warsha-dialog-in 180ms var(--ease) both;
+  --animate-dialog-out: warsha-dialog-out 90ms var(--ease) both;
+  /* A menu or a tooltip grows out of the edge nearest its trigger; the caller
+     picks the direction from Radix's data-side, and pairs it with
+     `origin-(--radix-popper-transform-origin)` so the scale grows from that
+     corner rather than from the panel's own middle. */
+  --animate-pop-from-top: warsha-pop-from-top 120ms var(--ease) both;
+  --animate-pop-from-bottom: warsha-pop-from-bottom 120ms var(--ease) both;
+  --animate-pop-from-left: warsha-pop-from-left 120ms var(--ease) both;
+  --animate-pop-from-right: warsha-pop-from-right 120ms var(--ease) both;
+  --animate-pop-out: warsha-pop-out 90ms var(--ease) both;
+  --animate-toast-in: warsha-toast-in 180ms var(--ease) both;
+  --animate-toast-out: warsha-toast-out 90ms var(--ease) both;
 }
+
+/* Two app states live on <html> (written by ui/viewport.ts and the hand
+   preference), so a component that reacts to them needs an ANCESTOR variant.
+   These are the Tailwind-native way to say that; without them the only way to
+   write `min-height` when the keyboard is up is a bespoke component class.
+   Usage: `kb-open:min-h-touch-kb`, `hand-left:flex-row-reverse`. */
+@custom-variant kb-open (html[data-kb='open'] &);
+@custom-variant hand-left (html[data-hand='left'] &);
 
 /* ---------------------------------------------------------------- base ---- */
 @layer base {
@@ -322,17 +456,6 @@
 
   /* Fixed and sized from --app-h (written by ui/viewport.ts), so iOS cannot
      scroll the document out from under a focused input. */
-  .app-shell {
-    position: fixed;
-    inset: 0;
-    height: var(--app-h, 100dvh);
-    padding-bottom: env(safe-area-inset-bottom);
-    display: grid;
-    grid-template-rows: var(--bar-top) 1fr;
-    grid-template-columns: 100%;
-    overflow: hidden;
-  }
-
   .scroller {
     overflow: auto;
     overscroll-behavior: contain;
@@ -364,25 +487,9 @@
   /* Keyboard-open compaction (spec §4.3): shed decoration, never content.
      The --pad-panel half of this lives OUTSIDE this layer — see the note above
      the rule at the end of the file. */
-  html[data-kb='open'] .app-shell {
-    grid-template-rows: var(--bar-top-kb) 1fr;
-  }
   html[data-kb='open'] .kb-hide {
     display: none;
   }
-  /* The bar and the controls in it compact together, or the controls overflow it
-     and land on the tab strip. See --touch-kb for why this trade is acceptable
-     for these two buttons and nothing else. */
-  html[data-kb='open'] .top-bar .icon-btn {
-    width: var(--touch-kb);
-    height: var(--touch-kb);
-  }
-
-  /* Left-handed students get Run/Stop on the leading edge (spec §5.3). */
-  html[data-hand='left'] .console-header {
-    flex-direction: row-reverse;
-  }
-
   /* Touch affordances: kill double-tap zoom on controls, never on the editor. */
   .tap {
     touch-action: manipulation;
@@ -398,126 +505,6 @@
      they take their numbers from the one scale (see STACKING in the header). */
   .drawer {
     z-index: var(--z-drawer);
-  }
-
-  .safe-x {
-    padding-left: max(var(--sp-1), env(safe-area-inset-left));
-    padding-right: max(var(--sp-1), env(safe-area-inset-right));
-  }
-
-  /* ============================================================ top bar ==== */
-
-  /* Every fixed-height bar in the app draws its divider as an inset shadow, not a
-     border. With border-box sizing a 1px border comes out of the bar's own 44px,
-     leaving 43px of content for a 44px control — which overflows the bar by a
-     pixel and, in the console's case, pushed Run one pixel under the keyboard.
-     A shadow costs no layout, so 44px stays 44px. */
-  .top-bar {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    height: 100%;
-    min-width: 0;
-    background: var(--surface-0);
-    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
-  }
-
-  /* Spec §11: the wordmark is only ever the UI font at 600. */
-  .top-bar__wordmark {
-    font-size: var(--fs-btn);
-    font-weight: 600;
-    line-height: 1.2;
-    color: var(--text-1);
-    letter-spacing: -0.01em;
-  }
-
-  /* Spec §3.2 "top-bar title": the quiet line that says which file you are in. */
-  .top-bar__title {
-    font-size: var(--fs-tab);
-    font-weight: 500;
-    line-height: 1.2;
-    letter-spacing: 0.01em;
-    color: var(--text-3);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .top-bar__sep {
-    width: 1px;
-    height: 16px;
-    flex: none;
-    background: var(--border-subtle);
-  }
-
-  /* The identity run: logo, wordmark, project, file. It gets the slack, and the
-     file title is what gives way first — the project you are in matters more than
-     which file is open, so the project name truncates last. */
-  .top-bar__identity {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    min-width: 0;
-    flex: 1;
-  }
-
-  /* The project name reads as a CONTROL, not as a label: it is the thing you tap
-     to switch projects. Brighter than the file title, with a real hover and press.
-     `flex-shrink: 0` down to a floor so it survives while the file title
-     ellipsises away beside it. */
-  .top-bar__project {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--sp-1);
-    flex: 0 1 auto;
-    min-width: 4ch;
-    max-width: 40vw;
-    min-height: var(--touch);
-    padding-inline: var(--sp-2);
-    border-radius: var(--r-sm);
-    background: transparent;
-    font-family: var(--font-ui);
-    font-size: var(--fs-tab);
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: 0.01em;
-    color: var(--text-2);
-    cursor: pointer;
-    touch-action: manipulation;
-    transition:
-      background-color var(--dur-fast) var(--ease),
-      color var(--dur-fast) var(--ease);
-  }
-  .top-bar__project:hover {
-    background: var(--surface-3);
-    color: var(--text-1);
-  }
-  .top-bar__project:active,
-  .top-bar__project[aria-expanded='true'] {
-    background: var(--surface-4);
-    color: var(--text-1);
-  }
-  .top-bar__project__name {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Keyboard up: the bar is 40px, so the control matches it (see --touch-kb). */
-  html[data-kb='open'] .top-bar__project {
-    min-height: var(--touch-kb);
-  }
-
-  /* =========================================================== explorer ==== */
-
-  /* Spec §3.2 section label. */
-  .panel-label {
-    font-size: var(--fs-micro);
-    line-height: 1;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
   }
 
   .tree-row {
@@ -614,140 +601,6 @@
       opacity: 1;
     }
   }
-
-  /* =============================================================== tabs ==== */
-
-  .tab-strip {
-    display: flex;
-    flex: none;
-    height: var(--bar-top);
-    overflow-x: auto;
-    overflow-y: hidden;
-    background: var(--surface-2);
-    /* The bottom divider is an inset shadow, not a border. With border-box
-       sizing a 1px border eats into the strip's 44px, which left every tab 43px
-       tall and failed the 44px floor by one pixel — and a tab is one of the
-       most-tapped things in the app. A shadow costs no layout. */
-    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
-  }
-  .tab-strip::-webkit-scrollbar {
-    height: 0;
-  }
-
-  /* The strip hides its scrollbar (10px out of a 44px row is not affordable), so
-     an edge fade is the only thing left to say "there are more tabs that way".
-     Rendered only when the strip actually scrolls. Non-interactive by definition:
-     it sits over a tab, so it must never eat the tap. */
-  .fade-edge {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 20px;
-    pointer-events: none;
-    z-index: var(--z-raised);
-    background: var(--fade-surface-2);
-  }
-  .fade-edge--start {
-    left: 0;
-  }
-  .fade-edge--end {
-    right: 0;
-    transform: scaleX(-1);
-  }
-
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    flex: none;
-    height: 100%;
-    min-width: 96px;
-    max-width: 60vw;
-    padding-inline: var(--sp-3);
-    cursor: pointer;
-    touch-action: manipulation;
-    scroll-snap-align: end;
-    background: var(--surface-2);
-    /* Reserved at all times so activating a tab never shifts its label. */
-    border-bottom: var(--rail) solid transparent;
-    box-shadow: inset -1px 0 0 0 var(--border-subtle);
-    transition:
-      background-color var(--dur-fast) var(--ease),
-      color var(--dur-fast) var(--ease);
-  }
-  .tab__label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: var(--fs-tab);
-    line-height: 1.2;
-    font-weight: 500;
-    color: var(--text-2);
-  }
-  .tab:hover {
-    background: var(--surface-3);
-  }
-  .tab:active {
-    background: var(--surface-4);
-  }
-  /* Active tab: accent rule (7.92:1) + weight 600 + text-1 (13.19 vs 7.72).
-     The surface-1 fill matches the editor canvas so the tab owns it, and it
-     carries none of the load — the tab stays unambiguous in greyscale. */
-  .tab[data-state='active'] {
-    background: var(--surface-1);
-    border-bottom-color: var(--accent);
-    box-shadow:
-      inset 1px 0 0 0 var(--border-subtle),
-      inset -1px 0 0 0 var(--border-subtle);
-  }
-  .tab[data-state='active']:hover {
-    background: var(--surface-1);
-  }
-  .tab[data-state='active'] .tab__label {
-    color: var(--text-1);
-    font-weight: 600;
-  }
-
-  .tab__close {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: var(--touch);
-    height: var(--touch);
-    margin-right: calc(-1 * var(--sp-2));
-    border-radius: var(--r-sm);
-    font-size: 14px;
-    line-height: 1;
-    color: var(--text-3);
-    touch-action: manipulation;
-  }
-  .tab__close:hover {
-    color: var(--text-1);
-    background: var(--surface-4);
-  }
-  .tab__close:active {
-    color: var(--text-1);
-    background: var(--surface-4);
-    transform: scale(0.92);
-  }
-
-  /* ============================================================= editor ==== */
-
-  /* Spec §4.3 rule 5: do not shrink past 96px — let the editor scroll under the
-     console instead. */
-  .editor-pane {
-    position: relative;
-    flex: 1;
-    min-width: 0;
-    min-height: var(--editor-min-h);
-    overflow: hidden;
-    background: var(--surface-1);
-  }
-
   /* ============================================================ console ==== */
 
   .console-panel {
@@ -813,31 +666,6 @@
   .console-panel--open[data-state='waiting'] {
     min-height: min(var(--console-floor-stdin), 100%);
   }
-
-  .console-header {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    flex: none;
-    height: var(--bar-console);
-    padding-inline: var(--sp-2);
-    background: var(--surface-2);
-    /* Inset shadow, so the 44px Run control gets all 44px of the bar. */
-    box-shadow: inset 0 -1px 0 0 var(--border-subtle);
-    padding-left: max(var(--sp-2), env(safe-area-inset-left));
-    padding-right: max(var(--sp-2), env(safe-area-inset-right));
-  }
-
-  /* A hairline before the trailing controls, so a wide console header reads as
-     a deliberate toolbar with two groups rather than two things and a void. */
-  .console-header__rule {
-    width: 1px;
-    height: 24px;
-    flex: none;
-    margin-inline: var(--sp-1);
-    background: var(--border-subtle);
-  }
-
   /* Smallest phones (360px, and the 320px iPhone SE): the header runs out of width
      and used to push the collapse control off the screen. Only decoration goes —
      the group divider and the inter-control gap.
@@ -847,27 +675,100 @@
      wide: 44 tall but 38 across, so an earlier comment here claiming "every
      control stays 44px" was true on one axis only (caught and measured by
      ui-console). The pressure that made it necessary is gone, because on a phone
-     the status pill now stands down from the header — the status line directly
-     above the stdin row already carries the same glyph, word and tone one row
-     lower. Measured at 390px: Run 104 + Copy 44 + Clear 44 + collapse 44 ends at
+     the status pill now stands down from the header — the status line at the foot
+     of the console already carries the same glyph, word and tone.
+     Measured at 390px: Run 104 + Copy 44 + Clear 44 + collapse 44 ends at
      x=382 of 388, nothing clipped, with this rule in force. */
-  @media (max-width: 460px) {
-    .console-header__rule {
-      display: none;
-    }
-    .console-header {
-      gap: var(--sp-1);
-    }
-  }
-
+  
   .console-transcript {
     flex: 1;
-    padding: var(--sp-2) var(--pad-panel);
+    /* Tight left gutter: the rows carry their own 3px rule + 8px, so the text
+       lands ~15px in — a terminal's rhythm, not a document's margin. The bottom
+       pad is the breathing room under the last line / the live one. */
+    padding: var(--sp-2) var(--sp-2) var(--sp-3);
     font-family: var(--font-code);
     /* Explicit px, never inherited: WebKit renders an unqualified `monospace`
        at ~81.25% of the inherited size (spec §3.1). */
     font-size: var(--fs-console);
     line-height: var(--lh-console);
+    /* Terminals are for reading text out of, so selection has to look like a
+       first-class thing rather than the browser's afterthought. */
+    &::selection,
+    & ::selection {
+      background: color-mix(in srgb, var(--info) 28%, var(--code-selection));
+      color: var(--text-1);
+    }
+  }
+
+  /* The console's empty state. Not a centred illustration: a terminal that has
+     printed nothing yet should look like a terminal that has printed nothing yet,
+     so this is one dim monospace line on the transcript's own grid. Doubles as
+     the "Cleared." state (§7.5). */
+  .console-empty {
+    padding: var(--sp-1) 0 0 calc(3px + var(--sp-2) + var(--sp-3));
+    color: var(--text-3);
+    font-style: italic;
+  }
+
+  /* "Show 3,800 earlier lines" — the head of a windowed transcript. */
+  .console-earlier {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch);
+    margin-bottom: var(--sp-1);
+    padding-inline: var(--sp-3);
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-sm);
+    background: var(--surface-3);
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+    color: var(--text-2);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .console-earlier:hover {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
+  .console-earlier:active {
+    transform: scale(0.97);
+  }
+
+  /* "Warsha could not download Java" — a run that never started, as a block
+     rather than a red line. It reuses `.note--danger`'s anatomy so it reads as
+     part of the same product as the import dialog's warnings, and it sits INSIDE
+     the transcript so it cannot cover the output a student is reading. */
+  .console-failure {
+    margin: var(--sp-2) 0;
+  }
+  .console-failure__title {
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+    line-height: 1.55;
+    font-weight: 600;
+    color: var(--text-1);
+    margin: 0 0 var(--sp-1);
+  }
+  .console-failure__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-top: var(--sp-2);
+  }
+  .console-failure__actions .console-earlier {
+    margin-bottom: 0;
+  }
+  /* The engine's own words. Wrapped, not scrolled sideways: a student on a phone
+     copying this into a message to a teacher must be able to select all of it. */
+  .console-failure__detail {
+    margin: var(--sp-2) 0 0;
+    font-family: var(--font-code);
+    font-size: var(--fs-micro);
+    line-height: 1.5;
+    color: var(--text-3);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   /* One transcript row. Each is a flex row: a 3px leading rule, then content.
@@ -923,106 +824,111 @@
     font-style: italic;
   }
 
-  /* The stdin row. Sticky so the keyboard can never cover it (§4.3 rule 1). */
-  .stdin-row {
+  /* ---------------------------------------------------------- the live line --
+   *
+   * There is NO standing input bar, and re-adding one is a regression, not a
+   * convenience: a terminal has one surface, and an input that is on screen while
+   * nothing is reading it teaches a student that the program is always listening.
+   * `.stdin-row` is a `.console-row` that exists ONLY while the program is blocked
+   * on stdin (plus a ~900ms grace after Enter, so two reads in a row do not blink
+   * the software keyboard shut between them — see Console.tsx). It renders at the
+   * cursor's real position: joined to a partial-line prompt when the program left
+   * one open, so `Your name: ` and the answer are one line, in two colours.
+   *
+   * The class names are the old ones on purpose — the design audits measure
+   * `.stdin-row` / `.stdin-input`, and it is the same thing (the place a student
+   * types), moved into the stream.
+   */
+  .console-row.stdin-row {
+    /* A current-line band. Faint on purpose: the leading rule, the caret and the
+       status line are what announce the state; this only says "here". */
+    background: color-mix(in srgb, var(--info-soft) 55%, transparent);
+  }
+  /* Waiting is marked by an --info control boundary, never by a fill alone
+       (§4.3/§7.3) — here the boundary is the row's own 3px leading rule, which
+       is also what survives the greyscale check. */
+  .console-row.stdin-row[data-waiting='true'] {
+    border-left-color: var(--info);
+  }
+  /* The row's text becomes a flex line so the input can take whatever width the
+     prompt leaves, and wrap onto the next line when the prompt fills the row.
+     Baseline alignment, not centre: the input is 16px (the iOS no-zoom floor) on
+     a 14px transcript, and only a shared baseline makes the two read as one line.
+     The hanging indent that wraps continuations does not apply to a flex line. */
+  .console-row__text--live {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    padding-left: 0;
+    text-indent: 0;
+  }
+  .stdin-marker {
+    flex: none;
+    white-space: pre;
+    color: var(--info);
+  }
+  /* No box, no fill, no radius: the caret IS the affordance. */
+  .stdin-input {
+    flex: 1 1 14ch;
+    min-width: 8ch;
+    /* The one concession to touch: the line the student types on is a 44px
+       target even though the rows around it are 21px. It doubles as the reason
+       the waiting line is impossible to overlook. */
+    min-height: var(--touch);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-family: var(--font-code);
+    /* HARD FLOOR — below 16px iOS zooms the whole layout on focus. */
+    font-size: var(--fs-input);
+    line-height: 1.4;
+    color: var(--info);
+    caret-color: var(--info);
+    /* Progressive: a block caret where the browser has it, a beam where it does
+       not. Both are --info, which is the point. */
+    caret-shape: block;
+  }
+  .stdin-input::placeholder {
+    color: var(--text-3);
+    font-style: italic;
+  }
+  /* The ring stays (§4.1 rule 3 — never outline-none), but it is re-tuned, and
+     both changes are deliberate.
+
+     `outline-offset: -2px` is the documented treatment for a focusable element
+     clipped by a scroll parent, which this one is. The colour moves from the
+     global amber to --info because this input is auto-focused the instant the
+     program reads, and amber is the app's running/attention signature: a
+     full-width amber rectangle across the console was the loudest thing on the
+     screen and read as the form field the founder asked us to delete. In --info
+     it is the same 2px indicator, in the same hue as the row's leading rule and
+     the caret, so the three read as one waiting state instead of three warnings.
+     Contrast on --surface-2 is 8.35:1. */
+  .stdin-input:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--info) 55%, transparent);
+    outline-offset: -2px;
+  }
+
+  /* The console's permanent bottom row. It carries the status line and nothing
+     else — sticky, so a software keyboard can never cover the one sentence that
+     says whether the program is waiting for the student (§4.3 rule 1). */
+  .console-foot {
     position: sticky;
     bottom: 0;
     flex: none;
     background: var(--surface-2);
-    border-top: 1px solid var(--border-subtle);
+    box-shadow: inset 0 1px 0 0 var(--border-subtle);
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .stdin-form {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    padding: var(--sp-2) var(--pad-panel);
-  }
-  .stdin-caret {
-    flex: none;
-    font-family: var(--font-code);
-    font-size: var(--fs-console);
-    color: var(--text-3);
-  }
-  .stdin-input {
-    flex: 1;
-    min-width: 0;
-    min-height: var(--touch);
-    padding-inline: var(--sp-3);
-    border-radius: var(--r-sm);
-    /* A visible control boundary (3.47:1 on surface-2), not a decorative one. */
-    border: 1px solid var(--border-control);
-    background: var(--surface-4);
-    font-family: var(--font-code);
-    font-size: var(--fs-input);
-    line-height: 1.4;
-    color: var(--text-1);
-  }
-  .stdin-input::placeholder {
-    color: var(--text-3);
-  }
-  /* Nothing running: a colour change, never opacity (§7.4). The row still reads
-     as a real control that is simply not accepting input yet. */
-  .stdin-input:disabled {
-    background: var(--surface-2);
-    border-color: var(--border-subtle);
-    color: var(--text-disabled);
-  }
-  .stdin-input:disabled::placeholder {
-    color: var(--text-disabled);
-  }
-  /* Submit, for a touch keyboard whose Enter is not obvious. 44px, trailing. */
-  .stdin-send {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    width: var(--touch);
-    height: var(--touch);
-    border: 1px solid var(--border-control);
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--text-2);
-    touch-action: manipulation;
-    transition:
-      background-color var(--dur-fast) var(--ease),
-      color var(--dur-fast) var(--ease);
-  }
-  .stdin-send:hover:not(:disabled) {
-    background: var(--surface-3);
-    color: var(--text-1);
-  }
-  .stdin-send:active:not(:disabled) {
-    background: var(--surface-4);
-  }
-  .stdin-send:disabled {
-    border-color: var(--border-subtle);
-    color: var(--text-disabled);
-  }
-  /* While the program is actually asking, the send button joins the input in
-     wearing --info, so the two read as one waiting control. */
-  .stdin-row[data-waiting='true'] .stdin-send {
-    border-color: var(--info);
-    color: var(--info);
-  }
-  /* Waiting for input is signalled by the border, the caret and the hint —
-     never by a fill change alone. */
-  .stdin-row[data-waiting='true'] .stdin-input {
-    border-color: var(--info);
-    box-shadow: inset 0 0 0 1px var(--info);
-  }
-  .stdin-row[data-waiting='true'] .stdin-caret {
-    color: var(--info);
-  }
 
-  /* The console status line: one sentence above the stdin row that names what the
-     program just did, per run state. Requested by ui-console; it supersedes
-     `.stdin-hint`, which only ever covered the waiting case. Tone comes from
-     [data-state] so the component sets no colours. */
+  /* The console status line: one sentence naming what the program just did, per
+     run state. Tone comes from [data-state] so the component sets no colours. */
   .console-status {
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    padding: var(--sp-1) var(--pad-panel) 0;
+    min-height: var(--sp-5);
+    padding: var(--sp-1) var(--pad-panel);
     font-family: var(--font-ui);
     font-size: var(--fs-micro);
     line-height: 1.45;
@@ -1101,140 +1007,6 @@
     color: var(--accent);
   }
 
-  /* ======================================================== status pill ==== */
-
-  /* Shrinkable on purpose: the pill is the only thing in the console header that
-     may give up width. On a 390px phone the header holds Run, the pill, Copy,
-     Clear and the collapse control, and if the pill refuses to yield the collapse
-     control is pushed off the screen entirely. Its label ellipsises; its glyph
-     and its first word never do. */
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--sp-1);
-    flex: 0 1 auto;
-    min-width: 0;
-    height: 24px;
-    padding-inline: var(--sp-2);
-    border-radius: var(--r-pill);
-    font-size: var(--fs-micro);
-    line-height: 1;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-    /* Every state carries a glyph and a word, so the five run states are
-       distinguishable with no colour vision at all (spec §7.3). */
-  }
-  /* 12px: §3.2's floor applies to the glyph too, and "nothing below 12px ships"
-     is measured, not eyeballed. The box stays narrow so the pill does not grow. */
-  .pill__glyph {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 12px;
-    font-size: var(--fs-micro);
-    line-height: 1;
-  }
-  .pill__label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pill[data-state='idle'] {
-    background: var(--surface-4);
-    color: var(--text-2);
-  }
-  .pill[data-state='preparing'],
-  .pill[data-state='running'],
-  .pill[data-state='ok'] {
-    background: var(--success-soft);
-    color: var(--success);
-  }
-  .pill[data-state='waiting'] {
-    background: var(--info-soft);
-    color: var(--info);
-  }
-  .pill[data-state='failed'] {
-    background: var(--danger-soft);
-    color: var(--danger);
-  }
-  /* Neutral, not red: the student stopped it on purpose, and reserving red for
-     genuine failure is what makes red mean something. */
-  .pill[data-state='stopped'] {
-    background: var(--neutral-soft);
-    color: var(--text-2);
-  }
-
-  /* The one continuous animation in the app: a 1.4s opacity pulse on a 6px
-     dot. Under reduced motion it goes static and the pill relies on its word. */
-  .pill .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: var(--r-pill);
-    background: currentColor;
-    animation: warsha-pulse 1.4s var(--ease) infinite;
-  }
-
-  /* =========================================================== progress ==== */
-
-  .progress-block {
-    margin-bottom: var(--sp-2);
-    padding: var(--sp-3);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
-    background: var(--surface-3);
-  }
-  .progress-block__title {
-    font-size: var(--fs-btn);
-    line-height: 1.35;
-    font-weight: 600;
-    color: var(--text-1);
-    font-family: var(--font-ui);
-  }
-  .progress-block__meta {
-    font-family: var(--font-ui);
-    font-size: var(--fs-meta);
-    line-height: 1.5;
-    color: var(--text-3);
-  }
-  .progress-track {
-    position: relative;
-    flex: 1;
-    height: 4px;
-    overflow: hidden;
-    border-radius: var(--r-pill);
-    background: var(--surface-4);
-  }
-  .progress-fill {
-    height: 100%;
-    border-radius: var(--r-pill);
-    background: var(--accent);
-    /* Never animate it backwards. */
-    transition: width 200ms linear;
-  }
-  .progress-fill--sweep {
-    width: 30%;
-    animation: warsha-sweep 1.4s var(--ease) infinite;
-  }
-  .progress-pct {
-    font-variant-numeric: tabular-nums;
-    font-size: var(--fs-meta);
-    color: var(--text-2);
-    min-width: 4ch;
-    text-align: right;
-  }
-
-  /* A 16px spinner for the glyph slot of the Run control during bootstrap. */
-  .spinner {
-    width: 16px;
-    height: 16px;
-    flex: none;
-    border-radius: var(--r-pill);
-    border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
-    border-top-color: currentColor;
-    animation: warsha-spin 700ms linear infinite;
-  }
-
   /* ============================================================ buttons ==== */
 
   .btn {
@@ -1276,19 +1048,18 @@
      Owned here so no component has to remember it. (Found by ui-files.) */
   .btn,
   .icon-btn,
-  .menu-item,
-  .template-card,
-  .tab__close,
-  .link,
-  .stdin-send {
+  .link {
     cursor: pointer;
   }
   .btn:disabled,
-  .icon-btn:disabled,
-  .menu-item:disabled,
-  .stdin-send:disabled,
-  .stdin-input:disabled {
+  .icon-btn:disabled {
     cursor: not-allowed;
+  }
+  /* The live line is a terminal line, so the whole row wants a text cursor —
+     including the transparent input, which would otherwise show the I-beam only
+     over its own box and a default arrow over the prompt beside it. */
+  .console-row.stdin-row {
+    cursor: text;
   }
   /* Still a 44px target, but visually secondary — for an action offered inside a
      dense row (the "New file" beside an empty folder). */
@@ -1426,25 +1197,6 @@
     padding: var(--sp-5) var(--sp-4) 0;
     text-align: center;
   }
-  /* A full-pane empty state (the editor with no file open). The measure moves off
-     the layer itself and onto its text: with `max-width: 32ch` on the same
-     element as `inset: 0`, max-width wins, so this layer computed to a 256px
-     centred column and its background only painted that strip — leaving
-     CodeMirror's gutter, line number and active-line band visible on both sides
-     of the placeholder. It read as a half-drawn screen, which is the opposite of
-     what an empty state is for. (Found by ui-files, measured in the built app.) */
-  .empty--pane {
-    position: absolute;
-    inset: 0;
-    --empty-measure: none;
-    justify-content: flex-start;
-    padding-top: max(var(--sp-5), 28%);
-    background: var(--surface-1);
-  }
-  .empty--pane > .empty__title,
-  .empty--pane > .empty__body {
-    max-width: 32ch;
-  }
   .empty__glyph {
     font-size: 32px;
     line-height: 1;
@@ -1461,158 +1213,6 @@
     line-height: 1.55;
     color: var(--text-3);
   }
-
-  /* The console's own empty state is inline in the transcript, so it must not
-     re-centre the scroller — and it lays the glyph out *beside* the text rather
-     than above it. A 32px glyph stacked over three lines is taller than the
-     console's 144px stdin floor, so the transcript's scroll-to-bottom pushed the
-     glyph out of sight and the empty state arrived decapitated. Sideways, the
-     whole thing fits in the shortest console we ever show. */
-  .empty--console {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: var(--sp-3);
-    max-width: 52ch;
-    padding: var(--sp-3) 0 0 var(--sp-2);
-    text-align: left;
-    margin-inline: 0;
-  }
-  .empty--console .empty__glyph {
-    flex: none;
-    margin-top: 2px;
-  }
-
-  /* ====================================================== welcome screen ==== */
-
-  /* The start panel. This used to be a full-page gate (`position: absolute;
-     inset: 0; z-index: 30`) and is now an in-pane empty state living inside
-     `.editor-pane` — the app opens straight into the IDE. The old z-30 made it
-     paint OVER the explorer drawer (z-20) and its scrim on a phone, which is a
-     collision, so the stacking context goes away entirely rather than being
-     renumbered: an in-flow panel cannot collide with anything. */
-  .welcome {
-    position: relative;
-    z-index: 0;
-    height: 100%;
-    background: var(--surface-1);
-  }
-  .welcome__col {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--sp-5);
-    width: 100%;
-    max-width: 480px;
-    margin-inline: auto;
-    /* Weighted above centre: the lockup lands in the upper third, which is
-       where the eye starts, and nothing important sits where a keyboard would. */
-    padding: var(--sp-6) var(--sp-5) var(--sp-6);
-  }
-
-  .lockup {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--sp-2);
-  }
-  .lockup__word {
-    font-size: 28px;
-    line-height: 1.15;
-    font-weight: 600;
-    letter-spacing: -0.015em;
-    color: var(--text-1);
-  }
-  /* Real text, so the device's own Arabic font shapes and joins it (§7.7). */
-  .lockup__ar {
-    font-size: var(--fs-btn);
-    line-height: 1.6;
-    color: var(--text-3);
-  }
-
-  .welcome__purpose {
-    font-size: var(--fs-btn);
-    line-height: 1.5;
-    color: var(--text-2);
-    text-align: center;
-    margin: 0;
-  }
-
-  .welcome__cards {
-    display: grid;
-    gap: var(--sp-3);
-  }
-  @media (min-width: 720px) {
-    .welcome__cards {
-      grid-template-columns: 1fr 1fr;
-    }
-  }
-
-  /* The whole card is one 88px+ target — no nested buttons. The 1px border does
-     the work, since surface-3 on surface-0 is only ~1.1:1. */
-  .template-card {
-    display: grid;
-    /* head / blurb / manifest. The blurb takes the slack so the manifest lines
-       up along the bottom of all three cards even when one title wraps to two
-       lines and the blurbs differ in length — without it the cards read as three
-       unrelated boxes that happen to sit in a row. */
-    grid-template-rows: auto 1fr auto;
-    gap: var(--sp-2);
-    min-height: 88px;
-    padding: var(--sp-4);
-    text-align: left;
-    border: 1px solid var(--border-control);
-    border-radius: var(--r-lg);
-    background: var(--surface-3);
-    cursor: pointer;
-    touch-action: manipulation;
-    transition:
-      background-color var(--dur-fast) var(--ease),
-      border-color var(--dur-fast) var(--ease),
-      transform var(--dur-fast) var(--ease);
-  }
-  .template-card:hover {
-    background: var(--surface-4);
-    border-color: var(--text-3);
-  }
-  .template-card:active {
-    background: var(--surface-4);
-    transform: scale(0.99);
-  }
-  .template-card__head {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-  }
-  .template-card__title {
-    flex: 1;
-    min-width: 0;
-    font-size: var(--fs-btn);
-    line-height: 1.3;
-    font-weight: 600;
-    color: var(--text-1);
-  }
-  .template-card__blurb {
-    font-size: var(--fs-meta);
-    line-height: 1.5;
-    color: var(--text-2);
-  }
-  .template-card__manifest {
-    font-size: var(--fs-micro);
-    line-height: 1.4;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-  }
-  /* A quiet arrow, so the card reads as something you go into. It is the only
-     decoration on the card and it inherits the accent on hover. */
-  .template-card__go {
-    flex: none;
-    color: var(--text-3);
-    transition: color var(--dur-fast) var(--ease);
-  }
-  .template-card:hover .template-card__go {
-    color: var(--accent);
-  }
-
   /* A note with a 3px leading rule — the same anatomy as a console row, which
      is what keeps the two halves of the app looking like one product. */
   .note {
@@ -1620,9 +1220,6 @@
     border-left: 3px solid var(--border-control);
     background: var(--surface-2);
     border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  }
-  .note--warn {
-    border-left-color: var(--warn);
   }
   .note--danger {
     border-left-color: var(--danger);
@@ -1632,14 +1229,6 @@
     font-size: var(--fs-meta);
     line-height: 1.55;
     color: var(--text-2);
-    margin: 0;
-  }
-
-  .welcome__footer {
-    font-size: var(--fs-micro);
-    line-height: 1.6;
-    color: var(--text-3);
-    text-align: center;
     margin: 0;
   }
   .link {
@@ -1652,197 +1241,19 @@
   .link:hover {
     color: var(--accent-hover);
   }
+  /* What survives of the dialog recipe, and only this: the four classes that
+     CONSUMERS outside components/ui still write by hand — `.dlg-title` in
+     CapabilityScreens/CrashScreen/ImportZipDialog, `.dlg-msg` and `.dlg-actions`
+     in ImportZipDialog, `.dlg-input` in Explorer's inline rename. The card, its
+     scrim, the prompt's label and error line and the whole toast recipe have
+     moved into components/ui as Tailwind utilities; these four follow the day
+     those four call sites do, and nothing else should start using them.
 
-  /* Two-letter language badge (§7.1): survives greyscale, faster to scan than a
-     colour-only icon. */
-  .badge {
-    display: grid;
-    place-items: center;
-    flex: none;
-    border-radius: var(--r-sm);
-    font-family: var(--font-code);
-    font-weight: 700;
-    line-height: 1;
-  }
-  /* 12px, not the 10px this shipped with: §3.2 makes 12px the floor for
-     everything, and "nothing below 12px" is a checklist item an auditor
-     measures. "Py" still fits a 20px box at 12px/700. */
-  .badge--sm {
-    width: 20px;
-    height: 20px;
-    font-size: var(--fs-micro);
-    letter-spacing: -0.03em;
-  }
-  .badge--md {
-    width: 24px;
-    height: 24px;
-    font-size: var(--fs-meta);
-    letter-spacing: -0.03em;
-  }
-  .badge--java {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .badge--py {
-    background: var(--info-soft);
-    color: var(--info);
-  }
-  .badge--plain {
-    background: var(--surface-4);
-    color: var(--text-3);
-  }
-
-  /* ===================================================== menus + dialogs ==== */
-
-  .menu {
-    min-width: 13rem;
-    padding: var(--sp-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
-    background: var(--surface-3);
-    box-shadow: var(--shadow-raised);
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: var(--touch);
-    padding-inline: var(--sp-3);
-    border-radius: var(--r-sm);
-    text-align: left;
-    font-size: var(--fs-row);
-    color: var(--text-1);
-    touch-action: manipulation;
-    transition: background-color var(--dur-fast) var(--ease);
-  }
-  .menu-item:hover {
-    background: var(--surface-4);
-  }
-  .menu-item:active {
-    background: var(--surface-4);
-  }
-  /* Destructive actions are never adjacent to frequent ones: Delete is last,
-     separated by an 8px gap and a divider (spec §5.2). */
-  .menu-item--danger {
-    color: var(--danger);
-  }
-  .menu-item--danger:hover,
-  .menu-item--danger:active {
-    background: var(--danger-soft);
-  }
-  .menu-sep {
-    margin: var(--sp-2) var(--sp-2);
-    border-top: 1px solid var(--border-subtle);
-  }
-  /* A 20px leading glyph slot and an optional trailing shortcut hint. The slot is
-     reserved whether or not an item has an icon, so labels line up down the menu
-     instead of stepping in and out. */
-  .menu-item {
-    gap: var(--sp-3);
-  }
-  .menu-item__icon {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 20px;
-    height: 20px;
-    color: var(--text-3);
-  }
-  .menu-item:hover .menu-item__icon {
-    color: var(--text-2);
-  }
-  .menu-item__label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .menu-item__hint {
-    flex: none;
-    margin-left: var(--sp-4);
-    font-size: var(--fs-micro);
-    font-variant-numeric: tabular-nums;
-    color: var(--text-3);
-  }
-  .menu-item:disabled {
-    color: var(--text-disabled);
-    background: transparent;
-  }
-  .menu-item:disabled .menu-item__icon,
-  .menu-item:disabled .menu-item__hint {
-    color: var(--text-disabled);
-  }
-
-  /* The .zip drop target. The only dashed border in the app — dashed reads as
-     "put something here", which is exactly the one place we mean it. */
-  .dropzone {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--sp-2);
-    padding: var(--sp-5) var(--sp-4);
-    border: 1px dashed var(--border-control);
-    border-radius: var(--r-md);
-    background: var(--surface-2);
-    color: var(--text-3);
-    text-align: center;
-    transition:
-      background-color var(--dur-fast) var(--ease),
-      border-color var(--dur-fast) var(--ease);
-  }
-  .dropzone[data-over='true'] {
-    border-color: var(--accent);
-    border-style: solid;
-    background: var(--surface-4);
-    color: var(--text-2);
-  }
-
-  /* Inline validation under a dialog field: answered where the student is already
-     looking, rather than by a toast after the dialog closes. */
-  .dlg-input[aria-invalid='true'] {
-    border-color: var(--danger);
-  }
-  .dlg-error {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--sp-2);
-    margin-top: var(--sp-2);
-    font-size: var(--fs-meta);
-    line-height: 1.5;
-    color: var(--danger);
-  }
-  .dlg-error__glyph {
-    flex: none;
-    line-height: 1.5;
-  }
-
-  /* The scrim behind every native dialog, owned here rather than by a utility on
-     each <dialog>. `backdrop:bg-[ --scrim ]` compiles to an invalid declaration
-     under Tailwind v4 and leaves the backdrop fully transparent, so a modal
-     floats over a live-looking IDE with nothing dimming it. One rule, and no
-     call site can get it wrong. */
-  dialog::backdrop {
-    background: var(--scrim);
-  }
-
-  /* The <dialog> element is only the positioner; `.dlg` is the card. */
-  .dlg-host {
-    margin: auto;
-    width: min(26rem, calc(100vw - var(--sp-6)));
-    max-height: calc(var(--app-h, 100dvh) - var(--sp-6));
-    padding: 0;
-    background: transparent;
-    border: none;
-  }
-
-  .dlg {
-    padding: var(--sp-4);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-lg);
-    background: var(--surface-3);
-    box-shadow: var(--shadow-raised);
-  }
+     `dialog::backdrop` went with them. The Radix dialog is not `showModal()`,
+     so there is no ::backdrop to paint — Dialog.tsx draws the scrim with
+     `bg-(--scrim)` on its own overlay. Note the parenthesis form: the bracket
+     form of that utility compiles to an invalid declaration under Tailwind v4
+     and silently leaves the IDE undimmed behind the modal. */
   .dlg-title {
     font-size: var(--fs-dlg-title);
     line-height: 1.3;
@@ -1855,12 +1266,6 @@
     line-height: 1.5;
     color: var(--text-2);
     margin: 0;
-  }
-  .dlg-label {
-    font-size: var(--fs-meta);
-    line-height: 1.5;
-    color: var(--text-3);
-    margin: 0 0 var(--sp-2);
   }
   .dlg-input {
     width: 100%;
@@ -1878,54 +1283,6 @@
     justify-content: flex-end;
     gap: var(--sp-2);
     margin-top: var(--sp-4);
-  }
-
-  .toast {
-    max-width: min(32rem, 90vw);
-    padding: var(--sp-2) var(--sp-4);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
-    background: var(--surface-3);
-    color: var(--text-1);
-    font-size: var(--fs-meta);
-    line-height: 1.5;
-    box-shadow: var(--shadow-raised);
-    animation: warsha-rise var(--dur) var(--ease) both;
-  }
-  /* A toast is a row: kind glyph, message, dismiss. Laid out here so all three
-     kinds share one geometry. */
-  .toast {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    min-height: var(--touch);
-    padding-right: var(--sp-1);
-  }
-  .toast__glyph {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 16px;
-    font-size: var(--fs-meta);
-    line-height: 1;
-  }
-  .toast__text {
-    min-width: 0;
-    flex: 1;
-  }
-  .toast[data-kind='success'] {
-    border-color: var(--success);
-  }
-  .toast[data-kind='success'] .toast__glyph {
-    color: var(--success);
-  }
-  .toast[data-kind='info'] .toast__glyph {
-    color: var(--info);
-  }
-  .toast[data-kind='error'] {
-    border-color: var(--danger);
-    background: var(--danger-soft);
-    color: var(--danger);
   }
 
   /* ============================================================= drawer ==== */
@@ -1983,10 +1340,80 @@ html[data-kb='open'] {
   }
 }
 
-@keyframes warsha-rise {
+/* Overlay motion. Each `from`-only keyframe leaves its `to` implicit, so the
+   finished state is whatever the element already is — nothing here has to
+   restate a resting transform, and nothing can drift from one. */
+
+@keyframes warsha-fade-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+  }
+}
+@keyframes warsha-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes warsha-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes warsha-dialog-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+/* Named for where the panel comes FROM, which is the side its trigger is on —
+   `data-side="bottom"` means the panel opened below its trigger, so it rises
+   the last 4px from above. */
+@keyframes warsha-pop-from-top {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+@keyframes warsha-pop-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes warsha-pop-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.98);
+  }
+}
+@keyframes warsha-pop-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(4px) scale(0.98);
+  }
+}
+@keyframes warsha-pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+/* A toast enters and leaves through the edge it is pinned to, so the stack
+   reads as a queue rather than as things blinking into existence. */
+@keyframes warsha-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.98);
+  }
+}
+@keyframes warsha-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(16px) scale(0.98);
   }
 }
 
@@ -1999,18 +1426,6 @@ html[data-kb='open'] {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
-  }
-  .pill .dot,
-  .progress-fill--sweep,
-  .spinner {
-    animation: none;
-  }
-  .progress-fill--sweep {
-    width: 100%;
-    opacity: 0.5;
-  }
-  .spinner {
-    border-top-color: currentColor;
   }
 }
 

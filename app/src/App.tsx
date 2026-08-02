@@ -5,7 +5,7 @@ import { splitPath } from './fs/project'
 import { prefs, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { entryCandidates } from './runtime'
+import { disposeRuntimes, entryCandidates } from './runtime'
 import { templates, type Template } from './templates'
 import { exportZip } from './zip'
 import { useProject } from './hooks/useProject'
@@ -14,12 +14,17 @@ import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
+import { ActivityBar } from './components/ActivityBar'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
+import { StorageBanner } from './components/StorageBanner'
 import { Console } from './components/Console'
 import { ConsoleDivider } from './components/ConsoleDivider'
 import { Editor } from './components/Editor'
 import { Explorer } from './components/Explorer'
+import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { RunBar } from './components/RunBar'
+import { RunControl, resolveEntry, type RunControlState } from './components/RunControl'
+import { StatusBar } from './components/StatusBar'
 import { Tabs } from './components/Tabs'
 import { TopBar } from './components/TopBar'
 import { WelcomePanel } from './components/WelcomePanel'
@@ -45,6 +50,31 @@ import { COPY, count } from './copy'
 
 const NARROW = '(max-width: 899px)'
 
+/* VSCode's floor plan (docs/design/LAYOUT-VSCODE.md, the ASCII drawing): an
+ * activity-bar column beside a title-bar / body stack, with a full-width status
+ * bar underneath. The activity bar and the status bar are ≥900px-only and are
+ * NOT RENDERED below it, which is why their tracks are `auto` rather than sizes:
+ * with the child absent the column and the row collapse to 0 and the phone
+ * layout is the old two-row grid to the pixel.
+ *
+ * Placement is explicit (`col-start`/`row-start`/`row-span`) rather than by flow
+ * order, because the activity bar spans two rows while the status bar spans two
+ * columns — auto-placement cannot express that. Fixed and sized from --app-h
+ * (written by ui/viewport.ts) so iOS cannot scroll the document out from under a
+ * focused input. */
+const SHELL =
+  // The dvh fallback is load-bearing: --app-h is written by JS on first sync, so
+  // the very first paint has nothing to read.
+  'app-shell fixed inset-0 h-[var(--app-h,100dvh)] pb-[env(safe-area-inset-bottom)] overflow-hidden grid ' +
+  'grid-cols-[auto_minmax(0,1fr)] grid-rows-[var(--bar-title)_minmax(0,1fr)_auto] ' +
+  // Keyboard-open compaction (spec §4.3 rule 3) is a PHONE behaviour and is
+  // scoped to below 900px on purpose. At ≥900px the title bar holds Run, and
+  // dropping the row to 40px there put a 44px filled control back into a 40px
+  // bar — the exact overflow --bar-title exists to prevent.
+  'max-[899px]:kb-open:grid-rows-[var(--bar-top-kb)_minmax(0,1fr)_auto]'
+
+const BODY = 'app-body col-start-2 row-start-2 relative flex min-h-0 min-w-0 overflow-hidden'
+
 /** A project name as a file name: "My first project" → "my-first-project". */
 function slug(name: string | undefined): string {
   return (name ?? '')
@@ -67,11 +97,15 @@ function Ide({ report }: { report: CapabilityReport }) {
   const {
     project,
     ready,
+    whenReady,
     revision,
     tree,
     projects,
     current: currentProject,
     migration,
+    storageProblem,
+    quotaTight,
+    isPrimaryTab,
     createProject,
     openProject,
     renameProject,
@@ -100,15 +134,30 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  // Ln:Col for the status bar. Null until a file is open, because a caret
+  // position for a document nobody is looking at is a small lie.
+  const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null)
 
   const candidates = useMemo(() => entryCandidates(project.sourceFiles()), [project, revision])
 
   // Identifiers from every file, for editor completion. Recomputed on `revision`
   // (structure or dirty changes) rather than per keystroke — the editor scans the
   // buffer being typed in on its own, so this only has to cover the other files.
+  //
+  // Bounded, because `revision` bumps twice per edited file per debounce window
+  // and this is a full re-tokenise of the whole project each time. At a few
+  // dozen files that is free; at five hundred it is the difference between an
+  // editor that keeps up with typing and one that does not. Past the budget we
+  // stop early — the completions get less complete, which a student will never
+  // notice, rather than the editor getting slow, which they will.
   const projectWords = useMemo(() => {
     const words = new Set<string>()
-    for (const file of project.sourceFiles()) for (const word of wordsInSource(file.content)) words.add(word)
+    let budget = 2_000_000
+    for (const file of project.sourceFiles()) {
+      budget -= file.content.length
+      if (budget < 0) break
+      for (const word of wordsInSource(file.content)) words.add(word)
+    }
     return [...words]
   }, [project, revision])
   const runner = useRunner(project, buffer, entryPath)
@@ -207,6 +256,23 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (name.startsWith('/') || name.endsWith('/')) return 'A name cannot start or end with "/".'
     if (name.split('/').some((s) => s === '' || s === '.' || s === '..')) return 'That path is not valid.'
     if (/[\\:*?"<>|]/.test(name)) return 'That name uses a character files cannot have.'
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/.test(name)) return 'That name uses a character files cannot have.'
+    // OPFS itself has no documented limit, but the filesystems underneath it cap
+    // a name at 255 bytes and reject the write, which surfaced as a save that
+    // silently never happened.
+    if (new TextEncoder().encode(name).length > 240) return 'That name is too long.'
+    // ".java" is a valid file name and an invalid Java file: the class name would
+    // be empty, so `public class  {` never compiles, and CheerpJ requires the
+    // public class to match the file name. Caught here rather than as a compiler
+    // error the student cannot connect to what they typed. Same for ".py", whose
+    // module name would be empty.
+    const leaf = name.split('/').pop() ?? ''
+    if (/^\.(java|py)$/i.test(leaf)) return `Give the file a name before the "${leaf}".`
+    if (leaf.startsWith('.') && leaf.slice(1).includes('.')) return 'A name cannot start with a dot.'
+    // Trailing dots and spaces are silently stripped by some filesystems, so
+    // "Main.java " and "Main.java" become the same file and one of them is lost.
+    if (/[ .]$/.test(leaf)) return 'A name cannot end with a space or a dot.'
     return null
   }
 
@@ -246,6 +312,9 @@ function Ide({ report }: { report: CapabilityReport }) {
     const path = dir ? `${dir}/${name}` : name
     if (project.has(path)) return notify(`${path} already exists.`, 'error')
     try {
+      // Same startup race as `replaceProject` — the explorer's New file is also
+      // reachable before the store is attached.
+      await whenReady()
       await project.createFile(path, starterContent(path))
       // Creating a file is the start of typing in it, so the caret goes there
       // rather than leaving the student to tap the canvas. Deferred, because on
@@ -319,14 +388,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     for (const t of affected) editorRef.current?.closeFile(t)
   }
 
-  const saveAll = useCallback(async () => {
-    await project.saveAll()
-  }, [project])
+  /** Resolves false when something could not be written. Never rejects. */
+  const saveAll = useCallback(async () => project.saveAll(), [project])
 
   // ---- starters + zip ----
   // A starter populates the project you are already in. It is an action, not a
   // mode: nothing about the app changes afterwards except which files exist.
   const replaceProject = async (snapshot: FsSnapshot, entry: string | null, label: string) => {
+    // The start panel is on screen before storage has finished opening, and a
+    // tap in that window used to write the starter into the throwaway store
+    // that `switchStore` then loaded over — leaving an open tab for a file that
+    // was not there. Wait rather than refuse: a tap that does nothing is the
+    // "dead card" complaint this panel exists to answer.
+    await whenReady()
     await project.replaceAll(snapshot)
     editorRef.current?.closeFile(editorRef.current.currentPath() ?? '')
     setTabs(entry ? [entry] : [])
@@ -499,8 +573,9 @@ function Ide({ report }: { report: CapabilityReport }) {
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        void saveAll()
-        notify('Saved')
+        // The toast used to fire before the write did, and said "Saved" whether
+        // or not one landed. Wait for the answer, then tell the truth.
+        void saveAll().then((ok) => notify(ok ? 'Saved' : COPY.saveFailed, ok ? 'info' : 'error'))
       } else if (mod && e.key === 'Enter') {
         e.preventDefault()
         const r = runnerRef.current
@@ -517,12 +592,38 @@ function Ide({ report }: { report: CapabilityReport }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [saveAll, notify])
 
+  // Three events, not one, because no single one of them fires everywhere the
+  // tab can go away:
+  //
+  //  - `visibilitychange` covers switching apps and switching tabs, and is the
+  //    only one iOS Safari reliably fires when the student presses Home.
+  //  - `pagehide` covers navigating away and being put into the bfcache, which
+  //    on iOS often happens with no `visibilitychange` at all.
+  //  - `freeze` covers Chrome discarding a backgrounded tab.
+  //
+  // All three call the same idempotent flush, so firing twice costs nothing.
+  // The flush is async and the page may be gone before OPFS finishes; that is
+  // unavoidable (there is no synchronous write) and is exactly why the debounce
+  // is 350 ms rather than something more comfortable.
   useEffect(() => {
-    const onHidden = () => {
-      if (document.visibilityState === 'hidden') void project.saveAll()
+    const flush = () => void project.saveAll()
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
     }
-    document.addEventListener('visibilitychange', onHidden)
-    return () => document.removeEventListener('visibilitychange', onHidden)
+    // Engines hold a WASM JVM and a CPython heap. A page that is being unloaded
+    // should not still be holding them while iPadOS looks for memory.
+    const onPageHide = (e: PageTransitionEvent) => {
+      flush()
+      if (!e.persisted) disposeRuntimes()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('freeze', flush)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('freeze', flush)
+    }
   }, [project])
 
   // Files from a single-workspace build become a real project on first load. Said
@@ -544,8 +645,11 @@ function Ide({ report }: { report: CapabilityReport }) {
   // Grouped, glyphed and 44px per row (spec §5.2). Destructive items sit last
   // behind a divider (Menu enforces that) and never near Save.
   //
-  // The projects come first: this is the menu the top bar labels "Project menu",
-  // and switching between projects is now its main job.
+  // Two menus now, not one (LAYOUT-VSCODE §2). Everything scoped to A PROJECT —
+  // switch, create, rename, export, empty, delete — hangs off the project row in
+  // the sidebar header, which is where VSCode puts the folder you are in and
+  // where a student will look for it. The top-bar "⋯" keeps what is scoped to
+  // the APP or to a file: new file, save, import, text size, handedness.
   const projectActions: MenuItem[] = [
     {
       label: 'New project…',
@@ -561,8 +665,22 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       label: 'Rename this project…',
       icon: <IconFileLines size={18} />,
+      startsGroup: true,
       disabled: !currentProject,
       onSelect: () => void renameCurrentProject(),
+    },
+    {
+      label: 'Export as .zip',
+      icon: <IconExport size={18} />,
+      disabled: empty,
+      onSelect: exportProject,
+    },
+    {
+      label: 'Empty this project…',
+      icon: <IconTrash size={18} />,
+      danger: true,
+      disabled: empty,
+      onSelect: () => void startEmpty(),
     },
     {
       label: 'Delete this project…',
@@ -578,12 +696,6 @@ function Ide({ report }: { report: CapabilityReport }) {
     { label: 'Save all', icon: <IconSave size={18} />, hint: `${mod} S`, onSelect: () => void saveAll() },
     { label: 'Import .zip…', icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
     {
-      label: 'Export as .zip',
-      icon: <IconExport size={18} />,
-      disabled: empty,
-      onSelect: exportProject,
-    },
-    {
       label: 'Bigger text',
       icon: <IconTextBigger size={18} />,
       startsGroup: true,
@@ -598,13 +710,6 @@ function Ide({ report }: { report: CapabilityReport }) {
       label: hand === 'right' ? 'Run button on left' : 'Run button on right',
       icon: <IconSwapSides size={18} />,
       onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
-    },
-    {
-      label: 'Empty this project…',
-      icon: <IconTrash size={18} />,
-      danger: true,
-      disabled: empty,
-      onSelect: () => void startEmpty(),
     },
   ]
 
@@ -636,20 +741,51 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
   })()
 
-  const menuItems: MenuItem[] = [...projectRows, ...projectActions, ...fileActions]
+  const projectMenuItems: MenuItem[] = [...projectRows, ...projectActions]
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
 
+  // One state object for Run/Stop, read by the console header and by the title
+  // bar's copy of the same control. Neither can drift from the other because
+  // there is only one of it.
+  const runControl: RunControlState = {
+    status: runner.status,
+    busy: runner.busy,
+    canRun: candidates.length > 0,
+    entry: resolveEntry(entryPath, candidates),
+    onRun: () => {
+      setConsoleOpen(true)
+      void runner.run()
+    },
+    onStop: runner.stop,
+  }
+
+  const projectName = currentProject?.name ?? ''
+
   return (
-    <div className="app-shell">
+    <div className={SHELL}>
+      {/* VSCode's icon column. Rendered only at ≥900px — below that the drawer
+          already is the explorer toggle, and a permanent 48px rail is a fifth of
+          a 390px screen. */}
+      {narrow ? null : (
+        <ActivityBar explorerOpen={explorerDocked} onToggleExplorer={() => setExplorerDocked((v) => !v)} />
+      )}
+
       <TopBar
-        onToggleExplorer={() => (narrow ? setDrawerOpen((v) => !v) : setExplorerDocked((v) => !v))}
-        menuItems={menuItems}
+        onToggleExplorer={narrow ? () => setDrawerOpen((v) => !v) : undefined}
+        menuItems={fileActions}
         title={activePath}
+        // ≥900px only, as the plan draws it. On a phone this bar is already
+        // hamburger + logo + wordmark + file + ⋯, and adding the project to it
+        // pushed the file name down to "main…" — the drawer's sidebar header
+        // carries the project there, one tap away, which is where the plan puts
+        // it below the breakpoint anyway.
+        projectSlot={narrow ? undefined : <ProjectSwitcher variant="title" name={projectName} items={projectMenuItems} />}
+        runSlot={narrow ? undefined : <RunControl run={runControl} placement="title" />}
       />
 
-      <div className="relative flex min-h-0 min-w-0 overflow-hidden">
+      <div className={BODY}>
         {/* Explorer: docked at ≥900px, an overlay drawer below that. */}
         <aside
           aria-label="Files"
@@ -671,6 +807,9 @@ function Ide({ report }: { report: CapabilityReport }) {
             project={project}
             tree={tree}
             activePath={activePath}
+            // The project row under the EXPLORER label — the home of project
+            // actions, docked or in the drawer (LAYOUT-VSCODE §2).
+            projectSlot={<ProjectSwitcher variant="sidebar" name={projectName} items={projectMenuItems} />}
             onOpenFile={openFile}
             onNewFile={(dir, name) => void newFile(dir, name)}
             onNewFolder={(dir, name) => void newFolder(dir, name)}
@@ -699,6 +838,16 @@ function Ide({ report }: { report: CapabilityReport }) {
             belt and braces, because this is the collision the founder saw. */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-1">
           <CapabilityBanner report={report} />
+          {/* Below the capability banner deliberately: "this browser cannot run
+              your code" outranks "this browser cannot save it". Both are
+              standing conditions, so neither is a toast. */}
+          <StorageBanner
+            problem={storageProblem}
+            quotaTight={quotaTight}
+            isPrimaryTab={isPrimaryTab}
+            migration={migration}
+            onExportZip={exportProject}
+          />
 
           {/* An empty project has nothing to tab through and nothing to edit, so
               the editor area carries the start panel instead. This is Warsha's
@@ -734,6 +883,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // a no-op.
                 onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
                 projectWords={projectWords}
+                onCursor={(line, col) => setCursor({ line, col })}
               />
             </>
           )}
@@ -776,13 +926,10 @@ function Ide({ report }: { report: CapabilityReport }) {
               candidates={candidates}
               entryPath={entryPath}
               consoleOpen={consoleOpen}
-              canRun={candidates.length > 0}
+              canRun={runControl.canRun}
               onEntryChange={setEntryPath}
-              onRun={() => {
-                setConsoleOpen(true)
-                void runner.run()
-              }}
-              onStop={runner.stop}
+              onRun={runControl.onRun}
+              onStop={runControl.onStop}
               onClear={() => buffer.clear()}
               onToggleConsole={() => setConsoleOpen((v) => !v)}
             />
@@ -795,6 +942,12 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // vaguer wording. Requested by ui-console, who cannot reach here.
                 exitCode={runner.exitCode}
                 progress={runner.progress}
+                // A run that never started — no engine, no output, nothing the
+                // transcript can say. Its own block, with the one button that
+                // does something about it.
+                failure={runner.failure}
+                onRetry={runControl.onRun}
+                onDismissFailure={runner.clearFailure}
                 bindStdinFocus={runner.bindStdinFocus}
                 onSubmitStdin={runner.submitStdin}
                 onNotify={notify}
@@ -804,6 +957,22 @@ function Ide({ report }: { report: CapabilityReport }) {
         </main>
 
       </div>
+
+      {/* The bottom bar (LAYOUT-VSCODE §3). Not on phones — the console's own
+          status line already carries the run state one row above the input — and
+          not while a software keyboard is up at any width, because §4.3 rule 4's
+          console floor gets its pixels before any decoration does. */}
+      {narrow || keyboardOpen ? null : (
+        <StatusBar
+          status={runner.status}
+          exitCode={runner.exitCode}
+          activePath={activePath}
+          entryPath={runControl.entry}
+          cursor={empty || !activePath ? null : cursor}
+          fontSize={fontSize}
+          onFontSize={setFontSize}
+        />
+      )}
 
       {importOpen ? (
         <ImportZipDialog

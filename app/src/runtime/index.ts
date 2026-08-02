@@ -27,6 +27,25 @@ export function runtimeFor(entryPath: string): Runtime | null {
   return lang ? registry[lang] : null
 }
 
+/**
+ * Terminate every engine worker. Called when the page is going away, so a
+ * backgrounded tab is not holding a WASM JVM plus ECJ plus a CPython heap
+ * against an iPad that is looking for memory to reclaim — the top-listed iPad
+ * risk in both INTEGRATION.md files.
+ *
+ * Not called on a language switch: a Java re-warm costs 7–20 s, and a student
+ * alternating Python and Java in one lesson would pay it every time.
+ */
+export function disposeRuntimes(): void {
+  for (const runtime of Object.values(registry)) {
+    try {
+      runtime.dispose?.()
+    } catch {
+      /* nothing useful to do while the page is closing */
+    }
+  }
+}
+
 export function langForPath(path: string): LangId | null {
   if (path.endsWith('.java')) return 'java'
   if (path.endsWith('.py')) return 'python'
