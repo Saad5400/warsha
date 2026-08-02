@@ -1,6 +1,6 @@
 # Browser QA suites
 
-Five suites that drive **local Chrome against a served production build** and assert
+Six suites that drive **local Chrome against a served production build** and assert
 what a student would actually see. They are not unit tests: they boot the real
 engines, download real Pyodide and real CheerpJ, type into the real console, and
 read the real DOM. A pass here means the feature works in a browser; a pass in
@@ -50,6 +50,7 @@ error, correctly. Java has no such requirement.
 | `verify-projects.mjs` | 19 | Multi-project: create from a starter, run, second project, run, switch back with files and edits intact, last-opened reopens, delete, rename — each persistence claim re-checked after a reload. |
 | `verify-migration.mjs` | 12 | The upgrade path: seeds the pre-multi-project flat OPFS root on a stub page (so the app has never run), then proves every file arrives byte-identical, the manifest is well-formed, the legacy root is retired only after the copy verifies, the migrated project runs, and the migration does not repeat. |
 | `measure-java.mjs` | — | Timings and progress continuity. Prints cold/warm/second-run numbers and the longest stretch with a blank or unchanging progress block. |
+| `robustness.mjs` | 65 | Failure injection, 13 scenarios: blocked/dropped engine CDNs, a worker killed outside its own kill path, OPFS writes failing or unavailable at startup, a vanished remembered project, two tabs at once, hostile `.zip` imports (bomb, path traversal, oversize, garbage), a 500-file project, runaway output, a 12-run session, a deleted Java class that must not ghost-run from a stale `.class`. See `docs/ROBUSTNESS.md` for the full before/after audit. |
 
 ## Two habits worth keeping
 
