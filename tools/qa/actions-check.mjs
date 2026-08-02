@@ -237,6 +237,32 @@ check(
   undonePy === beforePy.trim() ? '' : `got: ${JSON.stringify(undonePy.slice(0, 60))}`,
 )
 
+// ------------------------------------ 4b. formatting must not corrupt tracebacks
+// Regression (caught by eng-editor, fixed in worker.js, commit 6940bdd): the
+// Python-side formatter function was originally named `_warsha_format`, the
+// SAME name as the pre-existing traceback renderer in the same
+// `pyodide.globals` namespace — the first Format click silently replaced the
+// renderer, and every uncaught exception afterward crashed with a TypeError
+// about argument counts ("_warsha_format() takes 1 positional argument but 2
+// were given") instead of a normal traceback, until the worker respawned.
+// Format has already run twice by this point in the suite (Java and Python);
+// this proves an uncaught exception still renders correctly afterward.
+await newFile('throws.py')
+await setContent('raise ValueError("boom")\n')
+await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.waitForFunction(
+  () => /ValueError|Traceback|positional argument/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''),
+  null,
+  { timeout: 30000 },
+).catch(() => {})
+const tracebackOutput = await page.locator('[aria-label="Program output"]').innerText()
+const corruptedRenderer = /positional argument/.test(tracebackOutput)
+check(
+  'formatting did not corrupt the traceback renderer (regression)',
+  !corruptedRenderer && /Traceback/.test(tracebackOutput) && /ValueError: boom/.test(tracebackOutput),
+  corruptedRenderer ? `BUG: renderer crashed :: ${tracebackOutput.slice(-200)}` : tracebackOutput.slice(-200),
+)
+
 // ---------------------------- 5. Share as image: desktop scale from a phone
 // A deliberately long line: if the card ever wrapped to the viewport instead
 // of rendering at full desktop scale, the resulting PNG would top out near
