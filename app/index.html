@@ -56,33 +56,91 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
+    <!-- Matches --surface-0 and the manifest's theme_color. Keep all three in
+         step; a theme-color that disagrees with the painted background shows up
+         as a seam under the status bar on Android. -->
     <meta name="theme-color" content="#15171C" />
-    <meta name="description" content="Warsha — write and run Java or Python in your browser." />
-    <!-- An SVG icon so the mark stays sharp at every size Chrome asks for. It is
-         the mark-only variant (DESIGN-SPEC §11): below 20px the rule under the W
-         is a smudge, so the favicon drops it and scales the W to fill the box.
-         Declaring an icon is also what stops the browser probing /favicon.ico,
-         which was a standing 404 in the console. -->
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
     <!-- No webfont ships in v1 (DESIGN-SPEC §3.1): a 40 MB runtime download is
          already the budget, and system-ui / ui-monospace resolve to San
          Francisco + SF Mono on iPadOS and Roboto + Droid Sans Mono on Android.
          Both are good, and neither costs a byte. -->
-    <title>Warsha</title>
+    <title>Warsha — Java &amp; Python IDE in your browser</title>
+    <meta
+      name="description"
+      content="Warsha is a free, open-source IDE that runs Java and Python entirely in your browser — no install, no account. It works on a phone, and your files stay on your device."
+    />
+
+    <!-- DEPLOY STEP: replace https://warsha.example with the real origin.
+         It appears here, in og:url and in og:image / twitter:image, and those
+         two MUST be absolute — scrapers do not resolve relative image URLs, so
+         a relative one is simply no card at all. One find-and-replace covers
+         every occurrence; nothing else in the app hardcodes an origin. -->
+    <link rel="canonical" href="https://warsha.example/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Warsha" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://warsha.example/" />
+    <meta property="og:title" content="Warsha — Java &amp; Python IDE in your browser" />
+    <meta
+      property="og:description"
+      content="Write and run Java or Python in your browser. No install, no account — it works on the phone you already have."
+    />
+    <!-- Dimensions must match the file. Both are emitted by
+         tools/brand/build-brand-assets.mjs at exactly 1200x630; if you change
+         the canvas there, change these. -->
+    <meta property="og:image" content="https://warsha.example/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Warsha editor running the Java starter, with its console output below and a Python file open behind it."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Warsha — Java &amp; Python IDE in your browser" />
+    <meta
+      name="twitter:description"
+      content="Write and run Java or Python in your browser. No install, no account — it works on the phone you already have."
+    />
+    <meta name="twitter:image" content="https://warsha.example/og-image.png" />
+
+    <!-- sizes="any" on the .ico is what tells a browser that understands SVG to
+         prefer the SVG and skip the raster entirely. The .ico still earns its
+         place: tooling that hard-fetches /favicon.ico used to take a standing
+         404 in the console.
+         All of these are generated from docs/design/mark.svg — see
+         DESIGN-SPEC §11 and tools/brand/build-brand-assets.mjs. -->
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
   </head>
   <body>
     <div id="root">
       <div id="boot">
+        <!-- The mark, geometry copied from docs/design/logo.svg. Literal colours
+             because this paints before any stylesheet; they equal --text-1 and
+             --accent. If the mark changes, this and components/Logo.tsx are the
+             two hand-maintained copies that will not update themselves. -->
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
-            d="M3.25 4.5 L8.5 15 L12 8.5 L15.5 15 L20.75 4.5"
+            d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
             stroke="#E8EBF0"
-            stroke-width="2.6"
+            stroke-width="2.8"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
-          <path d="M4.75 19.5 H19.25" stroke="#F2A94B" stroke-width="2.6" stroke-linecap="round" />
+          <path
+            d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
+            stroke="#E8EBF0"
+            stroke-width="2.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5" fill="#F2A94B" />
         </svg>
       </div>
     </div>

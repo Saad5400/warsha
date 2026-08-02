@@ -1,35 +1,70 @@
 /**
- * Two-letter language badge instead of a generic file glyph (spec §7.1): faster
- * to scan than colour-only icons, and it survives greyscale.
- * Java = warn on warn-soft (7.76:1), Python = info on info-soft (7.75:1).
+ * The badge that identifies a file's language in the explorer, the tab strip
+ * and the welcome cards (spec §7.1).
+ *
+ * Java and Python get real glyphs (ui/LangIcons.tsx) rather than the "J" / "Py"
+ * lettering this shipped with. A two-letter abbreviation has to be *read*,
+ * which is the opposite of what a badge is for, and it carries nothing for a
+ * student who does not already know the answer.
+ *
+ * The tones are unchanged and still do the greyscale-safe work: Java = warn on
+ * warn-soft (7.76:1), Python = info on info-soft (7.75:1). The other extensions
+ * keep their letter — "M" and "{}" are not standing in for a logo, so there is
+ * no low-effort placeholder to fix there.
  */
+import { LangIcon, type IconLang } from './ui/LangIcons'
+
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.')
   return i === -1 ? '' : name.slice(i + 1).toLowerCase()
 }
 
-const badges: Record<string, { text: string; tone: string }> = {
-  java: { text: 'J', tone: 'badge--java' },
-  py: { text: 'Py', tone: 'badge--py' },
-  md: { text: 'M', tone: 'badge--plain' },
-  txt: { text: 'T', tone: 'badge--plain' },
-  json: { text: '{}', tone: 'badge--plain' },
+const langs: Record<string, IconLang> = { java: 'java', py: 'python' }
+
+export type BadgeSize = 'sm' | 'md'
+export type BadgeTone = 'java' | 'py' | 'plain'
+
+const BADGE = 'grid place-items-center flex-none rounded-sm font-code font-bold leading-none'
+const BADGE_SIZE: Record<BadgeSize, string> = {
+  sm: 'size-[20px] text-micro tracking-[-0.03em]',
+  md: 'size-[24px] text-meta tracking-[-0.03em]',
+}
+const BADGE_TONE: Record<BadgeTone, string> = {
+  java: 'bg-warn-soft text-warn',
+  py: 'bg-info-soft text-info',
+  plain: 'bg-surface-4 text-text-3',
 }
 
-export function FileBadge({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' }) {
-  const badge = badges[extOf(name)] ?? { text: '·', tone: 'badge--plain' }
+/** The badge's own class string. Exported so the welcome cards can wrap a "+". */
+export function badgeClass(size: BadgeSize, tone: BadgeTone): string {
+  return `${BADGE} ${BADGE_SIZE[size]} ${BADGE_TONE[tone]}`
+}
+
+const letters: Record<string, string> = { md: 'M', txt: 'T', json: '{}' }
+
+/** Inset inside the 20px / 24px badge box so the glyph is not flush to the fill. */
+const ICON_SIZE = { sm: 18, md: 20 } as const
+
+export function FileBadge({ name, size = 'sm' }: { name: string; size?: BadgeSize }) {
+  const ext = extOf(name)
+  const lang = langs[ext]
+
+  if (lang) {
+    return <LangBadge lang={lang} size={size} />
+  }
+
   return (
-    <span aria-hidden="true" className={`badge badge--${size} ${badge.tone}`}>
-      {badge.text}
+    <span aria-hidden="true" className={badgeClass(size, 'plain')}>
+      {letters[ext] ?? '·'}
     </span>
   )
 }
 
 /** The same badge keyed by language rather than by filename (welcome cards). */
-export function LangBadge({ lang, size = 'md' }: { lang: 'java' | 'python'; size?: 'sm' | 'md' }) {
+export function LangBadge({ lang, size = 'md' }: { lang: IconLang; size?: BadgeSize }) {
   return (
-    <span aria-hidden="true" className={`badge badge--${size} ${lang === 'java' ? 'badge--java' : 'badge--py'}`}>
-      {lang === 'java' ? 'J' : 'Py'}
+    <span aria-hidden="true" className={badgeClass(size, lang === 'java' ? 'java' : 'py')}>
+      <LangIcon lang={lang} size={ICON_SIZE[size]} />
     </span>
   )
 }

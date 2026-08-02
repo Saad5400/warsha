@@ -36,10 +36,13 @@ export function Logo({ size = 24, className = '' }: { size?: number; className?:
  */
 export function LogoLockup() {
   return (
-    <div className="lockup">
+    // `lockup` and `lockup__word` carry no styling — tools/qa selects them.
+    <div className="lockup flex flex-col items-center gap-2">
       <Logo size={40} />
-      <div className="lockup__word">Warsha</div>
-      <div lang="ar" dir="rtl" className="lockup__ar">
+      <div className="lockup__word text-[28px] leading-[1.15] font-semibold tracking-[-0.015em] text-text-1">
+        Warsha
+      </div>
+      <div lang="ar" dir="rtl" className="text-btn leading-[1.6] text-text-3">
         ورشة
       </div>
     </div>

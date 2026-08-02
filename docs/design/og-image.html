@@ -1,0 +1,318 @@
+<!--
+  Source for app/public/og-image.png (1200x630).
+  Regenerate with:  node tools/brand/build-brand-assets.mjs
+
+  Edit this file, never the PNG. __FONT_CSS__ is replaced at render time with
+  base64 @font-face rules built from docs/design/fonts/*.woff2 — a headless
+  render has no network, and a font that silently fails to load changes every
+  metric in this layout.
+
+  The figure is made out of Warsha's own surfaces, using the real token values
+  and the real starter code: the Java pane is app/Main.java from
+  content/templates, and the console shows the output that program actually
+  prints. Nothing here is invented, so nothing can drift from being true.
+-->
+<style>
+  __FONT_CSS__
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --surface-0: #15171C;
+    --surface-1: #1A1D23;
+    --surface-2: #1F232A;
+    --surface-3: #262B33;
+    --text-1: #E8EBF0;
+    --text-2: #AEB6C4;
+    --text-3: #8B94A3;
+    --accent: #F2A94B;
+    --accent-ink: #15171C;
+    --success: #6BD68F;
+    --success-soft: #16301F;
+    --warn: #E5B95C;
+    --warn-soft: #33291A;
+    --info-soft: #1B2A38;
+    --border-subtle: #2A2F38;
+    --gutter: #868E9D;
+
+    /* one-dark syntax, the same palette the editor ships */
+    --sx-key: #C678DD;
+    --sx-type: #E5C07B;
+    --sx-fn: #61AFEF;
+    --sx-str: #98C379;
+    --sx-num: #D19A66;
+    --sx-plain: #ABB2BF;
+  }
+
+  body {
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    position: relative;
+    background: var(--surface-0);
+    font-family: 'inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A single warm bloom behind the figure, so the right half does not read as
+     a flat rectangle pasted onto the background. */
+  .glow {
+    position: absolute;
+    top: -220px; right: -160px;
+    width: 900px; height: 760px;
+    background: radial-gradient(closest-side, rgba(242, 169, 75, 0.16), rgba(242, 169, 75, 0));
+  }
+
+  /* ---- left column ------------------------------------------------------- */
+
+  /* One vertically-centred editorial column. Keeping the lockup inside it
+     rather than pinning it to the corner is what stops the left half reading
+     as top-heavy with a hole under the chips. */
+  .copy {
+    position: absolute;
+    left: 64px; top: 50%;
+    transform: translateY(-50%);
+    width: 505px;
+  }
+
+  .lockup {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 38px;
+  }
+  .lockup span {
+    font-size: 27px; font-weight: 700; letter-spacing: -0.4px; color: var(--text-1);
+  }
+
+  /* The accent rule: the same signature bar that sits under the active tab. */
+  .rule {
+    width: 58px; height: 5px; border-radius: 3px;
+    background: var(--accent);
+    margin-bottom: 24px;
+  }
+
+  h1 {
+    font-size: 52px;
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -1.4px;
+    color: var(--text-1);
+  }
+
+  .chips {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-top: 30px;
+  }
+  .chip {
+    padding: 9px 16px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    background: var(--surface-2);
+    font-size: 17px;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
+  /* ---- the figure -------------------------------------------------------- */
+
+  .card {
+    position: absolute;
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    background: var(--surface-1);
+    overflow: hidden;
+  }
+
+  /* Secondary pane, rotated and dimmed: "there is more where this came from",
+     and it is what carries the Python half of the claim. */
+  .card--py {
+    left: 662px; top: 64px;
+    width: 424px; height: 202px;
+    transform: rotate(3deg);
+    opacity: 0.5;
+  }
+  /* Sits fully inside the canvas. Code still runs past the pane's right edge,
+     which is what a real editor does — but the edge is the card's own rounded
+     border, so it reads as a viewport rather than as a botched crop. */
+  .card--java {
+    left: 584px; top: 226px;
+    width: 590px; height: 330px;
+    box-shadow: 0 28px 64px -14px rgba(0, 0, 0, 0.75);
+  }
+
+  .tabs {
+    display: flex; align-items: stretch;
+    height: 40px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 15px;
+    font-size: 13px;
+    color: var(--text-3);
+    border-right: 1px solid var(--border-subtle);
+  }
+  .tab--on {
+    background: var(--surface-1);
+    color: var(--text-1);
+    box-shadow: inset 0 2px 0 0 var(--accent);
+  }
+
+  .badge {
+    display: grid; place-items: center;
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    flex: none;
+  }
+  .badge--java { background: var(--warn-soft); color: var(--warn); }
+  .badge--py { background: var(--info-soft); }
+
+  .code {
+    padding: 12px 0;
+    font-family: 'mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 22px;
+  }
+  .ln { display: flex; }
+  .ln > i {
+    width: 46px; flex: none;
+    text-align: right; padding-right: 14px;
+    color: var(--gutter);
+    font-style: normal;
+  }
+  .ln > code { color: var(--sx-plain); white-space: pre; }
+
+  .k { color: var(--sx-key); }
+  .t { color: var(--sx-type); }
+  .f { color: var(--sx-fn); }
+  .s { color: var(--sx-str); }
+  .n { color: var(--sx-num); }
+  .c { color: #7D8799; }
+
+  /* ---- console ----------------------------------------------------------- */
+
+  .console {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--surface-2);
+    border-top: 1px solid var(--border-subtle);
+    padding: 12px 16px 14px;
+  }
+  .console__bar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .run {
+    display: flex; align-items: center; gap: 8px;
+    height: 34px; padding: 0 18px 0 15px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 15px; font-weight: 600;
+  }
+  .path { font-size: 13px; color: var(--text-3); }
+  .done {
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: var(--success-soft);
+    color: var(--success);
+    font-size: 12px; font-weight: 600;
+  }
+  .out {
+    font-family: 'mono', ui-monospace, monospace;
+    font-size: 13px; line-height: 21px;
+    color: var(--text-1);
+    white-space: pre;
+  }
+</style>
+
+<div class="glow"></div>
+
+<div class="copy">
+  <div class="lockup">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
+            stroke="#E8EBF0" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
+            stroke="#E8EBF0" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5" fill="#F2A94B"/>
+    </svg>
+    <span>Warsha</span>
+  </div>
+  <div class="rule"></div>
+  <h1>Code Java &amp; Python<br />in your browser.</h1>
+  <div class="chips">
+    <div class="chip">No install, no account</div>
+    <div class="chip">Real CPython &amp; a Java compiler</div>
+    <div class="chip">Your files stay on the device</div>
+  </div>
+</div>
+
+<!-- Secondary pane: main.py from the Python starter. -->
+<div class="card card--py">
+  <div class="tabs">
+    <div class="tab tab--on">
+      <span class="badge badge--py">
+        <svg width="16" height="16" viewBox="0.21 -0.077 110 110" aria-hidden="true">
+          <linearGradient id="pyA" gradientUnits="userSpaceOnUse" x1="63.8159" y1="56.6829" x2="118.4934" y2="1.8225" gradientTransform="matrix(1 0 0 -1 -53.2974 66.4321)"><stop offset="0" stop-color="#387EB8"/><stop offset="1" stop-color="#366994"/></linearGradient>
+          <linearGradient id="pyB" gradientUnits="userSpaceOnUse" x1="97.0444" y1="21.6321" x2="155.6665" y2="-34.5308" gradientTransform="matrix(1 0 0 -1 -53.2974 66.4321)"><stop offset="0" stop-color="#FFE052"/><stop offset="1" stop-color="#FFC331"/></linearGradient>
+          <path fill="url(#pyA)" d="M55.023-0.077c-25.971,0-26.25,10.081-26.25,12.156c0,3.148,0,12.594,0,12.594h26.75v3.781c0,0-27.852,0-37.375,0c-7.949,0-17.938,4.833-17.938,26.25c0,19.673,7.792,27.281,15.656,27.281c2.335,0,9.344,0,9.344,0s0-9.765,0-13.125c0-5.491,2.721-15.656,15.406-15.656c15.91,0,19.971,0,26.531,0c3.902,0,14.906-1.696,14.906-14.406c0-13.452,0-17.89,0-24.219C82.054,11.426,81.515-0.077,55.023-0.077z M40.273,8.392c2.662,0,4.813,2.15,4.813,4.813c0,2.661-2.151,4.813-4.813,4.813s-4.813-2.151-4.813-4.813C35.46,10.542,37.611,8.392,40.273,8.392z"/>
+          <path fill="url(#pyB)" d="M55.397,109.923c25.959,0,26.282-10.271,26.282-12.156c0-3.148,0-12.594,0-12.594H54.897v-3.781c0,0,28.032,0,37.375,0c8.009,0,17.938-4.954,17.938-26.25c0-23.322-10.538-27.281-15.656-27.281c-2.336,0-9.344,0-9.344,0s0,10.216,0,13.125c0,5.491-2.631,15.656-15.406,15.656c-15.91,0-19.476,0-26.532,0c-3.892,0-14.906,1.896-14.906,14.406c0,14.475,0,18.265,0,24.219C28.366,100.497,31.562,109.923,55.397,109.923z M70.148,101.454c-2.662,0-4.813-2.151-4.813-4.813s2.15-4.813,4.813-4.813c2.661,0,4.813,2.151,4.813,4.813S72.809,101.454,70.148,101.454z"/>
+        </svg>
+      </span>
+      main.py
+    </div>
+    <div class="tab">shapes.py</div>
+  </div>
+  <div class="code">
+    <div class="ln"><i>6</i><code><span class="k">def</span> <span class="f">main</span>():</code></div>
+    <div class="ln"><i>7</i><code>    shapes = [<span class="t">Circle</span>(<span class="n">2</span>), <span class="t">Rectangle</span>(<span class="n">3</span>, <span class="n">4</span>)]</code></div>
+    <div class="ln"><i>8</i><code></code></div>
+    <div class="ln"><i>9</i><code>    <span class="f">print</span>(<span class="s">"=== Warsha starter ==="</span>)</code></div>
+    <div class="ln"><i>10</i><code>    <span class="k">for</span> shape <span class="k">in</span> shapes:</code></div>
+  </div>
+</div>
+
+<!-- Primary pane: app/Main.java from the Java starter, and its real output. -->
+<div class="card card--java">
+  <div class="tabs">
+    <div class="tab tab--on">
+      <span class="badge badge--java">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <g transform="translate(10 10) scale(0.906) translate(-9.75 -11.3)" fill="currentColor">
+            <path d="M3.6 9h9.4v3a4.7 4.7 0 0 1-9.4 0Z"/>
+            <path d="M13.2 10.4h1.2a2.9 2.9 0 0 1 0 5.8h-1.4v-1.75h1.3a1.15 1.15 0 0 0 0-2.3h-1.1Z"/>
+            <rect x="2.2" y="17.4" width="12.2" height="1.6" rx=".8"/>
+            <path d="M5.9 7.3c-1-1.1 1-1.9 0-3M8.3 7.3c-1-1.1 1-1.9 0-3M10.7 7.3c-1-1.1 1-1.9 0-3"
+                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </span>
+      Main.java
+    </div>
+    <div class="tab">Person.java</div>
+    <div class="tab">Student.java</div>
+  </div>
+  <div class="code">
+    <div class="ln"><i>9</i><code><span class="k">public</span> <span class="k">class</span> <span class="t">Main</span> {</code></div>
+    <div class="ln"><i>10</i><code>    <span class="k">public</span> <span class="k">static</span> <span class="k">void</span> <span class="f">main</span>(<span class="t">String</span>[] args) {</code></div>
+    <div class="ln"><i>11</i><code>        <span class="c">// Two objects. A Student is a Person, plus a major.</span></code></div>
+    <div class="ln"><i>12</i><code>        <span class="t">Person</span> teacher = <span class="k">new</span> <span class="t">Person</span>(<span class="s">"Layla"</span>, <span class="n">34</span>);</code></div>
+    <div class="ln"><i>13</i><code>        <span class="t">Student</span> student = <span class="k">new</span> <span class="t">Student</span>(<span class="s">"Omar"</span>, <span class="n">20</span>, <span class="s">"Computer Science"</span>);</code></div>
+    <div class="ln"><i>14</i><code></code></div>
+    <div class="ln"><i>15</i><code>        <span class="t">System</span>.out.<span class="f">println</span>(<span class="s">"=== Warsha starter ==="</span>);</code></div>
+  </div>
+  <div class="console">
+    <div class="console__bar">
+      <div class="run">
+        <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M6.5 4.6a.9.9 0 0 1 1.36-.78l7.1 4.4a.9.9 0 0 1 0 1.56l-7.1 4.4A.9.9 0 0 1 6.5 13.4V4.6Z" fill="currentColor"/>
+        </svg>
+        Run
+      </div>
+      <div class="path">app/Main.java</div>
+      <div class="done">Finished — exit code 0</div>
+    </div>
+    <div class="out">=== Warsha starter ===
+Omar, age 20, studies Computer Science</div>
+  </div>
+</div>

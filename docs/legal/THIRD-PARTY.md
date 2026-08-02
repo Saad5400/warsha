@@ -166,6 +166,58 @@ component. Three details matter:
 Any future replacement is also a **bundled** component and must be added to the table
 above with its license and version before it ships.
 
+## Language icons
+
+The file badges and welcome cards show a Java mark and a Python mark
+([`app/src/components/ui/LangIcons.tsx`](../../app/src/components/ui/LangIcons.tsx)).
+These are trademarks, not code, so the licence table above is the wrong instrument —
+what governs them is each owner's trademark policy. The two are handled differently
+on purpose.
+
+### Python — the PSF mark, embedded unaltered
+
+**Conclusion: permitted, no approval needed, provided we never restyle it.**
+
+The PSF's [trademark usage policy](https://www.python.org/psf/trademarks/) (reviewed
+2026-08-02) grants exactly the use Warsha is making. Verbatim:
+
+> stating accurately that software is written in the Python programming language, that
+> it is compatible with the Python programming language, or that it contains the Python
+> programming language, is always allowed
+
+and, on how that may be expressed:
+
+> you may use the word "Python" or the unaltered logos to indicate this, without our
+> prior approval. This is true both for non-commercial and commercial uses.
+
+Warsha runs student Python via Pyodide, so "contains the Python programming language"
+is a true statement and the badge asserts nothing beyond it. The policy also settles
+that the snakes alone qualify: *"The 'intertwined snakes' graphic alone is an unaltered
+version, whether or not accompanied by the words in PSF-provided logos."*
+
+The load-bearing word is **unaltered**. The same policy says *"Logos that simply change
+the colors or fonts require permission from the PSF Trademarks Committee"* and
+*"Modifications that modify or obscure any part of the shape of the logo will not be
+approved."* A version redrawn in Warsha's 1.6px house stroke, or flattened to
+`currentColor` to match the rest of the icon set, is a derived logo and would need
+approval we do not have. So the component embeds the real artwork with its original
+paths and gradients, and only pads and uniformly scales it. **Do not recolour it.**
+
+### Java — a generic coffee cup, drawn from scratch
+
+**Conclusion: no Oracle mark is used, and none is imitated.**
+
+Oracle owns the Java trademarks, including the wordmark, the steaming-cup logo and
+Duke, and its policy is materially narrower than the PSF's — so unlike Python, there is
+no unaltered-logo path here and we take none. Warsha's icon is an ordinary coffee cup
+with a saucer and steam, drawn from scratch on our own grid: a coffee cup is not
+distinctive of Oracle, it is the generic convention every editor and icon theme uses to
+mean "a `.java` file", and nothing in the glyph reproduces Oracle's artwork.
+
+The word "Java" appears only to state accurately which language a file is written in
+and which language Warsha runs, which is nominative use. Warsha makes no claim of
+Oracle endorsement, affiliation, or Java compatibility certification, and must not.
+
 ## Maintaining this file
 
 Add a row before merging anything that introduces a new runtime dependency, npm package

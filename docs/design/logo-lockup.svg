@@ -1,19 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 32" width="108" height="32"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 116 32" width="116" height="32"
      fill="none" role="img" aria-labelledby="warsha-lockup-title">
   <title id="warsha-lockup-title">Warsha</title>
-  <!-- Docs/README lockup. In the app, build the lockup in HTML instead
-       (logo.svg plus a styled span) so the wordmark stays crisp and the Arabic
-       word can render with the device's own Arabic font. See DESIGN-SPEC 7.7. -->
+  <!-- Docs/README lockup: symbol + wordmark. In the app, build the lockup in
+       HTML instead (logo.svg plus a styled span) so the wordmark stays crisp and
+       the Arabic word can render with the device's own Arabic font.
+       See DESIGN-SPEC §7.7 and §11. -->
   <g transform="translate(0 4)">
-    <path d="M3.25 4.5 L8.5 15 L12 8.5 L15.5 15 L20.75 4.5"
-          stroke="var(--logo-ink, #FFFFFF)" stroke-width="2.6"
+    <path d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
+          stroke="var(--logo-ink, #E8EBF0)" stroke-width="2.8"
           stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M4.75 19.5 H19.25"
-          stroke="var(--logo-accent, #F2A94B)" stroke-width="2.6"
-          stroke-linecap="round"/>
+    <path d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
+          stroke="var(--logo-ink, #E8EBF0)" stroke-width="2.8"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5"
+          fill="var(--logo-accent, #F2A94B)"/>
   </g>
   <text x="32" y="21.5"
         font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
         font-size="17.5" font-weight="600" letter-spacing="-0.2"
-        fill="var(--logo-ink, #FFFFFF)">Warsha</text>
+        fill="var(--logo-ink, #E8EBF0)">Warsha</text>
 </svg>
