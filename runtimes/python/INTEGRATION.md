@@ -270,15 +270,44 @@ out of run 1's program (tracebacks happened to escape because `traceback` calls
 `linecache.checkcache()` itself and `warnings` does not). The harness asserts
 this across two consecutive runs; it cannot be caught by running one program.
 
-**`asyncio.run()` does not work** — a known gap, not a traceback problem. The
-runner calls into Python synchronously, so Pyodide cannot stack-switch, and the
-student gets `RuntimeError: Cannot stack switch because the Python entrypoint
-was a synchronous function`. Worse, the coroutine's real exception surfaces
-later, out of band, as `Unhandled exception in event loop`, and lands in
-whichever run is active when it fires — measured contaminating the *next*
-program's output. Nothing in the curriculum uses `asyncio`; supporting it means
-moving the runner to `runPythonAsync`, which collides with the synchronous
-`Atomics.wait` that makes `input()` block. Treat as a v0.2 decision.
+**`asyncio.run()` fails fast and cleanly, on purpose** (task #21, CEO decision,
+2026-08-02: option (b), detect and fail fast). The runner calls into Python
+synchronously, so Pyodide can never stack-switch to actually drive a coroutine
+— and left alone, `asyncio.run()` and `loop.run_until_complete()` both call
+`loop.create_task()` *before* they discover that and raise, which schedules the
+coroutine onto the browser's event loop via a plain callback outside this call
+stack entirely. That callback still fires later — after the run that triggered
+it has already finished and posted `done` — and since `sys.stdout`/`sys.stderr`
+are wired to whichever run is *then* active, the coroutine's real exception (or
+asyncio's own "Task exception was never retrieved") used to land in a run the
+student never asked it to (measured, contaminating the *next* program's
+output).
+
+The fix, installed once at boot in `worker.js` (search "asyncio guard"),
+replaces `asyncio.run`, `WebLoop.run_until_complete` and `WebLoop.run_forever`
+outright rather than catching the `RuntimeError` after the fact: none of them
+ever create a task, so there is nothing left to fire late.
+`WebLoop.call_exception_handler` is silenced too, as a second line of defence.
+A student who calls `asyncio.run(main())` now sees exactly one line, at normal
+traceback position —
+
+```
+Traceback (most recent call last):
+  File "main.py", line 9, in <module>
+    asyncio.run(main())
+RuntimeError: asyncio is not supported in Warsha yet — use ordinary (synchronous) code
+```
+
+— and the coroutine's body never runs at all, in this run or any later one.
+`_warsha_internal_frame` was extended to filter by frame *name* (any
+`_warsha_*` function), not just by path, so the guard's own frame stays
+invisible the same way Pyodide's `webloop.py` frames already were. Covered by
+harness scenarios `asyncio-run` / `asyncio-clean-after` (checks 6a–6g) — the
+second one exists solely to prove the bleed is gone, by running immediately
+after the first with no delay and demanding byte-identical output. Nothing in
+the curriculum uses `asyncio`; genuinely supporting it would mean moving the
+runner to `runPythonAsync`, which collides with the synchronous `Atomics.wait`
+that makes `input()` block — still not on the table.
 
 **Each run starts from a clean project dir and clean user modules.** Editing
 `helpers/shapes.py` between runs takes effect, and a file you removed from the

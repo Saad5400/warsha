@@ -11,6 +11,7 @@
  * Protocol (main thread -> worker):
  *   { type: "init", sab, indexURL?, isatty? }
  *   { type: "run", files: { [path]: content }, entry: string }
+ *   { type: "format", id, code }            reformat one file's source with black
  * (worker -> main thread):
  *   { type: "progress", phase, message, loaded?, total? }   boot progress
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
@@ -18,6 +19,14 @@
  *   { type: "stdin-request" }               parked in input()
  *   { type: "done", code, ms }              run finished; code 0 = clean
  *   { type: "fatal", text }                 runtime-level failure
+ *   { type: "formatted", id, code }         format succeeded
+ *   { type: "format-error", id, message }   format failed (e.g. a syntax error)
+ *
+ * `format` is independent of the run protocol above: it does not touch
+ * `_WARSHA_PROJ`, the stdin ring buffer or `resetFs`/`runEntry`, so it is safe
+ * to send between runs. It is NOT safe to send while a run is in flight —
+ * `runEntry()` blocks this worker's only thread, so the message would simply
+ * queue behind it — callers must gate on the run state themselves.
  */
 
 const PYODIDE_VERSION = '314.0.3'
@@ -242,17 +251,28 @@ def _warsha_reset_fs():
     os.makedirs(_WARSHA_PROJ, exist_ok=True)
 
 
-def _warsha_internal_frame(filename):
-    """True for a frame belonging to Pyodide's own machinery.
+def _warsha_internal_frame(frame):
+    """True for a frame belonging to Pyodide's own machinery, or to ours.
 
-    CPython has no counterpart to these: pyodide/webloop.py and friends are the
-    browser emulation layer, so leaving them in a traceback is the Python
-    equivalent of showing a student our launcher. Anything under the project
-    dir is theirs and is never hidden, even if they name a file pyodide.py.
+    CPython has no counterpart to pyodide/webloop.py and friends -- the browser
+    emulation layer -- so leaving them in a traceback is the Python equivalent
+    of showing a student our launcher. Anything under the project dir is
+    theirs and is never hidden, even if they name a file pyodide.py.
+
+    The name check is for functions defined in *this* string (this one,
+    _warsha_run, the asyncio guard below, ...): they all share one compiled
+    filename, so a name a student never wrote is the only way to tell them
+    apart from a real frame. _warsha_run's own outer exec() frame is dropped
+    separately (see its caller) before this ever runs, but a deeper shim --
+    e.g. the asyncio guard raising from inside a student's own call -- is not,
+    and needs this to stay invisible.
     """
+    filename = frame.filename
     if not filename or filename.startswith(_WARSHA_PROJ):
         return False
-    return "/pyodide/" in filename or "/_pyodide/" in filename
+    if "/pyodide/" in filename or "/_pyodide/" in filename:
+        return True
+    return frame.name.startswith("_warsha_")
 
 
 def _warsha_format(exc, tb):
@@ -270,11 +290,72 @@ def _warsha_format(exc, tb):
         if id(node) in seen:
             continue
         seen.add(id(node))
-        node.stack[:] = [f for f in node.stack if not _warsha_internal_frame(f.filename)]
+        node.stack[:] = [f for f in node.stack if not _warsha_internal_frame(f)]
         for nxt in (node.__cause__, node.__context__):
             if nxt is not None:
                 pending.append(nxt)
     return "".join(top.format())
+
+
+# asyncio.run() cannot work here: this runner calls into Python synchronously
+# (Atomics.wait is what makes input() block, and that only works from a
+# synchronous call), so Pyodide's WebLoop can never actually stack-switch to
+# drive a coroutine to completion. Left alone, asyncio.run(main()) raises
+# "Cannot stack switch ..." -- confusing on its own -- but the real failure is
+# that asyncio.run() and loop.run_until_complete() both call loop.create_task()
+# *before* that check, which schedules main() onto the browser's event loop via
+# a plain callback that is not part of this call stack at all. That callback
+# still fires later -- after this run has already finished and posted "done",
+# sys.stdout/stderr are still wired to whichever run is *then* active, so the
+# coroutine's real exception (or asyncio's own "Task exception was never
+# retrieved") lands in a run the student never asked it to (measured; see
+# INTEGRATION.md). Replacing run()/run_until_complete()/run_forever() outright
+# -- rather than catching the RuntimeError after the fact -- means no task is
+# ever created, so there is nothing left to fire late. call_exception_handler
+# is silenced too, as a second line of defence: if some path we did not
+# anticipate ever reaches it, staying silent is strictly safer than a mystery
+# error surfacing in someone else's run.
+_WARSHA_ASYNCIO_MSG = "asyncio is not supported in Warsha yet — use ordinary (synchronous) code"
+
+
+def _warsha_close_quietly(x):
+    close = getattr(x, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def _warsha_asyncio_run(main, *, debug=None):
+    _warsha_close_quietly(main)
+    raise RuntimeError(_WARSHA_ASYNCIO_MSG)
+
+
+def _warsha_run_until_complete(self, future):
+    _warsha_close_quietly(future)
+    raise RuntimeError(_WARSHA_ASYNCIO_MSG)
+
+
+def _warsha_run_forever(self):
+    raise RuntimeError(_WARSHA_ASYNCIO_MSG)
+
+
+def _warsha_swallow_exception_handler(self, context):
+    pass
+
+
+def _warsha_install_asyncio_guard():
+    import asyncio
+    from pyodide.webloop import WebLoop
+
+    asyncio.run = _warsha_asyncio_run
+    WebLoop.run_until_complete = _warsha_run_until_complete
+    WebLoop.run_forever = _warsha_run_forever
+    WebLoop.call_exception_handler = _warsha_swallow_exception_handler
+
+
+_warsha_install_asyncio_guard()
 
 
 def _warsha_run(entry):
@@ -345,6 +426,70 @@ def _warsha_run(entry):
     return status
 `
 
+// --- formatting (black) ------------------------------------------------------
+
+/* Lazily installs black and its pure-Python dependency chain via micropip, the
+ * first time a student formats a Python file — never during boot, so Run never
+ * pays for it. Memoized on a single in-flight/settled promise: a second format
+ * request while the first install is still downloading joins it rather than
+ * installing twice. Not reset on kill()/respawn deliberately: black has no
+ * per-run state, so a fresh worker still has the package cached by the
+ * browser's HTTP cache, and re-installing costs a round trip to confirm that. */
+let blackReady = null
+
+async function ensureBlack() {
+  if (!blackReady) {
+    blackReady = (async () => {
+      await pyodide.loadPackage('micropip')
+      const micropip = pyodide.pyimport('micropip')
+      await micropip.install('black')
+      pyodide.runPython(FORMAT_RUNNER)
+    })().catch((e) => {
+      // A failed install must not be cached -- the next attempt (maybe on a
+      // better connection) should retry from scratch.
+      blackReady = null
+      throw e
+    })
+  }
+  return blackReady
+}
+
+/* One function, defined once black is importable. Deliberately narrow: a
+ * syntax error in the student's own file must surface as a normal "could not
+ * format" failure, not a worker-level fatal.
+ *
+ * Named _warsha_black_format, not _warsha_format: this runs in the SAME
+ * pyodide.globals namespace as RUNNER above, which already defines
+ * _warsha_format(exc, tb) -- the traceback renderer every uncaught exception
+ * goes through. Sharing the name meant the first Format click silently
+ * replaced that function with this one; the next uncaught exception in the
+ * same worker then called it with the wrong arguments and crashed with
+ * "_warsha_format() takes 1 positional argument but 2 were given" instead of
+ * showing the student a traceback. Caught by hand while touching this file
+ * for task #21 -- not a regression from that task, pre-existing here. */
+const FORMAT_RUNNER = String.raw`
+import black as _warsha_black
+
+
+def _warsha_black_format(src):
+    return _warsha_black.format_str(src, mode=_warsha_black.Mode())
+`
+
+async function formatPython(id, code) {
+  try {
+    await ensureBlack()
+    const fn = pyodide.globals.get('_warsha_black_format')
+    try {
+      const formatted = fn(code)
+      self.postMessage({ type: 'formatted', id, code: formatted })
+    } finally {
+      fn.destroy()
+    }
+  } catch (e) {
+    self.postMessage({ type: 'format-error', id, message: String((e && e.message) || e) })
+  }
+}
+
 // --- messages ---------------------------------------------------------------
 
 function writeProjectFiles(files) {
@@ -386,5 +531,10 @@ self.onmessage = (ev) => {
     } catch (e) {
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
     }
+    return
+  }
+
+  if (msg.type === 'format') {
+    void formatPython(msg.id, msg.code)
   }
 }

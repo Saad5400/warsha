@@ -372,6 +372,48 @@ async function selfTest() {
     send('32')
     code = await waitFor('exit', 30_000, 'exit after kill')
     check('5c run() works after kill()', code === 0 && state.output.includes('10 + 32 = 42'), `re-warm ${rewarm}ms`)
+
+    // --- 6. asyncio.run() fails fast, cleanly, and does not bleed -----------
+    // Task #21 (CEO decision, 2026-08-02): asyncio is out of scope, but a raw
+    // "Cannot stack switch..." confused students, and the coroutine's real
+    // failure used to surface later, out of band, in whichever run was active
+    // when it fired -- see worker.js's asyncio guard and INTEGRATION.md.
+    const beforeAsyncio = state.output.length
+    await run('asyncio-run')
+    code = await waitFor('exit', 30_000, 'asyncio-run exit')
+    const asyncioOut = state.output.slice(beforeAsyncio)
+    check(
+      '6a one clear line, at normal traceback position',
+      asyncioOut.includes('RuntimeError: asyncio is not supported in Warsha yet'),
+      firstMatch(/RuntimeError:[^\n]*/),
+    )
+    check('6b names the student\'s own call site', /File "main\.py", line \d+, in <module>/.test(asyncioOut))
+    check(
+      '6c no internal shim frame leaked (e.g. _warsha_asyncio_run)',
+      !/_warsha_/.test(asyncioOut),
+      firstMatch(/[^\n]*_warsha_[^\n]*/),
+    )
+    check(
+      '6d the coroutine body never actually ran',
+      !asyncioOut.includes('should never run'),
+      firstMatch(/[^\n]*should never run[^\n]*/),
+    )
+    check('6e exit code non-null and non-zero', code !== null && code !== 0, `got ${code}`)
+
+    // The bleed this whole scenario exists to catch: run a plain program
+    // *immediately* after, with no delay, and demand its output is exactly
+    // what it would print running on its own -- nothing left over from the
+    // asyncio run above.
+    const beforeClean = state.output.length
+    await run('asyncio-clean-after')
+    code = await waitFor('exit', 30_000, 'asyncio-clean-after exit')
+    const cleanOut = state.output.slice(beforeClean)
+    check(
+      '6f next run is byte-clean (no cross-run bleed)',
+      cleanOut === '\n[run asyncio-clean-after -> main.py]\nclean run, should be pristine\n\n[exit 0]\n',
+      JSON.stringify(cleanOut),
+    )
+    check('6g next run still exits 0', code === 0, `got ${code}`)
   } catch (error) {
     check('self-test completed without error', false, String(error && error.message ? error.message : error))
   }

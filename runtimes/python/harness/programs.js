@@ -113,4 +113,52 @@ while True:
       },
     ],
   },
+
+  /* asyncio.run() cannot work in this runner (see worker.js's asyncio guard and
+   * INTEGRATION.md): the coroutine awaits something, so if the guard did not
+   * replace run()/run_until_complete()/run_forever() outright, this would
+   * schedule a Task that fires later, out of band -- see `asyncio-clean-after`,
+   * which exists solely to catch that bleed. */
+  'asyncio-run': {
+    label: 'asyncio.run() (not supported)',
+    entry: 'main.py',
+    files: [
+      {
+        path: 'main.py',
+        content: `import asyncio
+
+print("before asyncio.run")
+
+
+async def main():
+    print("inside coroutine, before await -- should never run")
+    await asyncio.sleep(0.01)
+    print("inside coroutine, after await -- should never run")
+    raise ValueError("boom from inside the coroutine -- should never run")
+
+
+asyncio.run(main())
+print("after asyncio.run -- should never run")
+`,
+      },
+    ],
+  },
+
+  /* Deliberately the plainest possible program. Its ONLY job is to run right
+   * after `asyncio-run` and come back byte-identical to what it would print on
+   * its own -- any leftover "Task exception was never retrieved", the
+   * coroutine's "boom from inside the coroutine", or a second copy of the
+   * guard's RuntimeError landing here is the exact bleed this scenario exists
+   * to catch. */
+  'asyncio-clean-after': {
+    label: 'clean run after asyncio.run()',
+    entry: 'main.py',
+    files: [
+      {
+        path: 'main.py',
+        content: `print("clean run, should be pristine")
+`,
+      },
+    ],
+  },
 }
