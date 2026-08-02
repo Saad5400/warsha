@@ -25,10 +25,31 @@ Reaching the iPad half of that audience is a stated goal, not yet a finished one
 
 ## Status
 
-**v0.1 MVP.** The editor, file explorer, on-device storage, and zip import/export work.
-The Java and Python engines are being wired in behind a stub runtime — see
-[`app/src/runtime/`](app/src/runtime/). Treat this as pre-release: the storage format may
-still change, so export anything you care about.
+**v0.1 MVP.** Both language engines are wired in and verified in a real browser: you can
+write Java or Python across multiple files, run it, type into stdin, and kill a runaway
+loop. The editor, file explorer, tabs, multi-project storage, and zip import/export work.
+
+Treat this as pre-release. The storage format may still change, so export anything you
+care about, and see [Browser support](#browser-support) for where it is actually proven.
+
+## What's in it
+
+- **Multiple projects.** Each project is its own tree in the browser's private file
+  system (`warsha/projects/<id>/`), with a switcher in the project menu. Projects created
+  before multi-project support are migrated on first open.
+- **A real editor.** Java and Python syntax highlighting, search, indent guides, and
+  completion that includes the snippet abbreviations students already see teachers type —
+  `sout`, `psvm`, `fori` — plus a hand-written dictionary of the API names from the first
+  weeks of a course, each with a plain-English description. It is a word list, not type
+  analysis; real type-aware completion is a later version.
+- **A console that behaves like a terminal.** Partial writes appear immediately, so a
+  `print("Name: ")` prompt shows up before the newline that never comes; what you type
+  lands on the same line as the prompt; output auto-scrolls with a jump-to-bottom pill
+  when you scroll away; and long output is capped at 1200 rows and says so when it drops
+  the head.
+- **Import and export.** Any project round-trips through a zip file, so work moves
+  between devices without an account.
+- **Nothing leaves the device.** No backend, no account, no telemetry.
 
 ## Browser support
 
@@ -65,13 +86,27 @@ static files.
 | Piece | What runs it |
 |---|---|
 | **Editor** | [CodeMirror 6](https://codemirror.net/) — syntax highlighting, autocomplete, search |
-| **Java** | [CheerpJ](https://cheerpj.com/) — a full JVM compiled to WebAssembly, loaded from Leaning Technologies' CDN |
+| **Java** | [CheerpJ](https://cheerpj.com/) — a full JVM compiled to WebAssembly, loaded from Leaning Technologies' CDN — plus [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj), the Eclipse batch compiler, which runs *inside* that JVM to compile the student's code |
 | **Python** | [Pyodide](https://pyodide.org/) — CPython and the standard library compiled to WebAssembly |
 | **Files** | OPFS, the browser's own private file system, plus [fflate](https://github.com/101arrowz/fflate) for zip import/export |
+| **UI** | React 19 and Tailwind CSS 4, bundled by Vite |
 
-Both language engines sit behind one small interface (`Runtime` in
+**Java is Java 8.** CheerpJ's runtime is a Java 8 JVM, so Warsha pins ECJ to 3.26.0 — the
+last release whose own class files are Java 8 bytecode and can therefore run on it. Newer
+language features (`var`, records, switch expressions, text blocks) are not available.
+That is a limitation of the runtime, not a choice; it is unlikely to bite an introductory
+course, but check it against your syllabus before adopting Warsha. The compiler jar is
+fetched from Maven Central and checksum-verified at
+build time by [`runtimes/java/fetch-compiler.sh`](runtimes/java/fetch-compiler.sh); it is
+never committed, because `*.jar` is gitignored repo-wide for licensing reasons.
+
+Every language sits behind one small interface (`Runtime` in
 [`app/src/runtime/types.ts`](app/src/runtime/types.ts)): load the engine, run a set of
-files, stream stdout/stderr back to the console. Adding a third language means
+files, stream stdout/stderr back to the console. There are three implementations of it —
+[`runtimes/java/`](runtimes/java/) and [`runtimes/python/`](runtimes/python/), each an
+independent package with its own browser harness and `INTEGRATION.md`, plus
+[`app/src/runtime/fake.ts`](app/src/runtime/fake.ts), a stub the UI can be developed
+against without waiting on a 20-second engine download. Adding a fourth language means
 implementing that interface and adding one line to the registry.
 
 The engines are downloaded from third-party CDNs on first run, which is the one thing that
@@ -89,9 +124,19 @@ downloaded at least once.
 ```bash
 cd app
 npm install
-npm run dev      # Vite dev server
-npm run build    # type-check + static build into app/dist
+npm run dev      # Vite dev server on http://localhost:5173
+npm run build    # type-check (tsc --noEmit) + static build into app/dist
 ```
+
+Both commands run `npm run assets` first, which copies the Java worker into `public/` and
+fetches the checksum-verified ECJ compiler jar from Maven Central. So the **first** `dev`
+or `build` on a fresh clone needs network access; after that the jar is cached and the
+step is a no-op.
+
+There is also a browser QA suite in [`tools/qa/`](tools/qa/) — Chrome-driven checks that
+boot the real engines against a served production build and assert what a student would
+actually see, rather than what type-checks. See [`tools/qa/README.md`](tools/qa/README.md);
+everything in it is configurable by environment variable and defaults to `127.0.0.1`.
 
 `app/dist` is the entire deployable artifact — put it on any static host (GitHub Pages,
 Netlify, an S3 bucket, a school's own web server). One hosting note: the WebAssembly
@@ -103,14 +148,31 @@ service worker instead.
 ## Project layout
 
 ```
-app/            the IDE itself (Vite + TypeScript, no framework)
-  src/ui/       editor, file explorer, dialogs, DOM helpers
-  src/runtime/  the Runtime interface and one implementation per language
-  src/fs/       OPFS-backed project storage and preferences
-content/        exercises and lesson content
-docs/legal/     licensing and privacy
-spikes/         throwaway prototypes; not part of the build
+app/              the IDE itself (Vite + React + TypeScript)
+  src/components/ editor, explorer, tabs, console, dialogs, toolbars
+  src/editor/     CodeMirror setup, completions, snippets, indent guides
+  src/fs/         OPFS-backed project storage, multi-project, preferences
+  src/runtime/    the Runtime interface, the language registry, the dev stub
+  src/hooks/      project and runner state
+runtimes/java/    JavaRuntime — CheerpJ + ECJ, its own harness and build
+runtimes/python/  PythonRuntime — Pyodide, its own harness and build
+content/          exercises, templates, and the teacher guide
+tools/qa/         Chrome-driven browser verification suites
+docs/design/      design spec, tokens, review checklist
+docs/legal/       licensing and privacy
+docs/product/     PRD, roadmap, acceptance criteria
+spikes/           throwaway prototypes; not part of the build
 ```
+
+## Screenshots
+
+Not yet — a screenshot of the app belongs here and there isn't an honest one to publish
+while the interface is still moving. Until then, the visual design is specified in
+[`docs/design/DESIGN-SPEC.md`](docs/design/DESIGN-SPEC.md) with the palette and type scale
+in [`docs/design/tokens.css`](docs/design/tokens.css), and each language runtime ships a
+screenshot of its own self-test passing in a real browser
+([Java](runtimes/java/harness/screenshot-selftest-passing.jpg),
+[Python](runtimes/python/harness/screenshot-selftest-passing.jpg)).
 
 ## Contributing
 
@@ -120,8 +182,9 @@ for dev setup and the runtime contract, and note that this project follows a
 
 ## License
 
-Warsha's own code is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
-Copyright Warsha contributors.
+Warsha's own code is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE),
+and [NOTICE](NOTICE) for the attributions that ship with it. Copyright Warsha
+contributors.
 
 **A note on CheerpJ.** Warsha's Java support depends on CheerpJ, which is **proprietary
 software** from [Leaning Technologies](https://leaningtech.com/), not open source. Their
@@ -130,8 +193,10 @@ this one, on the condition that it is loaded from their CDN rather than self-hos
 that credit is given — which this section does. **If you fork Warsha for a business or
 for a private, non-open-source deployment, that free license may not extend to you** and
 you should check [cheerpj.com/licensing](https://cheerpj.com/licensing/) yourself.
-Everything else Warsha uses is open source (MIT or MPL-2.0). Full details, obligations,
-and citations are in [docs/legal/THIRD-PARTY.md](docs/legal/THIRD-PARTY.md).
+Everything else Warsha uses is open source (MIT, MPL-2.0, or EPL-2.0). Full details,
+obligations, and citations are in
+[docs/legal/THIRD-PARTY.md](docs/legal/THIRD-PARTY.md), with the shipped attributions in
+[NOTICE](NOTICE).
 
 ## Roadmap
 

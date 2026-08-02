@@ -1,7 +1,8 @@
 # Contributing to Warsha
 
-Thanks for helping. Warsha is a small, deliberately plain codebase — Vite, TypeScript, no
-UI framework — so most contributions need nothing more than Node and a browser.
+Thanks for helping. Warsha is a small, deliberately plain codebase — Vite, TypeScript,
+React, and Tailwind, with no state library and no router — so most contributions need
+nothing more than Node and a browser.
 
 By contributing you agree that your contribution is licensed under the project's
 [Apache-2.0 license](LICENSE), and you agree to follow the
@@ -15,6 +16,14 @@ npm install
 npm run dev      # http://localhost:5173
 npm run build    # tsc --noEmit + vite build → app/dist
 ```
+
+Both scripts run `npm run assets` first, which copies the Java worker into `public/` and
+fetches the checksum-verified ECJ compiler jar, so your first run on a fresh clone needs
+network access.
+
+Browser-level verification lives in [`tools/qa/`](tools/qa/) — Chrome-driven suites that
+run the real engines against a served build. If you change the editor, console, storage,
+or a runtime, run the relevant suite and say so in the PR.
 
 Run `npm run build` before opening a pull request; it type-checks as well as bundles, and a
 type error is the most common reason a PR needs a second round.

@@ -1,0 +1,53 @@
+Warsha
+Copyright 2026 The Warsha contributors
+
+This product includes software developed by the Warsha contributors,
+licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+Warsha depends on the components below. Full details of each dependency — how it
+reaches the user, whether we redistribute it, and the obligations it carries —
+are recorded in docs/legal/THIRD-PARTY.md, which is the authoritative record.
+
+CheerpJ (Leaning Technologies Ltd.) — https://cheerpj.com/
+    Proprietary software, used under the CheerpJ Community License.
+    Warsha's Java support runs on CheerpJ, and this credit is a condition of
+    that free license, as is loading the runtime from Leaning Technologies'
+    CDN (cjrtnc.leaningtech.com) rather than self-hosting it. CheerpJ is NOT
+    open source and is NOT covered by Warsha's Apache-2.0 license. If you fork
+    Warsha for business use or for a private, non-open-source deployment, the
+    Community License may not extend to you — see https://cheerpj.com/licensing/
+
+Eclipse Compiler for Java (ECJ), org.eclipse.jdt:ecj — Eclipse Foundation
+    Licensed under the Eclipse Public License 2.0 (EPL-2.0).
+    https://www.eclipse.org/legal/epl-2.0/
+    Version 3.26.0, unmodified, fetched from Maven Central at build time by
+    runtimes/java/fetch-compiler.sh and deployed as a static asset. Sources for
+    the same version are available at the same Maven coordinates
+    (ecj-3.26.0-sources.jar).
+
+Pyodide — https://pyodide.org/
+    Licensed under the Mozilla Public License 2.0 (MPL-2.0).
+    https://github.com/pyodide/pyodide/blob/main/LICENSE
+    Loaded unmodified from a CDN at runtime; not modified by Warsha.
+
+CodeMirror 6 — https://codemirror.net/
+    Copyright (C) by Marijn Haverbeke and others. Licensed under the MIT License.
+    https://github.com/codemirror/dev/blob/main/LICENSE
+
+fflate — https://github.com/101arrowz/fflate
+    Copyright (c) 2023 Arjun Barrett. Licensed under the MIT License.
+    https://github.com/101arrowz/fflate/blob/master/LICENSE
+
+coi-serviceworker — https://github.com/gzuidhof/coi-serviceworker
+    Copyright (c) 2021 Guido Zuidhof. Licensed under the MIT License.
+    https://github.com/gzuidhof/coi-serviceworker/blob/master/LICENSE
+
+React — https://react.dev/
+    Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.
+
+Tailwind CSS — https://tailwindcss.com/
+    Copyright (c) Tailwind Labs, Inc. MIT License.
