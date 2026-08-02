@@ -86,8 +86,11 @@ const ring = await page.evaluate(() => {
 info(`focus ring: ${JSON.stringify(ring)}`)
 // THEME-V3: --focus-ring is still var(--accent), but --accent is now white
 // (#FAFAFA, rgb(250,250,250)) rather than amber.
-if (ring && ring.w === '2px' && ring.outline === 'rgb(250, 250, 250)' && ring.off === '2px')
-  pass('20. hardware keyboard gets a 2px white accent focus ring at 2px offset')
+// Founder ruling, 2026-08-02: ring geometry is 1px/no-offset app-wide (was
+// 2px/2px) — this is the welcome card, which uses the global default rather
+// than one of the -1px inset variants (ActivityBar/StatusBar/stdin-input).
+if (ring && ring.w === '1px' && ring.outline === 'rgb(250, 250, 250)' && ring.off === '0px')
+  pass('20. hardware keyboard gets a 1px white accent focus ring at no offset')
 else fail('20. focus ring', JSON.stringify(ring))
 await shot('welcome-1280')
 

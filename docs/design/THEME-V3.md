@@ -223,6 +223,40 @@ the two files this document names in §3 (`WelcomePanel.tsx`) and the
 comment-only amber→accent language cleanup in `index.css` (no selectors or
 values touched by that cleanup, only prose describing them).
 
+## 4a. Focus ring geometry — founder ruling, 2026-08-02
+
+The default `:focus-visible` ring (`app/src/index.css` `@layer base`) moved
+from **2px width / 2px offset** to **1px width / no offset**, app-wide. This
+is a geometry-only ruling — colour is unchanged (still `var(--focus-ring)` =
+`var(--accent)`, i.e. white).
+
+Three call sites carry a **-1px inset** variant instead of the default, for
+controls with zero slack around their own box (a column exactly as wide as
+the button in it, or an element clipped by a scroll parent) — the rule is
+`outline-offset` = **minus the ring's own width**, which keeps the ring
+flush against the *inside* of the border with zero outward overflow, so it
+can never be clipped by a parent that ends exactly at that edge:
+
+| Site | Before | After |
+|---|---|---|
+| `ActivityBar.tsx` rail buttons | `outline-offset-[-2px]` | `outline-offset-[-1px]` |
+| `StatusBar.tsx` font-size stepper | `outline-offset-[-1px]` | unchanged — already equalled the new `-width` |
+| `.stdin-input:focus-visible` (index.css) | `outline: 2px solid …; outline-offset: -2px` | `outline: 1px solid …; outline-offset: -1px` |
+
+Verified by tabbing through the real app (real `Tab`/`ArrowDown` key
+events — a scripted `.focus()` call does not reliably trigger
+`:focus-visible` in Chromium, since the pseudo-class also tracks the most
+recent input modality; using the actual keyboard is what makes this
+observation trustworthy) across the title bar, explorer rows, tabs, console
+header controls (Run, icon buttons), the overflow menu, an inline rename
+input, and the stdin live line. The 1px white ring stayed clearly visible
+everywhere, including against `--border-control`-bordered controls (welcome
+cards, the rename input) — `--border-control` `#8D8D9A` (rgb(141,141,154))
+and the ring colour `#FAFAFA` (rgb(250,250,250)) are far enough apart in
+lightness that the ring reads as a distinct, brighter line rather than
+merging with the control's own border. No surface needed a colour/inversion
+workaround to stay legible at 1px/0.
+
 ## 5. QA contract
 
 Unchanged from DESIGN-SPEC/PIXEL-FINDINGS: `tools/qa/verify.mjs`,

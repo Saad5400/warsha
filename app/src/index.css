@@ -465,10 +465,13 @@
   }
 
   /* One ring, everywhere, on :focus-visible only — so it appears for a
-     hardware keyboard and never sticks after a tap. */
+     hardware keyboard and never sticks after a tap. Founder ruling,
+     2026-08-02: 1px, no offset (was 2px/2px) — see FOCUS RING above for the
+     per-component -1px inset variant used where a control has zero slack
+     around its own box. */
   :focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    outline: 1px solid var(--focus-ring);
+    outline-offset: 0;
   }
 
   /* Dark scrollbars. Firefox gets the standard properties, WebKit/Blink the
@@ -962,19 +965,22 @@
   /* The ring stays (§4.1 rule 3 — never outline-none), but it is re-tuned, and
      both changes are deliberate.
 
-     `outline-offset: -2px` is the documented treatment for a focusable element
-     clipped by a scroll parent, which this one is. The colour moves from the
-     global accent to --info because this input is auto-focused the instant the
+     `outline-offset: -1px` (was -2px, scaled down with the app-wide 2px→1px
+     ring width, founder ruling 2026-08-02) is the documented treatment for a
+     focusable element clipped by a scroll parent, which this one is — offset
+     equal to minus the ring's own width keeps it flush against the inside of
+     the row with zero outward overflow. The colour moves from the global
+     accent to --info because this input is auto-focused the instant the
      program reads, and accent is the app's running/attention signature: a
      full-width accent-coloured rectangle across the console was the loudest
      thing on the screen and read as the form field the founder asked us to
      delete. In --info
-     it is the same 2px indicator, in the same hue as the row's leading rule and
+     it is the same indicator, in the same hue as the row's leading rule and
      the caret, so the three read as one waiting state instead of three warnings.
      Contrast on --surface-2 is 8.35:1. */
   .stdin-input:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--info) 55%, transparent);
-    outline-offset: -2px;
+    outline: 1px solid color-mix(in srgb, var(--info) 55%, transparent);
+    outline-offset: -1px;
   }
 
   /* The console's permanent bottom row. It carries the status line and nothing
@@ -1082,15 +1088,9 @@
      44px target, disabled treatment and every variant fill now live. The class
      names still land on the element — a bare selector hook, the same move
      Toast.tsx already made for `.toast` — because `audit.mjs` and the pixel-crop
-     harness find controls by them. Nothing here restyles them any more.
-
-     Tailwind v4's preflight sets no cursor on <button>, so the UA default
-     `cursor: default` applies unless something restores it; `.link` is the one
-     control left that still needs this rule owned here, since it has no
-     component of its own. (Found by ui-files.) */
-  .link {
-    cursor: pointer;
-  }
+     harness find controls by them. Nothing here restyles them any more; the
+     `.link` recipe below keeps its own `cursor: pointer` instead of sharing
+     this one, now that it is the last of the three. */
   /* The live line is a terminal line, so the whole row wants a text cursor —
      including the transparent input, which would otherwise show the I-beam only
      over its own box and a default arrow over the prompt beside it. */
@@ -1167,6 +1167,10 @@
     text-underline-offset: 2px;
     touch-action: manipulation;
     border-radius: var(--r-sm);
+    /* Moved in from the shared `.btn, .icon-btn, .link { cursor: pointer }`
+       rule when the other two became cva output (task #22) — kept here on its
+       own now that it is the last of the three. */
+    cursor: pointer;
   }
   .link:hover {
     color: var(--accent-hover);

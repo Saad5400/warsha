@@ -43,8 +43,10 @@ const SLOT =
   // contrast, and these two slots are on screen permanently.
   'disabled:text-text-disabled disabled:cursor-default ' +
   // The ring goes inside the box: the column is exactly as wide as the button,
-  // so a 2px outset ring would be clipped by the rail's own edge.
-  'focus-visible:outline-offset-[-2px]'
+  // so any outset ring would be clipped by the rail's own edge. -1px matches
+  // the app-wide 1px ring width (founder ruling 2026-08-02: 1px/0 default,
+  // was 2px/2px) so it sits flush against the inside with zero overflow.
+  'focus-visible:outline-offset-[-1px]'
 
 export interface ActivityBarProps {
   explorerOpen: boolean
