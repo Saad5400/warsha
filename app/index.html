@@ -20,14 +20,14 @@
     <meta name="color-scheme" content="dark" />
     <style>
       html {
-        background: #15171c;
+        background: #09090b;
       }
       #boot {
         position: fixed;
         inset: 0;
         display: grid;
         place-items: center;
-        background: #15171c;
+        background: #09090b;
       }
       @media (prefers-reduced-motion: no-preference) {
         #boot > svg {
@@ -59,7 +59,7 @@
     <!-- Matches --surface-0 and the manifest's theme_color. Keep all three in
          step; a theme-color that disagrees with the painted background shows up
          as a seam under the status bar on Android. -->
-    <meta name="theme-color" content="#15171C" />
+    <meta name="theme-color" content="#09090B" />
 
     <!-- No webfont ships in v1 (DESIGN-SPEC §3.1): a 40 MB runtime download is
          already the budget, and system-ui / ui-monospace resolve to San
@@ -121,26 +121,31 @@
   <body>
     <div id="root">
       <div id="boot">
-        <!-- The mark, geometry copied from docs/design/logo.svg. Literal colours
-             because this paints before any stylesheet; they equal --text-1 and
-             --accent. If the mark changes, this and components/Logo.tsx are the
-             two hand-maintained copies that will not update themselves. -->
+        <!-- The mark, geometry copied from docs/design/logo.svg (brand v3's
+             clean-silhouette tier — this renders at 40px, well under the
+             ~180px floor where the founder's actual glitch texture stays
+             legible; see the note atop docs/design/mark.svg). Literal colours
+             because this paints before any stylesheet; #FAFAFA equals
+             --logo-ink / --text-1 in docs/design/tokens.css. No amber — brand
+             v3 killed the accent workpiece. If the mark changes, this and
+             components/Logo.tsx are the two hand-maintained copies that will
+             not update themselves. -->
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
-            d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
-            stroke="#E8EBF0"
-            stroke-width="2.8"
+            d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
+            stroke="#FAFAFA"
+            stroke-width="3.3"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
           <path
-            d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
-            stroke="#E8EBF0"
-            stroke-width="2.8"
+            d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
+            stroke="#FAFAFA"
+            stroke-width="3.3"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
-          <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5" fill="#F2A94B" />
+          <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#FAFAFA" />
         </svg>
       </div>
     </div>

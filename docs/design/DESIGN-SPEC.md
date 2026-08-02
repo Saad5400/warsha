@@ -595,6 +595,20 @@ The running indicator is the one continuous animation in the app (a 1.4s opacity
 
 ## 11. Logo
 
+**Brand v3 addendum (read this first).** The founder replaced the mark outright with a glitched
+raster — scan-line noise over two thick, rounded bracket jaws holding a centred pill
+(`docs/design/brand-v3/mark-glitch-dark.png` / `mark-glitch-transparent.png`) — and killed the amber
+workpiece: jaws and pill are now the same off-white ink, everywhere, full stop. Everything below this
+paragraph is the v1 record: why *a bracket-and-workpiece figure* was the right concept, and what died
+on the contact sheet to get there. That reasoning still holds — v3 is a restyle of the same figure, not
+a new one. What no longer holds is the *execution* detail: "two tones," "amber," and the exact path
+data are v1-specific and superseded by the notes atop `docs/design/mark.svg` and `logo.svg`. Two tiers
+now, not one: the actual glitch PNGs render at 180px and up (apple-touch-icon, the 192/512/maskable PWA
+icons), and a clean unglitched redraw of the same structure — proportioned from pixel measurements of
+the source PNG, not eyeballed — covers everything smaller (favicon.svg/.ico, the boot splash, the
+welcome-panel lockup, the OG card's small mark). See `THEME-V3.md` for why amber died at the token
+level; this addendum is the mark-specific half of that same call.
+
 Three files:
 [`mark.svg`](./mark.svg) (the plated 64×64 source every OS icon is generated from),
 [`logo.svg`](./logo.svg) (the same mark plate-less, 24×24 grid, for surfaces we control), and

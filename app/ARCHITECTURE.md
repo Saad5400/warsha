@@ -236,9 +236,10 @@ component logic.
 | `--r-sm/md/lg/pill` | `rounded-sm/md/lg/pill` |
 
 To change a colour, size or radius: edit `docs/design/tokens.css`. Components carry **no colour
-literals** — the only hex in `src/components/` is the two `var(--logo-ink, #FFFFFF)` /
-`var(--logo-accent, #F2A94B)` fallbacks inside `Logo.tsx`, copied from Design's own `logo.svg` so the
-mark is still correct if the custom properties are ever missing.
+literals** — the only hex in `src/components/` is the `var(--logo-ink, #FAFAFA)` fallback inside
+`Logo.tsx`, copied from Design's own `logo.svg` so the mark is still correct if the custom property is
+ever missing. Brand v3 dropped the second, `--logo-accent` fallback along with the amber workpiece —
+the mark is one colour now.
 
 ### 4.1 Three ways CSS silently does nothing here
 
@@ -290,7 +291,7 @@ which no token exists. If Design wants them tokenised, add the token and swap th
 | `[20px]` | `ui/Button.tsx` | icon-button glyph size (§5.2) |
 | `[14px]` | `Tabs.tsx` | the close × glyph (§7.2) |
 | `[12px]` | `RunBar.tsx` | the Run/Stop play/square glyph |
-| `[28px]` / `[15px]` | `Logo.tsx` | welcome lockup wordmark and the Arabic line (§7.7) |
+| `[28px]` | `Logo.tsx` | welcome lockup wordmark (§7.7) |
 | `[1024px]` / `[900px]` | `WelcomePanel.tsx`, `Tabs.tsx` | breakpoints: start cards side by side, close × on all tabs |
 
 Most of that table used to be longer. The badge sizes, the console-line rule, the note blocks, the
@@ -299,9 +300,10 @@ dots, the glyph sizes and the toast glyph now live in `index.css` as `.badge--sm
 literals were also *wrong* against the spec and were raised to the §3.2 floor: the language badge was
 10px and the status-pill glyph 10px, where 12px (`--fs-micro`) is the smallest type the app ships.
 
-`app/index.html` carries three unavoidable colour literals — `#15171c`, `#E8EBF0`, `#F2A94B` in the
-first-paint style and the `#boot` splash mark. They run before any stylesheet exists, equal
-`--surface-0` / `--text-1` / `--accent`, and must be kept in sync by hand. They sit **above** the
+`app/index.html` carries two unavoidable colour literals — `#09090b` and `#FAFAFA` in the first-paint
+style and the `#boot` splash mark. They run before any stylesheet exists, equal `--surface-0` and
+`--text-1` (brand v3 also made `--accent` equal to `--text-1`, so one literal now covers both), and
+must be kept in sync by hand. They sit **above** the
 `coi-serviceworker` script deliberately: that script is parser-blocking, so anything after it is not
 parsed until it has executed, and `color-scheme: dark` is what makes the UA paint its default canvas
 dark in the meantime. Do not reorder that head without re-running a first-paint screencast.

@@ -11,29 +11,45 @@
   and the real starter code: the Java pane is app/Main.java from
   content/templates, and the console shows the output that program actually
   prints. Nothing here is invented, so nothing can drift from being true.
--->
+
+  BRAND V3: black/white glitch aesthetic, no amber anywhere. Every value
+  below is copied from docs/design/tokens.css (theme v3, task #27) — this
+  file's own "made out of Warsha's own surfaces" rule means it tracks that
+  file, not the other way round; re-copy them here if tokens.css ever moves.
+  --accent is no longer amber, full stop: it is the same off-white as
+  --text-1 now, so the active-tab rule, the Run pill, and the top-left mark
+  all moved off it. --warn / --warn-soft (the Java badge's background) kept
+  their v1 hex on purpose — tokens.css's own comment notes they are now
+  "independent of --accent," a semantic warm tint rather than the dead brand
+  accent, so this card matches the real app by leaving them alone. The
+  top-left mark is the brand-v3 clean-silhouette glyph (docs/design/logo.svg,
+  same geometry, single colour — see the note atop docs/design/mark.svg for
+  why this tier stays vector rather than using the glitch PNGs). The large
+  watermark behind the code panes IS one of those glitch PNGs, full-size —
+  1200px comfortably clears the ~180px floor where that texture reads. -->
+
 <style>
   __FONT_CSS__
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   :root {
-    --surface-0: #15171C;
-    --surface-1: #1A1D23;
-    --surface-2: #1F232A;
-    --surface-3: #262B33;
-    --text-1: #E8EBF0;
-    --text-2: #AEB6C4;
-    --text-3: #8B94A3;
-    --accent: #F2A94B;
-    --accent-ink: #15171C;
+    --surface-0: #09090B;
+    --surface-1: #0E0E11;
+    --surface-2: #151519;
+    --surface-3: #242429;
+    --text-1: #FAFAFA;
+    --text-2: #BABAC4;
+    --text-3: #8B8B9C;
+    --accent: #FAFAFA;
+    --accent-ink: #09090B;
     --success: #6BD68F;
     --success-soft: #16301F;
     --warn: #E5B95C;
     --warn-soft: #33291A;
     --info-soft: #1B2A38;
-    --border-subtle: #2A2F38;
-    --gutter: #868E9D;
+    --border-subtle: #242429;
+    --gutter: #8D8D9A;
 
     /* one-dark syntax, the same palette the editor ships */
     --sx-key: #C678DD;
@@ -54,13 +70,20 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* A single warm bloom behind the figure, so the right half does not read as
-     a flat rectangle pasted onto the background. */
+  /* Brand v3: the warm amber bloom is gone with the rest of the amber. In its
+     place, the founder's actual glitch mark at hero scale (1200px canvas is
+     nowhere near the ~180px floor where that texture stops reading), faint
+     enough to sit behind the figure rather than compete with it. This is the
+     one place on the card large enough to use the real PNG instead of the
+     clean-silhouette tier. */
   .glow {
     position: absolute;
-    top: -220px; right: -160px;
-    width: 900px; height: 760px;
-    background: radial-gradient(closest-side, rgba(242, 169, 75, 0.16), rgba(242, 169, 75, 0));
+    top: -160px; right: -180px;
+    width: 820px; height: 820px;
+    background-image: url('brand-v3/mark-glitch-transparent.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    opacity: 0.14;
   }
 
   /* ---- left column ------------------------------------------------------- */
@@ -230,11 +253,11 @@
 <div class="copy">
   <div class="lockup">
     <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
-            stroke="#E8EBF0" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
-            stroke="#E8EBF0" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5" fill="#F2A94B"/>
+      <path d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
+            stroke="#FAFAFA" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
+            stroke="#FAFAFA" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#FAFAFA"/>
     </svg>
     <span>Warsha</span>
   </div>

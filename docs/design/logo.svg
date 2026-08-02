@@ -1,24 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      fill="none" role="img" aria-labelledby="warsha-logo-title">
   <title id="warsha-logo-title">Warsha</title>
-  <!-- The mark, plate-less, for surfaces we already control (top bar, welcome
-       panel, README). The plated version every OS icon is derived from is
-       mark.svg; DESIGN-SPEC §11 says what the figure means and which candidates
-       it beat.
+  <!-- The mark, plate-less, for surfaces we already control (welcome panel,
+       README, boot splash). The plated version every OS icon is derived from
+       is mark.svg; DESIGN-SPEC §11 says what the figure means.
 
-       A vise: two bracket-shaped jaws holding a workpiece. Inline the file to
-       recolour it via the two custom properties below; the fallbacks make it
-       correct as a plain <img> on a dark background.
+       BRAND V3: glitched brackets, redrawn as a clean, unglitched silhouette.
+       The founder supplied the real mark as raster art (docs/design/brand-v3/
+       mark-glitch-*.png) — a scan-line/noise treatment over two thick,
+       rounded bracket jaws holding a centred pill. That texture is real
+       artwork, not something to hand-trace into paths, so it stays a raster
+       and is used as-is everywhere it renders at 180px or larger
+       (tools/brand/build-brand-assets.mjs composites it directly for
+       apple-touch-icon and the 192/512/maskable PWA icons). Below 180px the
+       fine glitch strokes thin out into noise — measured on the source PNG,
+       not assumed — so every smaller surface (welcome panel, favicon.svg /
+       favicon.ico, the boot splash, the OG card's small lockup) uses THIS
+       file instead: the same two-jaws-and-workpiece structure, redrawn
+       clean, with proportions (bracket thickness, arm reach, the pill's
+       width/height ratio) measured off mark-glitch-transparent.png rather
+       than eyeballed.
 
-       The two tones are not decorative. Jaws and workpiece in one colour close
-       the gap between them and the mark becomes a single blob below 24px —
-       verified on a contact sheet, not assumed. Keep the contrast. -->
-  <path d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
-        stroke="var(--logo-ink, #E8EBF0)" stroke-width="2.8"
+       One colour now, not two: brand v3 killed the amber workpiece, so jaws
+       and pill are both var(--logo-ink). Inline the file to recolour it; the
+       fallback makes it correct as a plain <img> on the near-black surface
+       this version ships on. -->
+  <path d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
+        stroke="var(--logo-ink, #FAFAFA)" stroke-width="3.3"
         stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
-        stroke="var(--logo-ink, #E8EBF0)" stroke-width="2.8"
+  <path d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
+        stroke="var(--logo-ink, #FAFAFA)" stroke-width="3.3"
         stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5"
-        fill="var(--logo-accent, #F2A94B)"/>
+  <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4"
+        fill="var(--logo-ink, #FAFAFA)"/>
 </svg>

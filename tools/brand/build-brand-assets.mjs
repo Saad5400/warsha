@@ -2,24 +2,37 @@
 //
 //   node tools/brand/build-brand-assets.mjs
 //
-// Sources (edit these, never the PNGs):
-//   docs/design/mark.svg        the Warsha mark, with #tile and #glyph
-//   docs/design/og-image.html   the 1200x630 social card
-//   docs/design/fonts/*.woff2   subset faces, inlined into the card at render
+// Sources (edit these, never the PNGs this script writes):
+//   docs/design/mark.svg                       clean-silhouette tier, #tile + #glyph
+//   docs/design/brand-v3/mark-glitch-dark.png  the founder's actual mark (glitch texture)
+//   docs/design/og-image.html                  the 1200x630 social card
+//   docs/design/fonts/*.woff2                  subset faces, inlined into the card at render
 //
 // Artifacts (all written to app/public/, all committed):
 //   favicon.svg  favicon.ico  apple-touch-icon.png
 //   icon-192.png  icon-512.png  icon-maskable-512.png  og-image.png
 //
-// Two tile treatments, because the consumers genuinely differ:
+// BRAND V3 TWO-TIER SPLIT. The founder's real mark is a glitched raster —
+// scan-line noise over two bracket jaws and a centred pill — and that texture
+// only reads above roughly 180px; measured on the source PNG, it thins into
+// noise below that. So the icon set is generated from two different sources
+// depending on size, not one:
 //
-//   Rounded, transparent outside the corners -> favicon.svg / favicon.ico.
-//   The mark supplies its own corners and sits on browser chrome.
+//   Under 180px (favicon.svg, the favicon.ico frames at 16/32/48) -> rendered
+//   from docs/design/mark.svg, a clean unglitched redraw of the same
+//   brackets-and-pill structure. This tier keeps its own rounded plate — the
+//   mark supplies its own corners and sits on browser chrome.
 //
-//   Square, full bleed -> apple-touch-icon and the PWA icons. iOS composites
-//   transparency onto black and rounds the corners itself; Android launchers
-//   crop to a circle or squircle. So the plate must reach every edge, and for
-//   the maskable entry the glyph is inset to stay inside the central 80%.
+//   180px and up (apple-touch-icon, icon-192, icon-512, icon-maskable-512) ->
+//   the actual mark-glitch-dark.png, resized down through Chromium (never
+//   upscaled — its native 1254px comfortably covers every size here). It is
+//   already a full-bleed square (pure black background, no transparency) at
+//   native resolution, which is exactly what apple-touch/PWA icons want: iOS
+//   composites transparency onto black and rounds the corners itself, and
+//   Android crops to a circle or squircle. No separate maskable treatment is
+//   needed either — the glyph in the source PNG only occupies ~56% width by
+//   ~50% height of its own canvas (measured, not eyeballed), which already
+//   sits comfortably inside the maskable spec's central 80% safe zone.
 //
 // Chromium comes from CHROMIUM or /usr/bin/google-chrome; playwright-core is
 // resolved from tools/qa, which is where this repo already keeps it.
@@ -98,52 +111,51 @@ const written = [];
 const iconPage = await browser.newPage({ viewport: { width: 512, height: 512 }, deviceScaleFactor: 2 });
 
 /**
- * Reshaping happens in the DOM rather than by rewriting the SVG text, so the
- * source stays the single authored artifact and nothing depends on how it
- * happens to be formatted.
- *
- * `fullBleed` drops the corner radius so the plate reaches every edge.
- * `inset` shrinks the glyph about the centre for the maskable variant.
+ * Clean-silhouette tier, under 180px. Reshaping happens in the DOM rather
+ * than by rewriting the SVG text, so the source stays the single authored
+ * artifact and nothing depends on how it happens to be formatted.
  */
-async function raster(size, { fullBleed = false, inset = 1 } = {}) {
+async function raster(size) {
   await iconPage.setViewportSize({ width: size, height: size });
   await iconPage.setContent(
     `<style>*{margin:0;padding:0}html,body{width:${size}px;height:${size}px;overflow:hidden;background:transparent}svg{display:block;width:${size}px;height:${size}px}</style>${markSvg}`,
     { waitUntil: 'load' }
   );
 
-  await iconPage.evaluate(({ fullBleed, inset }) => {
-    if (fullBleed) {
-      document.getElementById('tile').setAttribute('rx', '0');
-    }
-
-    if (inset !== 1) {
-      const root = document.querySelector('svg');
-      const [, , w, h] = (root.getAttribute('viewBox') ?? '0 0 64 64').split(/[\s,]+/).map(Number);
-      const glyph = document.getElementById('glyph');
-      const shift = `translate(${(w * (1 - inset)) / 2} ${(h * (1 - inset)) / 2}) scale(${inset})`;
-      glyph.setAttribute('transform', `${shift} ${glyph.getAttribute('transform') ?? ''}`.trim());
-    }
-  }, { fullBleed, inset });
-
   return iconPage.screenshot({ type: 'png', scale: 'css', omitBackground: true });
+}
+
+const glitchMark = fs.readFileSync(path.join(design, 'brand-v3/mark-glitch-dark.png'));
+const glitchMarkDataUri = `data:image/png;base64,${glitchMark.toString('base64')}`;
+
+/**
+ * Glitch tier, 180px and up. Just the source PNG resized down through
+ * Chromium's own image scaling — never upscaled, see the header comment for
+ * why no fullBleed/inset handling is needed here.
+ */
+async function rasterGlitch(size) {
+  await iconPage.setViewportSize({ width: size, height: size });
+  await iconPage.setContent(
+    `<style>*{margin:0;padding:0}html,body{width:${size}px;height:${size}px;overflow:hidden}img{display:block;width:${size}px;height:${size}px}</style><img src="${glitchMarkDataUri}">`,
+    { waitUntil: 'load' }
+  );
+
+  return iconPage.screenshot({ type: 'png', scale: 'css' });
 }
 
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, 'favicon.svg'), markSvg);
 written.push('favicon.svg');
 
-// apple-touch-icon and the "any" PWA icons: full bleed, glyph at its authored
-// ~73%, which is already a normal home-screen proportion.
-for (const [file, size] of [['apple-touch-icon.png', 180], ['icon-192.png', 192], ['icon-512.png', 512]]) {
-  fs.writeFileSync(path.join(out, file), await raster(size, { fullBleed: true }));
+for (const [file, size] of [
+  ['apple-touch-icon.png', 180],
+  ['icon-192.png', 192],
+  ['icon-512.png', 512],
+  ['icon-maskable-512.png', 512],
+]) {
+  fs.writeFileSync(path.join(out, file), await rasterGlitch(size));
   written.push(`${file} (${size}x${size})`);
 }
-
-// A separate maskable entry rather than "any maskable" on one file: the shared
-// compromise renders visibly padded wherever it is used as "any".
-fs.writeFileSync(path.join(out, 'icon-maskable-512.png'), await raster(512, { fullBleed: true, inset: 0.8 }));
-written.push('icon-maskable-512.png (512x512)');
 
 const icoSizes = [16, 32, 48];
 const entries = [];

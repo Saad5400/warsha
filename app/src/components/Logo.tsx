@@ -1,16 +1,22 @@
 /**
- * Inlined from docs/design/logo.svg so it recolours through --logo-ink and
- * --logo-accent.
+ * Inlined from docs/design/logo.svg so it recolours through --logo-ink.
  *
  * The mark is a vise: two bracket-shaped jaws holding a workpiece. "Warsha"
  * means workshop, so the brackets read as both the vise that clamps work to a
- * bench and the brackets of code, and the workpiece carries the accent — the
- * colour the interface already uses to mean "this one is live". DESIGN-SPEC §11
- * has the full rationale and the candidates it beat.
+ * bench and the brackets of code. DESIGN-SPEC §11 has the full rationale.
  *
- * This is one of three hand-maintained copies of the geometry (the others are
- * docs/design/logo.svg and the boot splash inlined in app/index.html). Nothing
- * keeps them in sync automatically — change one, change all three.
+ * Brand v3: the founder's actual mark is a glitched raster (see
+ * docs/design/brand-v3/ and the notes atop docs/design/mark.svg) — real
+ * texture, not something worth hand-tracing into paths. This component only
+ * ever renders at 40px (LogoLockup below is its one call site), well under
+ * the ~180px floor where that texture stays legible, so it renders the clean
+ * silhouette tier instead: same two-jaws-and-pill structure, geometry
+ * measured off the source PNG. No amber — brand v3 killed the accent
+ * workpiece, jaws and pill are both --logo-ink now.
+ *
+ * This is one of three hand-maintained copies of the geometry (the others
+ * are docs/design/logo.svg and the boot splash inlined in app/index.html).
+ * Nothing keeps them in sync automatically — change one, change all three.
  */
 export function Logo({ size = 24, className = '' }: { size?: number; className?: string }) {
   return (
@@ -23,23 +29,23 @@ export function Logo({ size = 24, className = '' }: { size?: number; className?:
       role="img"
       aria-label="Warsha"
       className={className}
-      style={{ '--logo-ink': 'var(--text-1)', '--logo-accent': 'var(--accent)' } as React.CSSProperties}
+      style={{ '--logo-ink': 'var(--text-1)' } as React.CSSProperties}
     >
       <path
-        d="M8.8 5.6h-3a1.15 1.15 0 0 0-1.15 1.15v10.5a1.15 1.15 0 0 0 1.15 1.15h3"
-        stroke="var(--logo-ink, #E8EBF0)"
-        strokeWidth="2.8"
+        d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
+        stroke="var(--logo-ink, #FAFAFA)"
+        strokeWidth="3.3"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       <path
-        d="M15.2 5.6h3a1.15 1.15 0 0 1 1.15 1.15v10.5a1.15 1.15 0 0 1-1.15 1.15h-3"
-        stroke="var(--logo-ink, #E8EBF0)"
-        strokeWidth="2.8"
+        d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
+        stroke="var(--logo-ink, #FAFAFA)"
+        strokeWidth="3.3"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <rect x="9.4" y="8.6" width="5.25" height="6.75" rx="1.5" fill="var(--logo-accent, #F2A94B)" />
+      <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="var(--logo-ink, #FAFAFA)" />
     </svg>
   )
 }
