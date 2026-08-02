@@ -11,7 +11,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,15 +39,21 @@ if (!existsSync(jar)) {
   process.exit(0)
 }
 
+// Globbed, not listed: a new bootstrap class that nothing here compiles would
+// be checked for the first time in a browser, as "bootstrap failed to compile".
+const sourceDir = join(here, 'src/bootstrap')
+const sources = readdirSync(sourceDir)
+  .filter((name) => name.endsWith('.java'))
+  .sort()
+  .map((name) => join(sourceDir, name))
+if (!sources.length) throw new Error(`no .java files in ${sourceDir}`)
+
 const out = mkdtempSync(join(tmpdir(), 'warsha-bootstrap-'))
 try {
-  execFileSync(
-    compiler,
-    ['--release', '8', '-Xlint:all', '-cp', jar, '-d', out, join(here, 'src/bootstrap/Bridge.java'),
-     join(here, 'src/bootstrap/Build.java'), join(here, 'src/bootstrap/Launcher.java')],
-    { stdio: 'inherit' },
-  )
-  console.log('check-bootstrap: bootstrap compiles clean against --release 8')
+  execFileSync(compiler, ['--release', '8', '-Xlint:all', '-cp', jar, '-d', out, ...sources], {
+    stdio: 'inherit',
+  })
+  console.log(`check-bootstrap: ${sources.length} bootstrap sources compile clean against --release 8`)
 } finally {
   rmSync(out, { recursive: true, force: true })
 }

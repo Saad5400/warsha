@@ -12,10 +12,10 @@ runtimes/java/
   src/javaRuntime.ts        JavaRuntime (implements Runtime)
   src/types.ts              mirror of app/src/runtime/types.ts
   src/jvm.worker.js         the CheerpJ worker (plain JS, and CLASSIC -- see §2)
-  src/bootstrap/*.java      Bridge / Build / Launcher, run inside the JVM
+  src/bootstrap/*.java      Bridge / Build / Launcher / Traces, run inside the JVM
   src/bootstrap.generated.ts  GENERATED from the above, committed
   fetch-compiler.sh         downloads + sha256-verifies ecj.jar
-  validate.sh               offline gate: compiles the bootstrap, 28 self-tests
+  validate.sh               offline gate: compiles the bootstrap, 42 self-tests
   serve.mjs                 harness server, HTTP Range (and optional COOP/COEP)
   harness/                  standalone test page, see "Running the harness"
 ```
@@ -426,27 +426,62 @@ The session then ends with `onExit(1)` and **nothing runs**. No `/files/` or
 they are left in place rather than reformatted, so what the student sees is what
 the compiler said. If Education wants them gone, that is a display-layer change.
 
-**Runtime exceptions have NO line numbers. This is the runtime's worst
-limitation and it cannot be fixed from our side.** CheerpJ's stack walker
-reports `getFileName() == null` and `getLineNumber() == 0` for every frame,
-regardless of `-g`. Implicit exception messages are missing too — a real JVM says
-`ArithmeticException: / by zero`, CheerpJ gives a null message. The rendering,
-verified verbatim for a divide-by-zero two student frames deep:
+**Uncaught exceptions read exactly as they do in a terminal — except for the
+line number, which CheerpJ cannot give us.** The output is byte-for-byte what
+`java` prints for classes carrying a `SourceFile` attribute and no line table
+(`javac -g:source`), which has been diffed against a real JDK. A divide by zero
+two student frames deep, verbatim:
 
 ```
-java.lang.ArithmeticException
-	at models.Calculator.divide (line unknown)
-	at app.Crash.main (line unknown)
+Exception in thread "main" java.lang.ArithmeticException: / by zero
+	at models.Calculator.divide(Calculator.java)
+	at app.Crash.main(Crash.java)
 ```
+
+Two things have to be reconstructed to get there, because CheerpJ withholds
+both regardless of `-g` — measured directly, not read anywhere:
+
+| Withheld | Rebuilt by | How |
+| --- | --- | --- |
+| `getFileName() == null` on every frame | `warsha.Traces` | `warsha.Build` indexes every **top-level type** in the project against the file it was declared in (`classes.tsv`), so `models.Shape` declared inside `Shapes.java` reports `(Shapes.java)` — which no simple-name guess could get right. Inner, local, anonymous and lambda classes resolve through the name before the first `$`. Anything not in the index (JDK frames above student code) falls back to `<SimpleName>.java`, which is what javac would have recorded for it anyway. |
+| `getMessage() == null` on implicit exceptions | `warsha.Traces.restoredMessage` | **One rule only.** A message-less `ArithmeticException` becomes `/ by zero` — the VM throws that bare for integer `/` and `%` and nothing else, and real java says `/ by zero` for both. The class is matched exactly, so a student's own `extends ArithmeticException` is untouched. Every other missing message stays missing: a bare `NullPointerException` is what every JVM before 14 printed, and inventing text would be worse than authentic. Explicitly thrown messages survive CheerpJ untouched and are never rewritten. |
+
+`getLineNumber() == 0` is **not** worked around. There is no `(line unknown)`
+and no apologetic `(Unknown Source)`; a frame simply ends at the file name,
+which is a shape real java produces. Recovering true line numbers would need
+bytecode instrumentation — see ROADMAP; it is a v0.2 investigation, not a
+compiler flag we are missing.
 
 Frames are filtered **in Java**, where they are still structured objects rather
 than text: `warsha.*`, `sun.reflect.*`, `jdk.internal.reflect.*` and
 `java.lang.reflect.*` are dropped, then everything below the deepest student
 frame. Platform frames *above* student code survive, because
-`at java.lang.Integer.parseInt` is the useful half of a bad-input crash. Cause
-chains are rendered with `Caused by:` and the same filter. For a beginner, "your
-program crashed somewhere in `divide`" is still a poor experience — **this should
-be raised with Product**, since no compiler flag fixes it.
+`at java.lang.Integer.parseInt` is the useful half of a bad-input crash.
+
+Cause chains, suppressed exceptions and the `... N more` collapsing follow
+`Throwable.printStackTrace` step for step, over the filtered traces:
+
+```
+Exception in thread "main" java.lang.IllegalStateException: could not place order 7
+	at app.Order.place(Order.java)
+	at app.Order.main(Order.java)
+Caused by: java.lang.IllegalArgumentException: no order with id 7
+	at models.Repo.find(Repo.java)
+	... 2 more
+```
+
+An exception on a thread the student started reports that thread's real name
+(`Exception in thread "Thread-0" …`), through a default
+`UncaughtExceptionHandler` the launcher installs. The main thread is always
+called `main`, hardcoded — CheerpJ runs `cheerpjRunMain` on a thread of its own
+naming, and no student should be shown that.
+
+**None of this is JS string-munging.** `javaRuntime.ts` passes the stderr
+channel through untouched; rewriting only ever happens on the separate `diag`
+channel, for compiler paths. Both the harness and `tools/qa/verify-java.mjs`
+assert the whole block as **one exact string**, because the previous rendering
+drifted into something no JVM has ever printed while every individual
+substring assertion still passed.
 
 **CheerpJ's "JIT failure" noise never reaches the student.** ECJ's parser has one
 generated method CheerpJ's JIT refuses, so it logs two alarming lines on *every*

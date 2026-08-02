@@ -300,6 +300,19 @@ function firstMatch(re) {
   return m ? m[0] : '(not found)'
 }
 
+/**
+ * The uncaught-exception report on its own: from "Exception in thread" to the
+ * end of the output, with trailing newlines dropped.
+ *
+ * The exception checks compare this as ONE EXACT STRING against what a real
+ * `java` prints. Asserting on substrings is how the old rendering drifted into
+ * something no JVM has ever produced -- every individual `includes()` passed.
+ */
+function traceBlock() {
+  const at = state.io.indexOf('Exception in thread')
+  return at < 0 ? '' : state.io.slice(at).replace(/\n+$/, '')
+}
+
 /** Clears the console mirror so each scenario asserts only on its own output. */
 function freshConsole() {
   el('out').textContent = ''
@@ -404,7 +417,12 @@ async function selfTest() {
     check('4f exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
     check('4g nothing ran', !state.io.includes('42'), firstMatch(/42/))
 
-    // --- 5. uncaught exception: filtered trace, no JIT noise ----------------
+    // --- 5. uncaught exception: byte-for-byte what a real JVM prints --------
+    //
+    // The whole block is compared as one exact string. `java` on classes with a
+    // SourceFile attribute and no line table (javac -g:source, which is what
+    // CheerpJ effectively leaves us with) prints precisely this -- verified
+    // against a real JDK -- so anything less than equality is a regression.
     freshConsole()
     const noiseBefore = state.noiseSeen
     await run('crash')
@@ -412,33 +430,93 @@ async function selfTest() {
     check('5a the program ran up to the throw', state.io.includes('about to divide by zero'))
     check('5b execution stopped at the throw', !state.io.includes('never reached'))
     check(
-      '5c exception class named, with no ": null" for a missing message',
-      /^java\.lang\.ArithmeticException\s*$/m.test(state.io),
+      '5c EXACT real-JVM output for an uncaught divide by zero',
+      traceBlock() ===
+        'Exception in thread "main" java.lang.ArithmeticException: / by zero\n' +
+          '\tat models.Calculator.divide(Calculator.java)\n' +
+          '\tat app.Crash.main(Crash.java)',
+      JSON.stringify(traceBlock()),
+    )
+    check(
+      '5d implicit message restored ("/ by zero", which CheerpJ drops)',
+      state.io.includes('java.lang.ArithmeticException: / by zero'),
       firstMatch(/java\.lang\.ArithmeticException[^\n]*/),
     )
     check(
-      '5d deepest student frame kept, labelled honestly',
-      state.io.includes('at models.Calculator.divide (line unknown)'),
+      '5e frames name the file each class was declared in',
+      state.io.includes('(Calculator.java)') && state.io.includes('(Crash.java)'),
       firstMatch(/at models\.Calculator[^\n]*/),
     )
     check(
-      '5e caller frame kept',
-      state.io.includes('at app.Crash.main (line unknown)'),
-      firstMatch(/at app\.Crash[^\n]*/),
+      '5f no apology in place of a line number',
+      !/line unknown|Unknown Source/.test(state.io),
+      firstMatch(/[^\n]*(line unknown|Unknown Source)[^\n]*/),
     )
-    check('5f warsha.* frames filtered out', !state.io.includes('warsha.'), firstMatch(/[^\s]*warsha\.[^\n]*/))
+    check('5g warsha.* frames filtered out', !state.io.includes('warsha.'), firstMatch(/[^\s]*warsha\.[^\n]*/))
     check(
-      '5g reflection frames filtered out',
+      '5h reflection frames filtered out',
       !state.io.includes('sun.reflect.') && !state.io.includes('java.lang.reflect.'),
       firstMatch(/[^\s]*reflect\.[^\n]*/),
     )
-    check('5h no JIT-failure noise in the student\'s output', !/JIT failure|please report a bug/.test(state.io))
+    check('5i no JIT-failure noise in the student\'s output', !/JIT failure|please report a bug/.test(state.io))
     check(
-      '5i ...and that noise really did occur (so the filter is doing work)',
+      '5j ...and that noise really did occur (so the filter is doing work)',
       state.noiseSeen > noiseBefore,
       `${state.noiseSeen - noiseBefore} noise lines this scenario, ${state.noiseSeen} total`,
     )
-    check('5j exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
+    check('5k exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
+
+    // --- 5B. an explicitly thrown message survives CheerpJ ------------------
+    freshConsole()
+    await run('throw-message')
+    code = await waitFor('exit', COMPILE_MS, 'throw-message exit')
+    check(
+      '5Ba EXACT output for an explicit throw with a message',
+      traceBlock() ===
+        'Exception in thread "main" java.lang.IllegalStateException: the tank is empty\n' +
+          '\tat app.Refuse.main(Refuse.java)',
+      JSON.stringify(traceBlock()),
+    )
+    check('5Bb exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
+
+    // --- 5C. cause chain: Caused by + "... N more" --------------------------
+    freshConsole()
+    await run('caused-by')
+    code = await waitFor('exit', COMPILE_MS, 'caused-by exit')
+    check(
+      '5Ca EXACT output for a wrapped-and-rethrown exception',
+      traceBlock() ===
+        'Exception in thread "main" java.lang.IllegalStateException: could not place order 7\n' +
+          '\tat app.Order.place(Order.java)\n' +
+          '\tat app.Order.main(Order.java)\n' +
+          'Caused by: java.lang.IllegalArgumentException: no order with id 7\n' +
+          '\tat models.Repo.find(Repo.java)\n' +
+          '\t... 2 more',
+      JSON.stringify(traceBlock()),
+    )
+    check('5Cb exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
+
+    // --- 5D. a second top-level class reports ITS OWN file ------------------
+    // The one case no fallback can guess: models.Shape was declared in
+    // Shapes.java, and "Shape.java" is not a file the student has.
+    freshConsole()
+    await run('two-classes-one-file')
+    code = await waitFor('exit', COMPILE_MS, 'two-classes-one-file exit')
+    check(
+      '5Da EXACT output, with the non-public class named against its real file',
+      traceBlock() ===
+        'Exception in thread "main" java.lang.IllegalArgumentException: negative side: -1\n' +
+          '\tat models.Shape.area(Shapes.java)\n' +
+          '\tat models.Shapes.area(Shapes.java)\n' +
+          '\tat app.Draw.main(Draw.java)',
+      JSON.stringify(traceBlock()),
+    )
+    check(
+      '5Db no invented Shape.java',
+      !state.io.includes('Shape.java)'),
+      firstMatch(/[^\n]*Shape\.java\)[^\n]*/),
+    )
+    check('5Dc exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
 
     // --- 6. infinite loop -> kill -> run again ------------------------------
     freshConsole()

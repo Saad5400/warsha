@@ -57,6 +57,28 @@ async function setEditor(text) {
   await page.waitForTimeout(700) // 350ms persistence debounce + slack
 }
 
+/** models/Person.java as the template ships it, plus the divide() section C2 crashes through. */
+const PERSON_OK =
+  'package models; public class Person { private String name; private int age; ' +
+  'public Person(String n, int a) { name = n; age = a; } ' +
+  'public String getName() { return name; } ' +
+  'public int getAge() { return age; } ' +
+  'public String describe() { return name + ", age " + age; } ' +
+  'public static int divide(int a, int b) { return a / b; } }'
+
+/**
+ * The uncaught-exception report on its own: the "Exception in thread" line and
+ * the frame / "Caused by:" / "... N more" lines under it, stopping at the first
+ * line that is none of those (the console's own "stopped early" note).
+ */
+function traceBlock(text) {
+  const at = text.indexOf('Exception in thread')
+  if (at < 0) return ''
+  const lines = text.slice(at).split('\n')
+  const end = lines.findIndex((l, i) => i > 0 && !/^(\s+at |Caused by: |\s+\.\.\. \d+ more|\s+Suppressed: )/.test(l))
+  return (end < 0 ? lines : lines.slice(0, end)).join('\n').trimEnd()
+}
+
 /** Sample the progress block + run state every 100ms, in the page. */
 async function startSampler() {
   await page.evaluate(() => {
@@ -206,14 +228,73 @@ else fail('nothing ran after a compile error')
 if (/exit code [1-9]|stopped early/i.test(errOut)) pass('compile failure surfaced as a non-zero exit')
 else fail('compile failure surfaced as a non-zero exit', errOut.slice(-120))
 
-// restore Person.java
-await setEditor(
-  'package models; public class Person { private String name; private int age; ' +
-    'public Person(String n, int a) { name = n; age = a; } ' +
-    'public String getName() { return name; } ' +
-    'public int getAge() { return age; } ' +
-    'public String describe() { return name + ", age " + age; } }',
-)
+// Restore Person.java, plus the divide() that section C2's crashes go through:
+// a throw two student frames deep, in a different file from the entry, is the
+// only way to check that each frame is named against its OWN source file.
+await setEditor(PERSON_OK)
+
+// =============================== C2. uncaught exception: byte-for-byte real java
+//
+// THE CONTRACT for what a crash looks like, compared as ONE EXACT STRING.
+// `java` prints exactly this for classes carrying a SourceFile attribute and no
+// line table (javac -g:source) -- verified against a real JDK, and that is the
+// most a CheerpJ frame can support: its stack walker returns getFileName()
+// == null and getLineNumber() == 0 whatever the compiler is told, and implicit
+// exceptions arrive with getMessage() == null. Both the file name and the
+// "/ by zero" are therefore reconstructed by warsha.Traces in the bootstrap.
+//
+// Substring assertions are what let the old "(line unknown)" rendering survive:
+// every individual includes() passed while the block as a whole looked like
+// nothing any JVM has ever printed. Hence full-string equality.
+for (const [label, main, expected] of [
+  [
+    'implicit divide by zero, two student frames',
+    'package app; public class Main { public static void main(String[] a) { ' +
+      'System.out.println("about to divide"); System.out.println(models.Person.divide(42, 0)); } }',
+    'Exception in thread "main" java.lang.ArithmeticException: / by zero\n' +
+      '\tat models.Person.divide(Person.java)\n' +
+      '\tat app.Main.main(Main.java)',
+  ],
+  [
+    'explicit throw keeps its own message',
+    'package app; public class Main { public static void main(String[] a) { ' +
+      'throw new IllegalStateException("boom"); } }',
+    'Exception in thread "main" java.lang.IllegalStateException: boom\n' +
+      '\tat app.Main.main(Main.java)',
+  ],
+  [
+    'cause chain, with the shared tail collapsed',
+    'package app; public class Main { public static void main(String[] a) { ' +
+      'try { models.Person.divide(1, 0); } catch (RuntimeException e) { ' +
+      'throw new IllegalStateException("could not divide", e); } } }',
+    'Exception in thread "main" java.lang.IllegalStateException: could not divide\n' +
+      '\tat app.Main.main(Main.java)\n' +
+      'Caused by: java.lang.ArithmeticException: / by zero\n' +
+      '\tat models.Person.divide(Person.java)\n' +
+      '\t... 1 more',
+  ],
+]) {
+  await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
+  await page.waitForTimeout(300)
+  await setEditor(main)
+  await runBtn().click()
+  await page.waitForFunction(
+    () => /Exception in thread/.test(document.querySelector('[aria-label="Program output"]')?.innerText || ''),
+    null, { timeout: 240000 })
+  await page.waitForTimeout(1200)
+  const crashOut = await out()
+  const got = traceBlock(crashOut)
+  if (got === expected) pass(`uncaught exception is byte-for-byte real java: ${label}`)
+  else fail(`uncaught exception is byte-for-byte real java: ${label}`, `got ${JSON.stringify(got)}`)
+  if (!/line unknown|Unknown Source/.test(crashOut)) pass(`no apology in place of a line number: ${label}`)
+  else fail(`no apology in place of a line number: ${label}`, traceBlock(crashOut))
+  if (!/warsha\.|sun\.reflect\.|java\.lang\.reflect\./.test(crashOut)) pass(`no Warsha or reflection frames: ${label}`)
+  else fail(`no Warsha or reflection frames: ${label}`, crashOut.match(/[^\n]*(warsha|reflect)[^\n]*/)?.[0] ?? '')
+  if (/exit code [1-9]|stopped early/i.test(crashOut)) pass(`crash reported as a non-zero exit: ${label}`)
+  else fail(`crash reported as a non-zero exit: ${label}`, crashOut.slice(-140))
+}
+await page.screenshot({ path: `${SHOTS}/warsha-java-exception.png` })
+info(`screenshot -> ${SHOTS}/warsha-java-exception.png`)
 
 // ============================================ D. infinite loop -> Stop -> Run again
 await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
@@ -266,10 +347,13 @@ if (warm.staticGap <= 2000) pass('progress UI never STATIC >2s on a warm reload'
 else fail('progress UI never STATIC >2s on a warm reload', `text frozen for ${warm.staticGap}ms`)
 
 // ========================================== F. Python regression in the SAME build
-await page.getByRole('button', { name: 'New file', exact: true }).click()
-await page.waitForTimeout(400)
-await page.locator('dialog input').first().fill('main.py')
-await page.getByRole('button', { name: 'Create', exact: true }).click()
+// The explorer creates a file through an inline draft row, not a dialog: the
+// "New file" button inserts a row with a name input that commits on Enter.
+await page.getByRole('button', { name: 'New file', exact: true }).first().click()
+const draftName = page.locator('[aria-label="New file name"]')
+await draftName.waitFor({ timeout: 10000 })
+await draftName.fill('main.py')
+await draftName.press('Enter')
 await page.waitForTimeout(800)
 await setEditor('import sys\nprint("python still works", sys.version.split()[0])\n')
 const picker = page.locator('select[aria-label="File to run"]')

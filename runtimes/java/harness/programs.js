@@ -193,6 +193,117 @@ public class Calculator {
     ],
   },
 
+  // An explicitly thrown exception, to prove getMessage() survives CheerpJ. Only
+  // IMPLICIT (VM-thrown) exceptions lose their message there, so a message the
+  // student wrote must arrive intact -- the renderer restores "/ by zero" and
+  // nothing else, and this is the other half of that claim.
+  'throw-message': {
+    label: 'explicit throw, with a message',
+    entry: 'app/Refuse.java',
+    files: [
+      {
+        path: 'app/Refuse.java',
+        content: `package app;
+
+public class Refuse {
+    public static void main(String[] args) {
+        System.out.println("about to refuse");
+        throw new IllegalStateException("the tank is empty");
+    }
+}
+`,
+      },
+    ],
+  },
+
+  // A wrapped-and-rethrown exception: "Caused by:" plus the "... N more"
+  // collapsing real java does over the frames the two traces share.
+  'caused-by': {
+    label: 'cause chain (Caused by + ... N more)',
+    entry: 'app/Order.java',
+    files: [
+      {
+        path: 'app/Order.java',
+        content: `package app;
+
+import models.Repo;
+
+public class Order {
+    public static void main(String[] args) {
+        System.out.println("looking up order 7");
+        place(7);
+    }
+
+    /** Wraps the failure, exactly as a student is taught to. */
+    static void place(int id) {
+        try {
+            Repo.find(id);
+        } catch (RuntimeException cause) {
+            throw new IllegalStateException("could not place order " + id, cause);
+        }
+    }
+}
+`,
+      },
+      {
+        path: 'models/Repo.java',
+        content: `package models;
+
+public class Repo {
+    public static String find(int id) {
+        throw new IllegalArgumentException("no order with id " + id);
+    }
+}
+`,
+      },
+    ],
+  },
+
+  // Two top-level classes in ONE file. Nothing but Build's source index gets
+  // models.Shape's file right: the simple-name fallback would say "Shape.java",
+  // which is not a file the student has.
+  'two-classes-one-file': {
+    label: 'second class in one file (SourceFile naming)',
+    entry: 'app/Draw.java',
+    files: [
+      {
+        path: 'app/Draw.java',
+        content: `package app;
+
+import models.Shapes;
+
+public class Draw {
+    public static void main(String[] args) {
+        System.out.println("drawing");
+        System.out.println(Shapes.area(-1));
+    }
+}
+`,
+      },
+      {
+        // Shape is NOT the public class here -- it cannot be, a public class
+        // must match its file name. Its .class therefore records Shapes.java as
+        // its source, and so must the stack trace.
+        path: 'models/Shapes.java',
+        content: `package models;
+
+public class Shapes {
+    public static int area(int side) {
+        return Shape.area(side);
+    }
+}
+
+class Shape {
+    static int area(int side) {
+        if (side < 0) throw new IllegalArgumentException("negative side: " + side);
+        return side * side;
+    }
+}
+`,
+      },
+    ],
+  },
+
   // (f) A loop that performs no I/O and so never yields. Nothing but
   // worker.terminate() can stop this; a cooperative kill does not exist.
   'infinite-loop': {

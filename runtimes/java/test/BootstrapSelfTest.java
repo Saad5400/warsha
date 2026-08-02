@@ -4,7 +4,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.jdt.core.compiler.batch.BatchCompiler;
 
@@ -29,14 +31,23 @@ public final class BootstrapSelfTest {
         mainClassOf_ignoresCommentedOutPackage();
         mainClassOf_toleratesOddSpacing();
 
+        topLevelTypes_findsEveryTypeInAFile();
+        topLevelTypes_ignoresCommentsAndLiterals();
+        topLevelTypes_ignoresNestedTypes();
+        indexTypes_pairsBinaryNamesWithTheirFile();
+
         studentFrames_dropsReflectionAndLauncher();
         studentFrames_keepsPlatformAboveStudentCode();
         studentFrames_keepsLibraryFramesWhenNoStudentFrame();
 
-        render_labelsLinesUnknown();
-        render_includesMessageWhenPresent();
-        render_followsCauseChain();
-        render_survivesCauseCycle();
+        format_matchesARealJvmForDivideByZero();
+        format_restoresNothingButDivideByZero();
+        format_keepsAnExplicitMessage();
+        format_namesTheFileEachClassWasDeclaredIn();
+        format_collapsesSharedFramesInACauseChain();
+        format_reportsTheRealThreadName();
+        format_printsSuppressedExceptions();
+        format_survivesCauseCycle();
 
         ecj_reportsDiagnosticsOnAKnownChannel();
         ecj_compilesTwoPackagesWithInheritance();
@@ -87,7 +98,57 @@ public final class BootstrapSelfTest {
             Build.mainClassOf("Main.java", "package com . example . app ;\npublic class Main {}"));
     }
 
-    // --- warsha.Launcher.studentFrames --------------------------------------
+    // --- warsha.Build.topLevelTypes / indexTypes -----------------------------
+
+    /**
+     * javac records the FILE in each class's SourceFile attribute, so the
+     * second, non-public class in a file belongs to that file's name. Getting
+     * this wrong sends a student looking for a source file that never existed.
+     */
+    private static void topLevelTypes_findsEveryTypeInAFile() {
+        String source = "package models;\n"
+            + "public class Shapes { }\n"
+            + "class Circle { }\n"
+            + "interface Drawable { }\n"
+            + "enum Colour { RED }\n"
+            + "@interface Marker { }\n";
+        check("topLevelTypes: every top-level type, in order",
+            "[Shapes, Circle, Drawable, Colour, Marker]",
+            Build.topLevelTypes(source).toString());
+    }
+
+    /** A brace in a string literal must not shift the depth the scan relies on. */
+    private static void topLevelTypes_ignoresCommentsAndLiterals() {
+        String source = "package app;\n"
+            + "// class Ghost { }\n"
+            + "/* class AlsoGhost { } */\n"
+            + "public class Main {\n"
+            + "    String braces = \"} class Sneaky {\";\n"
+            + "    char c = '}';\n"
+            + "    String quote = \"\\\"} class Escaped {\";\n"
+            + "}\n"
+            + "class Real { }\n";
+        check("topLevelTypes: comments and literals cannot invent a type",
+            "[Main, Real]", Build.topLevelTypes(source).toString());
+    }
+
+    /** Inner classes are looked up through their outer name, so they need no entry. */
+    private static void topLevelTypes_ignoresNestedTypes() {
+        String source = "package app;\npublic class Main {\n  static class Helper { }\n  enum Mode { A }\n}\n";
+        check("topLevelTypes: nested types are not top-level", "[Main]",
+            Build.topLevelTypes(source).toString());
+    }
+
+    private static void indexTypes_pairsBinaryNamesWithTheirFile() {
+        StringBuilder index = new StringBuilder();
+        Build.indexTypes(index, "models/Shapes.java", "package models;\npublic class Shapes {}\nclass Circle {}\n");
+        Build.indexTypes(index, "Root.java", "public class Root {}\n");
+        check("indexTypes: package-qualified names against their own file",
+            "models.Shapes\tShapes.java\nmodels.Circle\tShapes.java\nRoot\tRoot.java\n",
+            index.toString());
+    }
+
+    // --- warsha.Traces.studentFrames ----------------------------------------
 
     /** The exact shape CheerpJ produced in the spike: 5 frames, 1 of them the student's. */
     private static void studentFrames_dropsReflectionAndLauncher() {
@@ -98,7 +159,7 @@ public final class BootstrapSelfTest {
             frame("java.lang.reflect.Method", "invoke"),
             frame("warsha.Launcher", "main"),
         };
-        List<StackTraceElement> kept = Launcher.studentFrames(trace);
+        List<StackTraceElement> kept = Traces.studentFrames(trace);
         check("studentFrames: 5 frames -> 1", 1, kept.size());
         if (kept.size() == 1) {
             check("studentFrames: keeps the student's frame", "app.Boom", kept.get(0).getClassName());
@@ -114,7 +175,7 @@ public final class BootstrapSelfTest {
             frame("sun.reflect.NativeMethodAccessorImpl", "invoke"),
             frame("warsha.Launcher", "main"),
         };
-        List<StackTraceElement> kept = Launcher.studentFrames(trace);
+        List<StackTraceElement> kept = Traces.studentFrames(trace);
         check("studentFrames: keeps platform frames above student code", 3, kept.size());
         if (kept.size() == 3) {
             check("studentFrames: deepest kept frame is the student's",
@@ -128,59 +189,167 @@ public final class BootstrapSelfTest {
             frame("java.util.Scanner", "nextInt"),
             frame("warsha.Launcher", "main"),
         };
-        List<StackTraceElement> kept = Launcher.studentFrames(trace);
+        List<StackTraceElement> kept = Traces.studentFrames(trace);
         check("studentFrames: no student frame -> keep the library frames", 2, kept.size());
     }
 
-    // --- warsha.Launcher.render ---------------------------------------------
+    // --- warsha.Traces.format -----------------------------------------------
 
-    private static void render_labelsLinesUnknown() {
-        RuntimeException e = new ArithmeticException();
+    /** The project the format tests pretend to be running. */
+    private static Traces traces() {
+        Map<String, String> index = new HashMap<String, String>();
+        index.put("app.Crash", "Crash.java");
+        index.put("models.Calculator", "Calculator.java");
+        // The case the simple-name fallback would get wrong: two top-level
+        // classes in one file, so models.Circle lives in Shapes.java.
+        index.put("models.Shapes", "Shapes.java");
+        index.put("models.Circle", "Shapes.java");
+        return new Traces(index);
+    }
+
+    /**
+     * The whole point of this class, asserted as one exact string: what a real
+     * `java` prints for the same program compiled without line numbers. Any
+     * drift in spacing, punctuation or the restored message fails here.
+     */
+    private static void format_matchesARealJvmForDivideByZero() {
+        ArithmeticException e = new ArithmeticException(); // CheerpJ: no message
         e.setStackTrace(new StackTraceElement[] {
-            frame("app.Boom", "main"),
+            frame("models.Calculator", "divide"),
+            frame("app.Crash", "main"),
+            frame("sun.reflect.NativeMethodAccessorImpl", "invoke"),
+            frame("java.lang.reflect.Method", "invoke"),
             frame("warsha.Launcher", "main"),
         });
-        String out = Launcher.render(e);
-        checkContains("render: exception header", out, "java.lang.ArithmeticException");
-        checkContains("render: frame with unknown line", out, "\tat app.Boom.main (line unknown)");
-        checkAbsent("render: launcher frame hidden", out, "warsha.Launcher");
-        // CheerpJ omits implicit messages, so a bare header must not gain ": null".
-        checkAbsent("render: no ': null' for a message-less throwable", out, ": null");
+        check("format: byte-for-byte a real JVM's divide-by-zero report",
+            "Exception in thread \"main\" java.lang.ArithmeticException: / by zero\n"
+                + "\tat models.Calculator.divide(Calculator.java)\n"
+                + "\tat app.Crash.main(Crash.java)\n",
+            traces().format(e, "main"));
     }
 
-    private static void render_includesMessageWhenPresent() {
-        IllegalStateException e = new IllegalStateException("tank empty");
-        e.setStackTrace(new StackTraceElement[] { frame("app.Main", "run") });
-        checkContains("render: keeps the message", Launcher.render(e),
-            "java.lang.IllegalStateException: tank empty");
+    /**
+     * Restoration is one rule, not a habit. A bare NullPointerException is what
+     * every JVM before 14 printed, so leaving it bare IS the faithful output;
+     * inventing "cannot invoke method on null" would not be.
+     */
+    private static void format_restoresNothingButDivideByZero() {
+        check("restoredMessage: implicit ArithmeticException", "/ by zero",
+            Traces.restoredMessage(new ArithmeticException()));
+        check("restoredMessage: NullPointerException stays bare", null,
+            Traces.restoredMessage(new NullPointerException()));
+        check("restoredMessage: ArrayIndexOutOfBounds stays bare", null,
+            Traces.restoredMessage(new ArrayIndexOutOfBoundsException()));
+        check("restoredMessage: a real message is never replaced", null,
+            Traces.restoredMessage(new ArithmeticException("Non-terminating decimal expansion")));
+        // A student's own subclass must not be handed a message it never had.
+        check("restoredMessage: a subclass of ArithmeticException stays bare", null,
+            Traces.restoredMessage(new TooSmall()));
+
+        NullPointerException npe = new NullPointerException();
+        npe.setStackTrace(new StackTraceElement[] { frame("app.Crash", "main") });
+        check("format: bare NPE, with no ': null' bolted on",
+            "Exception in thread \"main\" java.lang.NullPointerException\n"
+                + "\tat app.Crash.main(Crash.java)\n",
+            traces().format(npe, "main"));
     }
 
-    private static void render_followsCauseChain() {
+    private static void format_keepsAnExplicitMessage() {
+        IllegalStateException e = new IllegalStateException("boom");
+        e.setStackTrace(new StackTraceElement[] { frame("app.Crash", "main") });
+        check("format: an explicitly thrown message survives verbatim",
+            "Exception in thread \"main\" java.lang.IllegalStateException: boom\n"
+                + "\tat app.Crash.main(Crash.java)\n",
+            traces().format(e, "main"));
+    }
+
+    /**
+     * Three naming paths: the index (Circle -> Shapes.java, which no fallback
+     * could guess), an inner class resolving through its outer name, and a JDK
+     * class the index has never heard of.
+     */
+    private static void format_namesTheFileEachClassWasDeclaredIn() {
+        Traces t = traces();
+        check("sourceFileFor: a second class in one file", "Shapes.java",
+            t.sourceFileFor("models.Circle"));
+        check("sourceFileFor: an inner class uses its outer file", "Shapes.java",
+            t.sourceFileFor("models.Shapes$Inner"));
+        check("sourceFileFor: a lambda uses its outer file", "Crash.java",
+            t.sourceFileFor("app.Crash$$Lambda$1"));
+        check("sourceFileFor: an unknown class falls back to its simple name", "Integer.java",
+            t.sourceFileFor("java.lang.Integer"));
+        check("sourceFileFor: default package", "Main.java", t.sourceFileFor("Main"));
+    }
+
+    /** The "... N more" arithmetic, which real java does over the shared tail. */
+    private static void format_collapsesSharedFramesInACauseChain() {
         Exception root = new IllegalArgumentException("bad id");
-        root.setStackTrace(new StackTraceElement[] { frame("app.Repo", "find") });
+        root.setStackTrace(new StackTraceElement[] {
+            frame("models.Calculator", "lookup"),
+            frame("models.Calculator", "divide"),
+            frame("app.Crash", "main"),
+        });
         RuntimeException wrapper = new RuntimeException("lookup failed", root);
-        wrapper.setStackTrace(new StackTraceElement[] { frame("app.Main", "main") });
+        wrapper.setStackTrace(new StackTraceElement[] {
+            frame("models.Calculator", "divide"),
+            frame("app.Crash", "main"),
+        });
 
-        String out = Launcher.render(wrapper);
-        checkContains("render: wrapper", out, "java.lang.RuntimeException: lookup failed");
-        checkContains("render: cause header", out, "Caused by: java.lang.IllegalArgumentException: bad id");
-        checkContains("render: cause frame", out, "\tat app.Repo.find (line unknown)");
+        check("format: cause chain with the shared tail collapsed",
+            "Exception in thread \"main\" java.lang.RuntimeException: lookup failed\n"
+                + "\tat models.Calculator.divide(Calculator.java)\n"
+                + "\tat app.Crash.main(Crash.java)\n"
+                + "Caused by: java.lang.IllegalArgumentException: bad id\n"
+                + "\tat models.Calculator.lookup(Calculator.java)\n"
+                + "\t... 2 more\n",
+            traces().format(wrapper, "main"));
+    }
+
+    private static void format_reportsTheRealThreadName() {
+        RuntimeException e = new RuntimeException("off main");
+        e.setStackTrace(new StackTraceElement[] { frame("app.Crash", "run") });
+        checkContains("format: a student's own thread is named as java names it",
+            traces().format(e, "Thread-0"),
+            "Exception in thread \"Thread-0\" java.lang.RuntimeException: off main");
+    }
+
+    private static void format_printsSuppressedExceptions() {
+        RuntimeException e = new RuntimeException("closing failed");
+        e.setStackTrace(new StackTraceElement[] { frame("app.Crash", "main") });
+        RuntimeException suppressed = new IllegalStateException("stream already shut");
+        suppressed.setStackTrace(new StackTraceElement[] { frame("models.Calculator", "close") });
+        e.addSuppressed(suppressed);
+
+        check("format: suppressed exceptions are indented under their owner",
+            "Exception in thread \"main\" java.lang.RuntimeException: closing failed\n"
+                + "\tat app.Crash.main(Crash.java)\n"
+                + "\tSuppressed: java.lang.IllegalStateException: stream already shut\n"
+                + "\t\tat models.Calculator.close(Calculator.java)\n",
+            traces().format(e, "main"));
     }
 
     /** A self-referential cause must not spin forever. */
-    private static void render_survivesCauseCycle() {
+    private static void format_survivesCauseCycle() {
         Throwable a = new RuntimeException("a");
         Throwable b = new RuntimeException("b", a);
-        a.setStackTrace(new StackTraceElement[] { frame("app.A", "go") });
-        b.setStackTrace(new StackTraceElement[] { frame("app.B", "go") });
+        a.setStackTrace(new StackTraceElement[] { frame("app.Crash", "go") });
+        b.setStackTrace(new StackTraceElement[] { frame("app.Crash", "main") });
         try {
             a.initCause(b); // a -> b -> a
         } catch (IllegalStateException ignored) {
             // initCause after a cause-taking constructor is refused on some JVMs;
             // the guard is still worth exercising with what we have.
         }
-        String out = Launcher.render(b);
-        checkContains("render: cycle still prints the head", out, "java.lang.RuntimeException: b");
+        String out = traces().format(b, "main");
+        checkContains("format: a cause cycle still prints the head", out,
+            "Exception in thread \"main\" java.lang.RuntimeException: b");
+        checkContains("format: a cause cycle is reported, not followed", out,
+            "[CIRCULAR REFERENCE: java.lang.RuntimeException: b]");
+    }
+
+    /** Stands in for a student writing their own exception type. */
+    private static final class TooSmall extends ArithmeticException {
+        private static final long serialVersionUID = 1L;
     }
 
     // --- ECJ behaviour that Build depends on --------------------------------

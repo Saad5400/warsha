@@ -17,7 +17,8 @@ import org.eclipse.jdt.core.compiler.batch.BatchCompiler;
 /**
  * Stages the student's sources and compiles them.
  *
- * Two constraints of CheerpJ's filesystem shape this class (SPIKE.md §4):
+ * Two constraints of CheerpJ's filesystem shape this class, both measured
+ * rather than documented anywhere:
  *
  *  1. /str/ -- the only mount JS can write -- is a FLAT namespace. Writing
  *     "/str/models/Person.java" appears to succeed but Java cannot open it, and
@@ -70,6 +71,18 @@ public class Build {
         return new File(runDir(runId), "main.txt");
     }
 
+    /**
+     * Written by this class, read by Traces: "&lt;binary name&gt;\t&lt;source file&gt;"
+     * for every top-level type in the project.
+     *
+     * This is the SourceFile attribute that CheerpJ's stack walker refuses to
+     * give back, rebuilt from the only place that still knows
+     * it -- the sources, while we have them in hand.
+     */
+    static File sourceIndexFile(String runId) {
+        return new File(runDir(runId), "classes.tsv");
+    }
+
     public static void main(String[] args) {
         String runId = args[0];
         String entryPath = args[1];
@@ -95,6 +108,7 @@ public class Build {
 
         List<String[]> manifest = readManifest(runId);
         List<String> sourcePaths = new ArrayList<String>();
+        StringBuilder sourceIndex = new StringBuilder();
         String entrySource = null;
 
         for (String[] entry : manifest) {
@@ -109,12 +123,14 @@ public class Build {
             }
             writeAll(target, content);
             sourcePaths.add(target.getPath());
+            indexTypes(sourceIndex, relativePath, content);
 
             if (relativePath.equals(entryPath)) entrySource = content;
         }
 
         if (entrySource == null) throw new IOException("entry " + entryPath + " not in the manifest");
         writeAll(mainClassFile(runId), mainClassOf(entryPath, entrySource));
+        writeAll(sourceIndexFile(runId), sourceIndex.toString());
 
         return compile(sourcePaths, out) ? 0 : 1;
     }
@@ -169,35 +185,126 @@ public class Build {
      * find.
      */
     static String mainClassOf(String entryPath, String source) {
-        String fileName = entryPath;
-        int slash = fileName.lastIndexOf('/');
-        if (slash >= 0) fileName = fileName.substring(slash + 1);
+        String fileName = simpleFileName(entryPath);
         if (fileName.endsWith(".java")) fileName = fileName.substring(0, fileName.length() - 5);
-
-        Matcher m = PACKAGE.matcher(stripComments(source));
-        if (!m.find()) return fileName;
-        return m.group(1).replaceAll("\\s+", "") + "." + fileName;
+        String pkg = packageOf(source);
+        return pkg.isEmpty() ? fileName : pkg + "." + fileName;
     }
 
-    /** Enough comment stripping that a commented-out package line is ignored. */
-    private static String stripComments(String source) {
-        StringBuilder sb = new StringBuilder(source.length());
+    /** The declared package, or "" for the default package. */
+    static String packageOf(String source) {
+        Matcher m = PACKAGE.matcher(blankNonCode(source));
+        if (!m.find()) return "";
+        return m.group(1).replaceAll("\\s+", "");
+    }
+
+    private static String simpleFileName(String path) {
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    // --- the class -> source-file index --------------------------------------
+
+    /**
+     * Appends "&lt;binary name&gt;\t&lt;file&gt;" for every top-level type in one source.
+     *
+     * Every type gets a line, not just the public one, because javac records
+     * the FILE in each class's SourceFile attribute: a package-private
+     * `class Circle` declared in Shapes.java belongs to Shapes.java, and a
+     * trace that claimed "Circle.java" would send a student looking for a file
+     * that does not exist. Inner classes need no entries -- Traces strips
+     * everything from the '$' on before looking a frame up.
+     */
+    static void indexTypes(StringBuilder into, String relativePath, String source) {
+        String pkg = packageOf(source);
+        String file = simpleFileName(relativePath);
+        for (String type : topLevelTypes(source)) {
+            into.append(pkg.isEmpty() ? type : pkg + "." + type).append('\t').append(file).append('\n');
+        }
+    }
+
+    /**
+     * The names of the types declared at the top level of a source file, in
+     * declaration order.
+     *
+     * Deliberately a scanner and not a parser: it tracks brace depth and takes
+     * the identifier after `class`, `interface` or `enum` at depth 0. Comments
+     * and literals are blanked first, so neither `// class Ghost` nor
+     * `"}"` can move the depth or invent a type. Anything it misses costs a
+     * frame the simple-name fallback, never a wrong compile.
+     */
+    static List<String> topLevelTypes(String source) {
+        String s = blankNonCode(source);
+        List<String> found = new ArrayList<String>();
+        int depth = 0;
         int i = 0;
-        while (i < source.length()) {
-            char c = source.charAt(i);
-            if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '/') {
-                while (i < source.length() && source.charAt(i) != '\n') i++;
-            } else if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '*') {
-                i += 2;
-                while (i + 1 < source.length() && !(source.charAt(i) == '*' && source.charAt(i + 1) == '/')) i++;
-                i = Math.min(i + 2, source.length());
-                sb.append(' ');
+        int n = s.length();
+        while (i < n) {
+            char c = s.charAt(i);
+            if (c == '{') {
+                depth++;
+                i++;
+            } else if (c == '}') {
+                if (depth > 0) depth--;
+                i++;
+            } else if (Character.isJavaIdentifierStart(c)
+                    && (i == 0 || !Character.isJavaIdentifierPart(s.charAt(i - 1)))) {
+                int end = i;
+                while (end < n && Character.isJavaIdentifierPart(s.charAt(end))) end++;
+                String word = s.substring(i, end);
+                if (depth == 0 && (word.equals("class") || word.equals("interface") || word.equals("enum"))) {
+                    int start = end;
+                    while (start < n && Character.isWhitespace(s.charAt(start))) start++;
+                    int stop = start;
+                    while (stop < n && Character.isJavaIdentifierPart(s.charAt(stop))) stop++;
+                    if (stop > start) found.add(s.substring(start, stop));
+                }
+                i = end;
             } else {
-                sb.append(c);
                 i++;
             }
         }
-        return sb.toString();
+        return found;
+    }
+
+    /**
+     * Comments and literals replaced by spaces; length, newlines outside block
+     * comments, and every other character left alone.
+     *
+     * Two callers need it and for different reasons: packageOf must not be
+     * fooled by a commented-out `package` line (which would stage the class
+     * under a name nothing can load, surfacing much later as an unrelated
+     * "cannot find symbol"), and topLevelTypes must not let a brace inside a
+     * string literal shift its depth.
+     */
+    static String blankNonCode(String source) {
+        char[] out = source.toCharArray();
+        int i = 0;
+        int n = out.length;
+        while (i < n) {
+            char c = out[i];
+            if (c == '/' && i + 1 < n && out[i + 1] == '/') {
+                while (i < n && out[i] != '\n') out[i++] = ' ';
+            } else if (c == '/' && i + 1 < n && out[i + 1] == '*') {
+                out[i++] = ' ';
+                out[i++] = ' ';
+                while (i < n && !(out[i] == '*' && i + 1 < n && out[i + 1] == '/')) out[i++] = ' ';
+                if (i < n) out[i++] = ' ';
+                if (i < n) out[i++] = ' ';
+            } else if (c == '"' || c == '\'') {
+                out[i++] = ' ';
+                while (i < n && out[i] != c) {
+                    // A backslash escape consumes the next character, so a
+                    // literal quote inside the literal does not end it.
+                    if (out[i] == '\\' && i + 1 < n) out[i++] = ' ';
+                    if (i < n) out[i++] = ' ';
+                }
+                if (i < n) out[i++] = ' ';
+            } else {
+                i++;
+            }
+        }
+        return new String(out);
     }
 
     // --- manifest -------------------------------------------------------------
