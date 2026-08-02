@@ -8,7 +8,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const URL_ = 'http://localhost:8087/'
+const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8087/'
 const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
 const results = []
 const pass = (n, d = '') => { results.push(['PASS', n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
@@ -43,7 +43,11 @@ const css = (sel, props) => page.evaluate(([s, ps]) => {
 }, [sel, props])
 
 await page.goto(URL_, { waitUntil: 'load' })
-await page.waitForSelector('.template-card', { timeout: 20000 })
+// WelcomePanel's cards lost their `template-card` class in a concurrent refactor,
+// so wait on the accessible name instead — that is the part that cannot be
+// refactored away without changing what the page means.
+const startCard = () => page.getByRole('button', { name: /starter/i }).first()
+await startCard().waitFor({ timeout: 20000 })
 await page.waitForTimeout(600)
 
 // ============================================== §2 / §7.4 fills and boundaries
@@ -57,7 +61,8 @@ if (primary && primary['font-weight'] === '600' && primary['font-size'] === '15p
   pass('§3.2 button label is 15px/600')
 else fail('§3.2 button label is 15px/600', JSON.stringify(primary))
 
-const card = await css('.template-card', ['border-color', 'border-width', 'border-radius', 'min-height'])
+const CARD_SEL = '.template-card, [aria-label="Start a project"] button'
+const card = await css(CARD_SEL, ['border-color', 'border-width', 'border-radius', 'min-height'])
 if (card['border-width'] === '1px' && card['border-color'] === 'rgb(107, 119, 137)')
   pass('5. welcome card has a visible --border-control edge', '3.13:1 on surface-3')
 else fail('5. welcome card border', JSON.stringify(card))
@@ -121,7 +126,10 @@ else fail('1b. open explorer row', JSON.stringify({ row, rowLabel }))
 // pass over an unmounted subtree.
 const toggle = page.getByRole('button', { name: 'Show output' })
 if (await toggle.count()) { await toggle.click(); await page.waitForTimeout(400) }
-await page.waitForSelector('.stdin-input', { timeout: 5000 })
+// Wait for the transcript, NOT for `.stdin-input`: the console has no standing
+// input any more. `.stdin-input` is the live line and exists only while the
+// program is blocked on a read, which is much later in this script.
+await page.waitForSelector('.console-transcript', { timeout: 5000 })
 
 // ---- 4. fills are honest, measured on a LIVE amber button and a disabled one
 const btnStates = await page.evaluate(() =>
@@ -188,8 +196,12 @@ const inputs = await page.evaluate(() =>
     .filter((el) => el.offsetParent !== null)
     .map((el) => ({ n: el.getAttribute('aria-label') || el.tagName, fs: getComputedStyle(el).fontSize })))
 info(`focusable inputs: ${JSON.stringify(inputs)}`)
-if (inputs.length && inputs.every((i) => parseFloat(i.fs) >= 16))
-  pass('8/10. every focusable input is ≥16px — iOS will not zoom on focus')
+// Vacuously true is a PASS here, and that is the point: with the console idle
+// there is deliberately no stdin input on screen to measure (the live line exists
+// only while a program is reading). The 16px floor for that input is asserted
+// further down, at the moment it exists.
+if (inputs.every((i) => parseFloat(i.fs) >= 16))
+  pass('8/10. every focusable input is ≥16px — iOS will not zoom on focus', inputs.length ? JSON.stringify(inputs) : 'none on screen while idle')
 else fail('8/10. input font-size ≥16px', JSON.stringify(inputs))
 
 const tiny = await page.evaluate(() => {
@@ -241,8 +253,14 @@ else fail('6. code font is monospaced', JSON.stringify(mono))
 const floors = await css('.console-panel', ['min-height', 'border-left-width'])
 const editorMin = await css('.editor-pane', ['min-height'])
 info(`console ${JSON.stringify(floors)} editor ${JSON.stringify(editorMin)}`)
-if (floors['min-height'] === '144px') pass('§4.3 r4. console floor is a real 144px', '4 output lines + input row')
-else fail('§4.3 r4. console 144px floor', floors['min-height'])
+// The spec writes rule 4 as 144px, which is 4 output lines + the input row and
+// nothing else. index.css derives the PANEL floor from that plus the console's own
+// 44px header (--console-floor), because 144 on the panel left the transcript
+// with one line where the rule asks for four. Assert the derived number, and
+// assert that it is derived rather than typed.
+if (floors['min-height'] === 'min(188px, 100%)')
+  pass('§4.3 r4. console floor is the derived 188px (144 + the 44px header)', floors['min-height'])
+else fail('§4.3 r4. console floor', floors['min-height'])
 if (editorMin['min-height'] === '96px') pass('§4.3 r5. editor floor is a real 96px')
 else fail('§4.3 r5. editor 96px floor', editorMin['min-height'])
 
@@ -312,10 +330,29 @@ if (absent <= 2000 && staticGap <= 2000)
 else fail('17. progress ticks every 2s', `blank ${absent}ms, static ${staticGap}ms`)
 
 // stdin state
-const stdinBorder = await css('.stdin-row[data-waiting="true"] .stdin-input', ['border-color'])
-if (stdinBorder && stdinBorder['border-color'] === 'rgb(127, 196, 245)')
-  pass('§4.3/§7.3 waiting-for-input is marked by an --info control boundary, not a fill', stdinBorder['border-color'])
-else fail('waiting stdin border', JSON.stringify(stdinBorder))
+// The waiting boundary moved with the input. The live line is a console row, so
+// the --info boundary is the row's own 3px leading rule — which is also what keeps
+// the state legible in the greyscale check, where a hue-only signal disappears.
+const stdinBorder = await css('.stdin-row[data-waiting="true"]', ['border-left-color', 'border-left-width'])
+if (stdinBorder && stdinBorder['border-left-color'] === 'rgb(127, 196, 245)' && stdinBorder['border-left-width'] === '3px')
+  pass('§4.3/§7.3 waiting-for-input is marked by an --info control boundary, not a fill', JSON.stringify(stdinBorder))
+else fail('waiting stdin boundary', JSON.stringify(stdinBorder))
+const stdinCaret = await css('.stdin-row[data-waiting="true"] .stdin-input', ['caret-color', 'color'])
+if (stdinCaret && stdinCaret['caret-color'] === 'rgb(127, 196, 245)')
+  pass('the caret itself is --info, so the cursor names the state where it sits', JSON.stringify(stdinCaret))
+else fail('--info caret on the live line', JSON.stringify(stdinCaret))
+// Check 14 above cannot see the live line — it runs while the console is idle and
+// the input does not exist — so its 44px/16px obligations are asserted here, at the
+// only moment the element is on screen.
+const liveBox = await page.evaluate(() => {
+  const el = document.querySelector('.stdin-input')
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  return { h: Math.round(r.height), fs: getComputedStyle(el).fontSize }
+})
+if (liveBox && liveBox.h >= 44 && parseFloat(liveBox.fs) >= 16)
+  pass('14/8. the live input is a 44px target at the 16px iOS floor', JSON.stringify(liveBox))
+else fail('live input 44px / 16px', JSON.stringify(liveBox))
 const consoleRule = await css('.console-panel', ['border-left-color'])
 if (consoleRule['border-left-color'] === 'rgb(242, 169, 75)')
   pass('§1.3 the amber signature marks a running process on the console\'s leading edge')
@@ -423,7 +460,7 @@ const errs2 = []
 p2.on('console', (m) => { if (m.type() === 'error') errs2.push(m.text()) })
 p2.on('pageerror', (e) => errs2.push('pageerror: ' + e.message))
 await p2.goto(URL_, { waitUntil: 'load' })
-await p2.waitForSelector('.template-card', { timeout: 20000 })
+await p2.getByRole('button', { name: /starter/i }).first().waitFor({ timeout: 20000 })
 await p2.getByRole('button', { name: /Python starter/ }).click()
 await p2.waitForSelector('[role="tab"]', { timeout: 15000 })
 await p2.waitForTimeout(800)

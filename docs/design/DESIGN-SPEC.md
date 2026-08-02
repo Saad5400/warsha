@@ -130,7 +130,7 @@ What each stack actually resolves to, verified:
 - `system-ui` — supported Chrome 56+ and Safari 11+. **San Francisco** on iPadOS, **Roboto** on Android. Both are excellent UI faces; nothing to add.
 - `ui-monospace` — **Safari 13.1+ / iOS 13.4+ only. Chromium ignores it entirely** (all versions to date; it is a 2026 Interop focus area but not shipped in Blink). So: on iPad it resolves to **SF Mono** and we get the good font for free. On Android Chrome the keyword is skipped and we fall through.
 - On **Android**, the generic `monospace` resolves to **Droid Sans Mono**. `"Roboto Mono"` is listed ahead of it optimistically — it is present on many devices but is *not* guaranteed addressable by name across OEM skins, so it must never be load-bearing.
-- `"Noto Sans Arabic"` is in the UI stack for the ورشة lockup and any future Arabic UI; both platforms ship Arabic system fonts, so this is a hint, not a dependency.
+- `"Noto Sans Arabic"` is in the UI stack against a future Arabic UI (§12); both platforms ship Arabic system fonts, so this is a hint, not a dependency, and it costs nothing while the interface is English-only.
 
 **Two mandatory guards:**
 
@@ -510,7 +510,7 @@ Backwards-compatible in spirit (`message` alone still works and the UI degrades 
 
 Shown when no project exists. Vertical stack, `max-width: 480px`, centred, 24px padding.
 
-1. **Lockup** — 40px logomark above `Warsha` at 28px/600, and beneath it `ورشة` at 15px in `--text-3` with `lang="ar" dir="rtl"`. The Arabic is rendered as *text* by the device's own Arabic font (both platforms ship one) — never as SVG paths or an image, so it shapes and joins correctly.
+1. **Lockup** — 40px logomark above `Warsha` at 28px/600. Latin only: the Arabic wordmark that used to sit beneath it was removed in brand v2, and the interface ships in English throughout (§12).
 2. **One line of purpose:** "Write and run Java or Python. In your browser, on your phone." `--text-2`, 15px.
 3. **Two template cards**, matching the two entries in `app/src/templates.ts`.
 
@@ -595,21 +595,35 @@ The running indicator is the one continuous animation in the app (a 1.4s opacity
 
 ## 11. Logo
 
-Two files: [`logo.svg`](./logo.svg) (mark, 24×24 grid) and [`logo-lockup.svg`](./logo-lockup.svg) (mark + Latin wordmark, for README and docs).
+Three files:
+[`mark.svg`](./mark.svg) (the plated 64×64 source every OS icon is generated from),
+[`logo.svg`](./logo.svg) (the same mark plate-less, 24×24 grid, for surfaces we control), and
+[`logo-lockup.svg`](./logo-lockup.svg) (mark + Latin wordmark, for README and docs).
 
-**The mark** is a geometric **W** in white over a 2.6-unit **amber rule** — a bench with a tool over it. The rule is not decoration: it is the same accent bar that sits under the active tab and to the left of a running process, so the logo and the interface share one signature. Two strokes, two colours, no gradients, no container shape.
+**The mark is a vise.** Two jaws clamp a workpiece to a bench — and the jaws are square brackets, so the same figure reads as code held open for work. *Warsha* means workshop; this is the workshop's defining object fused with what the student actually puts in it. The workpiece is `--accent`, the colour the interface already uses to mean "this one is live": the active tab's rule, the caret, the Run control.
+
+**It replaced a "W" monogram**, and the reason generalises. A letter on a tile says nothing about what the product does, and it is the standard sign that nobody did this work. Anything proposed as a replacement has to clear the same bar this did — judged on a contact sheet at 96/64/48/32/24/16px, against a circular mask, on both background polarities. What died there, and why:
+
+- **A play triangle over the rule** — perfectly legible at every size, and useless: it is the YouTube glyph. An icon indistinguishable from a stock one is not an icon.
+- **A hammer over the rule** — collapses into a "T". Straight back to a letter.
+- **An anvil** — the strongest *concept*, but the horn and waist dissolve below 32px and it becomes a bowtie.
+- **A trestle bench** — reads as a picnic table, and says nothing about code.
+- **Jaws and workpiece both in amber** — the channel between them closes and the whole mark is one blob at 24px. The two-tone contrast is load-bearing, not styling.
 
 Verified by rasterising, not by assumption:
 
-- **24px: legible**, and the gap between the W and the rule survives. This is the target size and it passes.
-- **20px: floor.** Below that the W's inner vertices start to merge.
-- **16px (favicon): use a mark-only variant** — drop the rule and scale the W to fill the box. At 16px the rule is a smudge and the W loses definition sharing the space.
-- **On a light background the white W disappears entirely** (only the amber rule survives). Any light-surface use *must* override the ink: set `--logo-ink: #15171C`, or inline the SVG and swap the ink stroke to `currentColor`. Never place the default file on white.
+- **16px: legible.** The bracket-and-workpiece structure survives, which is the whole reason this candidate won.
+- **Under a circular mask** the jaws stay inside the crop and the figure still reads.
+- **Plate-less on a light background the light jaws disappear** and only the amber workpiece survives. Any light-surface use *must* override the ink: set `--logo-ink: #15171C`, or inline the SVG and swap the ink stroke to `currentColor`. Never place `logo.svg` unmodified on white.
 
-Usage rules: minimum clear space equal to 25% of the mark's height on all sides; never recolour the W to the accent or the rule to anything but `--accent`; never add a stroke, shadow, outline, or rounded-square backdrop; never stretch non-uniformly; never set the wordmark in anything but the UI font at weight 600.
+**Two tile treatments, because the consumers differ.** `favicon.svg` and `favicon.ico` carry the mark's own rounded plate. `apple-touch-icon.png` and the PWA icons are square and full-bleed: iOS composites transparency onto black and rounds the corners itself, and Android launchers crop to a circle or squircle, so the plate must reach every edge while the glyph stays inside the central 80%. Both come out of [`tools/brand/build-brand-assets.mjs`](../../tools/brand/build-brand-assets.mjs); never hand-edit a PNG.
 
-In the app, build the lockup in **HTML** (`logo.svg` + a styled `<span>`), not from `logo-lockup.svg`. That keeps the wordmark crisp at any size and lets ورشة render with the device's own Arabic font, correctly shaped and joined — an SVG `<text>` element cannot be relied on for that, and tracing it to paths would produce worse Arabic typography than the system font gives us for free.
+Usage rules: minimum clear space equal to 25% of the mark's height on all sides; never recolour the jaws to the accent or the workpiece to anything but `--accent`; never add a stroke, shadow or outline; never stretch non-uniformly; never set the wordmark in anything but the UI font at weight 600. The rounded-square plate is for OS icons only — do not put the mark on a backdrop inside the UI.
+
+**The geometry is duplicated in three places** and nothing keeps them in sync automatically: `mark.svg` / `logo.svg`, [`app/src/components/Logo.tsx`](../../app/src/components/Logo.tsx), and the boot splash inlined in `app/index.html` (which must stay literal — it paints before any stylesheet). Change one, change all three.
+
+In the app, build the lockup in **HTML** (`logo.svg` + a styled `<span>`), not from `logo-lockup.svg`. The wordmark then stays real text — crisp at any size, selectable, and reachable by a screen reader — rather than a traced path that has to be re-exported every time the type changes. `logo-lockup.svg` exists for README and docs, where a single self-contained file is worth more than live text.
 
 ## 12. Deferred
 
-Explicitly out of v1, recorded so they don't get smuggled in: light theme, theme switching, font-size UI beyond the three code sizes, split editor panes, minimap (actively wrong on a phone), breadcrumbs, git anything, settings screen beyond the overflow menu, Arabic UI localisation (the *lockup* is Arabic; the interface is English for now — RTL layout is a real project, not a polish pass).
+Explicitly out of v1, recorded so they don't get smuggled in: light theme, theme switching, font-size UI beyond the three code sizes, split editor panes, minimap (actively wrong on a phone), breadcrumbs, git anything, settings screen beyond the overflow menu, Arabic UI localisation (brand v2 removed the Arabic wordmark from the lockup, so the product is English-only end to end — RTL layout is a real project, not a polish pass).

@@ -231,7 +231,7 @@ async function boot() {
  * it instantly; `npm run check` in this package does exactly that.
  */
 const RUNNER = String.raw`
-import os, shutil, sys, traceback
+import linecache, os, shutil, sys, traceback
 
 _WARSHA_PROJ = ${JSON.stringify(PROJECT_DIR)}
 
@@ -240,6 +240,41 @@ def _warsha_reset_fs():
     os.chdir("/")
     shutil.rmtree(_WARSHA_PROJ, ignore_errors=True)
     os.makedirs(_WARSHA_PROJ, exist_ok=True)
+
+
+def _warsha_internal_frame(filename):
+    """True for a frame belonging to Pyodide's own machinery.
+
+    CPython has no counterpart to these: pyodide/webloop.py and friends are the
+    browser emulation layer, so leaving them in a traceback is the Python
+    equivalent of showing a student our launcher. Anything under the project
+    dir is theirs and is never hidden, even if they name a file pyodide.py.
+    """
+    if not filename or filename.startswith(_WARSHA_PROJ):
+        return False
+    return "/pyodide/" in filename or "/_pyodide/" in filename
+
+
+def _warsha_format(exc, tb):
+    """format_exception, minus Pyodide's frames, across the whole cause chain.
+
+    TracebackException rather than a hand-rolled walk because it is the same
+    machinery format_exception itself uses -- so the output is unchanged for
+    the overwhelmingly common case where there is nothing to filter.
+    """
+    top = traceback.TracebackException(type(exc), exc, tb)
+    seen = set()
+    pending = [top]
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        node.stack[:] = [f for f in node.stack if not _warsha_internal_frame(f.filename)]
+        for nxt in (node.__cause__, node.__context__):
+            if nxt is not None:
+                pending.append(nxt)
+    return "".join(top.format())
 
 
 def _warsha_run(entry):
@@ -255,6 +290,15 @@ def _warsha_run(entry):
         if getattr(m, "__file__", None) and str(m.__file__).startswith(proj)
     ]:
         del sys.modules[name]
+
+    # Every source line a student sees -- in a traceback, and in a warning --
+    # is fetched from linecache, which is keyed by file name and lives as long
+    # as the interpreter. One interpreter serves every run here, unlike
+    # "python main.py", so without this a second run's main.py is rendered with
+    # the FIRST run's source. traceback happens to survive because it calls
+    # linecache.checkcache() itself; warnings does not, and was printing a line
+    # out of the previously-run program.
+    linecache.clearcache()
 
     with open(os.path.join(proj, entry)) as f:
         src = f.read()
@@ -292,7 +336,7 @@ def _warsha_run(entry):
             # own files, and strip the FS prefix so helper frames read
             # "helpers/shapes.py" not "/home/pyodide/project/helpers/shapes.py".
             tb = e.__traceback__.tb_next if e.__traceback__ else None
-            text = "".join(traceback.format_exception(type(e), e, tb or e.__traceback__))
+            text = _warsha_format(e, tb or e.__traceback__)
             sys.stderr.write(text.replace(proj + "/", ""))
             status = 1
 

@@ -27,6 +27,7 @@ Driven by the intervention log from the first real assignment (PRD §5 metric 9)
 - **Multiple projects** per device (shared family tablet) + rename project.
 - **Entry-point picker** ("Run which file?") and **copy console output** — the two panic mitigations cut from v0.1.
 - **Errors made readable** — map compiler/traceback output to a tappable "jump to file:line". Not an LSP; just navigation.
+  - *Java runtime line numbers — an investigation, not a commitment.* Java crashes now print exactly what a real JVM prints (`Exception in thread "main" java.lang.ArithmeticException: / by zero` / `at app.Main.main(Main.java)`), but with no `:12` on the end: CheerpJ's stack walker returns `getLineNumber() == 0` for every frame whatever the compiler is told, so the number does not exist to be shown. Recovering it means putting it there ourselves — rewriting student bytecode after compilation to track a current-line variable. Timebox this before promising it; without a line number, "jump to file:line" only works for *compile* errors on the Java side, and those already carry file, line and caret.
 - **Data-loss guardrails** — post-run nudge to export, and a warning before anything destructive.
 - **Data structures & algorithms — first landing:** ships here as **starter templates only** (LinkedList, Stack, BST, sorting comparison, Big-O printout), one per template, in both languages. No new UI. This is the cheapest way to serve the DS&A course, and it validates demand before we build content infrastructure.
 

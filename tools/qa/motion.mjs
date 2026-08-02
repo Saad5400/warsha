@@ -13,17 +13,21 @@ for (const motion of ['no-preference', 'reduce']) {
     executablePath: '/usr/bin/google-chrome', headless: true,
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: motion })
   const p = ctx.pages()[0] ?? await ctx.newPage()
-  await p.goto('http://localhost:8087/', { waitUntil: 'load' })
-  await p.waitForSelector('.template-card', { timeout: 20000 })
+  await p.goto(process.env.WARSHA_URL ?? 'http://localhost:8087/', { waitUntil: 'load' })
+  // WelcomePanel's cards lost their `template-card` class in a concurrent
+  // refactor; the accessible name is the durable handle.
+  await p.getByRole('button', { name: /starter/i }).first().waitFor({ timeout: 20000 })
   await p.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
   await p.waitForSelector('[role="tab"]', { timeout: 15000 })
   await p.waitForTimeout(700)
-  // The console starts collapsed on a fresh project, so the stdin row does not
-  // exist yet — open it, or the "is the input above the keyboard" check measures
-  // an unmounted subtree and reports null.
+  // The console starts collapsed on a fresh project, so none of its internals
+  // exist yet — open it, or the keyboard-geometry checks measure an unmounted
+  // subtree and report null. Nothing is running here, so there is deliberately no
+  // stdin input to wait for: `.console-foot` (the status line) is the bottom-most
+  // thing the console always has.
   const show = p.getByRole('button', { name: 'Show output' })
   if (await show.count()) { await show.click(); await p.waitForTimeout(400) }
-  await p.waitForSelector('.stdin-input', { timeout: 5000 })
+  await p.waitForSelector('.console-foot', { timeout: 5000 })
 
   const drawer = await p.evaluate(() => {
     const el = document.querySelector('.drawer')
@@ -31,11 +35,15 @@ for (const motion of ['no-preference', 'reduce']) {
     const c = getComputedStyle(el)
     return { dur: c.transitionDuration, prop: c.transitionProperty, state: el.dataset.state, tf: c.transform }
   })
+  // The running dot moved from a `.pill .dot` rule to the `animate-dot-pulse`
+  // utility on StatusPill (with `motion-reduce:animate-none` beside it), so probe
+  // what the component actually wears.
   const dot = await p.evaluate(() => {
-    const d = document.createElement('span'); d.className = 'dot'
-    const w = document.createElement('span'); w.className = 'pill'; w.append(d); document.body.append(w)
+    const d = document.createElement('span')
+    d.className = 'animate-dot-pulse motion-reduce:animate-none'
+    document.body.append(d)
     const a = getComputedStyle(d).animationName, t = getComputedStyle(d).animationDuration
-    w.remove(); return { name: a, dur: t }
+    d.remove(); return { name: a, dur: t }
   })
   console.log(`      [${motion}] drawer ${JSON.stringify(drawer)}  running dot ${JSON.stringify(dot)}`)
 
@@ -62,17 +70,27 @@ for (const motion of ['no-preference', 'reduce']) {
   await p.keyboard.press('Escape')
   await p.waitForTimeout(300)
 
-  await p.evaluate(() => {
-    document.documentElement.dataset.kb = 'open'
-    document.documentElement.style.setProperty('--kb-inset', '336px')
-    document.documentElement.style.setProperty('--app-h', '844px')
-  })
-  await p.waitForTimeout(400)
+  // Simulate the keyboard at its source, not by writing the CSS variables.
+  // Writing them by hand was doubly wrong: ui/viewport.ts re-syncs from
+  // visualViewport and undoes them, and `--app-h: 844px` (the full window) is a
+  // shell geometry the app never has — visualViewport.height is ALREADY the
+  // height above the keyboard on both platforms, which is why nothing subtracts
+  // --kb-inset a second time. With the old values the console legitimately sat
+  // below the simulated keyboard line and three checks failed on the simulation
+  // rather than on the app.
+  await p.evaluate((KB) => {
+    const vv = window.visualViewport
+    Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight - KB })
+    Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
+    vv.dispatchEvent(new Event('resize'))
+  }, 336)
+  await p.waitForTimeout(500)
   const kb = await p.evaluate(() => {
     const shell = getComputedStyle(document.querySelector('.app-shell'))
     const panel = document.querySelector('.console-panel')
-    const stdin = document.querySelector('.stdin-input')
-    const runBtn = [...document.querySelectorAll('.console-header button')][0]
+    const stdin = document.querySelector('.console-foot')
+    // RunBar's root lost its `console-header` class in a concurrent refactor.
+    const runBtn = document.querySelector('.console-header button, section[aria-label="Console"] > div:first-of-type button')
     const vh = window.innerHeight
     const kbTop = vh - 336
     return {
@@ -92,13 +110,17 @@ for (const motion of ['no-preference', 'reduce']) {
     else fail('§4.3 r3. top bar 40px', kb.topBar)
     if (kb.pad === '8px') pass('§4.3 r3. panel padding drops 12px → 8px')
     else fail('§4.3 r3. panel padding 8px', kb.pad)
-    if (kb.panelMb === '336px') pass('§4.3 r1. console is lifted by the full --kb-inset', kb.panelMb)
-    else fail('§4.3 r1. console-lift', kb.panelMb)
+    // There is deliberately NO console-lift: --app-h is visualViewport.height, so
+    // .app-shell already ends at the keyboard and a margin-bottom would subtract
+    // it twice (index.css says this at length, with the measurements). The check
+    // is therefore that the lift is ABSENT and the shell ends where it should.
+    if (kb.panelMb === '0px') pass('§4.3 r1. no double keyboard inset — the shell is already sized above it', 'console margin-bottom 0')
+    else fail('§4.3 r1. console-lift must stay removed', kb.panelMb)
     if (kb.clearLabels === 0) pass('§4.3 r3. decorative labels (Clear, wordmark, entry) are hidden, controls stay')
     else fail('§4.3 r3. kb-hide', String(kb.clearLabels))
     if (kb.stdinBottom !== null && kb.stdinBottom <= kb.keyboardTop)
-      pass('9. stdin row sits ABOVE the keyboard, fully visible', `input bottom ${kb.stdinBottom} ≤ keyboard top ${kb.keyboardTop}`)
-    else fail('9. stdin row above the keyboard', JSON.stringify(kb))
+      pass('9. the console foot (status line) sits ABOVE the keyboard, fully visible', `foot bottom ${kb.stdinBottom} ≤ keyboard top ${kb.keyboardTop}`)
+    else fail('9. console foot above the keyboard', JSON.stringify(kb))
     if (kb.runBottom !== null && kb.runBottom <= kb.keyboardTop)
       pass('12. Run/Stop rides up with the console and is never covered', `Run bottom ${kb.runBottom} ≤ ${kb.keyboardTop}`)
     else fail('12. Run above the keyboard', JSON.stringify(kb))

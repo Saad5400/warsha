@@ -230,6 +230,56 @@ SyntaxError: expected ':'
 `sys.exit(3)` surfaces as `onExit(3)`; `sys.exit("message")` prints the message on
 stderr and exits 1. No FS paths leak into any of this.
 
+**"CPython-identical" is measured, not asserted.** 19 crash shapes were run in
+this runtime and, separately, under a real `python3.14` on the same sources,
+and the two stderr streams compared byte for byte:
+`Traceback` header, frame order, source lines, 3.14 carets and anchors, chained
+exceptions (`from`, and the implicit "During handling of…"), `SyntaxError`,
+import-time errors, `assert`, `RecursionError`'s `[Previous line repeated N more
+times]`, `__del__`'s "Exception ignored while calling deallocator", a student's
+own `exec()` (`"<string>"` survives), non-ASCII messages and file names, and
+warnings. **16 of 19 are byte-identical.** Two normalisations are applied to the
+reference first, both of them deliberate Warsha behaviour rather than fidelity
+gaps: the project prefix (Warsha shows project-relative paths) and the stdlib
+prefix (`/usr/lib` here, `/lib` in Pyodide).
+
+The three that are not identical, and why none of them is fixable from here:
+
+| Case | Difference | Cause |
+| --- | --- | --- |
+| `open("missing.txt")` | `[Errno 44]` where CPython says `[Errno 2]` | Emscripten's libc numbers `ENOENT` 44. The number is inside the `OSError` message that CPython itself builds; rewriting it would mean editing the text of a student's exception, which is a line worth not crossing. The words after it are identical. |
+| `RecursionError` | `[Previous line repeated 25 more times]` where CPython says 26 | The student's `<module>` starts one frame deeper here, because it runs inside `_warsha_run` rather than as the process entry point. Matching the count would mean matching the whole host stack depth. |
+| `RecursionError` | keeps the `~~~^^^` anchor on the first frame, where CPython drops it | A CPython **micro-version** difference, not ours: Pyodide 314.0.3 bundles 3.14.2, and 3.14.6 suppresses anchors while handling a `RecursionError`. Verified by running the same file under 3.12, 3.14.2 and 3.14.6. |
+
+**Pyodide's own frames never reach a student.** `pyodide/webloop.py` and friends
+are the browser emulation layer and have no CPython counterpart, so a frame from
+them in a traceback is the Python equivalent of showing a student our launcher.
+The runner filters any frame whose file sits under `pyodide/` or `_pyodide/` and
+outside the project dir — a file the student themselves named `pyodide.py` is
+never hidden. The filter runs over the whole cause chain via
+`traceback.TracebackException`, which is the same machinery `format_exception`
+uses, so output is unchanged in the ordinary case where there is nothing to
+filter. Only one known path reaches it today: `asyncio.run()` (see below).
+
+**Source lines are re-read every run.** Everything a student sees a source line
+in — tracebacks, and the line under a warning — gets it from `linecache`, which
+is keyed by file name and lives as long as the interpreter. One interpreter
+serves every run here, unlike `python main.py`, so the runner clears that cache
+alongside its `sys.modules` purge. Without it a warning in run 2 printed a line
+out of run 1's program (tracebacks happened to escape because `traceback` calls
+`linecache.checkcache()` itself and `warnings` does not). The harness asserts
+this across two consecutive runs; it cannot be caught by running one program.
+
+**`asyncio.run()` does not work** — a known gap, not a traceback problem. The
+runner calls into Python synchronously, so Pyodide cannot stack-switch, and the
+student gets `RuntimeError: Cannot stack switch because the Python entrypoint
+was a synchronous function`. Worse, the coroutine's real exception surfaces
+later, out of band, as `Unhandled exception in event loop`, and lands in
+whichever run is active when it fires — measured contaminating the *next*
+program's output. Nothing in the curriculum uses `asyncio`; supporting it means
+moving the runner to `runPythonAsync`, which collides with the synchronous
+`Atomics.wait` that makes `input()` block. Treat as a v0.2 decision.
+
 **Each run starts from a clean project dir and clean user modules.** Editing
 `helpers/shapes.py` between runs takes effect, and a file you removed from the
 file set is really gone (no stale import, no stale `__pycache__`). `__name__` is

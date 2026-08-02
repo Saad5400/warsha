@@ -74,6 +74,29 @@ print("never reached")
     ],
   },
 
+  /* A warning, which is the cheapest way to catch stale linecache state.
+   *
+   * One interpreter serves every run, so the source line printed under a
+   * warning is fetched from a cache that outlives the program. This scenario is
+   * only meaningful when something else ran FIRST -- the self-test runs it
+   * straight after `traceback`, whose main.py has a different line 3. If the
+   * cache is not cleared per run, the warning prints that other program's line.
+   * Keep line 3 as the warn() call, and keep this after `traceback`. */
+  warning: {
+    label: 'warning (stale source line)',
+    entry: 'main.py',
+    files: [
+      {
+        path: 'main.py',
+        content: `import warnings
+
+warnings.warn("this API is going away", DeprecationWarning)
+print("still running")
+`,
+      },
+    ],
+  },
+
   'infinite-loop': {
     label: 'infinite loop',
     entry: 'main.py',

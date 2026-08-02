@@ -9,8 +9,9 @@
     "java": "node verify-java.mjs",
     "projects": "node verify-projects.mjs",
     "migration": "node verify-migration.mjs",
+    "robustness": "node robustness.mjs",
     "timings": "node measure-java.mjs",
-    "all": "node verify.mjs && node verify-java.mjs && node verify-projects.mjs && node verify-migration.mjs"
+    "all": "node verify.mjs && node verify-java.mjs && node verify-projects.mjs && node verify-migration.mjs && node robustness.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.62.1"

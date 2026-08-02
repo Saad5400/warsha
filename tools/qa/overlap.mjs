@@ -17,9 +17,9 @@
  *  3. CLIP       — an element is cut off by a non-scrollable `overflow: hidden`
  *                  ancestor, i.e. content is silently invisible.
  *  4. INVARIANT  — named pairs from the brief's (a)-(g) list that must never
- *                  overlap whatever else is true: stdin row vs transcript, Run
- *                  vs the drag handle, tabs vs top bar, and everything vs the
- *                  keyboard inset.
+ *                  overlap whatever else is true: the console's status foot vs
+ *                  the transcript, Run vs the drag handle, tabs vs top bar, and
+ *                  everything vs the keyboard inset.
  *
  * Usage: node overlap.mjs
  */
@@ -28,7 +28,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const URL_ = 'http://localhost:8087/'
+const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8087/'
 const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
 const findings = []
 let checks = 0
@@ -185,11 +185,16 @@ const PROBE = () => {
   const q = (s) => document.querySelector(s)
   const box = (s) => { const e = q(s); return e && vis(e) ? R(e) : null }
   const inv = {
+    // `.stdin-input` / `.stdin-row` are the live line and exist only while the
+    // program is blocked on a read — usually null in this sweep, which is correct.
+    // `.console-foot` (the status line) is the console's permanent bottom row and
+    // is what the keyboard invariant is really about.
     stdin: box('.stdin-input'),
-    stdinRow: box('.stdin-row'),
+    foot: box('.console-foot'),
     transcript: box('.console-transcript'),
-    header: box('.console-header'),
-    runBtn: (() => { const b = document.querySelector('.console-header button'); return b && vis(b) ? R(b) : null })(),
+    // RunBar's root lost its `console-header` class in a concurrent refactor.
+    header: box('.console-header') ?? box('section[aria-label="Console"] > div:first-of-type'),
+    runBtn: (() => { const b = document.querySelector('.console-header button, section[aria-label="Console"] > div:first-of-type button'); return b && vis(b) ? R(b) : null })(),
     divider: box('[role="separator"]'),
     tabStrip: box('.tab-strip'),
     topBar: box('.top-bar'),
@@ -217,8 +222,12 @@ function report(scenario, { out, inv }) {
   if (inv.docScrollX > 0) add('WIDE', `document scrolls horizontally by ${inv.docScrollX}px`)
 
   const gap = (a, b) => Math.round(b - a)
-  if (inv.transcript && inv.stdinRow && inv.transcript.bottom > inv.stdinRow.top + 1)
-    add('INVARIANT-a', `transcript bottom (${Math.round(inv.transcript.bottom)}) is below stdin row top (${Math.round(inv.stdinRow.top)}) — output can run under the input`)
+  // The input is inside the transcript now, so "transcript vs input row" is no
+  // longer a thing that can overlap. What still must not overlap is the transcript
+  // and the status line under it — that is the row that tells a student the
+  // program is waiting, and output running under it hides the state.
+  if (inv.transcript && inv.foot && inv.transcript.bottom > inv.foot.top + 1)
+    add('INVARIANT-a', `transcript bottom (${Math.round(inv.transcript.bottom)}) is below the console foot's top (${Math.round(inv.foot.top)}) — output can run under the status line`)
   if (inv.divider && inv.runBtn && inv.divider.bottom > inv.runBtn.top + 1)
     add('INVARIANT-b', `drag handle bottom (${Math.round(inv.divider.bottom)}) overlaps Run top (${Math.round(inv.runBtn.top)}) by ${gap(inv.runBtn.top, inv.divider.bottom)}px`)
   if (inv.tabStrip && inv.topBar && inv.tabStrip.top < inv.topBar.bottom - 1)
@@ -227,7 +236,7 @@ function report(scenario, { out, inv }) {
     findings.push({ scenario, kind: 'INFO-d', msg: `drawer overlays editor by ${gap(inv.editorPane.left, inv.drawer.right)}px (expected below 900px: it is an overlay drawer)` })
   if (inv.kbInset > 100) {
     const kbTop = inv.innerH - inv.kbInset
-    for (const [label, r] of [['stdin input', inv.stdin], ['Run/Stop', inv.runBtn], ['stdin row', inv.stdinRow]])
+    for (const [label, r] of [['stdin input', inv.stdin], ['Run/Stop', inv.runBtn], ['console foot', inv.foot]])
       if (r && r.bottom > kbTop + 1) add('INVARIANT-f', `${label} bottom (${Math.round(r.bottom)}) is under the keyboard (top ${Math.round(kbTop)})`)
   }
   return findings.filter((f) => f.scenario === scenario)
@@ -281,7 +290,7 @@ for (const [label, h] of [['min', 100], ['max', 4000]]) {
       localStorage.setItem(k, JSON.stringify({ ...p, consoleHeight: px, consoleCollapsed: false }))
     }, h)
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('.console-header', { timeout: 15000 })
+    await page.waitForSelector('.console-header, section[aria-label="Console"] > div:first-of-type', { timeout: 15000 })
     await page.waitForTimeout(600)
   })
 }
@@ -322,21 +331,36 @@ await scenario('390px · console open again', async () => {
   if (await show.count()) await show.click()
 })
 
+/* Raise / lower the simulated software keyboard.
+   At its SOURCE — visualViewport.height — not by writing --kb-inset / --app-h.
+   Writing those by hand is undone by ui/viewport.ts's next sync(), and
+   `--app-h: 844px` (the whole window) is a shell geometry the app never has:
+   visualViewport.height is already the height ABOVE the keyboard on both
+   platforms, which is why nothing subtracts --kb-inset a second time. With the
+   old values the console honestly sat below the simulated keyboard line and
+   INVARIANT-f fired on the simulation instead of on the app. */
+const KB_PX = 336
+const raiseKeyboard = () => page.evaluate((KB) => {
+  const vv = window.visualViewport
+  Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight - KB })
+  Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
+  vv.dispatchEvent(new Event('resize'))
+}, KB_PX)
+const lowerKeyboard = () => page.evaluate(() => {
+  delete window.visualViewport.height
+  delete window.visualViewport.offsetTop
+  window.visualViewport.dispatchEvent(new Event('resize'))
+})
+
 /* Keyboard open, both phone widths — the highest-risk state. */
 for (const w of [430, 390]) {
-  await scenario(`${w}px · keyboard open (data-kb, 336px inset)`, async () => {
+  await scenario(`${w}px · keyboard open (visualViewport, ${KB_PX}px inset)`, async () => {
     await page.setViewportSize({ width: w, height: 844 })
-    await page.evaluate(() => {
-      document.documentElement.dataset.kb = 'open'
-      document.documentElement.style.setProperty('--kb-inset', '336px')
-      document.documentElement.style.setProperty('--app-h', '844px')
-    })
+    await raiseKeyboard()
+    await page.waitForTimeout(400)
   })
 }
-await page.evaluate(() => {
-  document.documentElement.dataset.kb = 'closed'
-  document.documentElement.style.setProperty('--kb-inset', '0px')
-})
+await lowerKeyboard()
 
 /* Long file name — ellipsis, not spill (brief item g). */
 await scenario('390px · very long file name', async () => {
@@ -390,10 +414,8 @@ await page.screenshot({ path: `${SHOTS}/ovl-1280-progress.png` })
 /* Toast + menu + dialog while the keyboard is up (brief item f). */
 await scenario('390px · toast visible with keyboard open', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.evaluate(() => {
-    document.documentElement.dataset.kb = 'open'
-    document.documentElement.style.setProperty('--kb-inset', '336px')
-  })
+  await raiseKeyboard()
+  await page.waitForTimeout(400)
   await page.keyboard.press('Control+s')
   await page.waitForTimeout(500)
 })

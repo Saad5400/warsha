@@ -315,6 +315,42 @@ async function selfTest() {
     check('4b helper file + line in traceback', /File "helpers\/boom\.py", line 3/.test(state.output), firstMatch(/File "helpers\/boom\.py"[^\n]*/))
     check('4c no absolute FS paths leaked', !state.output.includes('/home/pyodide'))
     check('4d exit code non-null and non-zero', code !== null && code !== 0, `got ${code}`)
+    // Pyodide's own machinery has no CPython counterpart, so a frame from it in
+    // a student's traceback is the Python equivalent of showing them our
+    // launcher. The runner filters those out; this is the guard on that.
+    check(
+      '4e no Pyodide-internal frames',
+      !/\/pyodide\/|\/_pyodide\//.test(state.output),
+      firstMatch(/[^\n]*_?pyodide\/[^\n]*/),
+    )
+
+    // --- 4B. a warning shows THIS run's source line, not the last one's ----
+    // Source lines come from linecache, which is keyed by file name and lives
+    // as long as the interpreter -- and one interpreter serves every run. This
+    // must follow `traceback`, whose main.py line 3 is the decoy.
+    // state.output is cumulative across the whole self-test, and the decoy
+    // string is something the PREVIOUS scenario legitimately printed -- so this
+    // must assert on this scenario's own slice, not on everything so far.
+    const beforeWarning = state.output.length
+    await run('warning')
+    code = await waitFor('exit', 30_000, 'warning exit')
+    const warned = state.output.slice(beforeWarning)
+    check(
+      '4Ba warning names the student file and line',
+      warned.includes('main.py:3: DeprecationWarning: this API is going away'),
+      JSON.stringify(warned.match(/main\.py:\d+: [^\n]*/)?.[0] ?? '(not found)'),
+    )
+    check(
+      '4Bb warning shows THIS run\'s source line',
+      warned.includes('  warnings.warn("this API is going away", DeprecationWarning)'),
+      JSON.stringify(warned.match(/DeprecationWarning: [^\n]*\n[^\n]*/)?.[0] ?? '(not found)'),
+    )
+    check(
+      '4Bc ...and not the previous run\'s (stale linecache)',
+      !warned.includes('about to fail'),
+      JSON.stringify(warned.match(/[^\n]*about to fail[^\n]*/)?.[0] ?? ''),
+    )
+    check('4Bd a warning is not fatal', code === 0 && warned.includes('still running'), `got ${code}`)
 
     // --- 5. infinite loop -> kill -> run again ----------------------------
     await run('infinite-loop')

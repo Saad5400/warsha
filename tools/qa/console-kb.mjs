@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const URL_ = 'http://localhost:8091/'
+const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8091/'
 const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
 const results = []
 const pass = (n, d = '') => { results.push(['PASS', n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
@@ -56,10 +56,13 @@ if (await picker.count()) {
   info(`picker leading rule: ${rule}`)
 } else info('only one runnable file — picker correctly absent')
 
-const overflow = await page.evaluate(() => {
-  const h = document.querySelector('.console-header')
+// RunBar's root lost its `console-header` class in a concurrent refactor; accept
+// either spelling so this suite reports console regressions rather than that one.
+const HEADER_SEL = '.console-header, section[aria-label="Console"] > div:first-of-type'
+const overflow = await page.evaluate((sel) => {
+  const h = document.querySelector(sel)
   return { scrollW: h.scrollWidth, clientW: h.clientWidth, docScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth }
-})
+}, HEADER_SEL)
 if (overflow.scrollW <= overflow.clientW + 1) pass('console header fits 390px without horizontal overflow', JSON.stringify(overflow))
 else fail('console header overflows at 390px', JSON.stringify(overflow))
 
@@ -69,19 +72,34 @@ await hasOut('name')
 await page.screenshot({ path: `${SHOTS}/con-390-waiting.png` })
 
 // ------------------------------------------- simulate the software keyboard
-// ui/viewport.ts owns --kb-inset and html[data-kb] and re-syncs them from
-// visualViewport (including on a 300ms focusout timer), so a simulated keyboard
-// set in one tick and measured in the next gets wiped. Set and measure together.
-const kb = await page.evaluate(() => {
-  const KB = 340
-  const root = document.documentElement
-  root.style.setProperty('--kb-inset', `${KB}px`)
-  // What ui/viewport.ts really publishes: --app-h = visualViewport.height, i.e.
-  // the height ABOVE the keyboard, on iPad AND Android. Simulating the spec's
-  // §4.2 narrative (--app-h = innerHeight) instead would test a shell geometry
-  // the app never actually has.
-  root.style.setProperty('--app-h', `${window.innerHeight - KB}px`)
-  root.dataset.kb = 'open'
+// The keyboard is simulated at its SOURCE — `visualViewport.height` — and not by
+// writing --kb-inset / --app-h / data-kb by hand.
+//
+// Writing the CSS variables was self-cancelling and produced a false failure that
+// took an afternoon to explain: shrinking the shell changes the layout, that fires
+// a visualViewport event, ui/viewport.ts's sync() reads the REAL (un-shrunk)
+// viewport and writes everything back, and React's data-kb observer follows it —
+// so a suite that set the variables in one tick and measured in the next was
+// measuring a half-reverted layout with the phone-layout inline height still
+// applied. Shadowing the property makes the simulation self-consistent: every
+// re-sync, whenever it happens, computes the same 340px keyboard, which is exactly
+// what a real device does.
+//
+// It also has to be more than one tick now. The input is IN the transcript, so
+// shrinking the console for the keyboard moves the cursor relative to the scroll
+// window and the console's ResizeObserver scrolls it back — and a ResizeObserver
+// fires after layout but before paint, i.e. never inside the evaluate() that
+// forced the layout.
+const KB_PX = 340
+await page.evaluate((KB) => {
+  const vv = window.visualViewport
+  Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight - KB })
+  Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
+  vv.dispatchEvent(new Event('resize'))
+}, KB_PX)
+await page.waitForTimeout(500)
+
+const kb = await page.evaluate(([KB, HEADER_SEL]) => {
   const r = (s) => { const e = document.querySelector(s)
     if (!e) return null
     const q = e.getBoundingClientRect()
@@ -89,11 +107,20 @@ const kb = await page.evaluate(() => {
   }
   const rows = [...document.querySelectorAll('.console-row')].map((e) => e.getBoundingClientRect().toJSON())
   const keyboardTop = window.innerHeight - KB
+  const sc = document.querySelector('.console-transcript')
   return {
     keyboardTop,
+    // Diagnostics for the one failure mode this geometry has: the transcript
+    // shrank for the keyboard and the cursor did not come with it.
+    scroll: { top: Math.round(sc.scrollTop), max: sc.scrollHeight - sc.clientHeight },
+    kbVars: {
+      inset: getComputedStyle(document.documentElement).getPropertyValue('--kb-inset').trim(),
+      appH: getComputedStyle(document.documentElement).getPropertyValue('--app-h').trim(),
+      state: document.documentElement.dataset.kb,
+    },
     input: r('[aria-label="Program input"]'),
     status: r('p[role="status"][data-state]'),
-    header: r('.console-header'),
+    header: r(HEADER_SEL),
     visibleRows: rows.filter((b) => b.bottom <= keyboardTop + 1 && b.height > 0).length,
     totalRows: rows.length,
     clearLabelShown: [...document.querySelectorAll('.kb-hide')].some((e) => getComputedStyle(e).display !== 'none'),
@@ -102,11 +129,19 @@ const kb = await page.evaluate(() => {
     // must be 0. Anything else means the keyboard inset is being applied twice.
     deadSpace: keyboardTop - (r('section[aria-label="Console"]')?.b ?? keyboardTop),
     transcriptH: r('.console-transcript')?.h,
+    transcript: r('.console-transcript'),
+    foot: r('.console-foot'),
   }
-})
+}, [KB_PX, HEADER_SEL])
 info(JSON.stringify(kb))
-if (kb.input && kb.input.bottom <= kb.keyboardTop + 1) pass('stdin row stays above the keyboard', `input bottom ${Math.round(kb.input.bottom)} ≤ keyboard top ${kb.keyboardTop}`)
-else fail('stdin row stays above the keyboard', JSON.stringify(kb.input))
+if (kb.input && kb.input.bottom <= kb.keyboardTop + 1) pass('the live input stays above the keyboard', `input bottom ${Math.round(kb.input.bottom)} ≤ keyboard top ${kb.keyboardTop}`)
+else fail('the live input stays above the keyboard', JSON.stringify(kb.input))
+// Above the keyboard is not enough now that the input scrolls with the stream: it
+// also has to be inside the transcript's own scroll window, or it is clipped by a
+// panel that shrank for the keyboard and the student types at an invisible cursor.
+if (kb.input && kb.transcript && kb.input.bottom <= kb.transcript.bottom + 1 && kb.input.top >= kb.transcript.top - 1)
+  pass('the live input is inside the transcript viewport, not scrolled out of it', `input ${Math.round(kb.input.top)}–${Math.round(kb.input.bottom)} within ${Math.round(kb.transcript.top)}–${Math.round(kb.transcript.bottom)}`)
+else fail('live input clipped by the transcript', JSON.stringify({ input: kb.input, transcript: kb.transcript }))
 if (kb.status && kb.status.bottom <= kb.keyboardTop + 1) pass('status line stays above the keyboard')
 else fail('status line stays above the keyboard', JSON.stringify(kb.status))
 if (kb.header && kb.header.bottom <= kb.keyboardTop + 1) pass('Run/Stop stays above the keyboard')
@@ -119,14 +154,28 @@ if (kb.deadSpace <= 1) pass('no dead space between the console and the keyboard'
 else fail('keyboard inset applied twice — dead space below the console', `${Math.round(kb.deadSpace)}px of empty shell, transcript squeezed to ${kb.transcriptH}px`)
 if (kb.transcriptH >= 84) pass('four output lines fit above the input row (§4.3 rule 4)', `${kb.transcriptH}px`)
 else fail('four output lines above the input row (§4.3 rule 4)', `transcript is ${kb.transcriptH}px, needs ~84px`)
-await page.evaluate(() => {
-  document.documentElement.style.setProperty('--kb-inset', '340px')
-  document.documentElement.dataset.kb = 'open'
-})
+// The keyboard is still up (the shadowed getter holds it there), so this crop is
+// the real keyboard-open layout, not a re-poked approximation of it.
 await page.screenshot({ path: `${SHOTS}/con-390-keyboard.png`, clip: { x: 0, y: 0, width: 390, height: 440 } })
 
-await page.evaluate(() => { document.documentElement.dataset.kb = 'closed'; document.documentElement.style.setProperty('--kb-inset', '0px') })
-await page.waitForTimeout(300)
+// Put the keyboard away the same way it was raised: restore the real viewport.
+await page.evaluate(() => {
+  delete window.visualViewport.height
+  delete window.visualViewport.offsetTop
+  window.visualViewport.dispatchEvent(new Event('resize'))
+})
+await page.waitForTimeout(400)
+
+// Touch: the cursor is somewhere inside a scrolling transcript rather than in a
+// fixed bar, so "tap the console" has to mean "type here".
+await page.evaluate(() => document.activeElement?.blur())
+await page.waitForTimeout(200)
+await page.locator('.console-transcript').tap({ position: { x: 80, y: 24 } })
+await page.waitForTimeout(250)
+const refocused = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
+if (refocused === 'Program input') pass('tapping the console while it waits focuses the live input')
+else fail('tap-to-focus while waiting', String(refocused))
+
 await page.locator('[aria-label="Program input"]').fill('Warsha')
 await page.locator('[aria-label="Program input"]').press('Enter')
 await hasOut('Finished')

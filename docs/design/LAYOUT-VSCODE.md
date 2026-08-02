@@ -26,6 +26,11 @@ VSCode's floor plan.
 1. **Activity bar** (far left, 48px, icon-only): Explorer toggle now;
    Search/Settings are future slots. On <900px it disappears — the drawer
    pattern already covers it.
+1b. **No logo, no app name in the title bar** (founder ruling, 2026-08-02):
+   VSCode does not put a wordmark above the explorer, so neither do we. The
+   top-left of the title bar is empty (or holds the project name); the brand
+   appears only on the welcome panel, the favicon, and the OG image. This
+   overrides the "logo · (project name ▾)" sketch above.
 2. **Sidebar header like VSCode's**: the word EXPLORER (11px caps, text-3),
    below it a **project row: current project name + chevron** — clicking opens
    the project switcher (switch / new / new-from-template / rename / delete /

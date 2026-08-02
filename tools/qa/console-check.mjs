@@ -6,7 +6,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const URL_ = 'http://localhost:8091/'
+const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8091/'
 const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
 const W = Number(process.argv[2] ?? 1280)
 const H = Number(process.argv[3] ?? 900)
@@ -37,6 +37,9 @@ const stopBtn = () => page.getByRole('button', { name: 'Stop', exact: true })
 const input = () => page.locator('[aria-label="Program input"]')
 const statusLine = () => page.locator('p[role="status"][data-state]')
 const shot = (n) => page.screenshot({ path: `${SHOTS}/con-${TAG}-${n}.png` })
+// RunBar's root lost its `console-header` class in a concurrent refactor; accept
+// either spelling so this suite reports console regressions rather than that one.
+const HEADER_SEL = '.console-header, section[aria-label="Console"] > div:first-of-type'
 
 async function setEditor(text) {
   await page.locator('.cm-content').click()
@@ -78,11 +81,11 @@ const emptyText = await out()
 if (/Output will appear here/.test(emptyText))
   pass('empty console is a designed hint, not a void', JSON.stringify(emptyText.replace(/\s+/g, ' ').trim()))
 else fail('empty console hint', JSON.stringify(emptyText))
-const inputDisabled = await input().isDisabled()
-if (inputDisabled) pass('stdin row disabled while nothing runs')
-else fail('stdin row disabled while nothing runs')
-const idlePh = await input().getAttribute('placeholder')
-info(`idle placeholder: ${JSON.stringify(idlePh)}`)
+// THE input model: a terminal has one surface. Nothing is reading stdin, so there
+// is no input in the DOM at all — not a disabled one, not a greyed one.
+const idleInputs = await input().count()
+if (idleInputs === 0) pass('no input UI whatsoever while nothing is reading stdin')
+else fail('no input UI while idle', `${idleInputs} stdin input(s) on screen`)
 await shot('a-idle')
 
 // ------------------------------------- B. mixed stdout/stderr/echo + exit code
@@ -124,6 +127,45 @@ else fail('stdin row enabled while the program reads')
 const beforeAnswer = await out()
 if (beforeAnswer.trimEnd().endsWith('Your name:')) pass('prompt printed before the read blocked')
 else fail('prompt printed before the read blocked', beforeAnswer.slice(-40))
+
+// The point of the whole redesign: the input is IN the transcript, on the prompt's
+// own line, where a terminal cursor would be — not in a bar underneath it.
+const inline = await page.evaluate(() => {
+  const inp = document.querySelector('[aria-label="Program input"]')
+  const scroller = document.querySelector('[aria-label="Program output"]')
+  const row = inp?.closest('.console-row')
+  const seg = row?.querySelector('[data-seg]')
+  if (!inp || !scroller || !row) return null
+  const i = inp.getBoundingClientRect()
+  const s = seg?.getBoundingClientRect() ?? null
+  const cs = getComputedStyle(inp)
+  return {
+    insideTranscript: scroller.contains(inp),
+    prompt: seg?.textContent ?? null,
+    sharesTheLine: s ? i.top < s.bottom && s.top < i.bottom : false,
+    gapAfterPrompt: s ? Math.round(i.left - s.right) : null,
+    height: Math.round(i.height),
+    fontSize: cs.fontSize,
+    border: cs.borderTopWidth + ' ' + cs.borderTopStyle,
+    background: cs.backgroundColor,
+    rowRule: getComputedStyle(row).borderLeftColor,
+  }
+})
+info(`inline input: ${JSON.stringify(inline)}`)
+if (inline?.insideTranscript) pass('the input lives INSIDE the transcript, not in a bar below it')
+else fail('input inside the transcript', JSON.stringify(inline))
+if (inline?.sharesTheLine && /Your name:/.test(inline.prompt ?? '') && inline.gapAfterPrompt >= -1 && inline.gapAfterPrompt <= 4)
+  pass('a partial-line prompt and the input are ONE visual line', `"${inline.prompt}" then the caret ${inline.gapAfterPrompt}px later`)
+else fail('prompt and input share a line', JSON.stringify(inline))
+if (inline && /^0px/.test(inline.border) && /rgba\(0, 0, 0, 0\)|transparent/.test(inline.background))
+  pass('the input has no box of its own — the caret is the affordance', `${inline.border}, ${inline.background}`)
+else fail('input is chromeless', JSON.stringify({ border: inline?.border, bg: inline?.background }))
+if (inline?.rowRule === 'rgb(127, 196, 245)') pass('the live line carries an --info leading rule (greyscale-safe)', inline.rowRule)
+else fail('live line --info leading rule', String(inline?.rowRule))
+if (inline && inline.height >= 43.5) pass('the live input is a ≥44px touch target', `${inline.height}px`)
+else fail('live input ≥44px', JSON.stringify(inline))
+if (inline && parseFloat(inline.fontSize) >= 16) pass('stdin font-size ≥16px (no iOS zoom on focus)', inline.fontSize)
+else fail('stdin font-size ≥16px', String(inline?.fontSize))
 await shot('c-waiting')
 
 await input().fill('Saad')
@@ -197,11 +239,62 @@ if (await copyBtn.count()) {
   else fail('copy button confirms on itself', String(label))
 } else fail('copy-all-output button exists in the console header')
 
+// Right-click copies the SELECTION outright, the way a terminal emulator does —
+// the Copy-all button is for the whole transcript, this is for the one line a
+// student wants to paste to a friend.
+const selRow = page.locator('.console-row__text', { hasText: 'Warsha console check' }).first()
+await page.evaluate(() => {
+  const el = [...document.querySelectorAll('.console-row__text')].find((e) => /Warsha console check/.test(e.textContent))
+  const r = document.createRange()
+  r.selectNodeContents(el)
+  const s = window.getSelection()
+  s.removeAllRanges()
+  s.addRange(r)
+})
+await page.evaluate(() => navigator.clipboard.writeText('(nothing copied)'))
+await selRow.click({ button: 'right' })
+await page.waitForTimeout(400)
+const selClip = await page.evaluate(() => navigator.clipboard.readText())
+if (/Warsha console check/.test(selClip) && !/ValueError/.test(selClip))
+  pass('right-click copies just the selection', JSON.stringify(selClip.trim()))
+else fail('right-click copies the selection', JSON.stringify(selClip.slice(0, 80)))
+// Selection has to be visible, not the browser's default on a dark surface.
+const selStyle = await page.evaluate(() => {
+  // Recursive: the app's rules live inside `@layer components`, so the interesting
+  // rules are children of a CSSLayerBlockRule and never appear at sheet top level.
+  const walk = (rules) => {
+    for (const r of rules) {
+      if (r.selectorText && /console-transcript[^,]*::selection/.test(r.selectorText) && r.style.backgroundColor)
+        return r.style.backgroundColor
+      if (r.cssRules) {
+        const hit = walk(r.cssRules)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+  for (const sheet of document.styleSheets) {
+    try { const hit = walk(sheet.cssRules); if (hit) return hit } catch { /* cross-origin */ }
+  }
+  return null
+})
+if (selStyle) pass('the transcript styles its own selection', selStyle)
+else fail('transcript ::selection styling is missing')
+
 // --------------------------------- D. 6000-line burst: autoscroll pill + Stop
 await setEditor('for i in range(6000): print("line", i, "of six thousand")\n')
 await runBtn().click()
+// Mid-flight: the program is producing output and reading nothing, so the console
+// must be pure transcript. (Sampled while it streams, before the run finishes.)
+const duringRun = await input().count()
 await hasOut('line 5999')
+if (duringRun === 0) pass('no input UI while the program is only printing')
+else fail('no input UI while streaming', `${duringRun} input(s) on screen`)
 await page.waitForTimeout(400)
+await shot('e-streaming-no-input')
+const afterExit = await input().count()
+if (afterExit === 0) pass('the input is gone again once the program exits')
+else fail('input removed after exit', `${afterExit} input(s) still on screen`)
 const stuck = await page.evaluate(() => {
   const el = document.querySelector('[aria-label="Program output"]')
   return el.scrollHeight - el.scrollTop - el.clientHeight
@@ -226,15 +319,27 @@ else fail('scroll-up raises the resume pill')
 // The pill must COUNT what arrived while the reader was away. Driven by a
 // pending prompt rather than a flood, because the Python engine stops emitting
 // after its own 2 MiB per-run output cap and a capped flood adds nothing new.
+// Note the sleep: the reader has to get back to the top of the transcript BEFORE
+// the 500 lines land. Scrolling up first and then typing no longer works, because
+// the input is at the cursor — at the bottom of the transcript — so focusing it to
+// type necessarily scrolls it into view. That is correct terminal behaviour (you
+// cannot type at a cursor you cannot see); the invariant being proved here is the
+// one that still matters: output arriving while the reader is away must not yank
+// them to the bottom.
 await page.waitForTimeout(700)
-await setEditor('for i in range(30): print("first pass", i)\nname = input("Ready? ")\nfor i in range(500): print("second pass", i)\n')
+await setEditor(
+  'import time\n' +
+  'for i in range(30): print("first pass", i)\n' +
+  'name = input("Ready? ")\n' +
+  'time.sleep(0.8)\n' +
+  'for i in range(500): print("second pass", i)\n',
+)
 await runBtn().click()
 await hasOut('Ready?')
-await page.locator('[aria-label="Program output"]').evaluate((el) => { el.scrollTop = 0 })
-await page.waitForTimeout(300)
 await input().fill('yes')
 await input().press('Enter')
-await page.waitForTimeout(1800)
+await page.locator('[aria-label="Program output"]').evaluate((el) => { el.scrollTop = 0 })
+await page.waitForTimeout(2600)
 const pillState = await page.evaluate(() => {
   const el = document.querySelector('[aria-label="Program output"]')
   const btn = [...document.querySelectorAll('button')].find((b) => /new line|Jump to latest/.test(b.innerText))
@@ -297,14 +402,14 @@ else fail('Ctrl+Enter runs / exit-0 status', `${okState} / ${okText}`)
 await shot('h-exit-ok')
 
 // --------------------------------------------------- F. geometry + overlap check
-const geo = await page.evaluate(() => {
+const geo = await page.evaluate((sel) => {
   const r = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null }
-  const header = r('.console-header')
-  const runB = [...document.querySelectorAll('.console-header button')].map((b) => ({
+  const header = r(sel)
+  const runB = [...document.querySelectorAll(`${sel.split(', ')[0]} button, ${sel.split(', ')[1]} button`)].map((b) => ({
     name: b.getAttribute('aria-label') ?? b.innerText.trim(), ...b.getBoundingClientRect().toJSON(),
   }))
-  return { header, runB, divider: r('[role="separator"][aria-label="Resize output"]'), input: r('[aria-label="Program input"]') }
-})
+  return { header, runB, divider: r('[role="separator"][aria-label="Resize output"]') }
+}, HEADER_SEL)
 info(`header: ${JSON.stringify(geo.header)}`)
 for (const b of geo.runB) info(`  btn ${b.name}: ${Math.round(b.width)}x${Math.round(b.height)} @ y=${Math.round(b.y)}`)
 const tooSmall = geo.runB.filter((b) => b.height < 43.5 || b.width < 43.5)
@@ -318,11 +423,16 @@ if (geo.divider) {
   if (!overlaps) pass('resize handle does not overlap the header', `handle bottom ${Math.round(geo.divider.y + geo.divider.height)} ≤ header top ${Math.round(geo.header.y)}`)
   else fail('resize handle overlaps the header')
 } else info('no resize handle at this width (phone layout, by design)')
-if (geo.input && geo.input.height >= 43.5) pass('stdin input is ≥44px tall')
-else fail('stdin input ≥44px', JSON.stringify(geo.input))
-const fs = await page.evaluate(() => getComputedStyle(document.querySelector('[aria-label="Program input"]')).fontSize)
-if (parseFloat(fs) >= 16) pass('stdin font-size ≥16px (no iOS zoom on focus)', fs)
-else fail('stdin font-size ≥16px', fs)
+// The input's own geometry (44px, 16px) is asserted back in section B, while it
+// exists — nothing is reading stdin here, so there is nothing to measure.
+
+// Ctrl+L clears, the way it does in a shell.
+await page.locator('[aria-label="Program output"]').click()
+await page.keyboard.press('Control+l')
+await page.waitForTimeout(300)
+const clearedText = await out()
+if (/Cleared\./.test(clearedText)) pass('Ctrl+L clears the console like a shell', JSON.stringify(clearedText.trim()))
+else fail('Ctrl+L clears the console', JSON.stringify(clearedText.slice(0, 80)))
 
 const notable = errors.filter((e) => !/favicon|404/i.test(e))
 if (!notable.length) pass('no unexpected console errors')

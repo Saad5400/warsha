@@ -141,10 +141,19 @@ export class PythonRuntime implements Runtime {
     return session
   }
 
-  /** Terminate the worker without any run in flight (e.g. leaving the page). */
+  /**
+   * Give up this runtime's worker for good: the page is closing, or the shell
+   * has decided the engine can no longer be trusted.
+   *
+   * A live session is reported as killed first, then the worker is terminated
+   * WITHOUT a replacement. It used to route through `killSession`, which
+   * respawns because the student is expected to press Run again — so disposing
+   * during a run left a fresh Pyodide booting behind a page that was being
+   * unloaded, on exactly the memory-starved iPad the dispose was for.
+   */
   dispose(): void {
-    if (this.active && !this.active.ended) this.killSession(this.active)
-    else this.teardown()
+    this.finish(null)
+    this.teardown()
   }
 
   // --- worker lifecycle -----------------------------------------------------
