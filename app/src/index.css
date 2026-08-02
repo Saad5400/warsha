@@ -131,6 +131,28 @@
  *                 `motion-reduce:w-full motion-reduce:opacity-50`) says so at
  *                 the call site, because that is where the reader is.
  *
+ * GLITCH (v3)     The one brand-specific effect, and it is used in exactly two
+ *                 places, never a third without asking Design first:
+ *                   `animate-glitch-mark` — the welcome lockup only
+ *                     (WelcomePanel.tsx wraps <LogoLockup/>). An infinite
+ *                     7s-period animation that sits still for ~92% of its
+ *                     cycle and glitches for ~250ms — a rare tic, not a loop
+ *                     you notice. The global reduced-motion block's
+ *                     `animation-iteration-count: 1 !important` already makes
+ *                     this a no-op under `prefers-reduced-motion`, so it needs
+ *                     no extra override.
+ *                   the console rail's run-state entry — `.console-panel`'s
+ *                     existing `[data-state='preparing'|'running'|'waiting']`
+ *                     selector (below) carries a one-shot (non-looping)
+ *                     keyframe that fires exactly when the attribute starts
+ *                     matching, i.e. the instant a run begins. Not a
+ *                     `--animate-*` token, on purpose: it is not a reusable
+ *                     utility, it is one transition tied to one selector this
+ *                     file already owns.
+ *                 NEVER on a reading surface (the editor canvas, console
+ *                 transcript text, file rows) — glitch is a brand moment, not
+ *                 a texture, and it would make code and output hard to read.
+ *
  * SCROLLBARS      Styled globally in @layer base (`scrollbar-color` for Firefox,
  *                 `::-webkit-scrollbar*` for Blink/WebKit). Use `.scroller` for
  *                 any scrolling region: it adds `overscroll-behavior: contain`
@@ -204,6 +226,15 @@
 @media (min-width: 900px) {
   :root {
     --bar-title: calc(var(--touch) + var(--sp-1) + var(--sp-1));
+    /* PIXEL-FINDINGS F-12: the console header has carried the SAME 0px-clearance
+       defect as the title bar, unfixed, since --bar-console (tokens.css) is also
+       44px around a 44px Run. Unlike the title bar, this one's Run is on screen
+       at every width, so the fix is scoped to ≥900px only rather than applied
+       everywhere: a phone console has no vertical budget to spare (§4.3 rule 4's
+       144px floor is "the single most important number" there), while a desktop
+       console does. --console-floor derives from --bar-console below and picks
+       up the extra 8px automatically. */
+    --bar-console: calc(var(--touch) + var(--sp-1) + var(--sp-1));
   }
 }
 
@@ -351,6 +382,12 @@
   --animate-dot-pulse: warsha-pulse 1.4s var(--ease) infinite;
   --animate-sweep: warsha-sweep 1.4s var(--ease) infinite;
   --animate-spinner: warsha-spin 700ms linear infinite;
+  /* The one brand-specific animation (v3, GLITCH above). 7s period so the
+     welcome lockup sits still almost all the time and glitches for ~250ms —
+     used ONLY on WelcomePanel.tsx's <LogoLockup/> wrapper. `steps(1,end)`
+     rather than an eased curve: a glitch reads as broken frames, not a
+     smooth wobble. */
+  --animate-glitch-mark: warsha-glitch-mark 7s steps(1, end) infinite;
 
   /* Overlay motion, for the Radix primitives in components/ui. Enter is the
      180ms drawer/menu/dialog step, or the 120ms one for a panel that appears
@@ -525,7 +562,7 @@
     padding-right: var(--sp-1);
     cursor: pointer;
     touch-action: manipulation;
-    /* The leading edge is reserved for the amber rule at all times, so a row
+    /* The leading edge is reserved for the accent rule at all times, so a row
        does not shift by 2px when it becomes the open file. */
     border-left: var(--rail) solid transparent;
     transition: background-color var(--dur-fast) var(--ease);
@@ -566,12 +603,20 @@
 
   /* Nesting guides: one hairline per level, so depth is readable without
      counting indents. Drawn from the row so they tile into a continuous rule. */
+  /* --border-subtle, not --code-indent-guide (which the EDITOR's guides keep).
+     The editor's guides only ever sit on one fill; a tree row has three, and
+     --code-indent-guide rgb(39,44,52) is a channel delta of 8 against the tree's
+     resting --surface-2 but only 1 against the --surface-3 hover fill — so the
+     guide vanished exactly on the row the pointer was over (PIXEL-FINDINGS
+     F-08). --border-subtle rgb(42,47,56) reads 11 at rest and 4-5 hovered: one
+     colour down the whole line, which a per-state colour could not give without
+     turning the guide into a lit 44px segment in an otherwise quiet rule. */
   .tree-row__guide {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 1px;
-    background: var(--code-indent-guide);
+    background: var(--border-subtle);
     pointer-events: none;
   }
 
@@ -588,7 +633,7 @@
     transform: rotate(90deg);
   }
 
-  /* The 6px amber dot for an unsaved file (spec §7.1). */
+  /* The 6px accent dot for an unsaved file (spec §7.1). */
   .dot-dirty {
     flex: none;
     width: 6px;
@@ -620,8 +665,10 @@
     /* Divider as an inset shadow: a 1px border-top would come out of the
        collapsed panel's 44px and push Run a pixel below the keyboard line. */
     box-shadow: inset 0 1px 0 0 var(--border-subtle);
-    /* The third home of the amber signature (principle 3): the leading edge of
-       a running process. Reserved always, coloured only while it runs. */
+    /* The third home of the accent signature (principle 3): the leading edge of
+       a running process. Reserved always, coloured only while it runs. A brief
+       glitch flicker marks the instant it starts — see GLITCH (v3) above and
+       the [data-state] rule + keyframe immediately below. */
     border-left: var(--rail) solid transparent;
     transition: border-left-color var(--dur) var(--ease);
   }
@@ -629,6 +676,12 @@
   .console-panel[data-state='running'],
   .console-panel[data-state='waiting'] {
     border-left-color: var(--accent);
+    /* Fires once, exactly when the attribute starts matching (a run begins),
+       not on every re-render: a CSS animation only (re)starts when the rule
+       that names it newly applies. `1` iteration, not `infinite` — this is a
+       transition INTO the running state, not a loop, so it has nothing to
+       repeat. See GLITCH (v3) in the file header. */
+    animation: warsha-glitch-rail var(--dur-slow) steps(3, end) 1;
   }
 
   /* Spec §4.3 rule 4 — the single most important number in that section:
@@ -906,10 +959,11 @@
 
      `outline-offset: -2px` is the documented treatment for a focusable element
      clipped by a scroll parent, which this one is. The colour moves from the
-     global amber to --info because this input is auto-focused the instant the
-     program reads, and amber is the app's running/attention signature: a
-     full-width amber rectangle across the console was the loudest thing on the
-     screen and read as the form field the founder asked us to delete. In --info
+     global accent to --info because this input is auto-focused the instant the
+     program reads, and accent is the app's running/attention signature: a
+     full-width accent-coloured rectangle across the console was the loudest
+     thing on the screen and read as the form field the founder asked us to
+     delete. In --info
      it is the same 2px indicator, in the same hue as the row's leading rule and
      the caret, so the three read as one waiting state instead of three warnings.
      Contrast on --surface-2 is 8.35:1. */
@@ -976,7 +1030,7 @@
   }
 
   /* "↓ 12 new lines" — floats bottom-trailing inside the transcript when the
-     reader has scrolled up and output is still arriving. Amber while there is
+     reader has scrolled up and output is still arriving. Accent while there is
      something unseen, quiet otherwise. Its parent needs `position: relative`. */
   .scroll-pill {
     position: absolute;
@@ -1088,7 +1142,7 @@
 
   .btn--primary {
     background: var(--accent);
-    color: var(--accent-ink); /* 9.01 — never white on amber (1.99) */
+    color: var(--accent-ink); /* 19.06 — accent-ink is tuned to --accent; never a literal colour here */
   }
   .btn--primary:hover:not(:disabled) {
     background: var(--accent-hover);
@@ -1349,6 +1403,66 @@ html[data-kb='open'] {
   }
 }
 
+/* GLITCH (v3) — see the file header note. Two effects, both CSS-only.
+ *
+ * warsha-glitch-mark: the welcome lockup's rare tic. Still for ~92% of the
+ * 7s cycle (see --animate-glitch-mark), then a jittered RGB-split-style
+ * stutter for the rest — transform + filter only, per MOTION's "animate only
+ * transform and opacity" rule, `filter` being the one addition a glitch needs
+ * to fake a channel split without literally splitting the SVG into layers. */
+@keyframes warsha-glitch-mark {
+  0%,
+  92%,
+  100% {
+    transform: translate(0, 0);
+    filter: none;
+    opacity: 1;
+  }
+  93% {
+    transform: translate(-2px, 1px);
+    filter: drop-shadow(2px 0 0 rgba(255, 255, 255, 0.5)) drop-shadow(-2px 0 0 rgba(255, 255, 255, 0.25));
+    opacity: 0.85;
+  }
+  95% {
+    transform: translate(2px, -1px);
+    filter: drop-shadow(-2px 0 0 rgba(255, 255, 255, 0.5));
+    opacity: 0.9;
+  }
+  97% {
+    transform: translate(-1px, 0);
+    filter: none;
+    opacity: 1;
+  }
+}
+
+/* warsha-glitch-rail: the console rail's run-state entry (one shot, see the
+ * `.console-panel[data-state=...]` rule above). A stutter in the rail's own
+ * width and brightness, not a colour change — colour already carries the
+ * "running" meaning via --accent, so this only makes the moment it ARRIVES
+ * feel like a switch being thrown rather than a CSS transition settling. */
+@keyframes warsha-glitch-rail {
+  0% {
+    border-left-width: var(--rail);
+    filter: none;
+  }
+  30% {
+    border-left-width: calc(var(--rail) * 2);
+    filter: brightness(1.6);
+  }
+  60% {
+    border-left-width: var(--rail);
+    filter: none;
+  }
+  80% {
+    border-left-width: calc(var(--rail) * 2);
+    filter: brightness(1.3);
+  }
+  100% {
+    border-left-width: var(--rail);
+    filter: none;
+  }
+}
+
 /* Overlay motion. Each `from`-only keyframe leaves its `to` implicit, so the
    finished state is whatever the element already is — nothing here has to
    restate a resting transform, and nothing can drift from one. */
@@ -1448,8 +1562,9 @@ html[data-kb='open'] {
  * is — so only the two rules that carried `!important` ever applied. Measured
  * consequences while it looked authoritative: the canvas and gutter rendered
  * oneDark's #282c34 instead of --surface-1, the active line was oneDark's blue,
- * the caret was 1px blue instead of 2px amber, and the 4px `.cm-content`
- * padding-left that keeps iOS selection handles off the gutter never applied.
+ * the caret was 1px blue instead of 2px accent-coloured, and the 4px
+ * `.cm-content` padding-left that keeps iOS selection handles off the gutter
+ * never applied.
  *
  * Ordering cannot fix it either — CodeMirror mounts collected style modules in
  * reverse, so an extension listed after oneDark lands earlier in the sheet and

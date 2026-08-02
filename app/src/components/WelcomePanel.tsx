@@ -54,7 +54,13 @@ export function WelcomePanel({ onNewFile, onPickTemplate, onImportZip }: Welcome
             height with the console, so the rhythm drops from 24px to 16px. */}
         <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-4 mx-auto px-5 py-5 min-[1024px]:max-w-[46rem]">
           <div className="flex flex-col items-center gap-4">
-            <LogoLockup />
+            {/* The one glitch moment on this screen (THEME-V3.md — "glitch is a
+                brand accent, used sparingly"): a rare ~250ms stutter every 7s,
+                never a continuous loop, and it never touches a reading surface
+                because it lives only on the mark, not on the copy beside it. */}
+            <span className="inline-flex animate-glitch-mark motion-reduce:animate-none">
+              <LogoLockup />
+            </span>
             <p className="m-0 text-center text-btn leading-normal text-text-2">{COPY.welcomePurpose}</p>
           </div>
 
