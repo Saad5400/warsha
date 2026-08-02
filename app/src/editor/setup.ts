@@ -1,4 +1,4 @@
-import { EditorState, Compartment } from '@codemirror/state'
+import { EditorState, Compartment, Text } from '@codemirror/state'
 import {
   EditorView,
   keymap,
@@ -196,6 +196,10 @@ const chromeTheme = EditorView.theme(
     '&.cm-editor .cm-completionIcon-class::after': { content: "'C'" },
     '&.cm-editor .cm-completionIcon-variable::after': { content: "'x'" },
     '&.cm-editor .cm-completionIcon-text::after': { content: "'a'" },
+    // Package/module segments, from import-statement completion (editor/imports.ts).
+    '&.cm-editor .cm-completionIcon-namespace::after': { content: "'P'" },
+    // math.pi / math.e / math.inf, from member completion (editor/members.ts).
+    '&.cm-editor .cm-completionIcon-constant::after': { content: "'K'" },
     // The "no matches" line, and the info panel if a completion ever carries one.
     '&.cm-editor .cm-tooltip.cm-completionInfo': {
       maxWidth: 'min(32ch, calc(100vw - 2 * var(--sp-3)))',
@@ -226,6 +230,19 @@ export interface EditorController {
   setFontSize(px: number): void
   focus(): void
   currentPath(): string | null
+  /**
+   * Replace the current file's whole document with `content` in one dispatch
+   * — one undo step, and `onChange` fires exactly as it would for a keystroke,
+   * so the result flows into `Project.setContent()` and the normal dirty/save
+   * pipeline like any other edit. Used by the "Format file" action.
+   *
+   * The cursor is kept at its old (line, column), clamped to the reformatted
+   * document's bounds — a real diff-based mapping is overkill for a
+   * whole-file rewrite that mostly preserves structure, and "same spot,
+   * clamped" reads as correct far more often than "line 1, column 0" would.
+   * No-ops if `content` is already what the document holds.
+   */
+  applyEdit(content: string): void
   destroy(): void
 }
 
@@ -467,6 +484,27 @@ export function createEditor(
     setFontSize(px) {
       fontSize = px
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(px)) })
+    },
+    applyEdit(content) {
+      if (!path) return
+      const cur = view.state.doc
+      if (cur.toString() === content) return
+      const head = view.state.selection.main.head
+      const oldLine = cur.lineAt(head)
+      const oldCol = head - oldLine.from
+      // Built off-state, so the clamped cursor can be computed and dispatched
+      // together with the change — one transaction, one undo step, and the
+      // update listener sees a normal docChanged (unlike `open()` above, this
+      // is a real edit and must flow to `onChange`/`Project.setContent()`).
+      const newDoc = Text.of(content.split(/\r?\n/))
+      const lineNumber = Math.min(oldLine.number, newDoc.lines)
+      const target = newDoc.line(lineNumber)
+      const pos = target.from + Math.min(oldCol, target.length)
+      view.dispatch({
+        changes: { from: 0, to: cur.length, insert: content },
+        selection: { anchor: pos },
+        scrollIntoView: true,
+      })
     },
     focus: () => view.focus(),
     currentPath: () => path,

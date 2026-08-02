@@ -8,6 +8,8 @@ import {
   type CompletionSource,
 } from '@codemirror/autocomplete'
 import type { LangId } from '../runtime'
+import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
+import { memberSource } from './members'
 
 /**
  * Completions and snippets — the "where is the IntelliSense?" layer.
@@ -129,6 +131,17 @@ const JAVA_API: readonly (readonly [string, string])[] = [
   ['put', 'store a value under a key'],
   ['containsKey', 'is this key in there?'],
   ['getMessage', 'what went wrong, as text'],
+  ['Random', 'a source of random numbers'],
+  ['nextBoolean', 'a random true or false'],
+  ['Arrays', 'helpers for working with arrays'],
+  ['Arrays.sort', 'put an array in order'],
+  ['Arrays.toString', 'an array as text'],
+  ['StringBuilder', 'text you can build up piece by piece'],
+  ['append', 'add to the end'],
+  ['HashSet', 'a set with no repeats'],
+  ['LinkedList', 'a list good at adding and removing from the ends'],
+  ['Collections', 'helpers for working with lists'],
+  ['Collections.sort', 'put a list in order'],
 ]
 
 const PYTHON_API: readonly (readonly [string, string])[] = [
@@ -182,23 +195,57 @@ const PYTHON_API: readonly (readonly [string, string])[] = [
   ['__init__', 'set a new object up'],
 ]
 
+/**
+ * `math`/`random` functions, offered as the fully-qualified form
+ * (`math.sqrt`) so accepting one also works as a completion for the plain
+ * name — CodeMirror's fuzzy matcher finds `sqrt` inside `math.sqrt` — and its
+ * `apply` inserts `import math` if the file does not have it yet.
+ */
+const PYTHON_MODULE_API: readonly (readonly [string, string, string])[] = [
+  ['sqrt', 'math', 'square root'],
+  ['floor', 'math', 'round down'],
+  ['ceil', 'math', 'round up'],
+  ['factorial', 'math', 'n!'],
+  ['gcd', 'math', 'greatest common divisor'],
+  ['randint', 'random', 'a random whole number from a to b'],
+  ['choice', 'random', 'a random item from a list'],
+  ['shuffle', 'random', 'mix a list randomly, in place'],
+  ['uniform', 'random', 'a random decimal in a range'],
+]
+
 /* ------------------------------------------------------------------- sources */
 
 const WORD_BEFORE = /[\w$]+/
 /** Words shorter than this are noise; they match half the file. */
 const MIN_IDENT_CHARS = 2
 
+/** A dictionary class that needs an import gets one attached to its completion, in the same edit. */
+const javaApiCompletion = (label: string, detail: string, type: string): Completion => {
+  const fqcn = !label.includes('.') ? JAVA_IMPORTS[label] : undefined
+  if (!fqcn) return { label, detail, type, boost: 10 }
+  return { label, detail: `${detail} — auto-imports ${fqcn}`, type, boost: 10, apply: applyWithImport((s) => importInsertion(s, fqcn)) }
+}
+
+/** `sqrt` → the completion is `math.sqrt`, and accepting it also inserts `import math` if needed. */
+const pythonModuleCompletion = ([label, module, detail]: readonly [string, string, string]): Completion => ({
+  label: `${module}.${label}`,
+  detail: `${detail} — auto-imports ${module}`,
+  type: 'function',
+  boost: 10,
+  apply: applyWithImport((s) => pyImportInsertion(s, module)),
+})
+
 const staticOptions = (lang: LangId): Completion[] => {
   const api = lang === 'java' ? JAVA_API : PYTHON_API
   const snippets = lang === 'java' ? JAVA_SNIPPETS : PYTHON_SNIPPETS
+  const apiCompletions = api.map(([label, detail]): Completion => {
+    const type = label.includes('.') ? 'method' : /^[A-Z]/.test(label) ? 'class' : 'function'
+    return lang === 'java' ? javaApiCompletion(label, detail, type) : { label, detail, type, boost: 10 }
+  })
   return [
     ...snippets,
-    ...api.map(([label, detail]): Completion => ({
-      label,
-      detail,
-      type: label.includes('.') ? 'method' : /^[A-Z]/.test(label) ? 'class' : 'function',
-      boost: 10,
-    })),
+    ...apiCompletions,
+    ...(lang === 'python' ? PYTHON_MODULE_API.map(pythonModuleCompletion) : []),
     ...KEYWORDS[lang].map((label): Completion => ({ label, type: 'keyword', boost: 20 })),
   ]
 }
@@ -263,7 +310,15 @@ const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComm
 export function completionSources(lang: LangId | null, projectWords: () => readonly string[]): CompletionSource[] {
   const ident = ifNotIn(NOT_IN, identifierSource(projectWords))
   if (!lang) return [ident]
-  return [ifNotIn(NOT_IN, staticSource(lang)), ident]
+  return [
+    // Member completion first: `sc.` should out-rank a same-named identifier
+    // elsewhere in the project, and the import sources are line-anchored so
+    // ordering against them does not matter.
+    ifNotIn(NOT_IN, memberSource(lang)),
+    ifNotIn(NOT_IN, importStatementSource(lang)),
+    ifNotIn(NOT_IN, staticSource(lang)),
+    ident,
+  ]
 }
 
 /** What shipped, for Education to review. Keyed the way the docs will want it. */
