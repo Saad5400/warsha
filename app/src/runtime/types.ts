@@ -57,6 +57,23 @@ export interface Runtime {
    * implement it simply keeps the worker it has; both runtimes do implement it.
    */
   dispose?(): void
+  /**
+   * OPTIONAL. Reformat one file's source engine-side. Only `PythonRuntime`
+   * implements this (via black, lazily micropip-installed into the
+   * already-booted interpreter) — Java formatting runs entirely off the main
+   * thread through prettier and never touches CheerpJ, so `JavaRuntime` has no
+   * need for it. Callers must check `isReady()` first: calling `format()`
+   * before the engine has booted would silently pay the full engine download
+   * just to format a file.
+   */
+  format?(code: string): Promise<string>
+  /**
+   * OPTIONAL. True once the engine's heavy bootstrap has already completed, so
+   * a caller can offer an engine-side capability (see `format`) without
+   * triggering that bootstrap as a side effect. Undefined for an engine, like
+   * Java's, that no caller needs to ask.
+   */
+  isReady?(): boolean
 }
 
 /** Accepts either shape, so an engine may report a plain string. */

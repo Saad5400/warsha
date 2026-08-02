@@ -546,7 +546,7 @@ function EmptyDirRow({ depth, onNewFile }: { depth: number; onNewFile(): void })
     <div className="relative flex min-h-touch items-center gap-2 pr-1" style={rowPadding(depth)}>
       <Guides depth={depth} />
       <p className="text-meta italic text-text-3">This folder is empty.</p>
-      <Button variant="quiet" className="btn--compact" onClick={onNewFile}>
+      <Button variant="quiet" compact onClick={onNewFile}>
         New file
       </Button>
     </div>

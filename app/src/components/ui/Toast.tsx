@@ -1,6 +1,7 @@
 import { cva, cx } from 'class-variance-authority'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useKeyboardOpen } from '../../hooks/useMedia'
+import { IconButton } from './Button'
 import { IconClose } from './Icons'
 
 export type ToastKind = 'info' | 'success' | 'error'
@@ -207,9 +208,9 @@ function Toast({
         {GLYPH[item.kind]}
       </span>
       <p className="min-w-0 flex-1">{item.message}</p>
-      <button type="button" aria-label="Dismiss" title="Dismiss" onClick={close} className="icon-btn text-current">
+      <IconButton label="Dismiss" onClick={close} className="text-current">
         <IconClose size={16} />
-      </button>
+      </IconButton>
     </div>
   )
 }

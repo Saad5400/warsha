@@ -203,3 +203,19 @@ export const IconTrash = (p: IconProps) => (
     <path d="M6.25 6.5l.55 8.3a1 1 0 0 0 1 .95h4.4a1 1 0 0 0 1-.95l.55-8.3" />
   </Icon>
 )
+
+/** "Format file" — a wand, for the one action that rewrites the file for you. */
+export const IconWand = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 16 14.5 5.5" />
+    <path d="M15.5 3.5v2M18.5 6.5h-2M17.7 8.3l-1.4 1.4M8 3.5v2M6.5 6.5h2" />
+  </Icon>
+)
+
+/** "Share as image" — the export-out arrow above a tray. */
+export const IconShare = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 3v9.5M6.75 6.25 10 3l3.25 3.25" />
+    <path d="M4.5 11v3.75a1.25 1.25 0 0 0 1.25 1.25h8.5a1.25 1.25 0 0 0 1.25-1.25V11" />
+  </Icon>
+)

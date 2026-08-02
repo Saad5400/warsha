@@ -59,7 +59,8 @@ check(iconGlyph.glyph === '"{}"', 'snippets carry an ASCII {} icon, not an SMP g
 const rowH = (await options().first().boundingBox()).height
 check(rowH >= 44, 'completion rows are ≥44px so they can be tapped', `${rowH}px`)
 const matched = await page.locator('.cm-completionMatchedText').first().evaluate((el) => getComputedStyle(el).color)
-check(matched === 'rgb(242, 169, 75)', 'the matched prefix is highlighted in accent', matched)
+// THEME-V3: --accent #F2A94B (amber) -> #FAFAFA (white), rgb(242,169,75) -> rgb(250,250,250).
+check(matched === 'rgb(250, 250, 250)', 'the matched prefix is highlighted in accent', matched)
 await page.screenshot({ path: join(SHOTS, 'files-complete-sout-1280.png') })
 
 await page.keyboard.press('Tab')

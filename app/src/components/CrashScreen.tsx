@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Button } from './ui/Button'
 
 /**
  * The last line of defence.
@@ -47,12 +48,12 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
               them back.
             </p>
           </div>
-          <button type="button" className="btn btn--primary btn--lg" onClick={() => window.location.reload()}>
+          <Button variant="primary" large onClick={() => window.location.reload()}>
             Reload Warsha
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--lg"
+          </Button>
+          <Button
+            variant="ghost"
+            large
             onClick={() => {
               // Layout preferences only. Project files are in OPFS and are not
               // touched here, which is the whole reason this button is safe to
@@ -66,7 +67,7 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
             }}
           >
             Reload and forget my layout
-          </button>
+          </Button>
           <details>
             <summary className="text-meta text-text-3">What went wrong</summary>
             <pre className="console-failure__detail">{String(error.stack || error.message || error)}</pre>

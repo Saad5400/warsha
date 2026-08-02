@@ -55,7 +55,10 @@ await page.waitForTimeout(600)
 // EMPTY project the only primary on screen is a correctly-disabled Run, and
 // measuring that reports surface-4 / text-disabled and reads as a contrast
 // failure when it is in fact the spec's disabled treatment working.
-const primary = await css('.btn--primary', ['min-height', 'font-weight', 'font-size'])
+// task #22: `.btn--primary` no longer exists as a class — Button.tsx generates
+// pure Tailwind utilities via cva now, and publishes which variant is which
+// through `data-variant` instead (the same role `data-kind` plays on a toast).
+const primary = await css('.btn[data-variant="primary"]', ['min-height', 'font-weight', 'font-size'])
 info(`primary button geometry: ${JSON.stringify(primary)}`)
 if (primary && primary['font-weight'] === '600' && primary['font-size'] === '15px')
   pass('§3.2 button label is 15px/600')
@@ -146,7 +149,7 @@ await page.waitForSelector('.console-transcript', { timeout: 5000 })
 
 // ---- 4. fills are honest, measured on a LIVE amber button and a disabled one
 const btnStates = await page.evaluate(() =>
-  [...document.querySelectorAll('.btn--primary')].map((el) => {
+  [...document.querySelectorAll('.btn[data-variant="primary"]')].map((el) => {
     const c = getComputedStyle(el)
     return { label: (el.textContent || '').trim().slice(0, 14), disabled: el.disabled, bg: c.backgroundColor, fg: c.color }
   }))

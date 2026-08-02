@@ -17,6 +17,8 @@ type FromWorker =
   | { type: 'stdin-request' }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
+  | { type: 'formatted'; id: number; code: string }
+  | { type: 'format-error'; id: number; message: string }
 
 export interface PythonRuntimeOptions {
   /**
@@ -74,6 +76,10 @@ export class PythonRuntime implements Runtime {
   private lastProgress: ProgressReport | null = null
 
   private active: Active | null = null
+
+  /** In-flight `format` requests, keyed by the id `format()` handed the worker. */
+  private readonly formatRequests = new Map<number, { resolve: (code: string) => void; reject: (e: Error) => void }>()
+  private nextFormatId = 1
 
   private readonly encoder = new TextEncoder()
   /** Non-shared staging buffer: TextEncoder refuses to write into a shared view. */
@@ -139,6 +145,44 @@ export class PythonRuntime implements Runtime {
       writeEof: () => this.writeEof(active),
     }
     return session
+  }
+
+  /**
+   * True once this runtime's worker has finished booting Pyodide. Callers use
+   * this to decide whether `format()` is safe to call without silently paying
+   * the ~11 MB Pyodide download as a side effect of a "Format file" click.
+   */
+  isReady(): boolean {
+    return this.worker !== null && this.version !== null
+  }
+
+  /**
+   * Reformat one file's source with black, run inside this runtime's own
+   * worker so the interpreter is not booted twice. The first call per page
+   * load pays for `micropip.install("black")` (~500 KB of pure-Python wheels,
+   * cached by the browser thereafter); every call after that is just
+   * `black.format_str()` on an already-imported module.
+   *
+   * Rejects rather than hangs when a program is currently running: the worker
+   * has exactly one thread, `run()` occupies it synchronously end to end, and
+   * a `format` message sent during that window would only sit in the queue
+   * until the program exits or is killed — which reads to a student as "the
+   * Format button did nothing".
+   */
+  async format(code: string): Promise<string> {
+    if (this.active && !this.active.ended) {
+      throw new Error('A Python program is running; stop it before formatting.')
+    }
+    if (!this.isReady()) {
+      throw new Error('Python runtime is not ready.')
+    }
+    const worker = this.worker
+    if (!worker) throw new Error('Python runtime is not ready.')
+
+    const id = this.nextFormatId++
+    const result = new Promise<string>((resolve, reject) => this.formatRequests.set(id, { resolve, reject }))
+    worker.postMessage({ type: 'format', id, code })
+    return result
   }
 
   /**
@@ -247,6 +291,16 @@ export class PythonRuntime implements Runtime {
         }
         this.finish(1, `\n[python runtime error] ${msg.text}\n`)
         return
+
+      case 'formatted':
+        this.formatRequests.get(msg.id)?.resolve(msg.code)
+        this.formatRequests.delete(msg.id)
+        return
+
+      case 'format-error':
+        this.formatRequests.get(msg.id)?.reject(new Error(msg.message))
+        this.formatRequests.delete(msg.id)
+        return
     }
   }
 
@@ -266,6 +320,8 @@ export class PythonRuntime implements Runtime {
     this.booting = null
     this.bootSettle = null
     this.active = null
+    for (const req of this.formatRequests.values()) req.reject(new Error('Python runtime was torn down.'))
+    this.formatRequests.clear()
   }
 
   /** End the current session exactly once. `code` null means killed. */
@@ -289,6 +345,11 @@ export class PythonRuntime implements Runtime {
     this.booting = null
     this.bootSettle = null
     this.finish(null)
+    // A killed worker cannot answer any format() still waiting on it (format()
+    // itself refuses to start one while a run is active, but a request from
+    // just before Run was pressed could still be in flight).
+    for (const req of this.formatRequests.values()) req.reject(new Error('Python runtime was killed.'))
+    this.formatRequests.clear()
     // Respawn immediately so the next run() only waits for whatever is left of
     // the ~1.5 s Pyodide boot. Failures here are surfaced on the next
     // load()/run(); spawn() resets `booting` so a retry is possible.
