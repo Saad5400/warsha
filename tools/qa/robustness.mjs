@@ -158,7 +158,8 @@ async function startPythonProject(page) {
 
 async function startJavaProject(page) {
   await openApp(page)
-  await page.getByRole('button', { name: /Java starter/ }).click()
+  // The card reads "Java (OOP starter)", not "Java starter".
+  await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
   await waitForRunnable(page)
 }
 

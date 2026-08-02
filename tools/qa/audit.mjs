@@ -250,7 +250,11 @@ if (mono.iiii === mono.WWWW) pass('6. code font is genuinely monospaced', `iiii 
 else fail('6. code font is monospaced', JSON.stringify(mono))
 
 // ---- §4.3 rule 4 / rule 5 floors, and the amber running rule
-const floors = await css('.console-panel', ['min-height', 'border-left-width'])
+// Measure the OPEN panel: the floor is on `.console-panel--open`, and a collapsed
+// console reports `auto` for a rule that is simply not in play.
+const reopen = page.getByRole('button', { name: 'Show output' })
+if (await reopen.count()) { await reopen.click(); await page.waitForTimeout(400) }
+const floors = await css('.console-panel--open', ['min-height', 'border-left-width'])
 const editorMin = await css('.editor-pane', ['min-height'])
 info(`console ${JSON.stringify(floors)} editor ${JSON.stringify(editorMin)}`)
 // The spec writes rule 4 as 144px, which is 4 output lines + the input row and

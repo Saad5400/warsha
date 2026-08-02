@@ -205,7 +205,16 @@
   :root {
     --bar-title: calc(var(--touch) + var(--sp-1) + var(--sp-1));
   }
+}
 
+/* Everything below is unconditional. It has to be inside a `:root {` of its own:
+   when this @media block was introduced above, these declarations were left
+   sitting bare inside it, with no selector — which is invalid CSS the browser
+   drops silently, and it took the whole stacking scale AND the console floor with
+   it (`--console-line` computed to "", so `min-height: min(var(--console-floor),
+   100%)` was invalid and resolved to `auto`, i.e. §4.3 rule 4 was doing nothing
+   at all). Caught by audit.mjs reading `auto` where it expected a floor. */
+:root {
   /* One stacking scale for the whole app. See STACKING above. */
   --z-scrim: 10;
   --z-drawer: 20;

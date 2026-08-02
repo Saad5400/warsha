@@ -27,15 +27,29 @@ const STRIP =
 
 /* Active tab: accent rule (7.92:1) + weight 600 + text-1 (13.19 vs 7.72). The
  * surface-1 fill matches the editor canvas so the tab owns it, and it carries
- * none of the load — the tab stays unambiguous in greyscale (principle 2). The
- * 2px bottom rule is reserved at all times so activating never shifts a label. */
+ * none of the load — the tab stays unambiguous in greyscale (principle 2).
+ *
+ * The 2px accent rule is an inset shadow for the same reason the strip's divider
+ * above is: a border eats the box. As `border-b-2` it left the tab a 42px CONTENT
+ * box inside its 44px border box, and every centred child rode 1px high — the
+ * 44px close button measured T=43 B=87 against a tab of T=44 B=88, i.e. one pixel
+ * of it sat up in the title bar. A shadow costs no layout, so the children centre
+ * in the full 44px, and it keeps the property the transparent border was there
+ * for: nothing shifts when a tab activates, because a shadow never shifted
+ * anything.
+ *
+ * `first:` drops the leading divider on the leftmost tab. The sidebar already
+ * draws its own 1px edge at x=287 and the tab's `inset 1px` landed at 288, so the
+ * seam between the file tree and the first tab measured 2px of --border-subtle
+ * where every other tab boundary measures 1px. */
 const TAB =
   'group flex items-center gap-2 flex-none h-full min-w-[96px] max-w-[60vw] px-3 cursor-pointer ' +
-  'touch-manipulation snap-end bg-surface-2 border-b-2 border-b-transparent ' +
+  'touch-manipulation snap-end bg-surface-2 ' +
   'shadow-[inset_-1px_0_0_0_var(--border-subtle)] transition-[background-color,color] ' +
   'duration-(--dur-fast) ease-standard hover:bg-surface-3 active:bg-surface-4 ' +
-  'data-[state=active]:bg-surface-1 data-[state=active]:border-b-accent ' +
-  'data-[state=active]:shadow-[inset_1px_0_0_0_var(--border-subtle),inset_-1px_0_0_0_var(--border-subtle)] ' +
+  'data-[state=active]:bg-surface-1 ' +
+  'data-[state=active]:shadow-[inset_1px_0_0_0_var(--border-subtle),inset_-1px_0_0_0_var(--border-subtle),inset_0_-2px_0_0_var(--accent)] ' +
+  'first:data-[state=active]:shadow-[inset_-1px_0_0_0_var(--border-subtle),inset_0_-2px_0_0_var(--accent)] ' +
   'data-[state=active]:hover:bg-surface-1'
 
 /* `tab-strip`, `tab__label` and `tab__close` are styling-free — tools/qa

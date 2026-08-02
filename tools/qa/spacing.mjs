@@ -81,12 +81,23 @@ const offenders = await page.evaluate((scale) => {
       const r = el.getBoundingClientRect()
       if (r.width === 0 || r.height === 0) continue
       const cs = getComputedStyle(el)
+      // Runtime-computed geometry is not a spacing decision. ARCHITECTURE §4.2
+      // lists the inline styles exhaustively (drawer transform, console height,
+      // progress width, explorer indent, toast offset); the tree's 16px-per-level
+      // indent legitimately lands on 28px at depth 1.
+      if (el.getAttribute('style')) continue
       for (const n of NAMES) {
+        // `margin: auto` is not a number someone chose. getComputedStyle resolves
+        // it to the USED value, so a plain `ml-auto` reports as 438.64px;
+        // computedStyleMap keeps it a keyword, which is how we tell the two apart.
+        let typed = null
+        try { typed = el.computedStyleMap?.().get(n.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) } catch { /* unsupported */ }
+        if (typed && typed.constructor?.name === 'CSSKeywordValue') continue
         const raw = cs[n]
         if (!raw.endsWith('px')) continue
-        const v = Math.round(parseFloat(raw) * 100) / 100
+        // A -8px pull is as on-scale as +8px.
+        const v = Math.abs(Math.round(parseFloat(raw) * 100) / 100)
         if (v === 0 || scale.includes(v)) continue
-        // env(safe-area-*) resolves to 0 here, so anything left is ours.
         const key = `${rootSel}|${label(el)}|${n}|${v}`
         if (seen.has(key)) continue
         seen.add(key)

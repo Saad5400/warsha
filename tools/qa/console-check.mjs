@@ -264,8 +264,11 @@ const selStyle = await page.evaluate(() => {
   // rules are children of a CSSLayerBlockRule and never appear at sheet top level.
   const walk = (rules) => {
     for (const r of rules) {
-      if (r.selectorText && /console-transcript[^,]*::selection/.test(r.selectorText) && r.style.backgroundColor)
-        return r.style.backgroundColor
+      // cssText, not style.backgroundColor: the rule is written as the `background`
+      // shorthand with a var() inside, and the CSSOM cannot decompose that into a
+      // longhand — it hands back an empty string and the check reads as missing.
+      if (r.selectorText && /console-transcript[^,]*::selection/.test(r.selectorText) && r.style.cssText)
+        return r.style.cssText
       if (r.cssRules) {
         const hit = walk(r.cssRules)
         if (hit) return hit

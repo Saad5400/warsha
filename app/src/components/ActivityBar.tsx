@@ -26,7 +26,10 @@ const RAIL =
  * when a section becomes active — the same trick `tree-row` uses. */
 const SLOT =
   'grid place-items-center flex-none size-activity text-text-3 cursor-pointer touch-manipulation ' +
-  'border-l-rail border-l-transparent transition-colors duration-(--dur-fast) ease-standard ' +
+  // border-l-[var(--rail)], not `border-l-rail`: --rail has no border-width
+  // mapping in @theme, so the named form compiles to nothing and the active
+  // indicator silently vanishes. Every other rule in the app spells it this way.
+  'border-l-[var(--rail)] border-l-transparent transition-colors duration-(--dur-fast) ease-standard ' +
   'hover:not-disabled:text-text-1 hover:not-disabled:bg-surface-2 active:not-disabled:bg-surface-3 ' +
   'data-[state=active]:border-l-accent data-[state=active]:text-text-1 ' +
   // Disabled is a colour change, never opacity — opacity destroys measured
