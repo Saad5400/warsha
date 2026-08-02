@@ -63,8 +63,10 @@ else fail('§3.2 button label is 15px/600', JSON.stringify(primary))
 
 const CARD_SEL = '.template-card, [aria-label="Start a project"] button'
 const card = await css(CARD_SEL, ['border-color', 'border-width', 'border-radius', 'min-height'])
-if (card['border-width'] === '1px' && card['border-color'] === 'rgb(107, 119, 137)')
-  pass('5. welcome card has a visible --border-control edge', '3.13:1 on surface-3')
+// THEME-V3: --border-control #6B7789 (v1) -> #8D8D9A (v3, rgb(141,141,154)) — chosen
+// so it clears 3:1 on ALL FOUR surfaces (v1's own value only cleared -1/-2/-3).
+if (card['border-width'] === '1px' && card['border-color'] === 'rgb(141, 141, 154)')
+  pass('5. welcome card has a visible --border-control edge', '4.71:1 on surface-3')
 else fail('5. welcome card border', JSON.stringify(card))
 if (parseFloat(card['min-height']) >= 88) pass('§7.7 card is a single ≥88px target', card['min-height'])
 else fail('§7.7 card min-height', card['min-height'])
@@ -79,8 +81,10 @@ const ring = await page.evaluate(() => {
   return { tag: el.tagName, cls: el.className, outline: c.outlineColor, w: c.outlineWidth, off: c.outlineOffset }
 })
 info(`focus ring: ${JSON.stringify(ring)}`)
-if (ring && ring.w === '2px' && ring.outline === 'rgb(242, 169, 75)' && ring.off === '2px')
-  pass('20. hardware keyboard gets a 2px amber focus ring at 2px offset')
+// THEME-V3: --focus-ring is still var(--accent), but --accent is now white
+// (#FAFAFA, rgb(250,250,250)) rather than amber.
+if (ring && ring.w === '2px' && ring.outline === 'rgb(250, 250, 250)' && ring.off === '2px')
+  pass('20. hardware keyboard gets a 2px white accent focus ring at 2px offset')
 else fail('20. focus ring', JSON.stringify(ring))
 await shot('welcome-1280')
 
@@ -119,14 +123,15 @@ const tabLabel = await css('[role="tab"][data-state="active"] .tab__label', ['fo
 info(`active tab: ${JSON.stringify(tab)} label ${JSON.stringify(tabLabel)}`)
 // Chrome's serialised order is "color offset-x offset-y blur spread inset",
 // the reverse of the source order in the Tailwind arbitrary value.
-if (/rgb\(242, 169, 75\) 0px -2px 0px 0px inset/.test(tab['box-shadow']) && tabLabel['font-weight'] === '600')
-  pass('1a. active tab = 2px amber rule + weight 600 + text-1', `${tabLabel.color} @ ${tabLabel['font-size']}`)
+// THEME-V3: the rule is still --accent, now white rgb(250,250,250) not amber.
+if (/rgb\(250, 250, 250\) 0px -2px 0px 0px inset/.test(tab['box-shadow']) && tabLabel['font-weight'] === '600')
+  pass('1a. active tab = 2px white accent rule + weight 600 + text-1', `${tabLabel.color} @ ${tabLabel['font-size']}`)
 else fail('1a. active tab signals', JSON.stringify({ tab, tabLabel }))
 
 const row = await css('[role="treeitem"][data-state="open"]', ['border-left-width', 'border-left-color'])
 const rowLabel = await css('[role="treeitem"][data-state="open"] .tree-row__label', ['font-weight', 'color'])
-if (row && row['border-left-width'] === '2px' && row['border-left-color'] === 'rgb(242, 169, 75)')
-  pass('1b. open explorer row = 2px amber leading rule + text-1/500', JSON.stringify(rowLabel))
+if (row && row['border-left-width'] === '2px' && row['border-left-color'] === 'rgb(250, 250, 250)')
+  pass('1b. open explorer row = 2px white accent leading rule + text-1/500', JSON.stringify(rowLabel))
 else fail('1b. open explorer row', JSON.stringify({ row, rowLabel }))
 
 // The console starts collapsed on a fresh, empty project and auto-opens on Run.
@@ -146,12 +151,17 @@ const btnStates = await page.evaluate(() =>
     return { label: (el.textContent || '').trim().slice(0, 14), disabled: el.disabled, bg: c.backgroundColor, fg: c.color }
   }))
 info(`primary buttons: ${JSON.stringify(btnStates)}`)
+// THEME-V3: --accent is white now, so the invariant is no longer "no white on
+// amber" — it is "an --accent fill's text is always --accent-ink, never a
+// literal colour", which the v1 rule was really protecting against all along.
+// --accent #FAFAFA -> rgb(250,250,250); --accent-ink #09090B -> rgb(9,9,11).
 const live = btnStates.filter((b) => !b.disabled)
-if (live.length && live.every((b) => b.bg === 'rgb(242, 169, 75)' && b.fg === 'rgb(21, 23, 28)'))
-  pass('4a. no white on amber — enabled primary is --accent-ink on --accent', '9.01:1')
-else fail('4a. no white on amber', JSON.stringify(live))
+if (live.length && live.every((b) => b.bg === 'rgb(250, 250, 250)' && b.fg === 'rgb(9, 9, 11)'))
+  pass('4a. enabled primary is --accent-ink on --accent, never a literal colour', '19.06:1')
+else fail('4a. accent fill uses --accent-ink text', JSON.stringify(live))
 const off = btnStates.filter((b) => b.disabled)
-if (off.every((b) => b.bg === 'rgb(47, 53, 64)' && b.fg === 'rgb(122, 130, 144)'))
+// --surface-4 #323239 -> rgb(50,50,57); --text-disabled #6A6A7C -> rgb(106,106,124).
+if (off.every((b) => b.bg === 'rgb(50, 50, 57)' && b.fg === 'rgb(106, 106, 124)'))
   pass('4b. disabled is a COLOUR change, not an opacity fade', off.length ? 'surface-4 / text-disabled' : 'none on screen')
 else fail('4b. disabled treatment', JSON.stringify(off))
 
@@ -266,13 +276,28 @@ const floors = await css('.console-panel--open', ['min-height', 'border-left-wid
 const editorMin = await css('.editor-pane', ['min-height'])
 info(`console ${JSON.stringify(floors)} editor ${JSON.stringify(editorMin)}`)
 // The spec writes rule 4 as 144px, which is 4 output lines + the input row and
-// nothing else. index.css derives the PANEL floor from that plus the console's own
-// 44px header (--console-floor), because 144 on the panel left the transcript
-// with one line where the rule asks for four. Assert the derived number, and
-// assert that it is derived rather than typed.
-if (floors['min-height'] === 'min(188px, 100%)')
-  pass('§4.3 r4. console floor is the derived 188px (144 + the 44px header)', floors['min-height'])
-else fail('§4.3 r4. console floor', floors['min-height'])
+// nothing else. index.css derives the PANEL floor from that plus the console's
+// own header (--console-floor), because 144 on the panel left the transcript with
+// one line where the rule asks for four.
+//
+// So derive the expectation too, rather than typing the sum. The literal used to
+// be 188 (144 + a 44px header) and went stale the day the header grew to 52 for
+// its Run button's clearance — the floor became 196, which is CORRECT, and the
+// check failed anyway. What rule 4 actually protects is the 144px of CONTENT
+// under the header; that is the invariant worth asserting.
+//
+// Measured off the rendered header, not off --bar-console: a token name is one
+// rename away from resolving to '' and turning this into min(NaNpx), which is a
+// green-looking harness reporting on nothing. The header's own height is the
+// number the floor has to clear, whatever it is called this week.
+const headerH = await page.evaluate(() => {
+  const h = document.querySelector('.console-header')
+  return h ? Math.round(h.getBoundingClientRect().height) : null
+})
+const wantFloor = headerH === null ? null : 144 + headerH
+if (wantFloor !== null && floors['min-height'] === `min(${wantFloor}px, 100%)`)
+  pass(`§4.3 r4. console floor is the derived ${wantFloor}px (144 of content + the ${headerH}px header)`, floors['min-height'])
+else fail(`§4.3 r4. console floor should be min(${wantFloor}px, 100%) for a ${headerH}px header`, floors['min-height'])
 if (editorMin['min-height'] === '96px') pass('§4.3 r5. editor floor is a real 96px')
 else fail('§4.3 r5. editor 96px floor', editorMin['min-height'])
 
@@ -281,7 +306,9 @@ const scrimBg = await page.evaluate(() => {
   const d = document.createElement('div'); d.className = 'scrim'; document.body.appendChild(d)
   const bg = getComputedStyle(d).backgroundColor; d.remove(); return bg
 })
-if (scrimBg === 'rgba(8, 9, 12, 0.62)') pass('§6 drawer scrim resolves to a real colour', scrimBg)
+// THEME-V3: --scrim rgba(8,9,12,.62) (v1) -> rgba(4,4,5,.7) (v3) — a touch
+// richer/darker to read clearly against the near-black v3 surfaces.
+if (scrimBg === 'rgba(4, 4, 5, 0.7)') pass('§6 drawer scrim resolves to a real colour', scrimBg)
 else fail('§6 drawer scrim', scrimBg)
 
 // ---- 18/12. no horizontal page scroll at any width
@@ -366,9 +393,10 @@ if (liveBox && liveBox.h >= 44 && parseFloat(liveBox.fs) >= 16)
   pass('14/8. the live input is a 44px target at the 16px iOS floor', JSON.stringify(liveBox))
 else fail('live input 44px / 16px', JSON.stringify(liveBox))
 const consoleRule = await css('.console-panel', ['border-left-color'])
-if (consoleRule['border-left-color'] === 'rgb(242, 169, 75)')
-  pass('§1.3 the amber signature marks a running process on the console\'s leading edge')
-else fail('§1.3 running amber rule', JSON.stringify(consoleRule))
+// THEME-V3: the signature rule is still --accent, now white not amber.
+if (consoleRule['border-left-color'] === 'rgb(250, 250, 250)')
+  pass('§1.3 the accent signature marks a running process on the console\'s leading edge')
+else fail('§1.3 running accent rule', JSON.stringify(consoleRule))
 
 await page.locator('[aria-label="Program input"]').fill('Warsha')
 await page.locator('[aria-label="Program input"]').press('Enter')

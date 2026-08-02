@@ -26,10 +26,17 @@ const RAIL =
  * when a section becomes active — the same trick `tree-row` uses. */
 const SLOT =
   'grid place-items-center flex-none size-activity text-text-3 cursor-pointer touch-manipulation ' +
-  // border-l-[var(--rail)], not `border-l-rail`: --rail has no border-width
-  // mapping in @theme, so the named form compiles to nothing and the active
-  // indicator silently vanishes. Every other rule in the app spells it this way.
-  'border-l-[var(--rail)] border-l-transparent transition-colors duration-(--dur-fast) ease-standard ' +
+  // `length:` is load-bearing, and this is the third way this one rule has
+  // silently compiled to nothing (ARCHITECTURE §4.1). `border-l-rail` resolves
+  // against the COLOUR namespace, because v4 has no border-width theme
+  // namespace — and so does a bare `border-l-[var(--rail)]`, since an arbitrary
+  // value of unknown type on `border-l-` is read as a colour. Both emit
+  // `border-left-color` and leave the width at 0, which measures as
+  // `border: 0px solid rgb(242,169,75)`: the active section's accent rule is
+  // there in the cascade and 0px wide on screen. The type hint is the only form
+  // that survives. Everywhere else in the app the rule is a literal
+  // (`border-l-[3px]`), which is unambiguous and needs no hint.
+  'border-l-[length:var(--rail)] border-l-transparent transition-colors duration-(--dur-fast) ease-standard ' +
   'hover:not-disabled:text-text-1 hover:not-disabled:bg-surface-2 active:not-disabled:bg-surface-3 ' +
   'data-[state=active]:border-l-accent data-[state=active]:text-text-1 ' +
   // Disabled is a colour change, never opacity — opacity destroys measured
