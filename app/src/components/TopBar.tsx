@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from 'react'
-import { Logo } from './Logo'
 import { IconButton } from './ui/Button'
 import { IconMenu, IconMore } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
@@ -15,31 +14,50 @@ import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
  * 44px Run button was flush top AND bottom — measured 0px clearance — so its
  * 10px radius ran into the divider and read as spilling out of its own bar.
  *
- * Leading padding is --sp-3, matching the sidebar header's, so the logo mark and
- * the EXPLORER label below it start on the same vertical grid line. It was
- * --sp-1 (from the old `safe-x`), which left them 8px out of step. */
+ * Leading padding is --sp-1 at ≥900px, and that 4px is not arbitrary: the first
+ * thing in the bar is now the project button, which carries 8px of its own
+ * padding, so 4+8 puts its LABEL on x=60 — the same grid line as the EXPLORER
+ * label (pl-3) and the tree rows (12px) in the column directly below. The button
+ * box then starts at 52, 4px clear of the rail, which is the inset VSCode gives
+ * a sidebar hover fill. Below 900px the leading control is the hamburger, which
+ * has no padding of its own and sits against a screen edge rather than a rail,
+ * so it keeps --sp-3. */
 const BAR =
   'top-bar flex items-center gap-2 h-full min-w-0 bg-surface-0 col-start-2 row-start-1 ' +
   'shadow-[inset_0_-1px_0_0_var(--border-subtle)] ' +
-  'pl-[max(var(--sp-3),env(safe-area-inset-left))] pr-[max(var(--sp-2),env(safe-area-inset-right))]'
+  'pl-[max(var(--sp-3),env(safe-area-inset-left))] ' +
+  'min-[900px]:pl-[max(var(--sp-1),env(safe-area-inset-left))] ' +
+  'pr-[max(var(--sp-2),env(safe-area-inset-right))]'
 
-/* The identity run: logo, wordmark, project, file. It gets the slack, and the
- * file title is what gives way first — the project you are in matters more than
- * which file is open, so the project name truncates last. */
+/* The identity run: project, file. It gets the slack, and the file title is what
+ * gives way first — the project you are in matters more than which file is open,
+ * so the project name truncates last.
+ *
+ * There is no logo and no "Warsha" wordmark here, by founder ruling
+ * (LAYOUT-VSCODE §1b, 2026-08-02): VSCode puts no wordmark above the explorer,
+ * so neither do we. The brand lives on the welcome panel, the favicon and the OG
+ * image. */
 const IDENTITY = 'top-bar__identity flex items-center gap-2 min-w-0 flex-1'
 
-/* The brand zone, sized so the divider after it lands exactly on the
- * sidebar/editor boundary at ≥900px. The arithmetic, written once so nobody has
- * to re-derive it: this bar starts at the activity rail's right edge, so
- * --sp-3 (its padding) + this width + --sp-2 (the identity gap) = --explorer-w
- * puts the 1px divider on the same x as the sidebar's right edge and the tab
- * strip's left edge. Below 900px the sidebar is a drawer, there is no boundary
- * to meet, and the zone just shrink-wraps. */
-const BRAND_ZONE =
-  'flex items-center gap-2 min-w-0 min-[900px]:w-[calc(var(--explorer-w)-var(--sp-3)-var(--sp-2))]'
-
-/* Spec §11: the wordmark is only ever the UI font at 600. */
-const WORDMARK = 'top-bar__wordmark text-btn font-semibold leading-[1.2] tracking-[-0.01em] text-text-1'
+/* The bar's leading segment: as wide as the docked sidebar, and EMPTY. §1b took
+ * the mark and the wordmark out of it, and the project name does not move in —
+ * the sidebar's own project row is two rows below at the same x, and the same
+ * name twice, 50px apart, reads as a bug rather than as two controls.
+ *
+ * It is not dead space. It is the sidebar's column, continued upward: the
+ * divider after it lands exactly on the sidebar/editor boundary, so the file
+ * title starts where the editor starts rather than floating over the file tree.
+ * The arithmetic, written once so nobody has to re-derive it: this bar begins at
+ * the activity rail's right edge, so --sp-1 (its padding) + this width + --sp-2
+ * (the identity gap) = --explorer-w puts the 1px divider on the same x as the
+ * sidebar's right edge and the tab strip's left edge.
+ *
+ * Rendered only while the explorer is actually docked. Collapse it and the
+ * column goes too, because a divider marking a boundary that is no longer there
+ * is worse than no divider — and the project switcher takes the space instead,
+ * since with no sidebar the title bar is the only place left for it. */
+const SIDEBAR_COLUMN =
+  'flex-none min-[900px]:w-[calc(var(--explorer-w)-var(--sp-1)-var(--sp-2))]'
 
 /* Spec §3.2 "top-bar title": the quiet line that says which file you are in. */
 const TITLE =
@@ -60,11 +78,19 @@ export interface TopBarProps {
   /** The file being edited. Rendered as the quiet top-bar title (spec §3.2). */
   title?: string | null
   /**
-   * The current project's name, as a control. Rendered between the wordmark and
-   * the file title — pass the button, keep the menu and its state in your own
-   * component.
+   * The current project's name, as a control — pass the button, keep the menu
+   * and its state in your own component.
+   *
+   * Pass it only when the sidebar is NOT on screen to carry it. Docked, the
+   * sidebar's project row is the home of project actions (LAYOUT-VSCODE §2) and
+   * a second copy of the same name in the bar directly above it is noise.
    */
   projectSlot?: ReactNode
+  /**
+   * The explorer is docked (≥900px, not collapsed). Reserves the bar's leading
+   * segment at the sidebar's width — see SIDEBAR_COLUMN.
+   */
+  sidebarColumn?: boolean
   /**
    * Run/Stop in VSCode's play-button corner (LAYOUT-VSCODE §4), ≥900px only. The
    * console keeps its own copy of the control regardless — reach, not
@@ -74,14 +100,25 @@ export interface TopBarProps {
 }
 
 /**
- * The title bar: logo, project, file — and, on a desktop-width layout, Run.
+ * The title bar: project, file — and, on a desktop-width layout, Run.
  *
  * Chrome that is tapped rarely may live at the top (principle 4). Run is the one
  * exception, and only where reach is not the constraint: below 900px this bar
  * carries no Run at all and the console header is the only place it lives.
  */
-export function TopBar({ onToggleExplorer, menuItems, title, projectSlot, runSlot }: TopBarProps) {
+export function TopBar({
+  onToggleExplorer,
+  menuItems,
+  title,
+  projectSlot,
+  sidebarColumn,
+  runSlot,
+}: TopBarProps) {
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
+  /* Whatever occupies the bar's leading segment: the sidebar's empty column, or
+   * the project switcher standing in for a sidebar that is not there. Either way
+   * it is what the divider divides the file title FROM. */
+  const lead = sidebarColumn || projectSlot
 
   return (
     <header className={BAR}>
@@ -96,19 +133,14 @@ export function TopBar({ onToggleExplorer, menuItems, title, projectSlot, runSlo
       ) : null}
 
       <span className={IDENTITY}>
-        <span className={BRAND_ZONE}>
-          <Logo size={22} />
-          <span className={WORDMARK + ' kb-hide'}>Warsha</span>
-        </span>
-        {projectSlot ? (
-          <>
-            <span aria-hidden="true" className={SEP} />
-            {projectSlot}
-          </>
-        ) : null}
+        {sidebarColumn ? <span aria-hidden="true" className={SIDEBAR_COLUMN} /> : null}
+        {projectSlot}
         {title ? (
           <>
-            <span aria-hidden="true" className={SEP + ' kb-hide'} />
+            {/* The separator only ever sits BETWEEN two things. With the brand
+                block gone there is nothing before the title below 900px, and an
+                unconditional one left a hairline hanging off the hamburger. */}
+            {lead ? <span aria-hidden="true" className={SEP + ' kb-hide'} /> : null}
             <span className={TITLE + ' kb-hide'}>{title}</span>
           </>
         ) : null}

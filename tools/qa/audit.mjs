@@ -108,10 +108,18 @@ for (const f of ['Person.java', 'Student.java']) {
 }
 
 // ---- 1. active tab + open file carry a rule, not just a fill
-const tab = await css('[role="tab"][data-state="active"]', ['border-bottom-width', 'border-bottom-color', 'background-color'])
+// The 2px accent rule moved from `border-bottom` to an inset box-shadow
+// (PIXEL-FINDINGS F-03): a border-box tab with `border-b-2` measured 42px of
+// content box inside its 44px border box, so every centred child — the 44px
+// close button, the language badge — rode 1px proud of the tab. A shadow costs
+// no layout, so `border-bottom-width` is 0 by design now; the rule itself is
+// still there, just carried in `box-shadow`.
+const tab = await css('[role="tab"][data-state="active"]', ['box-shadow', 'background-color'])
 const tabLabel = await css('[role="tab"][data-state="active"] .tab__label', ['font-weight', 'color', 'font-size'])
 info(`active tab: ${JSON.stringify(tab)} label ${JSON.stringify(tabLabel)}`)
-if (tab['border-bottom-width'] === '2px' && tab['border-bottom-color'] === 'rgb(242, 169, 75)' && tabLabel['font-weight'] === '600')
+// Chrome's serialised order is "color offset-x offset-y blur spread inset",
+// the reverse of the source order in the Tailwind arbitrary value.
+if (/rgb\(242, 169, 75\) 0px -2px 0px 0px inset/.test(tab['box-shadow']) && tabLabel['font-weight'] === '600')
   pass('1a. active tab = 2px amber rule + weight 600 + text-1', `${tabLabel.color} @ ${tabLabel['font-size']}`)
 else fail('1a. active tab signals', JSON.stringify({ tab, tabLabel }))
 
@@ -418,7 +426,7 @@ await page.waitForTimeout(200)
 await page.setViewportSize({ width: 390, height: 844 })
 await page.waitForTimeout(500)
 await shot('ide-390')
-await page.getByRole('button', { name: 'Files' }).click()
+await page.getByRole('button', { name: 'Files', exact: true }).click()
 await page.waitForTimeout(500)
 await shot('ide-390-drawer')
 await page.keyboard.press('Escape')

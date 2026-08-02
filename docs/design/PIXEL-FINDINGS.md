@@ -34,15 +34,63 @@ Measurements are at 1280x900 unless stated. Colours are the resolved values:
 
 | Severity | Found | Fixed here | Routed | Not a defect |
 | --- | --- | --- | --- | --- |
-| P1 — visible break in a surface | 3 | 2 | 1 | — |
-| P2 — measurable misalignment | 5 | 1 | 4 | — |
+| P0 — founder ruling | 1 | 1 | — | — |
+| P1 — visible break in a surface | 4 | 3 | 1 | — |
+| P2 — measurable misalignment | 5 | 2 | 3 | — |
 | P3 — minor / sub-pixel | 3 | — | 3 | — |
 | Checked, clean | 9 | — | — | 9 |
 
 The founder's four reported defects: **one reproduced** (activity-bar icon
 borders), **one reproduced with a different cause than it appeared to have**
-(the amber sliver), **one reproduced** (logo/EXPLORER alignment), and **one did
-not reproduce** (the Run button overflowing the title bar) — see F-01.
+(the amber sliver), **one reproduced and fixed in this pass** (logo/EXPLORER
+alignment, F-07 below — superseded by the P0 ruling), and **one did not
+reproduce** (the Run button overflowing the title bar) — see F-01.
+
+---
+
+## P0 · Founder ruling, 2026-08-02 (LAYOUT-VSCODE §1b): no logo, no wordmark in the title bar
+
+VSCode puts no brand above its explorer, so `TopBar.tsx` no longer renders
+`Logo` or the "Warsha" wordmark — see `git log` on `app/src/components/TopBar.tsx`
+for the diff. Brand now appears in exactly one place in the running app: the
+welcome panel's lockup (`1280-welcome-lockup.png`, mark + Latin wordmark only —
+the Arabic line was already removed in brand v2, so `lockupAr` and the
+`1280-welcome-lockup-ar` crop are gone from `pixel-crops.mjs` along with the
+selectors that pointed at the removed mark: `S.logo`, `S.wordmark`).
+
+**What replaces it is conditional, not a straight swap.** The naive read of the
+ruling — "put the project switcher where the logo was" — creates a new defect:
+docked at ≥900px the sidebar's own project row is already on screen two rows
+below, and the same project name twice, 50px apart, reads as a duplicate
+control rather than two controls. So `TopBar`'s leading segment is:
+
+- **docked (≥900px, explorer open)** → empty. `TopBar.tsx`'s `SIDEBAR_COLUMN`
+  reserves the sidebar's width as a bare spacer, purely so the divider after it
+  still lands on the sidebar/editor boundary (see F-07's third check below) —
+  it carries no content.
+- **collapsed (≥900px, explorer toggled off)** → the project switcher
+  (`ProjectSwitcher variant="title"`), because with no docked sidebar there is
+  nowhere else for it.
+- **phone (<900px)** → neither, unchanged from before the ruling: the bar is
+  hamburger + file + ⋯, and the drawer's sidebar header carries the project one
+  tap away.
+
+Verified live (`tools/qa/spacing.mjs`, `WARSHA_URL=http://127.0.0.1:8101`):
+
+```
+alignment: {"panelLabel":60,"sidebarProject":60,"treeRow":60,"sidebarRight":288,
+            "sep":288,"tabStrip":288,"titleProjects":0}
+PASS  7. GRID — EXPLORER label, project row and tree rows share a left grid line
+PASS  7. GRID — no wordmark and no duplicate project name in the title bar (§1b)
+PASS  7. GRID — title-bar divider lands on the sidebar/editor boundary
+```
+
+`titleProjects` is a count of `.top-bar [aria-label^="Project:"]` — zero,
+confirmed, in the docked state the ledger above worried about. Crops:
+`1280-titlebar-full.png` (bare left edge, "main.py" then Run/⋯ at the far
+right), `390-titlebar.png` (hamburger, "main.py", ⋯ — never had a logo to
+begin with on phone, unaffected), `1280-corner-topleft.png` (rail icons and
+EXPLORER now the only ink in that corner).
 
 ---
 
@@ -74,6 +122,38 @@ leaves the iOS clearance intact.
 
 **After** the same cut is continuous: `css 14.00 .. 270.00  rgb(34,38,46)`.
 Crops: `crops/1280-editor-gutter-active.png` → `crops-after/1280-editor-gutter-active.png`.
+
+### F-07 · P2 · Three different left insets down the same column · fixed
+**Region** `1280-sidebar-header`, `1280-sidebar-project-row`, `1280-explorer-row-active`, `1280-corner-topleft`
+
+The title bar and the sidebar occupy the same column (both start at x=48), so
+their contents are read against each other. Originally they did not agree, and
+neither did the sidebar with itself:
+
+| Element | Left edge (before) | Inset from x=48 |
+| --- | --- | --- |
+| Warsha mark (title bar) | 52 | 4px |
+| EXPLORER label | 60 | 12px |
+| Project row content (`padding-left: 8px`) | 56 | 8px |
+| Tree rows (`padding-left: 12px`) | 60 | 12px |
+
+This was the founder's "cramped logo/EXPLORER alignment": 4 against 12, 8px of
+rag over a 44px vertical distance — filed here for ui-layout to settle on one
+value. The P0 title-bar ruling (above) removed the mark entirely and put the
+project switcher on the same grid instead, so the fix landed as a byproduct of
+that work rather than as a separate pass:
+
+**Fix** `Explorer.tsx`'s `PROJECT_ROW` moved its 8px inset from `pl-2` (on top
+of the row's own 4px) to just the row's `p-1`, since the project button inside
+already carries 8px of its own padding — 4+8 lands its ink at the same x as the
+label 4+8 gives the EXPLORER header. `TopBar.tsx`'s `BAR` dropped its ≥900px
+leading padding from `--sp-3` (12px) to `--sp-1` (4px) for the same reason: the
+project switcher that now occupies that segment (when the sidebar is
+collapsed) carries its own 8px button padding, so 4+8 matches too.
+
+**After**, measured live (`spacing.mjs`, see the P0 section above for the full
+output): `panelLabel`, `sidebarProject` and `treeRow` are all **x=60**. One
+grid line, three rows, confirmed by getBoundingClientRect rather than by eye.
 
 ### F-03 · P2 · Tab close button sits 1px above its tab
 **Region** `1280-tab-close`, `1280-tab-badge` · **Owner** eng-pixel (Tabs.tsx, coordinated with eng-tailwind)
@@ -116,6 +196,47 @@ the same colour.
 **Fix** a `first:` variant that drops the leading inset shadow on the leftmost
 tab. `first:data-[state=active]:` is (0,3,0) against the base rule's (0,2,0), so
 it wins on specificity regardless of emitted order.
+
+### F-12 · P1 · Console header's Run button has zero clearance in its 44px bar → console owner (vacant)
+**Not my file** (Console/RunBar are outside this pass's ownership) — reporting
+only, per the same rule that kept F-09/F-10 as reports.
+
+`spacing.mjs`'s BARS check, live against `http://127.0.0.1:8101`:
+
+```
+FAIL  6. BARS — console header / Run :: bar 44 control 44 clearance 0/0 border-bottom 0 inset-shadow true
+```
+
+This is the exact class of defect the title bar itself had before it grew from
+44px to 52px (`TopBar.tsx`'s own comment: "at 44px the 44px Run button was
+flush top AND bottom — measured 0px clearance — so its 10px radius ran into the
+divider and read as spilling out of its own bar"). The console header's Run
+control is the same 44px button in a 44px header with the same 0px clearance;
+the model fix is the same one — grow the header past 44px (48px matches the
+scale) or shrink the control, whichever the console owner prefers given the
+header's other content. The title bar's before/after is in `git log
+app/src/components/TopBar.tsx` if useful as a reference.
+
+### F-13 · Two test-harness bugs found while re-verifying this pass, fixed in the harness (not the app)
+
+Neither is an app defect — both are the QA scripts asserting against a shape
+that moved out from under them.
+
+**`audit.mjs` check 1a** compared `border-bottom-width`/`border-bottom-color` on
+the active tab, which has been `0px`/transparent since F-03 (above) moved the
+2px accent rule to an inset `box-shadow` — the check was never updated after
+that fix landed, so it was failing on a tab that is actually correct. Now reads
+`box-shadow` instead, matching Chrome's serialised order (`color offset-x
+offset-y blur spread inset`, the reverse of the Tailwind arbitrary-value source
+order): `rgb(242, 169, 75) 0px -2px 0px 0px inset`.
+
+**`overlap.mjs`**'s two `getByRole('button', { name: 'Files' })` locators (the
+hamburger) had no `exact: true`, unlike every other role lookup in the file. The
+moment the welcome panel is also on screen, Playwright's default substring
+match also picks up a template card's file-count line ("3 files · …", "2
+files · main.py" — §7.7 of the spec) because it contains "files", and `.click()`
+then throws a strict-mode violation on "resolved to 3 elements" instead of
+clicking the real hamburger. Both call sites now pass `exact: true`.
 
 ---
 
@@ -190,23 +311,6 @@ Same 4px is the reason the first icon does not line up with the title bar: the
 folder glyph's centre is y=28 against the Warsha mark's y=22 — **6px apart**, in
 the one place where two elements are most obviously compared.
 
-### F-07 · P2 · Three different left insets down the same column → ui-layout
-**Region** `1280-sidebar-header`, `1280-sidebar-project-row`, `1280-explorer-row-active`
-
-The title bar and the sidebar occupy the same column (both start at x=48), so
-their contents are read against each other. They do not agree, and neither does
-the sidebar with itself:
-
-| Element | Left edge | Inset from x=48 |
-| --- | --- | --- |
-| Warsha mark (title bar) | 52 | **4px** |
-| EXPLORER label | 60 | **12px** |
-| Project row content (`padding-left: 8px`) | 56 | **8px** |
-| Tree rows (`padding-left: 12px`) | 60 | 12px |
-
-This is the founder's "cramped logo/EXPLORER alignment": 4 against 12, 8px of
-rag over a 44px vertical distance. Picking one value (12px reads best against
-the 48px rail) for the mark and the project row would settle all three.
 
 ### F-08 · P2 · Indent guides vanish on hover → ui-layout
 **Region** `1280-explorer-row-nested`, `1280-explorer-guides`

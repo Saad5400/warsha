@@ -14,6 +14,8 @@ import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
+import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
+import { shareFileAsImage } from './actions/shareImage'
 import { ActivityBar } from './components/ActivityBar'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
 import { StorageBanner } from './components/StorageBanner'
@@ -41,10 +43,12 @@ import {
   IconImport,
   IconPlus,
   IconSave,
+  IconShare,
   IconSwapSides,
   IconTextBigger,
   IconTextSmaller,
   IconTrash,
+  IconWand,
 } from './components/ui/Icons'
 import { COPY, count } from './copy'
 
@@ -391,6 +395,45 @@ function Ide({ report }: { report: CapabilityReport }) {
   /** Resolves false when something could not be written. Never rejects. */
   const saveAll = useCallback(async () => project.saveAll(), [project])
 
+  /** "Format file" (⋯ menu, Shift+Alt+F) — see actions/format.ts for the
+   *  Java/Python split. Applied through the editor controller so it lands as
+   *  one undo step and flows through the normal onChange/dirty/save path. */
+  const formatActiveFile = useCallback(async () => {
+    const path = activePath
+    if (!path || !canFormat(path)) return
+    const source = project.read(path) ?? ''
+    try {
+      const formatted = await formatFile(path, source)
+      if (formatted === source) {
+        notify('Already formatted.')
+        return
+      }
+      editorRef.current?.applyEdit(formatted)
+      notify('Formatted.')
+    } catch (e) {
+      // Booting Python just to format a file would be a silent 11 MB download
+      // behind a menu click, so it never happens (see PythonNotLoadedError) —
+      // the fix is to run the file once, which the student was already about
+      // to do anyway.
+      if (e instanceof PythonNotLoadedError) notify('Run this file once to load Python, then Format will work.')
+      else notify('Could not format this file.', 'error')
+    }
+  }, [activePath, project, notify])
+
+  /** "Share as image…" (⋯ menu) — renders the active file to a PNG and hands
+   *  it to the OS share sheet, or downloads it. See actions/shareImage.ts. */
+  const shareActiveFile = useCallback(async () => {
+    const path = activePath
+    if (!path) return
+    const source = project.read(path) ?? ''
+    try {
+      const result = await shareFileAsImage(path, source)
+      if (result === 'downloaded') notify('Image downloaded.')
+    } catch {
+      notify('Could not create an image of this file.', 'error')
+    }
+  }, [activePath, project, notify])
+
   // ---- starters + zip ----
   // A starter populates the project you are already in. It is an action, not a
   // mode: nothing about the app changes afterwards except which files exist.
@@ -584,13 +627,18 @@ function Ide({ report }: { report: CapabilityReport }) {
           setConsoleOpen(true)
           void r.run()
         }
+      } else if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+        // VSCode's binding, and identical on Mac: Alt is the physical key
+        // under Option, so no separate `mod`-style branch is needed here.
+        e.preventDefault()
+        void formatActiveFile()
       } else if (e.key === 'Escape') {
         setDrawerOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [saveAll, notify])
+  }, [saveAll, notify, formatActiveFile])
 
   // Three events, not one, because no single one of them fires everywhere the
   // tab can go away:
@@ -696,6 +744,20 @@ function Ide({ report }: { report: CapabilityReport }) {
     { label: 'Save all', icon: <IconSave size={18} />, hint: `${mod} S`, onSelect: () => void saveAll() },
     { label: 'Import .zip…', icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
     {
+      label: 'Format file',
+      icon: <IconWand size={18} />,
+      hint: 'Shift+Alt+F',
+      startsGroup: true,
+      disabled: !canFormat(activePath),
+      onSelect: () => void formatActiveFile(),
+    },
+    {
+      label: 'Share as image…',
+      icon: <IconShare size={18} />,
+      disabled: !activePath,
+      onSelect: () => void shareActiveFile(),
+    },
+    {
       label: 'Bigger text',
       icon: <IconTextBigger size={18} />,
       startsGroup: true,
@@ -776,12 +838,24 @@ function Ide({ report }: { report: CapabilityReport }) {
         onToggleExplorer={narrow ? () => setDrawerOpen((v) => !v) : undefined}
         menuItems={fileActions}
         title={activePath}
-        // ≥900px only, as the plan draws it. On a phone this bar is already
-        // hamburger + logo + wordmark + file + ⋯, and adding the project to it
-        // pushed the file name down to "main…" — the drawer's sidebar header
-        // carries the project there, one tap away, which is where the plan puts
-        // it below the breakpoint anyway.
-        projectSlot={narrow ? undefined : <ProjectSwitcher variant="title" name={projectName} items={projectMenuItems} />}
+        // The bar's leading segment mirrors the sidebar column, and holds the
+        // project name only when no sidebar is on screen to hold it:
+        //
+        //  - docked (≥900px, explorer open) → an empty column. The sidebar's own
+        //    project row sits two rows below at the same x, and the same name
+        //    twice reads as a duplicate rather than as two controls.
+        //  - collapsed (≥900px, explorer off) → the switcher, because there is
+        //    now nowhere else for it.
+        //  - phone → neither. The bar is hamburger + file + ⋯, and adding the
+        //    project to it pushed the file name down to "main…"; the drawer's
+        //    sidebar header carries it one tap away, which is where the plan puts
+        //    it below the breakpoint anyway.
+        sidebarColumn={!narrow && explorerDocked}
+        projectSlot={
+          narrow || explorerDocked ? undefined : (
+            <ProjectSwitcher variant="title" name={projectName} items={projectMenuItems} />
+          )
+        }
         runSlot={narrow ? undefined : <RunControl run={runControl} placement="title" />}
       />
 

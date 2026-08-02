@@ -64,7 +64,7 @@ for (const motion of ['no-preference', 'reduce']) {
   }
 
   // ---- §4.3 keyboard-open compaction
-  await p.getByRole('button', { name: 'Files' }).click()
+  await p.getByRole('button', { name: 'Files', exact: true }).click()
   await p.waitForTimeout(400)
   if (motion === 'no-preference') await p.screenshot({ path: `${SHOTS}/final-390-drawer-open.png` })
   await p.keyboard.press('Escape')

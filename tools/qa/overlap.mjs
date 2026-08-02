@@ -367,7 +367,11 @@ await scenario('390px · very long file name', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   // Below 900px the explorer is an off-canvas drawer, so its rows are not
   // clickable until it is open.
-  const files = page.getByRole('button', { name: 'Files' })
+  // `exact: true`: the loose match also picks up the welcome cards' file-count
+  // line ("3 files · ..."), which contains "files" as a case-insensitive
+  // substring — a strict-mode violation the moment the welcome panel is on
+  // screen alongside the real hamburger.
+  const files = page.getByRole('button', { name: 'Files', exact: true })
   if (await files.count()) { await files.click(); await page.waitForTimeout(450) }
   const menu = page.locator('[role="treeitem"]', { hasText: 'Person.java' }).first()
   if (await menu.count()) {
@@ -393,7 +397,11 @@ for (const w of [880, 899, 900, 920]) {
   await scenario(`${w}px · drawer open across the 900px breakpoint`, async () => {
     await page.setViewportSize({ width: w, height: 800 })
     await page.waitForTimeout(250)
-    const files = page.getByRole('button', { name: 'Files' })
+    // `exact: true`: the loose match also picks up the welcome cards' file-count
+  // line ("3 files · ..."), which contains "files" as a case-insensitive
+  // substring — a strict-mode violation the moment the welcome panel is on
+  // screen alongside the real hamburger.
+  const files = page.getByRole('button', { name: 'Files', exact: true })
     if (await files.count()) await files.click()
   })
   await page.keyboard.press('Escape').catch(() => {})
@@ -404,9 +412,18 @@ await scenario('1280px · progress block during real cold boot', async () => {
   await page.setViewportSize({ width: 1280, height: 860 })
   await page.waitForTimeout(300)
   const run = page.getByRole('button', { name: 'Run', exact: true })
-  if (await run.count()) {
+  // Enabled, not just present. Run is disabled whenever the project has no entry
+  // candidate, and clicking a disabled button is a 30s timeout that takes the
+  // whole sweep with it rather than a failed scenario. Say so loudly instead:
+  // there is no progress block to test if nothing can start, and the reason the
+  // project became unrunnable is worth knowing.
+  if ((await run.count()) && (await run.isEnabled())) {
     await run.click()
     await page.waitForTimeout(2500)
+  } else {
+    const paths = await page.evaluate(() =>
+      [...document.querySelectorAll('[role="treeitem"]')].map((e) => e.getAttribute('data-path')))
+    console.log(`    SKIPPED  Run is disabled — no entry candidate. tree: ${JSON.stringify(paths)}`)
   }
 })
 await page.screenshot({ path: `${SHOTS}/ovl-1280-progress.png` })

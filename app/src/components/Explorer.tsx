@@ -54,9 +54,15 @@ const PANEL_LABEL = 'panel-label text-micro leading-none font-semibold uppercase
 
 /* VSCode's folder row, between the EXPLORER label and the tree
  * (LAYOUT-VSCODE §2). 4px of padding around a 44px control makes the row 52px,
- * matching the title bar above it. `sidebar-project-row` is a tools/qa hook. */
+ * matching the title bar above it. `sidebar-project-row` is a tools/qa hook.
+ *
+ * The 4px is on the leading edge too, not 8: the button inside carries 8px of
+ * its own, so 4+8 lands its folder glyph on x=60 — the same grid line as the
+ * EXPLORER label above, the tree rows below, and the project button in the title
+ * bar. Three different insets down one 48px-wide column was the founder's
+ * "cramped alignment" (PIXEL-FINDINGS F-07). */
 const PROJECT_ROW =
-  'sidebar-project-row flex-none p-1 pl-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
+  'sidebar-project-row flex-none p-1 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 
 /** One visual row: a real node, the "empty folder" line, or a name being typed. */
 type VisualRow =
@@ -298,14 +304,25 @@ function Guides({ depth }: { depth: number }) {
           key={i}
           aria-hidden="true"
           className="tree-row__guide"
-          style={{ left: `calc(var(--sp-3) + ${i} * var(--sp-4) + 9px)` }}
+          // Offset by --rail for the same reason rowPadding is: `left` is
+          // measured from the row's PADDING box, which begins after the 2px
+          // reserved accent border, so the guide has to give the 2px back or it
+          // stops sitting on the chevron centre it marks.
+          style={{ left: `calc(var(--sp-3) - var(--rail) + ${i} * var(--sp-4) + 9px)` }}
         />
       ))}
     </>
   )
 }
 
-const rowPadding = (depth: number) => ({ paddingLeft: `calc(var(--sp-3) + ${depth} * var(--sp-4))` })
+/* 12px of inset, MINUS the 2px the row already spends on its reserved accent
+ * border — so a top-level row's chevron starts on x=60, the same grid line as
+ * the EXPLORER label, the project row's folder glyph and (at ≥900px) the title
+ * bar above them. Without the subtraction the tree ran 2px right of everything
+ * else in its own column (PIXEL-FINDINGS F-07). */
+const rowPadding = (depth: number) => ({
+  paddingLeft: `calc(var(--sp-3) - var(--rail) + ${depth} * var(--sp-4))`,
+})
 
 function Row({
   node,

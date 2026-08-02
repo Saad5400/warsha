@@ -55,9 +55,9 @@ const ONLY = process.env.WARSHA_ONLY ? new RegExp(process.env.WARSHA_ONLY) : nul
 
 /* Semantic first, class as fallback. See rule 2 above. */
 const S = {
-  topbar: '.top-bar, header:has(svg[aria-label="Warsha"])',
-  logo: 'svg[aria-label="Warsha"]',
-  wordmark: '.top-bar__wordmark',
+  /* The bar holds no mark and no wordmark any more (LAYOUT-VSCODE §1b), so the
+     fallback is keyed to the one control that is in it at every width. */
+  topbar: '.top-bar, header:has([aria-label="More"])',
   identity: '.top-bar__identity',
   sep: '.top-bar__sep',
   project: '[aria-label^="Project:"]',
@@ -115,9 +115,11 @@ const S = {
   menuitem: '[role="menuitem"]',
   dialog: '[role="dialog"]',
   toast: '.toast',
-  /* The welcome lockup is a plain wrapper, but the Arabic wordmark inside it
-     carries lang/dir because it must be shaped by the device's Arabic font. */
-  lockupAr: '[lang="ar"]',
+  /* The welcome panel's brand block — the mark above the Latin wordmark. It is
+     the ONLY place in the app the wordmark appears (LAYOUT-VSCODE §1b). The
+     Arabic line that used to sit under it is gone: Warsha ships English-only,
+     so there is no `[lang="ar"]` in the DOM to anchor a crop to. */
+  lockup: '.lockup',
 }
 
 mkdirSync(CROPS, { recursive: true })
@@ -261,9 +263,9 @@ function slice(sel, side, extent, { nth = 0 } = {}) {
 /* The box of an ANCESTOR of a matched element.
  *
  * The escape hatch for containers that have no selector of their own. The
- * console header, the welcome lockup and the progress track are all plain
- * layout <div>s whose classes are moving to utilities, but each reliably
- * CONTAINS something semantic — the Run button, the Arabic wordmark, the fill.
+ * console header and the progress track are plain layout <div>s whose classes
+ * are moving to utilities, but each reliably CONTAINS something semantic — the
+ * Run button, the fill.
  * Walking up from the thing that has a contract is stabler than guessing at the
  * wrapper's current class. */
 function parentRect(sel, up = 1, { nth = 0 } = {}) {
@@ -353,8 +355,7 @@ log('  crossOriginIsolated')
 step('welcome / empty state (before any project exists)')
 await page.waitForTimeout(500)
 await shot('1280-welcome-full', { clip: { x: 0, y: 0, width: 1280, height: 900 }, pad: 0, note: 'start screen, whole viewport' })
-await shot('1280-welcome-lockup', { rect: parentRect(S.lockupAr, 1), probe: { sel: S.lockupAr, up: 1 }, pad: 16, note: 'logo lockup: mark, Latin and Arabic wordmark alignment' })
-await shot('1280-welcome-lockup-ar', { sel: S.lockupAr, pad: 14, note: 'Arabic wordmark: shaped by the system font, centred under the Latin one?' })
+await shot('1280-welcome-lockup', { sel: S.lockup, pad: 16, note: 'logo lockup: mark over wordmark — the only place the brand appears in the app' })
 await shot('1280-welcome-card', { sel: 'button:has-text("Python starter")', pad: 12, note: 'starter card: badge, title, blurb insets' })
 await shot('1280-welcome-cards-gap', { rect: junction('button:has-text("Python starter")', 'button:has-text("Java")'), pad: 12, note: 'the two cards side by side: equal boxes?' })
 
@@ -421,15 +422,14 @@ if (atPrompt) {
 /* --------------------------------------------------------------- 1. 1280 wide */
 step('1280 — title bar')
 await shot('1280-titlebar-full', { sel: S.topbar, pad: 6, note: 'whole bar' })
-await shot('1280-titlebar-left', { rect: slice(S.topbar, 'left', 400), probe: S.identity, note: 'logo, wordmark, separator, project, file title' })
+await shot('1280-titlebar-left', { rect: slice(S.topbar, 'left', 400), probe: S.identity, note: 'FOUNDER §1b: no mark, no wordmark — project, separator, file title' })
 await shot('1280-titlebar-right', { rect: slice(S.topbar, 'right', 300), probe: S.topbar, note: 'Run + ⋯ and the bar edge past them' })
 await shot('1280-titlebar-run', { sel: S.topRun, pad: 14, note: 'FOUNDER P0: does Run overflow the bar box?' })
 await shot('1280-titlebar-more', { sel: S.more, pad: 14, note: 'overflow ⋯; compare its box with Run' })
-await shot('1280-titlebar-logo', { sel: S.logo, pad: 14, note: 'mark vs wordmark: optical baseline' })
-await shot('1280-titlebar-project', { sel: S.project, pad: 12, note: 'project chip: padding symmetry' })
+await shot('1280-titlebar-project', { sel: S.project, pad: 12, note: 'project chip: padding symmetry, and its label on the EXPLORER grid line' })
 await shot('1280-titlebar-sep', { sel: S.sep, pad: 18, note: 'separator height and vertical centring' })
 await shot('1280-titlebar-tablist-seam', { rect: junction(S.topbar, S.tablist), pad: 0, note: 'SEAM: bottom of title bar into top of tab strip' })
-await shot('1280-corner-topleft', { clip: { x: 0, y: 0, width: 110, height: 96 }, pad: 0, probe: S.topbar, note: 'FOUNDER: logo / rail / EXPLORER alignment in the corner' })
+await shot('1280-corner-topleft', { clip: { x: 0, y: 0, width: 110, height: 96 }, pad: 0, probe: S.topbar, note: 'FOUNDER: rail / project row / EXPLORER alignment in the corner' })
 await shot('1280-corner-topright', { clip: { x: 1170, y: 0, width: 110, height: 96 }, pad: 0, probe: S.topbar, note: 'top-right corner' })
 await shot('1280-corner-bottomleft', { rect: async () => {
   const b = await box(S.statusbar)
@@ -633,7 +633,7 @@ await page.setViewportSize({ width: 390, height: 780 })
 await page.waitForTimeout(800)
 
 await shot('390-full', { clip: { x: 0, y: 0, width: 390, height: 780 }, pad: 0, note: 'whole phone viewport' })
-await shot('390-titlebar', { sel: S.topbar, pad: 6, note: 'compact bar: hamburger, logo, project, no Run' })
+await shot('390-titlebar', { sel: S.topbar, pad: 6, note: 'compact bar: hamburger, file title, no Run' })
 await shot('390-titlebar-left', { rect: slice(S.topbar, 'left', 220), probe: S.topbar, note: 'left end insets' })
 await shot('390-titlebar-right', { rect: slice(S.topbar, 'right', 150), probe: S.topbar, note: 'right end insets' })
 await shot('390-tablist', { sel: S.tablist, pad: 6, note: 'strip at 390: fade edges, no × on inactive tabs' })

@@ -206,18 +206,45 @@ for (const b of bars) {
 }
 
 /* ---- alignment grid: the corner the founder flagged ---------------------- */
+// One column, one grid line. The title bar carries no mark and no wordmark any
+// more (LAYOUT-VSCODE §1b), so what runs down the left of the app is the
+// sidebar's own stack: EXPLORER, the project row, the tree. Each of them starts
+// with a glyph or a word, and F-07 was those three starting at 60, 64 and 62.
+//
+// Measured at the CONTENT edge, never the box edge: the project row's button
+// carries 8px of its own padding and the tree row spends 2px on the reserved
+// accent border, and neither of those is an inset someone chose — they are what
+// has to be subtracted for the ink to line up.
 const grid = await page.evaluate(() => {
   const x = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().left) : null }
   const r = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().right) : null }
+  const inner = (s) => {
+    const e = document.querySelector(s)
+    if (!e) return null
+    const c = getComputedStyle(e)
+    return Math.round(e.getBoundingClientRect().left + parseFloat(c.paddingLeft) + parseFloat(c.borderLeftWidth))
+  }
   return {
-    logo: x('.top-bar svg'), wordmark: x('.top-bar__wordmark'),
-    panelLabel: x('.panel-label'), sidebarRight: r('aside[aria-label="Files"]'),
+    panelLabel: x('.panel-label'),
+    // `> :first-child` is the leading ink in either variant — the folder glyph
+    // in the sidebar's row, the name itself in the title bar's.
+    sidebarProject: x('.sidebar-project-row [aria-label^="Project:"] > :first-child'),
+    treeRow: inner('.tree-row'),
+    sidebarRight: r('aside[aria-label="Files"]'),
     sep: x('.top-bar__sep'), tabStrip: x('.tab-strip'),
+    // Docked, the bar's leading segment is deliberately EMPTY and the sidebar's
+    // project row is the only project control on screen (§1b + §2). Two copies
+    // of the same name 50px apart read as a duplicate, not as two controls.
+    titleProjects: document.querySelectorAll('.top-bar [aria-label^="Project:"]').length,
   }
 })
 info('alignment: ' + JSON.stringify(grid))
-if (grid.logo === grid.panelLabel) pass('7. GRID — logo mark and EXPLORER label share a left grid line', `x=${grid.logo}`)
-else fail('7. GRID — logo and EXPLORER label are out of step', `logo ${grid.logo} vs label ${grid.panelLabel}`)
+if (grid.sidebarProject === grid.panelLabel && grid.treeRow === grid.panelLabel)
+  pass('7. GRID — EXPLORER label, project row and tree rows share a left grid line', `x=${grid.panelLabel}`)
+else fail('7. GRID — one of them is out of step', JSON.stringify(grid))
+if (grid.titleProjects === 0)
+  pass('7. GRID — no wordmark and no duplicate project name in the title bar (§1b)')
+else fail('7. GRID — the title bar duplicates the sidebar project row', `${grid.titleProjects} project control(s) in the bar`)
 if (grid.sep !== null && Math.abs(grid.sep - grid.sidebarRight) <= 1 && Math.abs(grid.sep - grid.tabStrip) <= 1)
   pass('7. GRID — title-bar divider lands on the sidebar/editor boundary', `sep ${grid.sep}, sidebar ${grid.sidebarRight}, tabs ${grid.tabStrip}`)
 else fail('7. GRID — divider misses the boundary', JSON.stringify(grid))
