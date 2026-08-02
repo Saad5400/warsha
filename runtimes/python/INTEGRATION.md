@@ -313,12 +313,15 @@ node serve.mjs 8084  # http://localhost:8084/harness/  (sends no COOP/COEP heade
 ```
 
 The page drives the module through the contract only. "Run self-test (all
-scenarios)" runs 22 assertions: the committed `content/templates/python-starter`
+scenarios)" runs 27 assertions: the committed `content/templates/python-starter`
 verbatim (multi-file import + its `input()`), `input()` twice, the four
-partial-line-prompt cases, an uncaught traceback, and infinite loop → kill →
-run again. The suite last ran 22/22 on Chrome 150 / Linux, plus one hand-typed run of
-the template. (Screenshot evidence is no longer committed; run the harness to
-reproduce it.)
+partial-line-prompt cases, an uncaught traceback, a warning, and infinite loop →
+kill → run again. The suite last ran **27/27** on Chrome 151 / Linux.
+
+The warning scenario is the odd one out and must stay where it is, straight
+after `traceback`: it is the only check that spans two runs, and it exists to
+catch a stale `linecache` serving the *previous* program's source line. Run it
+first and it passes whether or not the bug is present.
 `window.harness` exposes the same API for scripted checks.
 
 Other checks worth keeping: `npm run check` (`node --check src/worker.js` — the
