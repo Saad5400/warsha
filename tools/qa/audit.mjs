@@ -186,7 +186,21 @@ if (Object.values(cursors).every((v) => v === 'pointer'))
 else fail('cursor: pointer', JSON.stringify(cursors))
 
 // ---- 14. touch targets
+// Founder ruling (P1): icon-only controls and Run/Stop dropped from 44px to
+// 40px visually. `.tab__close` and `.icon-btn` (and some `.btn` instances —
+// Run/Stop, console Copy/Clear — that selector also matches every OTHER
+// Button variant, still 44/48px) now carry a real box as small as 40px, so
+// the raw-height floor drops to 40 for everything. What must still hold at
+// 44 is the EFFECTIVE hit area: where `ui/Button.tsx`'s `after:` pseudo is
+// present (a negative-inset transparent expansion), it has to add up to
+// ≥44px — checked directly off the pseudo's own computed box, not assumed.
+// Controls that opted out of the pseudo (`after:content-none` — tab close,
+// Explorer's tight-gap trio and its per-row "⋯", documented in Button.tsx
+// and at each call site) are exempted from the effective-area check, same as
+// they are in the app: their floor is the 40px raw box, nothing more.
 const targets = await page.evaluate(() => {
+  const RAW_FLOOR = 40
+  const HIT_FLOOR = 44
   const sels = ['[role="treeitem"]', '[role="tab"]', '.tab__close', '.icon-btn', '.btn', '.stdin-input']
   const bad = []
   const seen = {}
@@ -195,14 +209,21 @@ const targets = await page.evaluate(() => {
       const r = el.getBoundingClientRect()
       if (r.width === 0 && r.height === 0) continue
       seen[s] = Math.min(seen[s] ?? 999, Math.round(r.height))
-      if (r.height < 44) bad.push(`${s} h=${Math.round(r.height)} "${(el.textContent || '').trim().slice(0, 18)}"`)
+      const label = `${s} h=${Math.round(r.height)} "${(el.textContent || '').trim().slice(0, 18)}"`
+      if (r.height < RAW_FLOOR) { bad.push(`${label} — under the 40px visual floor`); continue }
+      if (r.height >= HIT_FLOOR) continue
+      const after = getComputedStyle(el, '::after')
+      if (after.content !== '""') continue // opted out — 40px raw is the whole rule for this one
+      const expand = Math.abs(parseFloat(after.top) || 0) + Math.abs(parseFloat(after.bottom) || 0)
+      const effective = r.height + expand
+      if (effective < HIT_FLOOR) bad.push(`${label} — effective hit area only ${Math.round(effective)}px`)
     }
   }
   return { bad, seen }
 })
 info(`min heights: ${JSON.stringify(targets.seen)}`)
-if (targets.bad.length === 0) pass('14. every interactive element is ≥44px tall')
-else fail('14. touch targets ≥44px', targets.bad.join(' | '))
+if (targets.bad.length === 0) pass('14. every interactive element is ≥40px, and ≥44px effective where the hit-area pseudo applies')
+else fail('14. touch targets', targets.bad.join(' | '))
 
 // ---- 7/8. type scale
 const code = await css('.cm-content', ['font-size', 'line-height', 'padding-left'])

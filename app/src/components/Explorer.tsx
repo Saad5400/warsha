@@ -191,19 +191,29 @@ export function Explorer(props: ExplorerProps) {
       <div className={HEADER}>
         <span className={PANEL_LABEL}>Explorer</span>
         {/* 4px between these, not the 8px §5.2 asks for: a 240px sidebar cannot
-            hold a 66px label plus three 44px targets at 8px gaps (that needs
-            242px). Measured, not guessed — see the spacing sweep. The trade is
-            gap, never target size; every box here is still a full 44px. */}
+            hold a 66px label plus three 40px targets at 8px gaps (that needs
+            226px). Measured, not guessed — see the spacing sweep. The trade is
+            gap, never target size.
+            `after:content-none`: `IconButton`'s ≥44px hit-area pseudo expands
+            4px a side, which needs an 8px gap to clear its neighbour without
+            overlap (see Button.tsx) — this row's gap is 4px, so three of them
+            in a row would each steal 2px of taps meant for the next. Visual
+            size still drops to 40px per the founder ruling; only the invisible
+            hit-area expansion is skipped here. */}
         <div className="ml-auto flex items-center gap-1">
           {hasFolders ? (
-            <IconButton label="Collapse folders" onClick={() => setCollapsed(allFolders(tree))}>
+            <IconButton
+              label="Collapse folders"
+              className="after:content-none"
+              onClick={() => setCollapsed(allFolders(tree))}
+            >
               <IconChevronUp />
             </IconButton>
           ) : null}
-          <IconButton label="New file" onClick={() => startDraft('', 'file')}>
+          <IconButton label="New file" className="after:content-none" onClick={() => startDraft('', 'file')}>
             <IconPlus />
           </IconButton>
-          <IconButton label="New folder" onClick={() => startDraft('', 'dir')}>
+          <IconButton label="New folder" className="after:content-none" onClick={() => startDraft('', 'dir')}>
             <IconFolderPlus />
           </IconButton>
         </div>
@@ -461,7 +471,11 @@ function Row({
 
       <IconButton
         label={`Actions for ${node.name}`}
-        className="tree-row__more"
+        // after:content-none: tree rows stack with no gap between them
+        // (Explorer's HEADER comment applies the same logic) — IconButton's
+        // ≥44px hit-area pseudo needs clear space to expand into or it steals
+        // taps from the row above/below. Visual size still drops to 40px.
+        className="tree-row__more after:content-none"
         onClick={(e) => {
           e.stopPropagation()
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()

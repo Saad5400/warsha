@@ -421,19 +421,32 @@ else fail('Ctrl+Enter runs / exit-0 status', `${okState} / ${okText}`)
 await shot('h-exit-ok')
 
 // --------------------------------------------------- F. geometry + overlap check
+// Founder ruling (P1): Run/Stop and the icon-only controls in this header
+// (Copy, Clear, the collapse toggle) dropped from 44px to 40px visually. All
+// four keep `ui/Button.tsx`'s `after:` hit-area pseudo, so what is asserted
+// now is the EFFECTIVE box (raw rect expanded by the pseudo's own computed
+// inset) rather than the raw one — read straight from the pseudo, not assumed.
 const geo = await page.evaluate((sel) => {
   const r = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null }
   const header = r(sel)
-  const runB = [...document.querySelectorAll(`${sel.split(', ')[0]} button, ${sel.split(', ')[1]} button`)].map((b) => ({
-    name: b.getAttribute('aria-label') ?? b.innerText.trim(), ...b.getBoundingClientRect().toJSON(),
-  }))
+  const runB = [...document.querySelectorAll(`${sel.split(', ')[0]} button, ${sel.split(', ')[1]} button`)].map((b) => {
+    const rect = b.getBoundingClientRect().toJSON()
+    const after = getComputedStyle(b, '::after')
+    const expand = after.content === '""' ? Math.abs(parseFloat(after.top) || 0) + Math.abs(parseFloat(after.bottom) || 0) : 0
+    return {
+      name: b.getAttribute('aria-label') ?? b.innerText.trim(),
+      ...rect,
+      effectiveWidth: rect.width + expand,
+      effectiveHeight: rect.height + expand,
+    }
+  })
   return { header, runB, divider: r('[role="separator"][aria-label="Resize output"]') }
 }, HEADER_SEL)
 info(`header: ${JSON.stringify(geo.header)}`)
-for (const b of geo.runB) info(`  btn ${b.name}: ${Math.round(b.width)}x${Math.round(b.height)} @ y=${Math.round(b.y)}`)
-const tooSmall = geo.runB.filter((b) => b.height < 43.5 || b.width < 43.5)
-if (!tooSmall.length) pass('every console-header button is ≥44px')
-else fail('console-header buttons ≥44px', JSON.stringify(tooSmall.map((b) => `${b.name} ${Math.round(b.width)}x${Math.round(b.height)}`)))
+for (const b of geo.runB) info(`  btn ${b.name}: ${Math.round(b.width)}x${Math.round(b.height)} (effective ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}) @ y=${Math.round(b.y)}`)
+const tooSmall = geo.runB.filter((b) => b.effectiveHeight < 43.5 || b.effectiveWidth < 43.5)
+if (!tooSmall.length) pass('every console-header button is ≥44px effective (40px visual + hit-area pseudo)')
+else fail('console-header buttons ≥44px effective', JSON.stringify(tooSmall.map((b) => `${b.name} ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}`)))
 const spill = geo.runB.filter((b) => b.y < geo.header.y - 0.5 || b.y + b.height > geo.header.y + geo.header.height + 0.5)
 if (!spill.length) pass('no header button overflows the header bar')
 else fail('header buttons overflow the header', JSON.stringify(spill.map((b) => b.name)))

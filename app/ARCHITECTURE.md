@@ -46,7 +46,7 @@ Small and boring on purpose — roughly one file per box on screen.
 
 | Component | Notes |
 | --- | --- |
-| `TopBar` | Hamburger, logo, overflow menu. |
+| `TopBar` | Docked (≥900px, explorer open): an empty leading spacer, sized to the sidebar column, purely so its trailing divider still lands on the sidebar/editor boundary. Collapsed (≥900px, explorer off): the project switcher takes that spot instead, since there is no sidebar to carry it. Phone: hamburger + file title + overflow menu. No logo, no wordmark anywhere in it (LAYOUT-VSCODE §1b) — brand lives on the welcome panel, the favicon and the OG image only. |
 | `Explorer` | Tree, long-press/⋯ menu, create/rename/delete. |
 | `Tabs` | Horizontal strip, dirty dot, close. |
 | `Editor` | ~40-line shell around `editor/setup.ts`. |

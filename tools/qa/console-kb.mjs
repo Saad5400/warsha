@@ -91,13 +91,23 @@ await page.screenshot({ path: `${SHOTS}/con-390-waiting.png` })
 // fires after layout but before paint, i.e. never inside the evaluate() that
 // forced the layout.
 const KB_PX = 340
-await page.evaluate((KB) => {
+const raiseKeyboard = () => page.evaluate((KB) => {
   const vv = window.visualViewport
   Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight - KB })
   Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
   vv.dispatchEvent(new Event('resize'))
 }, KB_PX)
-await page.waitForTimeout(500)
+// Two passes, not one, despite the comment above already saying so: the
+// console's ResizeObserver-driven scroll-to-bottom fires after layout but
+// before paint, so it never lands inside the SAME evaluate() that forced the
+// resize. `pixel-crops.mjs`'s 390-kb section already double-calls this for
+// the exact same reason; this script measured `input.bottom` overlapping the
+// keyboard by ~10px, and `deadSpace` at -48 instead of 0, on every run until
+// the second call was added — one settle pass was consistently not enough.
+await raiseKeyboard()
+await page.waitForTimeout(350)
+await raiseKeyboard()
+await page.waitForTimeout(350)
 
 const kb = await page.evaluate(([KB, HEADER_SEL]) => {
   const r = (s) => { const e = document.querySelector(s)

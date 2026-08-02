@@ -73,7 +73,19 @@ export function RunControl({
               ? `Run ${what} (${shortcut})`
               : COPY.noEntry
       }
-      className={'min-w-[104px]' + (className ? ' ' + className : '')}
+      // Founder ruling (P1): Run/Stop's height drops from h-11 (44px) to h-10
+      // (40px) — `!` (a trailing-bang important) because `Button`'s own base
+      // sets `min-h-touch` (44px) and `min-height` always wins its own
+      // conflict regardless of which utility comes later in the class list, so
+      // a plain `min-h-10` here would be silently overridden back up to 44.
+      // `relative` + the `after:` pseudo restore a ≥44px effective hit area
+      // the same way `IconButton` does — Run/Stop is the single most-tapped
+      // control in the app (spec principle 4), so it is the last place to give
+      // up touch room even though its box shrank.
+      className={
+        'min-w-[104px] min-h-10! relative after:absolute after:-inset-1 after:content-[""]' +
+        (className ? ' ' + className : '')
+      }
       onClick={busy ? run.onStop : run.onRun}
     >
       {/* Spec §7.4 asks for a 16px spinner in the glyph slot while the engine

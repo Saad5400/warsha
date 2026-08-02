@@ -510,7 +510,20 @@ function StatusLine({
   const tone = statusTone[status]
   const text = statusText(status, exitCode, narrow)
   return (
-    <p role="status" aria-live="polite" data-state={status} title={text} className="console-status">
+    <p
+      role="status"
+      aria-live="polite"
+      data-state={status}
+      title={text}
+      // PIXEL-FINDINGS F-15: `.console-status`'s own `padding: 4px 16px` put
+      // this row's ink at x=306 against the header's and transcript scroller's
+      // shared 8px (`--sp-2`) container padding, x=298 — an outlier `.console-*`
+      // rule never got moved onto the console's own inset. Overridden here
+      // rather than in index.css (that file is ui-theme's for now): `px-2`
+      // lands in `@layer utilities`, which outranks the `@layer components`
+      // rule regardless of source order or specificity, so this wins.
+      className="console-status px-2"
+    >
       <span
         aria-hidden="true"
         className={'console-status__glyph' + (tone.live ? ' animate-pulse motion-reduce:animate-none' : '')}

@@ -199,9 +199,18 @@ const bars = await page.evaluate(() => {
 })
 for (const b of bars) {
   if (b.name === 'sidebar header') continue
-  const ok = b.top === b.bottom && b.top >= 4 && SCALE.includes(b.top) && b.borderBottom === 0 && b.insetShadow
+  // Clearance stopped being SCALE-checked here after the founder's P1 control
+  // resize (icon-only buttons and Run: 44px -> 40px, bars unchanged): it used
+  // to be an authored padding value, chosen off the scale on purpose, but it
+  // is now a DERIVED number (bar height minus control height, halved) that
+  // the scale was never going to divide evenly — 52-40 clearance is 6 a side,
+  // and 44-40 (the phone-width console header) is 2. What still matters, and
+  // is still asserted: centred (top === bottom), never crowded (>= 2, the
+  // founder's own floor for the phone case), no border-bottom, a real
+  // inset-shadow divider.
+  const ok = b.top === b.bottom && b.top >= 2 && b.borderBottom === 0 && b.insetShadow
   const detail = `bar ${b.barH} control ${b.ctrlH} clearance ${b.top}/${b.bottom} border-bottom ${b.borderBottom} inset-shadow ${b.insetShadow}`
-  if (ok) pass(`6. BARS — ${b.name} centred with scale clearance`, detail)
+  if (ok) pass(`6. BARS — ${b.name} centred with real clearance`, detail)
   else fail(`6. BARS — ${b.name}`, detail)
 }
 

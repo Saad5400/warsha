@@ -9,7 +9,7 @@ import { StatusPill } from './StatusPill'
 import { COPY } from '../copy'
 
 /* The console header. Its divider is an inset shadow, not a border: a 1px
- * border comes out of the bar's own 44px, and the 44px Run control inside it
+ * border comes out of the bar's own height, and a flush control inside it
  * then overflows by a pixel — which once pushed Run under the keyboard line.
  * `hand-left` mirrors the row so left-handed students get Run/Stop on the
  * leading edge (spec §5.3). At ≤460px only decoration goes: the inter-control
@@ -22,7 +22,11 @@ import { COPY } from '../copy'
  * running into the divider). Scoped to ≥900px, unlike the title bar's fix,
  * because this Run is on screen at every width and a phone console has no
  * vertical budget to spare for it (§4.3 rule 4's floor is "the single most
- * important number" in that section); Run itself stays 44px throughout. */
+ * important number" in that section). Founder ruling since shrank Run itself
+ * to 40px throughout (RunControl.tsx) — the bar did not follow it down; a 40px
+ * control in a 52px bar is 6px of clearance a side rather than 4, which reads
+ * fine (crops in the PR), and the phone-width 44px bar now holds a 40px
+ * control with 2px a side instead of 0. */
 /* `console-header` carries no styling — tools/qa reads it. */
 const HEADER =
   'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
@@ -67,12 +71,12 @@ export function RunBar(props: RunBarProps) {
   return (
     <div className={HEADER}>
       {/* Run/Stop — first in DOM order so it is the first tab stop and so
-          data-hand="left" (row-reverse) puts it on the leading edge. 44px, not
-          the spec's 48px, at every width: the header is 44px below 900px, so a
-          48px button would overflow its own bar top and bottom there — and 44px
-          stays consistent with the title bar's copy of the same control above
-          900px rather than being a second size to keep in sync (see F-12 above
-          for why the header itself grows to 52px there instead).
+          data-hand="left" (row-reverse) puts it on the leading edge. 40px
+          (founder ruling) at every width, never the spec's 48px: a 48px button
+          would overflow the 44px phone-width bar, and 40px stays consistent
+          with the title bar's copy of the same control above 900px rather than
+          being a second size to keep in sync (see F-12 above for why the
+          header itself grows to 52px there instead).
           The title bar renders the same control at ≥900px; see RunControl. */}
       <RunControl run={run} placement="console" />
 
@@ -125,7 +129,7 @@ export function RunBar(props: RunBarProps) {
                 and a void. */}
             <span aria-hidden="true" className="kb-hide w-px h-[24px] flex-none mx-1 bg-border-subtle max-[460px]:hidden" />
             <CopyOutputButton />
-            {/* Keyboard open: the label goes, the icon and the 44px box stay
+            {/* Keyboard open: the label goes, the icon and the box stay
                 (spec §4.3 rule 3 — collapse decoration, never function). */}
             <Button
               variant="quiet"
@@ -135,7 +139,11 @@ export function RunBar(props: RunBarProps) {
               // The ≤460px rule tightens .console-header .btn padding to 8px,
               // which takes an icon-only button down to 38px wide. Height was
               // never the problem; the box is the target, so floor the width.
-              className="min-w-touch shrink-0"
+              // min-h-10!: founder ruling, same override RunControl needs and
+              // for the same reason — `min-h-touch` in Button's base always
+              // wins a plain `min-h-10` regardless of class order. The after:
+              // pseudo restores the ≥44px hit area into this row's gap-2.
+              className="min-w-touch shrink-0 min-h-10! relative after:absolute after:-inset-1 after:content-['']"
             >
               <IconClear />
               <span className="kb-hide hidden min-[900px]:inline">Clear</span>
@@ -191,9 +199,10 @@ function CopyOutputButton() {
       title={label}
       data-state={state}
       // The result has to be visible, not only in the tooltip: a copy that
-      // silently failed is worse than no button.
+      // silently failed is worse than no button. min-h-10!/after: — see Clear,
+      // above: same founder-ruling override, same reason.
       className={
-        'min-w-touch shrink-0 ' +
+        "min-w-touch shrink-0 min-h-10! relative after:absolute after:-inset-1 after:content-[''] " +
         (state === 'done' ? 'text-success' : state === 'failed' ? 'text-danger' : '')
       }
     >

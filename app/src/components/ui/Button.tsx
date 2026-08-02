@@ -85,11 +85,27 @@ export function Button({ variant = 'quiet', large, compact, className = '', chil
   )
 }
 
-/** Square icon-only control: 44px box, 20px glyph — the box is the target. */
+/**
+ * Square icon-only control: 40px box, 20px glyph — the box is the target.
+ *
+ * Founder ruling (P1): every icon-only button shrank from size-11 (44px) to
+ * size-10 (40px). The VISUAL box is 40px, but `after:` restores a ≥44px
+ * EFFECTIVE hit area via a transparent, absolutely-positioned pseudo-element
+ * inset -4px (`--sp-1`) on all sides (40 + 4 + 4 = 48) — the touch rules this
+ * app is built on (spec §5.2) exist for the finger, not the eye. It costs
+ * nothing where a control has ≥8px (`gap-2`) of clear space to expand into —
+ * two adjacent 40px buttons 8px apart meet exactly at the midpoint with no
+ * overlap — which covers every consumer of THIS component (TopBar's
+ * hamburger/⋯, the console's collapse toggle, Toast's dismiss). Two consumers
+ * override it back off with `after:content-none` because the surrounding gap
+ * is smaller than 8px and the expanded zone would steal taps from a neighbour:
+ * Explorer's sidebar-header trio (a deliberate 4px `gap-1`, per that file's own
+ * comment) and its per-row "⋯" (no gap at all — tree rows stack flush). */
 const iconButton = cva(
   // Same selector-hook move as `btn` above — `.icon-btn` names nothing in CSS
   // any more but is still what `audit.mjs` and the pixel-crop harness find.
-  'icon-btn inline-grid place-items-center flex-none size-touch rounded-md text-[20px] leading-none text-text-2 ' +
+  'icon-btn relative inline-grid place-items-center flex-none size-[40px] rounded-md text-[20px] leading-none text-text-2 ' +
+    'after:absolute after:-inset-1 after:content-[""] ' +
     'touch-manipulation cursor-pointer transition-[background-color,color] duration-(--dur-fast) ease-standard ' +
     'hover:not-disabled:bg-surface-3 hover:not-disabled:text-text-1 ' +
     'active:not-disabled:bg-surface-4 active:not-disabled:text-text-1 ' +

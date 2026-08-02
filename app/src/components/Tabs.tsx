@@ -58,8 +58,14 @@ const TAB_LABEL =
   'tab__label flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-tab leading-[1.2] ' +
   'font-medium text-text-2 group-data-[state=active]:text-text-1 group-data-[state=active]:font-semibold'
 
+// Founder ruling (P1): 44px → 40px, same as every other icon-only control.
+// No hit-area expansion here (contrast IconButton in ui/Button.tsx): the
+// close slot sits flush against the tab's own right edge (`-mr-2` pulls it
+// into the tab's padding) with a 1px divider and the next tab immediately
+// past it, so an expanded invisible zone would reach across that divider and
+// steal a tap meant for opening the neighbour, not closing this one.
 const TAB_CLOSE =
-  'tab__close grid place-items-center flex-none size-touch -mr-2 rounded-sm text-[14px] leading-none text-text-3 ' +
+  'tab__close grid place-items-center flex-none size-[40px] -mr-2 rounded-sm text-[14px] leading-none text-text-3 ' +
   'touch-manipulation cursor-pointer hover:text-text-1 hover:bg-surface-4 ' +
   'active:text-text-1 active:bg-surface-4 active:scale-92'
 

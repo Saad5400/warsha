@@ -197,26 +197,6 @@ the same colour.
 tab. `first:data-[state=active]:` is (0,3,0) against the base rule's (0,2,0), so
 it wins on specificity regardless of emitted order.
 
-### F-12 · P1 · Console header's Run button has zero clearance in its 44px bar → console owner (vacant)
-**Not my file** (Console/RunBar are outside this pass's ownership) — reporting
-only, per the same rule that kept F-09/F-10 as reports.
-
-`spacing.mjs`'s BARS check, live against `http://127.0.0.1:8101`:
-
-```
-FAIL  6. BARS — console header / Run :: bar 44 control 44 clearance 0/0 border-bottom 0 inset-shadow true
-```
-
-This is the exact class of defect the title bar itself had before it grew from
-44px to 52px (`TopBar.tsx`'s own comment: "at 44px the 44px Run button was
-flush top AND bottom — measured 0px clearance — so its 10px radius ran into the
-divider and read as spilling out of its own bar"). The console header's Run
-control is the same 44px button in a 44px header with the same 0px clearance;
-the model fix is the same one — grow the header past 44px (48px matches the
-scale) or shrink the control, whichever the console owner prefers given the
-header's other content. The title bar's before/after is in `git log
-app/src/components/TopBar.tsx` if useful as a reference.
-
 ### F-13 · Two test-harness bugs found while re-verifying this pass, fixed in the harness (not the app)
 
 Neither is an app defect — both are the QA scripts asserting against a shape
@@ -456,27 +436,32 @@ by design, for the vertical-budget reason above), so a top shadow there would
 just be covered by Run in turn. A real fix needs the rule to live on the
 *editor's* bottom edge instead, where nothing paints over it — untried here.
 
-### F-15 · P2 · The console panel has three different left insets → eng-terminal
-**Region** `1280-console-header-left`, `1280-console-row-stdout`, `1280-console-foot`
+### F-15 · P2 · The console panel had three different left insets · partially fixed
+**Region** `1280-console-header-left`, `1280-console-row-stdout`, `1280-console-foot` · **Owner** ui-finish2 (Console zone)
 
-The founder named "console spacing" as a hot area, and this is what is in it.
-The panel starts at x=290 and the three things stacked inside it each begin
+The founder named "console spacing" as a hot area, and this was what was in it.
+The panel starts at x=290 and the three things stacked inside it each began
 somewhere else:
 
-| Element | Box | Inset | Ink starts at |
+| Element | Box | Inset (before) | Ink started at |
 | --- | --- | --- | --- |
-| Console header controls | x=290 | `padding: 0 8px` | **298** |
-| Status foot text (`.console-foot`) | x=290 | `padding: 4px 16px` | **306** |
-| Transcript row text (`[data-kind]`) | x=298 | 3px rule + `padding-left: 8px` | **309** |
+| Console header controls | x=290 | `padding: 0 8px` | 298 |
+| Status foot text (`.console-status`) | x=290 | `padding: 4px 16px` | 306 |
+| Transcript row text (`[data-kind]`) | x=298 | 3px rule + `padding-left: 8px` | 309 |
 
-11px of rag down one 990px-wide panel, in the surface a student watches for the
-whole of a run. The 3px on the transcript row is the §7.3 leading rule and has
-to stay; the honest fix is to pick one ink column and let each element reach it
-by its own route — 8px on the header, 8px on the foot, and the row's 8px measured
-from after its rule — which would put all three on 298.
+**Fix** `Console.tsx`'s `StatusLine` now carries an extra `px-2` on top of the
+bare `console-status` hook, landing in `@layer utilities` — which outranks the
+`@layer components` rule that sets `padding: 4px 16px` regardless of source
+order — so it wins without touching `index.css` (held for `ui-theme` while
+this landed). Foot ink moved from 306 to **298**, matching the header exactly.
 
-Not touched here: `Console.tsx` / `RunBar.tsx` belong to the console owner. The
-numbers are `measurements.json`'s, so the fix can be checked the same way.
+Left as is, and this is the "partially": the transcript row's 309 is the §7.3
+leading rule (3px) plus the row's own 8px padding, both load-bearing (the rule
+is the stdout/stderr/echo signal principle 2 requires; the padding is shared by
+every row kind). This is the same shape as F-07's tree-row exception — a
+reserved accent border that has to be subtracted before comparing ink, not
+zeroed out — so 309 stays as a documented, structural offset from the header/foot's
+298 rather than a mistake to chase further.
 
 ### F-11 · P3 · Tab lead-in and trail-out are optically unequal → eng-tailwind / eng-pixel
 **Region** `1280-tab-active`
