@@ -5,7 +5,8 @@
  * coi-serviceworker passes opaque responses through untouched, so under
  * COEP:require-corp the browser never sees jsDelivr's CORP header and blocks
  * the script. Module script fetches are always CORS-mode, so the shim can
- * rewrite the headers and the load succeeds. See spikes/python/SPIKE.md.
+ * rewrite the headers and the load succeeds. See
+ * docs/engineering/python-runtime-spike.md.
  *
  * Protocol (main thread -> worker):
  *   { type: "init", sab, indexURL?, isatty? }

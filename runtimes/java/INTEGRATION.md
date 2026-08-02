@@ -490,7 +490,7 @@ installed to the home screen — treat `/files/` as a cache, never as the only c
 of a student's work. No `SharedArrayBuffer` is needed, so that is one fewer
 constraint than Python has.
 
-## Deviations from SPIKE.md §9, and why
+## Deviations from the spike (§9 of [`docs/engineering/java-runtime-spike.md`](../../docs/engineering/java-runtime-spike.md)), and why
 
 **§9.2 said ship a prebuilt `warsha-bootstrap.jar`. This module compiles the
 bootstrap in-browser on every `load()` instead.** Reasons: (a) `*.jar` is
@@ -563,7 +563,8 @@ same class name in two packages; a compile error in a nested file (path, line,
 caret, nothing runs); an uncaught exception two student frames deep (filtered
 trace, no JIT noise, and proof the noise occurred); infinite loop → kill → run
 again; `System.exit(3)` → recovery; and per-run directory cleanup.
-The committed `harness/screenshot-selftest-passing.jpg` shows 43/43; the same
+The harness self-test last showed 43/43 (screenshot evidence is no longer
+committed; run the harness to reproduce it); the same
 43/43 was reproduced twice on Chrome 151/Windows during the verification
 described above — once before and once after the two fixes noted in §5 and in
 "Behaviour notes" — along with hand-typed runs of the template and the prompt

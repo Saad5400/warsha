@@ -266,8 +266,9 @@ The page drives the module through the contract only. "Run self-test (all
 scenarios)" runs 22 assertions: the committed `content/templates/python-starter`
 verbatim (multi-file import + its `input()`), `input()` twice, the four
 partial-line-prompt cases, an uncaught traceback, and infinite loop → kill →
-run again. `harness/screenshot-selftest-passing.jpg` is 22/22 on Chrome 150 / Linux, plus
-one hand-typed run of the template.
+run again. The suite last ran 22/22 on Chrome 150 / Linux, plus one hand-typed run of
+the template. (Screenshot evidence is no longer committed; run the harness to
+reproduce it.)
 `window.harness` exposes the same API for scripted checks.
 
 Other checks worth keeping: `npm run check` (`node --check src/worker.js` — the

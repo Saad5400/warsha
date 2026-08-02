@@ -1,5 +1,21 @@
 # Warsha Java-in-the-browser spike — CheerpJ 4.3
 
+> **Historical record, kept for its findings.** This documents the throwaway
+> prototype that established whether Java-in-the-browser was possible at all. The
+> spike's own code lived in `spikes/java/` and has been deleted; references below to
+> "the files in this directory" describe that removed prototype, not the shipping
+> code. The production implementation it led to is
+> [`runtimes/java/`](../../runtimes/java/), documented in
+> [`runtimes/java/INTEGRATION.md`](../../runtimes/java/INTEGRATION.md), which
+> supersedes this document wherever the two disagree.
+>
+> **One conclusion here is now wrong.** The licensing paragraph assumes Warsha would
+> be a commercial multi-person product needing a paid CheerpJ license. Warsha shipped
+> as a free Apache-2.0 open-source project, which falls under CheerpJ's Community
+> License FOSS category instead. See
+> [`docs/legal/THIRD-PARTY.md`](../legal/THIRD-PARTY.md) for the current analysis and
+> the obligations that actually apply.
+
 **Verdict: VIABLE-WITH-CAVEATS.** Multi-file Java (packages + inheritance across
 packages) compiles and runs 100% client-side, with real interactive stdin and a
 real kill switch. All three of Education's prompt-before-read criteria **pass**

@@ -159,20 +159,17 @@ runtimes/python/  PythonRuntime — Pyodide, its own harness and build
 content/          exercises, templates, and the teacher guide
 tools/qa/         Chrome-driven browser verification suites
 docs/design/      design spec, tokens, review checklist
+docs/engineering/ the runtime spikes that decided the architecture
 docs/legal/       licensing and privacy
 docs/product/     PRD, roadmap, acceptance criteria
-spikes/           throwaway prototypes; not part of the build
 ```
 
 ## Screenshots
 
 Not yet — a screenshot of the app belongs here and there isn't an honest one to publish
 while the interface is still moving. Until then, the visual design is specified in
-[`docs/design/DESIGN-SPEC.md`](docs/design/DESIGN-SPEC.md) with the palette and type scale
-in [`docs/design/tokens.css`](docs/design/tokens.css), and each language runtime ships a
-screenshot of its own self-test passing in a real browser
-([Java](runtimes/java/harness/screenshot-selftest-passing.jpg),
-[Python](runtimes/python/harness/screenshot-selftest-passing.jpg)).
+[`docs/design/DESIGN-SPEC.md`](docs/design/DESIGN-SPEC.md), with the palette and type
+scale in [`docs/design/tokens.css`](docs/design/tokens.css).
 
 ## Contributing
 

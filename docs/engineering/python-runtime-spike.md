@@ -1,5 +1,14 @@
 # Spike: interactive Python in the browser (Pyodide) — findings
 
+> **Historical record, kept for its findings.** This documents the throwaway
+> prototype that established whether interactive Python in the browser was possible
+> at all. The spike's own code lived in `spikes/python/` and has been deleted, so the
+> files named below (`index.html`, `worker.js`, `progress-probe.html`) no longer
+> exist. The production implementation it led to is
+> [`runtimes/python/`](../../runtimes/python/), documented in
+> [`runtimes/python/INTEGRATION.md`](../../runtimes/python/INTEGRATION.md), which
+> supersedes this document wherever the two disagree.
+
 **Verdict: VIABLE-WITH-CAVEATS.** All four required behaviours work in a real browser
 with no server, no build step, and no COOP/COEP headers from the host: multi-file
 imports, progressively streamed stdout, blocking `input()`, and a Stop button that

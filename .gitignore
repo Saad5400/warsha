@@ -9,6 +9,9 @@ dist/
 tools/qa/screenshots/
 screenshots/
 
+# Harness bundles, produced by `node build.mjs` in each runtime package.
+runtimes/*/harness/build/
+
 # Local scratch and OS/editor noise.
 *.log
 npm-debug.log*
