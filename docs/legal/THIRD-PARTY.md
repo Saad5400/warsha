@@ -28,6 +28,7 @@ Last reviewed: 2026-08-02.
 | [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj) (`org.eclipse.jdt:ecj`, Eclipse Foundation) | 3.26.0 | [EPL-2.0](https://www.eclipse.org/legal/epl-2.0/) | Java compiler: compiles student Java source, running unmodified inside the CheerpJ JVM | **Bundled** — fetched from Maven Central at build time and served as a static asset | Redistributed — see the EPL-2.0 obligations below |
 | [React](https://react.dev/) | 19.x | MIT | UI layer | **Bundled** via npm into our JS build | Redistributed — MIT notice must be preserved |
 | [Tailwind CSS](https://tailwindcss.com/) | 4.x | MIT | Styling; compiles to CSS at build time | **Bundled** (generated CSS) | Redistributed — MIT notice must be preserved |
+| [Devicon](https://github.com/devicons/devicon) — `java-original` icon | commit [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96) (2021-05-15), file unchanged since | [MIT](https://github.com/devicons/devicon/blob/master/LICENSE) | Java language badge glyph (file badges, welcome cards, the OG image's Java tab) | **Bundled** — SVG path data vendored inline into `LangIcons.tsx` and `og-image.html` | Redistributed — MIT notice recorded below; see also the trademark note under "Language icons" |
 
 MIT and MPL-2.0 are both compatible with distributing Warsha under Apache-2.0. MPL-2.0
 is file-level copyleft: if we ever *modify* Pyodide's own source files and ship the
@@ -170,9 +171,13 @@ above with its license and version before it ships.
 
 The file badges and welcome cards show a Java mark and a Python mark
 ([`app/src/components/ui/LangIcons.tsx`](../../app/src/components/ui/LangIcons.tsx)).
-These are trademarks, not code, so the licence table above is the wrong instrument —
-what governs them is each owner's trademark policy. The two are handled differently
-on purpose.
+Both name a language, so both raise a trademark question the licence table above
+cannot answer by itself — what governs the *use of the mark* is each language owner's
+trademark policy, not a software licence. Java's icon additionally has a copyright
+owner of its own (Devicon, not Oracle), which is why it also has a row in the summary
+table above; Python's does not, because the PSF's grant is a trademark permission with
+no separate copyright licence to track. The two are handled differently below because
+the trademark analysis genuinely differs.
 
 ### Python — the PSF mark, embedded unaltered
 
@@ -203,20 +208,45 @@ approved."* A version redrawn in Warsha's 1.6px house stroke, or flattened to
 approval we do not have. So the component embeds the real artwork with its original
 paths and gradients, and only pads and uniformly scales it. **Do not recolour it.**
 
-### Java — a generic coffee cup, drawn from scratch
+### Java — Devicon's `java-original` mark, embedded unaltered
 
-**Conclusion: no Oracle mark is used, and none is imitated.**
+**Conclusion: no Oracle mark is used, none is imitated, and the artwork we do use is
+under an MIT licence that permits exactly this.**
 
 Oracle owns the Java trademarks, including the wordmark, the steaming-cup logo and
 Duke, and its policy is materially narrower than the PSF's — so unlike Python, there is
-no unaltered-logo path here and we take none. Warsha's icon is an ordinary coffee cup
-with a saucer and steam, drawn from scratch on our own grid: a coffee cup is not
-distinctive of Oracle, it is the generic convention every editor and icon theme uses to
-mean "a `.java` file", and nothing in the glyph reproduces Oracle's artwork.
+no path to using Oracle's own artwork here, and Warsha uses none of it. What Warsha
+embeds instead is a *different* work: the `java-original` icon from
+[Devicon](https://github.com/devicons/devicon), a community-maintained, MIT-licensed
+icon set built for exactly this purpose (labelling files and badges by programming
+language). It was independently drawn by the Devicon project, not copied from Oracle,
+and it is the de facto standard glyph for ".java" across editors, icon themes, and
+documentation sites — which is the whole reason to use it rather than draw a
+house-style version: an established mark a student already recognises beats a
+better-looking one they don't.
 
-The word "Java" appears only to state accurately which language a file is written in
-and which language Warsha runs, which is nominative use. Warsha makes no claim of
-Oracle endorsement, affiliation, or Java compatibility certification, and must not.
+Two permissions stack here, and both need to hold:
+
+1. **Copyright, from Devicon's own licence.** The icon is Devicon's original artwork,
+   [MIT-licensed](https://github.com/devicons/devicon/blob/master/LICENSE). MIT permits
+   exactly what we do — copy it, unmodified, into our own bundle — provided the licence
+   notice is preserved, which is what this row and the top-level summary table are for.
+   Vendored from commit
+   [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96)
+   (2021-05-15; the file has not changed since), `icons/java/java-original.svg`,
+   SHA-256 `7582e518a9c02425f97155e5a3bd39d1a3a7d421b78caf9c8df7443dad3edc5d`.
+2. **Trademark, same nominative-use footing as before.** The glyph evokes the
+   familiar Java coffee cup, so the word "Java" and the cup shape still name Oracle's
+   language — stating accurately which language a file is written in, and which
+   language Warsha runs. Warsha makes no claim of Oracle endorsement, affiliation, or
+   Java compatibility certification, and must not.
+
+The artwork is embedded exactly as vendored — same path data, same two fixed brand
+colours (`#0074BD`, `#EA2D2E`) — only reparented from its native 128×128 viewBox into
+our 20-unit icon grid via a translate/scale on a wrapping `<g>`, which changes nothing
+about the shapes themselves. Do not recolour it to `currentColor`: doing so would turn
+an established, recognisable mark into a redrawn one, the opposite of the point of
+using it.
 
 ## Maintaining this file
 

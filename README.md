@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) [![Status](https://img.shields.io/badge/status-v0.1%20MVP-orange.svg)](#status)
 
-Warsha ("ورشة", *workshop*) is a website that turns a supported browser into a working
+Warsha (*workshop*) is a website that turns a supported browser into a working
 Java and Python environment. You open a URL and start writing code. Your files are saved
 on your device, your programs compile and run on your device, and nothing you write is
 ever uploaded anywhere.
