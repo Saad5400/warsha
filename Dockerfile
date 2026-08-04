@@ -13,12 +13,32 @@
 # ---- build stage ----------------------------------------------------------
 # node:22-bookworm-slim is >= 22.12, satisfying vite 8 / rolldown engines, and
 # ships bash (fetch-compiler.sh needs it). curl + ca-certificates are added for
-# the ECJ download.
+# the ECJ download; libicu72 is the ICU runtime the .NET SDK CLI needs on
+# bookworm-slim (which ships without it); python3 (exposed as `python` via
+# python-is-python3) is required by Emscripten's emcc, which `dotnet publish -c
+# Release` invokes to relink the Mono wasm runtime for the C# engine bundle;
+# libatomic1 provides libatomic.so.1, which Emscripten's bundled Node links
+# against during that relink.
 FROM node:22-bookworm-slim AS build
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends \
+      curl ca-certificates libicu72 python3 python-is-python3 libatomic1 \
  && rm -rf /var/lib/apt/lists/*
+
+# .NET 9 SDK + wasm-tools workload — required by runtimes/csharp/build.sh to
+# publish the C# WebAssembly engine bundle (app/public/warsha-dotnet/_framework)
+# during `npm run assets`. There is no apt package for the 9.0 SDK on bookworm,
+# so install user-local with the official script (matches INTEGRATION.md §3).
+# This whole stage is discarded — only app/dist reaches the nginx serve stage —
+# so the SDK never bloats the final image.
+ENV DOTNET_ROOT=/root/.dotnet
+ENV PATH=/root/.dotnet:$PATH
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+RUN curl -fsSL https://dot.net/v1/dotnet-install.sh \
+      | bash -s -- --channel 9.0 --install-dir "$DOTNET_ROOT" \
+ && dotnet workload install wasm-tools --skip-manifest-update \
+ && dotnet nuget locals all --clear
 
 WORKDIR /repo
 
