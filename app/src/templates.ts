@@ -656,6 +656,101 @@ const WEB_TAILWIND_INDEX_HTML = `<!doctype html>
 </html>
 `
 
+const WEB_REACT_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>React counter</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- React renders into this element. The markup itself lives in App.tsx. -->
+    <div id="root"></div>
+
+    <!-- A module written in TypeScript + JSX. Warsha bundles it — and React,
+         served on your device — into the page each time you press Run. -->
+    <script type="module" src="main.tsx"></script>
+  </body>
+</html>
+`
+
+const WEB_REACT_MAIN_TSX = `// The entry point. It finds the #root element in index.html and hands it to
+// React, which renders your <App /> into it.
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+
+const root = document.getElementById("root");
+if (root) createRoot(root).render(<App />);
+`
+
+const WEB_REACT_APP_TSX = `// A component is a function that returns markup (JSX). \`useState\` gives it
+// memory: each click updates \`count\`, and React re-renders only what changed.
+import { useState } from "react";
+
+export function App() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <main className="card">
+      <h1>Hello from React</h1>
+      <p>
+        You clicked {count} time{count === 1 ? "" : "s"}.
+      </p>
+      <button onClick={() => setCount(count + 1)}>Click me</button>
+      <p className="hint">
+        Change this text in <code>App.tsx</code>, then press Run.
+      </p>
+    </main>
+  );
+}
+`
+
+const WEB_REACT_STYLES_CSS = `/* Plain CSS, inlined into the preview for you. React builds the markup; the
+   look still comes from here. */
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+.card {
+  text-align: center;
+  padding: 2rem 2.5rem;
+  border-radius: 1rem;
+  background: #1e293b;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.card h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+}
+button {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  font: inherit;
+  color: #fff;
+  background: #6366f1;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button:hover {
+  background: #4f46e5;
+}
+.hint {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+`
+
 const CSHARP_BASICS_PROGRAM_CS = `using System;
 
 // Your first C# program. C# starts running at the top. Press Run.
@@ -999,6 +1094,23 @@ export const templates: Template[] = [
         { path: 'styles.css', content: WEB_MODULES_STYLES_CSS },
         { path: 'app.ts', content: WEB_MODULES_APP_TS },
         { path: 'greeting.ts', content: WEB_MODULES_GREETING_TS },
+      ],
+    },
+  },
+  {
+    id: 'web-react',
+    name: 'React counter',
+    lang: 'web',
+    level: 'advanced',
+    blurb: 'A React component with state — TSX and React, bundled on your device.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_REACT_INDEX_HTML },
+        { path: 'styles.css', content: WEB_REACT_STYLES_CSS },
+        { path: 'main.tsx', content: WEB_REACT_MAIN_TSX },
+        { path: 'App.tsx', content: WEB_REACT_APP_TSX },
       ],
     },
   },

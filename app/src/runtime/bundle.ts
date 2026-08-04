@@ -96,6 +96,66 @@ export function isBundlerReady(): boolean {
 }
 
 /**
+ * React, bundled first-party and on-device (see tools/prebuild-react.mjs). A
+ * page whose `main.tsx` imports `react` / `react-dom/client` gets React resolved
+ * into its bundle from this asset, so the preview stays one self-contained,
+ * inlinable document — the same "never link, always inline" rule Tailwind and
+ * the wasm follow, and for the same COEP reason.
+ */
+const REACT_URL = new URL('warsha-react.json', document.baseURI).href
+
+/** A reserved virtual directory for the injected React shim/core files. The
+ *  leading dot keeps it clear of any real project path a student would write. */
+const REACT_DIR = '.warsha-react'
+
+/** Bare specifier → the virtual shim file that provides its named exports. */
+const REACT_SPECIFIERS: Record<string, string> = {
+  react: `${REACT_DIR}/react.js`,
+  'react/jsx-runtime': `${REACT_DIR}/jsx-runtime.js`,
+  'react-dom': `${REACT_DIR}/react-dom.js`,
+  'react-dom/client': `${REACT_DIR}/react-dom-client.js`,
+}
+
+interface ReactAssets {
+  version: string
+  files: Record<string, string>
+}
+let reactAssets: Promise<ReactAssets> | null = null
+
+/** Fetch the first-party React bundle once (same-origin from the parent, so the
+ *  app's COEP is a non-issue here — the bytes are bundled *into* the student's
+ *  output, never linked from the preview). Cached; a failure lets a later run
+ *  retry rather than latching. */
+function loadReactAssets(): Promise<ReactAssets> {
+  if (!reactAssets) {
+    reactAssets = fetch(REACT_URL)
+      .then((r) => {
+        if (!r.ok) throw new Error(`Could not load the React runtime (${r.status})`)
+        return r.json() as Promise<ReactAssets>
+      })
+      .catch((err) => {
+        reactAssets = null
+        throw err
+      })
+  }
+  return reactAssets
+}
+
+/**
+ * Does this project reach for React — a `.tsx`/`.jsx` file (its JSX compiles to
+ * `react/jsx-runtime` imports) or any `import`/`require` of `react`/`react-dom`?
+ * A false positive only costs an unused ~196 KB fetch (esbuild drops anything the
+ * entry never imports), so the check errs toward loading.
+ */
+export function needsReact(files: SourceFile[]): boolean {
+  return files.some(
+    (f) =>
+      /\.(tsx|jsx)$/i.test(f.path) ||
+      /(?:import|export|require|import\s*)\s*(?:[^;]*?from\s*)?['"]react(?:-dom)?(?:\/[^'"]*)?['"]/.test(f.content),
+  )
+}
+
+/**
  * Does this entry need the bundler, or can it run as-is? A `.ts`/`.tsx`/`.jsx`
  * always does (it must be transpiled); a plain `.js`/`.mjs` only does when it
  * actually reaches for another module — so the common "one file, some
@@ -173,6 +233,17 @@ export async function bundleProject(
   const esbuild = await ensureBundler()
   const byPath = new Map(files.map((f) => [f.path, f.content]))
 
+  // React on demand: drop the first-party shim/core files into the virtual FS so
+  // `react` / `react-dom/client` / `react/jsx-runtime` resolve to them and get
+  // bundled in (one shared instance — see prebuild-react.mjs). Nothing is fetched
+  // for a project that never touches React.
+  if (needsReact(files)) {
+    const { files: reactFiles } = await loadReactAssets()
+    for (const [name, content] of Object.entries(reactFiles)) {
+      byPath.set(`${REACT_DIR}/${name}`, content)
+    }
+  }
+
   const plugin: import('esbuild-wasm').Plugin = {
     name: VFS,
     setup(build) {
@@ -182,8 +253,12 @@ export async function bundleProject(
           return { path: normalise('', args.path), namespace: VFS }
         }
         if (isExternal(args.path)) return { path: args.path, external: true }
-        // Anything not relative/root is a bare specifier (an npm package) — there
-        // is no node_modules on the device, so let esbuild report it can't resolve.
+        // A React bare specifier maps to its on-device shim (present only when
+        // the project needs React, so a missing map entry still errors cleanly).
+        const react = REACT_SPECIFIERS[args.path]
+        if (react && byPath.has(react)) return { path: react, namespace: VFS }
+        // Anything else not relative/root is a bare specifier (an npm package) —
+        // there is no node_modules on the device, so let esbuild report it.
         if (!args.path.startsWith('.') && !args.path.startsWith('/')) return null
 
         const baseDir = dirOf(args.importer)
@@ -211,6 +286,10 @@ export async function bundleProject(
       // es2022 (the app's own build target) so top-level `await` is allowed in
       // ESM output — a lower target makes esbuild reject it outright.
       target: 'es2022',
+      // Automatic JSX: `.jsx`/`.tsx` compiles to `react/jsx-runtime` imports
+      // (resolved to the on-device shim above), so no `import React` is needed in
+      // scope. Harmless for plain JS/TS, which emits no JSX calls.
+      jsx: 'automatic',
       sourcemap: false,
       logLevel: 'silent',
       plugins: [plugin],

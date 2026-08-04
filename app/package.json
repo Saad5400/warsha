@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "prebuild": "npm run assets",
     "predev": "npm run assets",
-    "assets": "cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && cp node_modules/esbuild-wasm/esbuild.wasm public/warsha-esbuild.wasm && cp node_modules/@tailwindcss/browser/dist/index.global.js public/warsha-tailwind.js && ../runtimes/java/fetch-compiler.sh public && ../runtimes/csharp/build.sh public/warsha-dotnet"
+    "assets": "cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && cp node_modules/esbuild-wasm/esbuild.wasm public/warsha-esbuild.wasm && cp node_modules/@tailwindcss/browser/dist/index.global.js public/warsha-tailwind.js && node tools/prebuild-react.mjs && ../runtimes/java/fetch-compiler.sh public && ../runtimes/csharp/build.sh public/warsha-dotnet"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",

@@ -21,3 +21,8 @@ public/warsha-esbuild.wasm
 # work offline and under COEP (a cross-origin CDN <script> would be blocked).
 # ~276 KB build product, never a source of truth.
 public/warsha-tailwind.js
+# React + react-dom bundled first-party for the Web preview, built by
+# tools/prebuild-react.mjs from the installed react/react-dom (one shared
+# instance, exposed as bare-specifier shims). Inlined into the preview like the
+# Tailwind build, for the same COEP reason. ~196 KB build product, not a source.
+public/warsha-react.json

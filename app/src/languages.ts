@@ -45,7 +45,7 @@ export const languages: Language[] = [
   // them into separate picker tiles would be a lie about how they are used.
   // TypeScript joined here (not as its own tile) once the in-browser bundler
   // landed. Each file still gets its own editor grammar and badge.
-  { id: 'web', label: 'Web', status: 'ready', version: 'HTML · CSS · JS · TS', mark: '</>' },
+  { id: 'web', label: 'Web', status: 'ready', version: 'HTML · CSS · JS · TS · React', mark: '</>' },
   { id: 'csharp', label: 'C#', status: 'ready', version: '.NET 9 · Roslyn', mark: 'C#' },
   { id: 'c', label: 'C', status: 'soon', mark: 'C' },
   { id: 'cpp', label: 'C++', status: 'soon', mark: 'C++' },
