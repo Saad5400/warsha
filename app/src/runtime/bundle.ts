@@ -208,7 +208,9 @@ export async function bundleProject(
       write: false,
       format: opts.format ?? 'esm',
       platform: 'browser',
-      target: 'es2020',
+      // es2022 (the app's own build target) so top-level `await` is allowed in
+      // ESM output — a lower target makes esbuild reject it outright.
+      target: 'es2022',
       sourcemap: false,
       logLevel: 'silent',
       plugins: [plugin],
@@ -226,7 +228,10 @@ function formatBuildError(err: unknown): string {
     return e.errors
       .map((d) => {
         const loc = d.location
-        const where = loc ? `${loc.file || 'entry'}:${loc.line ?? 0}:${loc.column ?? 0}: ` : ''
+        // Strip the internal virtual-fs namespace so a student sees "main.ts",
+        // not "warsha-vfs:main.ts".
+        const file = (loc?.file || 'entry').replace(new RegExp(`^${VFS}:`), '')
+        const where = loc ? `${file}:${loc.line ?? 0}:${loc.column ?? 0}: ` : ''
         return `${where}${d.text}`
       })
       .join('\n')

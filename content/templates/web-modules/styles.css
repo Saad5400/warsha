@@ -1,0 +1,25 @@
+/* Plain CSS for the page. Warsha inlines it into the preview for you. */
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 34rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1f2937;
+  line-height: 1.6;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+#people {
+  list-style: none;
+  padding: 0;
+}
+
+#people li {
+  padding: 0.6rem 0.8rem;
+  margin: 0.4rem 0;
+  background: #f3f4f6;
+  border-radius: 0.5rem;
+}

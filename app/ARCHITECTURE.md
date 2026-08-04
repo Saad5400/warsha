@@ -27,9 +27,9 @@ npm run preview   # serve dist/ on 8083
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
-| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. No download, no worker. |
+| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. A `<script type="module">`/`.ts` that imports a project file is transpiled + bundled through `bundle.ts` first (a build error → Console + a red banner). A Tailwind CDN `<script>` is rewritten to the first-party on-device build (`public/warsha-tailwind.js`) so it works offline and under COEP. No worker; the bundler downloads once only when a page needs it. |
 | `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/ts/mjs/tsx… entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. Plain one-file JS runs raw (instant); TypeScript or a script that imports another file is bundled first (`bundle.ts`). JS *inside* a page is inlined by `WebRuntime` instead. |
-| `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. Shared by `js.ts` (and, later, `web.ts`'s module scripts). |
+| `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. Shared by `js.ts` (standalone scripts) and `web.ts` (a page's module scripts). |
 | `src/runtime/fake.ts` | `FakeRuntime` — fakes download/unpack/boot/run so the shell is demoable without an engine. |
 | `src/fs/types.ts` | `ProjectStore` + `FsSnapshot`: the storage seam. |
 | `src/fs/opfs.ts` | `OpfsStore` (default) and `MemoryStore` (fallback); `createStore()` picks. |
@@ -469,16 +469,26 @@ that compile and run with piped stdin but have not been through that review. Eac
   because a display:none iframe keeps running — so the page's `console.log` fills the Console
   whichever tab you are on. Unmounting it on the Console tab was a bug where a page (and a lone
   script, before it moved to `JsRuntime`) only ran once you visited Preview.
-- **Web is a phased plan; Phase 2a (TypeScript + standalone modules) is in, 2b is not.** A standalone
-  script (`js` engine) now runs **TypeScript** and can `import` other *project* files — `bundle.ts`
-  (esbuild-wasm) transpiles and bundles it, downloaded once on the first such run and reported on the
-  progress bar; plain one-file JS keeps its zero-download instant path. TypeScript folds into the Web
-  tile (no separate picker tile), with two starters (`web-ts`, `web-ts-modules`). **Still open (Phase
-  2b):** a `<script type="module">` inside a *page* that imports another project file, or a `.ts`
-  script referenced from HTML, is not yet bundled by `WebRuntime` — that is the next slice. `JsRuntime`
-  has no stdin yet. Tailwind and the React/Vue/Svelte starter kits are later phases. Local refs are
-  inlined; network refs (a CDN) are left untouched, the seam those phases build on. The output pane
-  reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
+- **Web is a phased plan; Phases 2a and 2b (TypeScript + modules, standalone *and* in a page) are in.**
+  A standalone script (`js` engine) runs **TypeScript** and can `import` other *project* files, and a
+  **page** now does too: a `<script type="module">` that imports a project file, or any `<script src=…​.ts>`,
+  is transpiled and bundled by `WebRuntime.assemble()` (async) through the same `bundle.ts` (esbuild-wasm)
+  and inlined — `esm` keeps `type="module"`, a classic script that grew imports becomes an `iife`; an
+  inline `type="module"` block that imports is bundled via a synthetic entry file. The bundler is fetched
+  once (~12 MB) only when a page actually needs it (`pageNeedsBundle` decides at `load()` time so the
+  progress bar shows), and a plain classic script — or a module with no project imports — still runs
+  verbatim with nothing to download. A build error prints to the Console (via stderr) and shows as a red
+  banner in the preview. TypeScript folds into the Web tile (no separate picker tile), with three starters
+  (`web-ts`, `web-ts-modules`, `web-modules` — a page whose module script imports TS). **Phase 3
+  (Tailwind) is in too:** a `<script>` pointing at `cdn.tailwindcss.com` or `@tailwindcss/browser` is
+  rewritten to Warsha's first-party build (`public/warsha-tailwind.js`, a verbatim copy of
+  `@tailwindcss/browser`'s v4 global build, staged by `npm run assets`). Same-origin, so it loads under
+  the app's COEP — a real cross-origin CDN `<script>` is an opaque resource and would be blocked — and it
+  works offline. Utility classes are identical to the CDN; a v3 `tailwind.config = {}` object does not
+  apply (v4 config goes in a `<style type="text/tailwindcss">` `@theme` block). Starter `web-tailwind`.
+  `JsRuntime` has no stdin yet. The React/Vue/Svelte starter kits are the remaining phase. Local refs are
+  inlined; other network refs (a non-Tailwind CDN) are left untouched, the seam those kits build on. The
+  output pane reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
   editor-adjacent preview is a follow-up.
 - Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours) and its
   bootstrap compile costs 7–20 s on a fresh worker. Both are flagged for Product in

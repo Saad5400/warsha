@@ -533,6 +533,129 @@ console.log(\`Total area = \${total.toFixed(2)}\`);
 console.log("Now open shapes.ts and add a Square.");
 `
 
+const WEB_MODULES_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Modules in a page</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h1>People</h1>
+    <ul id="people"></ul>
+
+    <!-- A module script can import other files and can be TypeScript. -->
+    <script type="module" src="app.ts"></script>
+  </body>
+</html>
+`
+
+const WEB_MODULES_STYLES_CSS = `/* Plain CSS for the page. Warsha inlines it into the preview for you. */
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 34rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1f2937;
+  line-height: 1.6;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+#people {
+  list-style: none;
+  padding: 0;
+}
+
+#people li {
+  padding: 0.6rem 0.8rem;
+  margin: 0.4rem 0;
+  background: #f3f4f6;
+  border-radius: 0.5rem;
+}
+`
+
+const WEB_MODULES_GREETING_TS = `// A module: other files import what it \`export\`s. The type travels across the
+// import, so app.ts knows exactly what a Person is.
+
+export interface Person {
+  name: string;
+  role: string;
+}
+
+export function greet(person: Person): string {
+  return \`Hello, \${person.name} — our \${person.role}.\`;
+}
+`
+
+const WEB_MODULES_APP_TS = `// This runs inside the page as a module, so it can both import another file and
+// touch the page. Warsha transpiles the TypeScript and bundles the import — on
+// your device — then the page runs it. Press Run and watch the list fill in.
+
+import { greet, type Person } from "./greeting";
+
+const people: Person[] = [
+  { name: "Layla", role: "student" },
+  { name: "Omar", role: "teacher" },
+];
+
+const list = document.querySelector<HTMLUListElement>("#people");
+for (const person of people) {
+  const item = document.createElement("li");
+  item.textContent = greet(person);
+  list?.appendChild(item);
+  console.log(greet(person)); // also shows in the Console tab
+}
+
+// Open greeting.ts, add a field to Person, then use it here and Run again.
+`
+
+const WEB_TAILWIND_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tailwind card</title>
+
+    <!-- Tailwind, served on your device. Write utility classes and press Run. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+    <div class="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-lg">
+      <span class="text-xs font-semibold uppercase tracking-wide text-indigo-600">Warsha</span>
+      <h1 class="text-2xl font-bold text-slate-800">Styled with Tailwind</h1>
+      <p class="leading-relaxed text-slate-600">
+        Every class here is a Tailwind utility. Change one — say
+        <code class="rounded bg-slate-100 px-1 text-indigo-700">bg-white</code> to
+        <code class="rounded bg-slate-100 px-1 text-indigo-700">bg-amber-50</code> —
+        then press Run.
+      </p>
+      <button
+        id="cheer"
+        class="w-full rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white transition hover:bg-indigo-700"
+      >
+        Cheer me on
+      </button>
+      <p id="count" class="text-center text-sm text-slate-500">No cheers yet</p>
+    </div>
+
+    <script>
+      // Plain JavaScript still runs alongside Tailwind. This counts clicks.
+      let cheers = 0;
+      const count = document.getElementById("count");
+      document.getElementById("cheer").addEventListener("click", () => {
+        cheers += 1;
+        count.textContent = cheers === 1 ? "1 cheer 🎉" : \`\${cheers} cheers 🎉\`;
+        console.log("cheers:", cheers); // also shows in the Console tab
+      });
+    </script>
+  </body>
+</html>
+`
+
 const CSHARP_BASICS_PROGRAM_CS = `using System;
 
 // Your first C# program. C# starts running at the top. Press Run.
@@ -847,6 +970,35 @@ export const templates: Template[] = [
       files: [
         { path: 'main.ts', content: WEB_TS_MODULES_MAIN_TS },
         { path: 'shapes.ts', content: WEB_TS_MODULES_SHAPES_TS },
+      ],
+    },
+  },
+  {
+    id: 'web-tailwind',
+    name: 'Tailwind card',
+    lang: 'web',
+    level: 'intermediate',
+    blurb: 'Tailwind utility classes, served on your device — a styled card, no build step.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'index.html', content: WEB_TAILWIND_INDEX_HTML }],
+    },
+  },
+  {
+    id: 'web-modules',
+    name: 'Modules in a page',
+    lang: 'web',
+    level: 'advanced',
+    blurb: 'A page whose module script imports TypeScript — bundled live, then rendered.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_MODULES_INDEX_HTML },
+        { path: 'styles.css', content: WEB_MODULES_STYLES_CSS },
+        { path: 'app.ts', content: WEB_MODULES_APP_TS },
+        { path: 'greeting.ts', content: WEB_MODULES_GREETING_TS },
       ],
     },
   },

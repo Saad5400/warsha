@@ -16,3 +16,8 @@ public/warsha-dotnet/
 # esbuild.wasm (used to transpile/bundle TypeScript and cross-file JS/TS modules
 # in the browser). ~12 MB build product, never a source of truth.
 public/warsha-esbuild.wasm
+# The on-device Tailwind build, a verbatim copy of node_modules/@tailwindcss/
+# browser/dist/index.global.js — injected into the preview so Tailwind utilities
+# work offline and under COEP (a cross-origin CDN <script> would be blocked).
+# ~276 KB build product, never a source of truth.
+public/warsha-tailwind.js
