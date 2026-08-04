@@ -159,9 +159,18 @@ Roslyn ~9.5 MB); ~37 MB is actually fetched, brotli-compressing to roughly
 
 ## Open items (M3)
 
-- **QA parity**: add a `csharp` path to `tools/qa` mirroring
-  `console-check.mjs` / `verify-java.mjs` (template runs end to end, prompt-then-
-  read, compile error, kill+rerun). Not yet added.
+- **QA parity**: ✅ done. `tools/qa/verify-csharp.mjs` (34 checks, `npm run csharp`,
+  in the `all` script) mirrors `verify-java.mjs`: the OOP starter runs end to end
+  with polymorphic output and interpolated `F2` areas, the `ReadLine` prompt is
+  painted before the blocking read, stdin round-trips, warm beats cold, a Roslyn
+  compile error names `Program.cs(line,col)` with its `CSxxxx` code and nothing
+  runs, infinite-loop → Stop → respawn, OPFS persistence, and a Python regression
+  in the same build. Two C#-specific gotchas the suite documents: the infinite
+  loop must **throttle its print rate** (unthrottled `Console.WriteLine` floods the
+  main thread so a Stop click can't land — .NET is ~1000× faster than CheerpJ),
+  and the Stop click must **wait past `SWAP_GUARD_MS`** because the warm worker
+  reaches output in under 250 ms. Needs the staged bundle under
+  `app/public/warsha-dotnet/`; last run 34/34 green (cold 2.1 s, warm 0.1 s).
 - **Size trim**: enable `PublishTrimmed` and trim the BCL; Roslyn resists trimming
   (~9.5 MB floor), so expect ~15–25 MB uncompressed after trim. Measure that the
   reference set still resolves typical student code.
