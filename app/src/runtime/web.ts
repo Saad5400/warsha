@@ -34,13 +34,14 @@ import type { ProgressReport, RunContext, RunIO, RunSession, Runtime, SourceFile
  *
  *  - **Tailwind is served on-device (Phase 3).** A `<script>` pointing at the
  *    Tailwind Play CDN (`cdn.tailwindcss.com`) or the `@tailwindcss/browser` build
- *    is rewritten to Warsha's first-party copy (`public/warsha-tailwind.js`, staged
- *    by `npm run assets`). A student writes the familiar CDN line every tutorial
- *    shows, and it just works — offline, and under the app's COEP, where a real
- *    cross-origin CDN `<script>` would be blocked as an opaque resource. The
- *    on-device build is Tailwind v4: utility classes work identically; a v3 Play
- *    CDN `tailwind.config = {…}` object does not apply (v4 config lives in a
- *    `<style type="text/tailwindcss">` `@theme` block instead).
+ *    is replaced by Warsha's first-party copy (`public/warsha-tailwind.js`, staged
+ *    by `npm run assets`), fetched same-origin and *inlined* into the document
+ *    (see `loadTailwindSource` — a linked `<script src>` would be a cross-origin
+ *    load from the sandboxed iframe's opaque origin and COEP would block it). A
+ *    student writes the familiar CDN line every tutorial shows, and it just works,
+ *    offline included. The on-device build is Tailwind v4: utility classes work
+ *    identically; a v3 Play CDN `tailwind.config = {…}` object does not apply (v4
+ *    config lives in a `<style type="text/tailwindcss">` `@theme` block instead).
  *
  *  - **The console is bridged back.** A small script injected at the top of the
  *    document forwards `console.log`/`warn`/`error`, uncaught errors and unhandled
@@ -56,9 +57,34 @@ import type { ProgressReport, RunContext, RunIO, RunSession, Runtime, SourceFile
 const MARK = '__warsha_preview__'
 
 /** Warsha's first-party, on-device Tailwind build (staged by `npm run assets`,
- *  see package.json / .gitignore). Absolute so it resolves to the app origin from
- *  inside the srcdoc iframe, where a bare relative path has no base to hang on. */
+ *  see package.json / .gitignore). */
 const TAILWIND_URL = new URL('warsha-tailwind.js', document.baseURI).href
+
+/**
+ * Fetch the Tailwind build once (same-origin, so it is allowed under the app's
+ * COEP) and cache it. The source is INLINED into the preview, never referenced by
+ * URL: the preview iframe is sandboxed without `allow-same-origin`, so it has an
+ * opaque origin, and a `<script src>` back to our own origin is *cross-origin*
+ * from its point of view — which `COEP: require-corp` blocks unless the response
+ * carries `Cross-Origin-Resource-Policy` (production nginx does not add it, and
+ * the browser's HTTP cache can hold a header-less copy). Inlining the bytes makes
+ * the document fully self-contained and sidesteps the whole COEP/CORP question.
+ */
+let tailwindSource: Promise<string> | null = null
+function loadTailwindSource(): Promise<string> {
+  if (!tailwindSource) {
+    tailwindSource = fetch(TAILWIND_URL)
+      .then((r) => {
+        if (!r.ok) throw new Error(`could not load the Tailwind build (${r.status})`)
+        return r.text()
+      })
+      .catch((err) => {
+        tailwindSource = null // let a later run retry rather than latch the failure
+        throw err
+      })
+  }
+  return tailwindSource
+}
 
 /** Does this `<script src>` point at a Tailwind CDN we can serve on-device? Both
  *  the v3 Play CDN and the v4 `@tailwindcss/browser` build are recognised. */
@@ -274,14 +300,25 @@ async function assemble(
     link.replaceWith(style)
   }
 
-  // Point a Tailwind CDN <script> at our on-device build before anything else,
-  // so it loads under COEP and offline. Rewriting the src (not replacing the
-  // element) keeps its position — Tailwind must run before the page's own
-  // scripts. The rewritten URL is absolute/external, so the loop below leaves it.
-  for (const script of Array.from(doc.querySelectorAll('script[src]'))) {
-    if (isTailwindCdn(script.getAttribute('src') ?? '')) {
-      script.setAttribute('data-warsha-src', script.getAttribute('src') as string)
-      script.setAttribute('src', TAILWIND_URL)
+  // Replace a Tailwind CDN <script> with our on-device build, INLINED (see
+  // loadTailwindSource for why inlined, not linked). Done before the loop below
+  // and keeping the element's position, since Tailwind must run before the page's
+  // own scripts. On a fetch failure the original CDN script is left as a last
+  // resort rather than dropping styling silently.
+  const twScripts = Array.from(doc.querySelectorAll('script[src]')).filter((s) =>
+    isTailwindCdn(s.getAttribute('src') ?? ''),
+  )
+  if (twScripts.length) {
+    try {
+      const twSource = safeScript(await loadTailwindSource())
+      for (const script of twScripts) {
+        const inline = doc.createElement('script')
+        inline.setAttribute('data-warsha-src', script.getAttribute('src') as string)
+        inline.textContent = twSource
+        script.replaceWith(inline)
+      }
+    } catch (err) {
+      onError(`${err instanceof Error ? err.message : String(err)}\n`)
     }
   }
 

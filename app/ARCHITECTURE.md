@@ -27,7 +27,7 @@ npm run preview   # serve dist/ on 8083
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
-| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. A `<script type="module">`/`.ts` that imports a project file is transpiled + bundled through `bundle.ts` first (a build error → Console + a red banner). A Tailwind CDN `<script>` is rewritten to the first-party on-device build (`public/warsha-tailwind.js`) so it works offline and under COEP. No worker; the bundler downloads once only when a page needs it. |
+| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. A `<script type="module">`/`.ts` that imports a project file is transpiled + bundled through `bundle.ts` first (a build error → Console + a red banner). A Tailwind CDN `<script>` is replaced by the first-party on-device build (`public/warsha-tailwind.js`), fetched same-origin and **inlined** — a linked `<script src>` would be cross-origin from the sandboxed preview's opaque origin and COEP would block it. No worker; the bundler downloads once only when a page needs it. |
 | `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/ts/mjs/tsx… entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. Plain one-file JS runs raw (instant); TypeScript or a script that imports another file is bundled first (`bundle.ts`). JS *inside* a page is inlined by `WebRuntime` instead. |
 | `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. Shared by `js.ts` (standalone scripts) and `web.ts` (a page's module scripts). |
 | `src/runtime/fake.ts` | `FakeRuntime` — fakes download/unpack/boot/run so the shell is demoable without an engine. |
@@ -481,10 +481,13 @@ that compile and run with piped stdin but have not been through that review. Eac
   banner in the preview. TypeScript folds into the Web tile (no separate picker tile), with three starters
   (`web-ts`, `web-ts-modules`, `web-modules` — a page whose module script imports TS). **Phase 3
   (Tailwind) is in too:** a `<script>` pointing at `cdn.tailwindcss.com` or `@tailwindcss/browser` is
-  rewritten to Warsha's first-party build (`public/warsha-tailwind.js`, a verbatim copy of
-  `@tailwindcss/browser`'s v4 global build, staged by `npm run assets`). Same-origin, so it loads under
-  the app's COEP — a real cross-origin CDN `<script>` is an opaque resource and would be blocked — and it
-  works offline. Utility classes are identical to the CDN; a v3 `tailwind.config = {}` object does not
+  replaced by Warsha's first-party build (`public/warsha-tailwind.js`, a verbatim copy of
+  `@tailwindcss/browser`'s v4 global build, staged by `npm run assets`), fetched same-origin and
+  **inlined** into the document. Inlining is required, not a nicety: the preview iframe is sandboxed
+  without `allow-same-origin`, so it has an opaque origin, and a linked `<script src>` back to our own
+  origin is *cross-origin* from its view — which COEP `require-corp` blocks unless the response carries
+  `Cross-Origin-Resource-Policy` (production nginx does not add it). Inlining the bytes makes the document
+  self-contained and works offline. Utility classes are identical to the CDN; a v3 `tailwind.config = {}` object does not
   apply (v4 config goes in a `<style type="text/tailwindcss">` `@theme` block). Starter `web-tailwind`.
   `JsRuntime` has no stdin yet. The React/Vue/Svelte starter kits are the remaining phase. Local refs are
   inlined; other network refs (a non-Tailwind CDN) are left untouched, the seam those kits build on. The
