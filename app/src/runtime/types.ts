@@ -39,11 +39,44 @@ export interface RunIO {
   onStderr(text: string): void
   onStdinRequest(): void          // console should focus its input line
   onExit(code: number | null): void
+  /**
+   * OPTIONAL, and only ever called by a `kind: 'preview'` runtime. Hand the
+   * shell a complete HTML document to load into the preview iframe it owns; the
+   * runtime rebuilds and re-emits it on every run. A console runtime never calls
+   * this, and the shell leaves it undefined for one — so an engine that ignores
+   * it (Java, Python) is unaffected. The preview's `console.log` and errors still
+   * flow back through `onStdout`/`onStderr`, so the Console stays useful.
+   */
+  onRender?(srcdoc: string): void
 }
 export interface RunSession { kill(): void; writeStdin(line: string): void }
+
+/**
+ * Which output surface a runtime drives. This is the seam that lets Warsha grow
+ * past a console: `'console'` engines (Java, Python) stream stdout/stdin, and a
+ * `'preview'` engine renders a live document into an iframe. Future surfaces —
+ * a full-stack sandbox, a database view — become new members here, and the
+ * shell branches on this one field rather than on a language id.
+ *
+ * Optional and defaulting to `'console'`, so every engine written before this
+ * union existed keeps its old meaning without a change.
+ */
+export type RuntimeKind = 'console' | 'preview'
+
 export interface Runtime {
-  readonly id: 'java' | 'python'
-  load(onProgress: (p: ProgressReport) => void): Promise<void>   // heavy engine bootstrap, idempotent
+  readonly id: string
+  /**
+   * The output surface this engine drives. Absent means `'console'` — the
+   * original contract, and what Java and Python are.
+   */
+  readonly kind?: RuntimeKind
+  /**
+   * Heavy engine bootstrap, idempotent. `ctx` describes the run this load is
+   * for (see `RunContext`); it is optional and every current engine but
+   * JavaScript ignores it, so an engine written as `load(onProgress)` still
+   * satisfies this type.
+   */
+  load(onProgress: (p: ProgressReport) => void, ctx?: RunContext): Promise<void>
   run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession>
   /**
    * OPTIONAL. Throw the engine away: report any live session as killed,
@@ -74,6 +107,22 @@ export interface Runtime {
    * Java's, that no caller needs to ask.
    */
   isReady?(): boolean
+}
+
+/**
+ * What a run is about to do, handed to `load()` so an engine can prepare for
+ * *this* run rather than in the abstract.
+ *
+ * Java, Python and C# ignore it — their bootstrap is the same whatever the files
+ * are. The JavaScript engine needs it: a plain one-file script runs with nothing
+ * to download, but the moment the entry is TypeScript or reaches for another
+ * module it needs the esbuild bundler (~12 MB, once). Only `load()` can show that
+ * download's progress bar, and only with the files in hand can it tell the two
+ * cases apart — so the shell passes them here.
+ */
+export interface RunContext {
+  files: SourceFile[]
+  entry: string
 }
 
 /** Accepts either shape, so an engine may report a plain string. */

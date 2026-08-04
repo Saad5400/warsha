@@ -5,7 +5,7 @@ import { splitPath } from './fs/project'
 import { prefs, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { disposeRuntimes, entryCandidates } from './runtime'
+import { disposeRuntimes, entryCandidates, isPreviewEntry } from './runtime'
 import { type Template } from './templates'
 import { exportZip } from './zip'
 import { useProject } from './hooks/useProject'
@@ -20,12 +20,13 @@ import { ActivityBar } from './components/ActivityBar'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
 import { StorageBanner } from './components/StorageBanner'
 import { Console } from './components/Console'
+import { Preview } from './components/Preview'
 import { ConsoleDivider } from './components/ConsoleDivider'
 import { Editor } from './components/Editor'
 import { Explorer } from './components/Explorer'
 import { InstallControl } from './components/InstallControl'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
-import { RunBar } from './components/RunBar'
+import { RunBar, type OutputView } from './components/RunBar'
 import { RunControl, resolveEntry, type RunControlState } from './components/RunControl'
 import { StatusBar } from './components/StatusBar'
 import { Tabs } from './components/Tabs'
@@ -136,6 +137,11 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [fontSize, setFontSize] = useState(initial.fontSize)
   const [consoleOpen, setConsoleOpen] = useState(!initial.consoleCollapsed)
   const [consoleHeight, setConsoleHeight] = useState(initial.consoleHeight)
+  // Which face the output pane shows for a web project — or null for "not chosen
+  // yet", in which case the entry decides (a page opens to the Preview, a lone
+  // script to its Console log). Once the student picks, that sticks. Ignored
+  // entirely for a Java/Python project, which has no preview.
+  const [outputView, setOutputView] = useState<OutputView | null>(null)
   const [hand, setHand] = useState<'right' | 'left'>(initial.hand)
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -857,6 +863,14 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const projectName = currentProject?.name ?? ''
 
+  // The output pane has two faces. A page project (html/css) drives the preview
+  // iframe and may switch to the Console (its log); a standalone script (.js) is
+  // a headless console program with no preview, and everything else (Java,
+  // Python) is console-only too. Preview is the default face for a page; the
+  // student's own choice overrides it.
+  const previewActive = isPreviewEntry(runControl.entry)
+  const outputFace: OutputView = previewActive ? (outputView ?? 'preview') : 'console'
+
   return (
     <div className={SHELL}>
       {/* VSCode's icon column. Rendered only at ≥900px — below that the drawer
@@ -1038,13 +1052,33 @@ function Ide({ report }: { report: CapabilityReport }) {
               entryPath={entryPath}
               consoleOpen={consoleOpen}
               canRun={runControl.canRun}
+              previewActive={previewActive}
+              view={outputFace}
+              onView={setOutputView}
               onEntryChange={setEntryPath}
               onRun={runControl.onRun}
               onStop={runControl.onStop}
               onClear={() => buffer.clear()}
               onToggleConsole={() => setConsoleOpen((v) => !v)}
             />
-            {consoleOpen ? (
+            {/* Two faces share this pane. A page project shows the live page
+                (Preview) with the Console one tap away for its log; a script and
+                the Java/Python engines have only the Console.
+
+                The preview iframe IS the page's execution — so for a page project
+                it stays MOUNTED whenever the pane is open, even while the Console
+                face is on top, and is merely hidden (`hidden`, display:none). A
+                display:none iframe keeps running, so the page's `console.log` fills
+                the Console whichever tab you are looking at. Unmounting it on the
+                Console tab was the bug where output only appeared after a visit to
+                Preview. `contents` lets the iframe's own flex sizing reach the
+                pane when it is the shown face. */}
+            {consoleOpen && previewActive ? (
+              <div className={outputFace === 'preview' ? 'contents' : 'hidden'}>
+                <Preview srcdoc={runner.previewDoc} />
+              </div>
+            ) : null}
+            {consoleOpen && outputFace === 'console' ? (
               <Console
                 buffer={buffer}
                 status={runner.status}

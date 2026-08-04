@@ -9,3 +9,10 @@ dist
 # runtimes/java/fetch-compiler.sh (*.jar is gitignored repo-wide for licensing).
 public/warsha-jvm.worker.js
 public/ecj.jar
+# The C# engine bundle (dotnet _framework + module worker), built + staged by
+# runtimes/csharp/build.sh. Large build product, never a source of truth.
+public/warsha-dotnet/
+# The esbuild bundler wasm, a verbatim copy of node_modules/esbuild-wasm/
+# esbuild.wasm (used to transpile/bundle TypeScript and cross-file JS/TS modules
+# in the browser). ~12 MB build product, never a source of truth.
+public/warsha-esbuild.wasm

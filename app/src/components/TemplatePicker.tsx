@@ -87,7 +87,10 @@ function LanguageStep({ titleId, onChoose }: { titleId: string; onChoose(id: str
       <p className="mb-4 text-meta leading-normal text-text-3">{COPY.pickerLangIntro}</p>
 
       <Section heading={COPY.pickerReadyHeading}>
-        <div className="grid grid-cols-2 gap-2 min-[560px]:grid-cols-3">
+        {/* Full-width on a phone so the two runnable languages read as the
+            headline and their version label has room; a compact row alongside
+            the "soon" grid once there is width for it. */}
+        <div className="grid grid-cols-1 gap-2 min-[560px]:grid-cols-3">
           {readyLanguages.map((l) => (
             <ReadyTile key={l.id} language={l} onChoose={() => onChoose(l.id)} />
           ))}
@@ -153,9 +156,9 @@ function ReadyTile({ language, onChoose }: { language: Language; onChoose(): voi
     <button type="button" onClick={onChoose} className={READY_TILE}>
       <LangMark language={language} />
       <span className="min-w-0 flex-1">
-        <span className="block text-btn leading-[1.2] font-semibold text-text-1">{language.label}</span>
+        <span className="block truncate text-btn leading-[1.2] font-semibold text-text-1">{language.label}</span>
         {language.version ? (
-          <span className="block text-micro leading-[1.3] text-text-3">{language.version}</span>
+          <span className="block truncate text-micro leading-[1.3] text-text-3">{language.version}</span>
         ) : null}
       </span>
       <IconChevronRight
@@ -174,12 +177,13 @@ function SoonTile({ language }: { language: Language }) {
   return (
     <div className={SOON_TILE} aria-disabled="true" aria-label={COPY.pickerSoonLabel(language.label)}>
       <LangMark language={language} dimmed />
-      <span className="min-w-0 flex-1">
-        <span className="block text-btn leading-[1.2] font-semibold text-text-2">{language.label}</span>
-      </span>
+      <span className="min-w-0 flex-1 truncate text-btn leading-[1.2] font-semibold text-text-2">{language.label}</span>
+      {/* The "Coming soon" section header and the dimming already say these are
+          unbuilt; the per-tile pill is a wider-screen nicety that would only
+          crush the label on a two-up phone grid, so it is hidden there. */}
       <span
         aria-hidden="true"
-        className="flex-none rounded-sm bg-surface-4 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-[0.04em] text-text-3"
+        className="hidden min-[560px]:block flex-none rounded-sm bg-surface-4 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-[0.04em] text-text-3"
       >
         {COPY.pickerSoonBadge}
       </span>

@@ -10,6 +10,7 @@
     "projects": "node verify-projects.mjs",
     "migration": "node verify-migration.mjs",
     "robustness": "node robustness.mjs",
+    "offline": "node offline-check.mjs",
     "timings": "node measure-java.mjs",
     "all": "node verify.mjs && node verify-java.mjs && node verify-projects.mjs && node verify-migration.mjs && node robustness.mjs"
   },

@@ -105,7 +105,7 @@ await shot('welcome-1024')
 // =========================================== build the Java project and measure
 await page.setViewportSize({ width: 1280, height: 860 })
 await page.waitForTimeout(300)
-await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 15000 })
 await page.waitForTimeout(700)
 // Dismiss the capability banner so it does not eat the captures. Scoped to the

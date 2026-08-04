@@ -25,20 +25,23 @@ npm run preview   # serve dist/ on 8083
 | `src/console/buffer.ts` | The transcript. Chunk-based (not line-based), batched notification, 5000-line head-dropping cap. Plain TS, no React. |
 | `src/editor/setup.ts` | All CodeMirror wiring: per-file state cache, lazy grammars, compartments. Plain TS. |
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
-| `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO`, `RunSession`, `Runtime`. |
-| `src/runtime/index.ts` | Runtime **registry** + entry-point resolution. |
+| `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunSession`, `RuntimeKind`, `Runtime`. |
+| `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
+| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. No download, no worker. |
+| `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/mjs entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. JS *inside* a page is inlined by `WebRuntime` instead. |
 | `src/runtime/fake.ts` | `FakeRuntime` — fakes download/unpack/boot/run so the shell is demoable without an engine. |
 | `src/fs/types.ts` | `ProjectStore` + `FsSnapshot`: the storage seam. |
 | `src/fs/opfs.ts` | `OpfsStore` (default) and `MemoryStore` (fallback); `createStore()` picks. |
 | `src/fs/project.ts` | `Project` — in-memory source of truth, tree building, debounced persistence, change events. |
 | `src/fs/prefs.ts` | UI state in `localStorage` (font size, console height/collapsed, open tabs, entry, handedness). |
-| `src/templates.ts` | **Generated** from `content/templates/` — see §5. |
+| `src/templates.ts` | **Generated** from `content/templates/` — see §5. Each starter carries a `level` (beginner / intermediate / advanced); a ready language owns one per level. |
+| `src/languages.ts` | The language catalogue the picker projects: which languages exist, which are `ready` (an engine is wired in runtime/index.ts) vs `soon` (a dimmed, unpickable promise). Grows as engines land. |
 | `src/zip.ts` | Export/import `.zip` via fflate. |
 | `src/hooks/useProject.ts` | Binds `Project`'s events to a React revision counter. |
 | `src/hooks/useRunner.ts` | The run state machine: status, progress, stdin buffering, kill, escalation timers. |
 | `src/hooks/useMedia.ts` | `useMedia` (the <900px threshold) and `useKeyboardOpen` (reads `html[data-kb]`). |
 | `src/index.css` | Token import + Tailwind theme mapping + the few things utilities cannot express. |
-| `public/coi-serviceworker.js` | Vendored v0.1.7, **plus a Warsha offline caching layer**. Buys cross-origin isolation on a header-less static host, and serves the app shell + downloaded runtimes offline — see §2.5. |
+| `public/coi-serviceworker.js` | Vendored v0.1.7, **plus a Warsha offline caching layer**. Buys cross-origin isolation on a header-less static host, and serves the app shell + Python runtime offline (Java partially cached, not guaranteed offline) — see §2.5. |
 
 ### Components
 
@@ -51,11 +54,13 @@ Small and boring on purpose — roughly one file per box on screen.
 | `Tabs` | Horizontal strip, dirty dot, close. |
 | `Editor` | ~40-line shell around `editor/setup.ts`. |
 | `Console` | The transcript, the live stdin line inside it, and the sticky status foot. |
-| `RunBar` | The console header: Run/Stop, status pill, entry picker, Clear, collapse. |
+| `Preview` | The output pane's second face: one sandboxed iframe (`allow-scripts`, **no** `allow-same-origin`) that loads the Web runtime's assembled `srcdoc`. Shown for a web project; the Console shows the transcript for Java/Python. |
+| `RunBar` | The console header: Run/Stop, status pill, entry picker, Clear, collapse — plus the Preview \| Console toggle for a web project. |
 | `ConsoleDivider` | Drag-resize handle (≥900px only). |
 | `ProgressBlock` | First-run engine download (bar, byte counter, phase). |
 | `StatusPill` | The seven run states. |
-| `WelcomePanel` | The empty project's editor area, and the whole first-run experience: three start cards (New file / the two starters from `templates.ts`) plus Import .zip, the first-run download note and the storage line. Rendered by `App` **instead of** `Tabs` + `Editor` while `project.isEmpty()`, so there is no welcome page, no route and no language gate — a starter is an action inside the IDE, and language comes from file extensions. |
+| `WelcomePanel` | The empty project's editor area, and the whole first-run experience: two start cards (New file / New from a starter → the picker) plus Import .zip, the first-run download note and the storage line. Rendered by `App` **instead of** `Tabs` + `Editor` while `project.isEmpty()`, so there is no welcome page, no route and no language gate — a starter is an action inside the IDE, and language comes from file extensions. |
+| `TemplatePicker` | The one entry point for starting any project (WelcomePanel's card and the project menu's single "New project…" both open it): a grid of languages from `languages.ts` — ready above `soon` — then the chosen language's starters grouped by level. It resolves to a starter or to "blank" and leaves the create/fill decision to `App`. This is what keeps the project menu one row wide as the language list grows. |
 | `ImportZipDialog` | One dialog for the whole import: drop zone or file picker, what the .zip contains, what it replaces, confirm. |
 | `CapabilityScreens` | Fatal screen + dismissible warning banner. |
 | `FileBadge`, `Logo` | Language badges; inlined logo that recolours via custom properties. |
@@ -155,8 +160,15 @@ a real Vite build and a real dev server.
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
   for the shell and the two runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) and
   network-first for navigations with a cached-`index.html` fallback, so after one online visit the
-  app opens and its already-downloaded runtimes run with **no network**. Cache Storage is kept from
-  eviction by the same `requestPersistence()` (`fs/health.ts`) that protects OPFS. Two departures
+  app shell opens with **no network**. Cache Storage is kept from eviction by the same
+  `requestPersistence()` (`fs/health.ts`) that protects OPFS. Runtime coverage differs by engine and
+  is deliberate: **Python (Pyodide) works fully offline** — jsdelivr serves it over CORS, so every
+  piece caches. **Java (CheerpJ) is not guaranteed offline**: it pulls its loader via a no-cors
+  `importScripts()` (an opaque response we refuse to store — opaque entries are quota-padded by Chrome
+  and would risk evicting OPFS) and lazily fetches runtime pieces it never touched on the first run.
+  The bulk of CheerpJ (`cj3.wasm` et al., fetched CORS) still caches, so it is persisted, just not
+  offline-complete. `tools/qa/offline-check.mjs` asserts the shell + Python offline; Java offline is a
+  known limitation. Two departures
   from upstream: (a) it registers **even when the origin already sends the isolation headers**
   (production nginx), because the worker is now needed for offline, not only for headers; (b) the
   isolation *reload* is gated on `!crossOriginIsolated`, so a header-less host still reloads exactly
@@ -418,20 +430,43 @@ Three lessons about the harness itself, all of which produced false results befo
 
 ## 5. Templates are generated, not authored
 
-`src/templates.ts` is generated from `content/templates/` (Education's reviewed, compiled,
-stdin-tested starters) and the code strings inside it are **byte-identical** to those files. Do not
-edit the strings by hand. To change a starter, edit it under `content/templates/`, regenerate, and
-re-verify with a diff against the source. The blurbs, ids and entry paths are Warsha's own metadata
-and live only in the generated file.
+`src/templates.ts` is generated from `content/templates/` and the code strings inside it are
+**byte-identical** to those files. Do not edit the strings by hand. To change a starter, edit it
+under `content/templates/`, regenerate, and re-verify with a diff against the source. The blurbs,
+ids, `level`s and entry paths are Warsha's own metadata and live only in the generated file.
+
+Two review tiers coexist: the `advanced` starters (`java-oop`, `python-starter`) are Education's
+reviewed, compiled, stdin-tested originals; the `beginner`/`intermediate` starters are later drafts
+that compile and run with piped stdin but have not been through that review. Each `ready` language
+(languages.ts) should own one starter per level so the picker's three groups are never empty.
 
 ---
 
 ## 6. Known gaps
 
-- Both runtimes are real and verified end-to-end against the built `dist/`: `python` →
-  `PythonRuntime` (Pyodide 314.0.3 / CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.26,
-  Java 8 only). `src/runtime/fake.ts` is now unreferenced — kept because it is the fastest way to
-  demo or test the shell without an engine, and it documents the contract by example.
+- Five runtimes are real, verified end-to-end: `python` → `PythonRuntime` (Pyodide 314.0.3 /
+  CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.26, Java 8 only), `csharp` →
+  `CSharpRuntime` (.NET 9 wasm + Roslyn — compiles and runs student C# in a module worker;
+  ~13–15 MB brotli, blocking `Console.ReadLine()` over `SharedArrayBuffer`; see
+  `runtimes/csharp/INTEGRATION.md`), `web` → `WebRuntime` (a **page** — html/css — in a sandboxed
+  iframe), and `js` → `JsRuntime` (a **standalone script** run headless in a Web Worker, Node-like).
+  All but `web` are `kind: 'console'`; `web` is `kind: 'preview'` — see §2's runtime contract. The
+  entry's extension picks the engine: `.cs` → `csharp`, html/css → `web`, js/mjs → `js`, and a `.js`
+  *referenced from a page* is inlined by `web`, never run by `js`. `src/runtime/fake.ts` is
+  unreferenced — kept as the fastest way to demo the shell without an engine, and it documents the
+  console contract by example.
+- **A preview's iframe is its execution.** For a page project the `Preview` iframe stays MOUNTED
+  while the output pane is open even when the Console face is on top (it is merely `display:none`),
+  because a display:none iframe keeps running — so the page's `console.log` fills the Console
+  whichever tab you are on. Unmounting it on the Console tab was a bug where a page (and a lone
+  script, before it moved to `JsRuntime`) only ran once you visited Preview.
+- **Web is Phase 1 of a larger plan and has deliberate limits.** A `<script type="module">` that
+  `import`s another *project* file does not resolve, and a standalone script cannot `import` another
+  project file either — cross-file ES modules need the bundling step that arrives with TypeScript
+  (Phase 2). `JsRuntime` has no stdin yet. Tailwind and the React/Vue/Svelte starter kits are later
+  phases. Local refs are inlined; network refs (a CDN) are left untouched, the seam those phases
+  build on. The output pane reuses the console panel's bottom strip, so on a phone the preview is
+  small — a larger, editor-adjacent preview is a follow-up.
 - Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours) and its
   bootstrap compile costs 7–20 s on a fresh worker. Both are flagged for Product in
   `runtimes/java/INTEGRATION.md`.

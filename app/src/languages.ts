@@ -2,8 +2,8 @@
  * The language catalogue the New-project picker is built from.
  *
  * Warsha runs code entirely on the device, so a language is "ready" only once
- * its engine is actually wired into runtime/index.ts — today that is Java and
- * Python and nothing else. Every other entry here is a promise, not a feature:
+ * its engine is actually wired into runtime/index.ts — today that is Python,
+ * Java and Web (HTML/CSS/JS). Every other entry here is a promise, not a feature:
  * it shows in the picker as a dimmed "Soon" tile that cannot be chosen, so a
  * student sees where Warsha is going without being handed a language that would
  * fail the moment they pressed Run.
@@ -39,11 +39,16 @@ export interface Language {
 export const languages: Language[] = [
   { id: 'python', label: 'Python', status: 'ready', version: 'Python 3.14', mark: 'Py' },
   { id: 'java', label: 'Java', status: 'ready', version: 'Java 8', mark: 'J' },
-  { id: 'javascript', label: 'JavaScript', status: 'soon', mark: 'JS' },
-  { id: 'typescript', label: 'TypeScript', status: 'soon', mark: 'TS' },
+  // One tile for the browser stack. HTML, CSS, JavaScript and TypeScript are a
+  // single "language" here on purpose (the request): a web project mixes them in
+  // one preview, and a standalone .js/.ts runs headless like Node — so splitting
+  // them into separate picker tiles would be a lie about how they are used.
+  // TypeScript joined here (not as its own tile) once the in-browser bundler
+  // landed. Each file still gets its own editor grammar and badge.
+  { id: 'web', label: 'Web', status: 'ready', version: 'HTML · CSS · JS · TS', mark: '</>' },
+  { id: 'csharp', label: 'C#', status: 'ready', version: '.NET 9 · Roslyn', mark: 'C#' },
   { id: 'c', label: 'C', status: 'soon', mark: 'C' },
   { id: 'cpp', label: 'C++', status: 'soon', mark: 'C++' },
-  { id: 'csharp', label: 'C#', status: 'soon', mark: 'C#' },
   { id: 'go', label: 'Go', status: 'soon', mark: 'Go' },
   { id: 'rust', label: 'Rust', status: 'soon', mark: 'Rs' },
   { id: 'kotlin', label: 'Kotlin', status: 'soon', mark: 'Kt' },

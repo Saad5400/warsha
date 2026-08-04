@@ -1,0 +1,14 @@
+{
+  "name": "@warsha/runtime-csharp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": ".NET-wasm + Roslyn backed C# runtime for Warsha, implementing the app's Runtime contract",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "node --check src/dotnet.worker.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "./build.sh",
+    "harness": "./build.sh && cd harness && node serve.mjs 8087"
+  }
+}

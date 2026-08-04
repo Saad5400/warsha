@@ -21,7 +21,7 @@ export function extOf(name: string): string {
   return i === -1 ? '' : name.slice(i + 1).toLowerCase()
 }
 
-const langs: Record<string, IconLang> = { java: 'java', py: 'python' }
+const langs: Record<string, IconLang> = { java: 'java', py: 'python', cs: 'csharp' }
 
 export type BadgeSize = 'sm' | 'md'
 export type BadgeTone = 'java' | 'py' | 'plain'
@@ -42,7 +42,22 @@ export function badgeClass(size: BadgeSize, tone: BadgeTone): string {
   return `${BADGE} ${BADGE_SIZE[size]} ${BADGE_TONE[tone]}`
 }
 
-const letters: Record<string, string> = { md: 'M', txt: 'T', json: '{}' }
+const letters: Record<string, string> = {
+  md: 'M',
+  txt: 'T',
+  json: '{}',
+  // Web files. Short marks in the code font, the same "a letter is a label, not a
+  // logo" call the other plain extensions make — html/css/js do not each own a
+  // vendor glyph small enough to read at 20px, so they stay lettered.
+  html: '<>',
+  htm: '<>',
+  css: '#',
+  js: 'JS',
+  mjs: 'JS',
+  jsx: 'JS',
+  ts: 'TS',
+  tsx: 'TS',
+}
 
 /** Inset inside the 20px / 24px badge box so the glyph is not flush to the fill. */
 const ICON_SIZE = { sm: 18, md: 20 } as const

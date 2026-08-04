@@ -2,6 +2,7 @@
  * device actually is. Desktop Chrome at a 390px width still reports
  * `hover: hover`, so the hover-gated affordances have to be checked here. */
 import { chromium, devices } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,7 +37,7 @@ info('media: ' + JSON.stringify(media))
 check(!media.hover && media.coarse, 'emulating a real touch device (no hover, coarse pointer)')
 
 // Seed a project.
-await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
 await page.locator('button[aria-label="Files"]').click()
 await page.waitForTimeout(500)

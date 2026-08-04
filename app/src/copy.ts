@@ -33,9 +33,10 @@ export const COPY = {
     'Reload the page once. If it still will not work, use Chrome on Android or on a computer.',
   engineBroken: (lang: string) => `Warsha could not start ${lang}.`,
   engineBrokenHint: 'Try again. If it keeps happening, reload the page.',
-  /** The engine stopped answering — a worker the browser took away, usually memory. */
+  /** The engine stopped answering — a worker the browser took away, usually
+   * memory. A single red line in the transcript, no failure card: it is not the
+   * student's fault and the one next step is to press Run. */
   engineLost: 'The language engine stopped responding, so Warsha shut it down.',
-  engineLostHint: 'Your files are safe. Press Run to start a fresh one.',
   engineRetry: 'Try again',
   engineDetails: 'Details',
   /** Run went ahead on what is on screen because a save did not land. */
@@ -58,6 +59,15 @@ export const COPY = {
   stdinHintShort: 'Waiting for you — type your answer, then Enter.',
   consoleEmpty: 'Output will appear here when you run your code.',
   consoleCleared: 'Cleared.',
+
+  // ---- preview surface (web projects) ----
+  // The iframe that renders a web project. `console.log` and errors still land in
+  // the Console tab beside it, so the two views are the page and its log.
+  previewTitle: 'Preview',
+  previewEmpty: 'Your page will appear here when you run it.',
+  /** The output pane's two faces, for a web project's tab toggle. */
+  viewPreview: 'Preview',
+  viewConsole: 'Console',
   /** PLACEHOLDER */
   editorEmpty: 'Pick a file from the explorer to start editing.',
   truncated: 'Earlier output hidden (5000-line limit).',

@@ -20,9 +20,14 @@ export type TemplateLevel = 'beginner' | 'intermediate' | 'advanced'
 
 export interface Template {
   id: string
+  /**
+   * The language tile this starter lives under in the picker (languages.ts). For
+   * `web` the starter is multi-language by nature — its files are html/css/js —
+   * so this is the *category*, not a per-file language; each file's own badge and
+   * editor grammar still come from its extension.
+   */
   name: string
-  /** The language's id in languages.ts. Also its file-badge glyph. */
-  lang: 'java' | 'python'
+  lang: 'java' | 'python' | 'web' | 'csharp'
   level: TemplateLevel
   blurb: string
   entry: string
@@ -298,6 +303,401 @@ if __name__ == "__main__":
     main()
 `
 
+const WEB_PAGE_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My web page</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- HTML is the structure. These tags are headings, paragraphs and a list. -->
+    <h1>Hello from Warsha</h1>
+    <p>This page is written in HTML and styled with CSS. Press Run to see it.</p>
+
+    <ul>
+      <li>HTML gives the page its structure.</li>
+      <li>CSS gives it its look.</li>
+      <li>Open <code>styles.css</code> and change a colour, then Run again.</li>
+    </ul>
+  </body>
+</html>
+`
+
+const WEB_PAGE_STYLES_CSS = `/* CSS is the look: colours, spacing, fonts. Change a value and press Run. */
+
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  max-width: 40rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+h1 {
+  color: #b45309; /* try changing this colour */
+}
+
+code {
+  background: #eaeaea;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+li {
+  margin: 0.25em 0;
+}
+`
+
+const WEB_INTERACTIVE_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interactive page</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h1>Click counter</h1>
+    <p>JavaScript makes a page respond to what you do.</p>
+
+    <button id="count">Clicked 0 times</button>
+
+    <p class="hint">Every click also prints to the Console tab.</p>
+
+    <script src="script.js"></script>
+  </body>
+</html>
+`
+
+const WEB_INTERACTIVE_STYLES_CSS = `/* The look of the page. The button gets a hover and a pressed state. */
+
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  max-width: 40rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+}
+
+button {
+  font: inherit;
+  padding: 0.6em 1.2em;
+  color: #fff;
+  background: #b45309;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #92400e;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.hint {
+  color: #666;
+  font-size: 0.9em;
+}
+`
+
+const WEB_INTERACTIVE_SCRIPT_JS = `// JavaScript runs in the page. This finds the button and reacts to each click.
+
+const button = document.querySelector("#count");
+let clicks = 0;
+
+button.addEventListener("click", () => {
+  clicks += 1;
+  button.textContent = "Clicked " + clicks + " time" + (clicks === 1 ? "" : "s");
+
+  // console.log shows up in the Console tab, right beside the Preview.
+  console.log("click number", clicks);
+});
+
+console.log("Page ready — click the button.");
+`
+
+const WEB_JS_SCRIPT_JS = `// JavaScript on its own — there is no page to show, so everything you print
+// with console.log appears in the Console. Press Run.
+
+console.log("=== Warsha starter ===");
+
+// A variable stores a value you can use again by name.
+const language = "JavaScript";
+console.log("You are writing " + language + ".");
+
+// A loop repeats. This counts 1, 2, 3.
+for (let n = 1; n <= 3; n++) {
+  console.log("Line " + n);
+}
+
+// A function is a named piece of code you can call as many times as you like.
+function greet(name) {
+  return "Hello, " + name + "!";
+}
+
+console.log(greet("world"));
+console.log("Now change a line above and Run again.");
+`
+
+const WEB_TS_MAIN_TS = `// TypeScript is JavaScript with types. The types are checked, then removed
+// before your code runs. There is no page to show, so everything you print with
+// console.log appears in the Console. Press Run.
+
+// A type says which values are allowed. TypeScript flags a mismatch as you type.
+type Grade = "pass" | "retry";
+
+// An interface describes the shape of an object.
+interface Student {
+  name: string;
+  score: number;
+}
+
+// The ": Grade" after the parameters is the return type.
+function verdict(score: number): Grade {
+  return score >= 7 ? "pass" : "retry";
+}
+
+const students: Student[] = [
+  { name: "Layla", score: 8 },
+  { name: "Omar", score: 6 },
+];
+
+console.log("=== Warsha starter ===");
+for (const student of students) {
+  console.log(\`\${student.name}: \${student.score} -> \${verdict(student.score)}\`);
+}
+
+// Try changing a score to a string above — TypeScript will underline it.
+console.log("Now change a line and Run again.");
+`
+
+const WEB_TS_MODULES_SHAPES_TS = `// A module: other files import what it \`export\`s. The types travel across the
+// import, so main.ts knows exactly what each shape can do.
+
+export interface Shape {
+  name: string;
+  area(): number;
+}
+
+// "implements Shape" is a promise this class has everything a Shape needs.
+export class Circle implements Shape {
+  name = "Circle";
+
+  // A "private" constructor parameter also becomes a field — no extra line.
+  constructor(private radius: number) {}
+
+  area(): number {
+    return Math.PI * this.radius ** 2;
+  }
+}
+
+export class Rectangle implements Shape {
+  name = "Rectangle";
+
+  constructor(
+    private width: number,
+    private height: number,
+  ) {}
+
+  area(): number {
+    return this.width * this.height;
+  }
+}
+`
+
+const WEB_TS_MODULES_MAIN_TS = `// Warsha starter: a program split across files. main.ts imports the shapes from
+// shapes.ts, and TypeScript checks the whole project together. Press Run.
+
+import { Circle, Rectangle, type Shape } from "./shapes";
+
+// One list can hold different kinds of Shape.
+const shapes: Shape[] = [new Circle(2), new Rectangle(3, 4)];
+
+console.log("=== Warsha starter ===");
+for (const shape of shapes) {
+  console.log(\`\${shape.name}: area = \${shape.area().toFixed(2)}\`);
+}
+
+const total = shapes.reduce((sum, shape) => sum + shape.area(), 0);
+console.log(\`Total area = \${total.toFixed(2)}\`);
+
+// Open shapes.ts, add a Square class, then use it here and Run again.
+console.log("Now open shapes.ts and add a Square.");
+`
+
+const CSHARP_BASICS_PROGRAM_CS = `using System;
+
+// Your first C# program. C# starts running at the top. Press Run.
+
+// Console.WriteLine shows a line in the console.
+Console.WriteLine("=== Warsha starter ===");
+
+// A variable stores a value. C# needs its type: string, int.
+string language = "C#";
+int year = 2026;
+Console.WriteLine("You are writing " + language + ".");
+
+// A loop repeats. This counts 1, 2, 3.
+for (int number = 1; number <= 3; number++)
+{
+    Console.WriteLine("Line " + number);
+}
+
+// Console.ReadLine reads one line that you type into the console.
+Console.Write("Your name: ");
+string? name = Console.ReadLine();
+
+Console.WriteLine("Hello, " + name + "! Now change a line above and Run again.");
+`
+
+const CSHARP_METHODS_PROGRAM_CS = `using System;
+
+/// <summary>Methods and an array — the next step after the basics.</summary>
+class Program
+{
+    // A method is a named piece of code you can call with different values.
+    // static means it belongs to the class, so Main() can call it directly.
+    static string Greet(string name)
+    {
+        return "Hello, " + name + "!";
+    }
+
+    static double Average(int[] numbers)
+    {
+        int total = 0;
+        foreach (int n in numbers)
+        {
+            total += n;
+        }
+        // Cast to double so 31 / 4 is 7.75, not 7.
+        return (double)total / numbers.Length;
+    }
+
+    static void Main()
+    {
+        Console.WriteLine("=== Warsha starter ===");
+
+        // An array holds many values of one type, in order.
+        int[] scores = { 8, 6, 10, 7 };
+        Console.WriteLine("Average: " + Average(scores));
+
+        // Loop over the array and decide something for each value.
+        foreach (int score in scores)
+        {
+            string verdict = score >= 7 ? "pass" : "retry";
+            Console.WriteLine("Score " + score + " -> " + verdict);
+        }
+
+        Console.Write("Your name: ");
+        string? name = Console.ReadLine();
+
+        Console.WriteLine(Greet(name ?? "") + " Now add a score to the array and Run again.");
+    }
+}
+`
+
+const CSHARP_STARTER_PROGRAM_CS = `using System;
+using System.Collections.Generic;
+
+/// <summary>Warsha starter: objects from another file, inheritance, and input.</summary>
+class Program
+{
+    static void Main()
+    {
+        // One list can hold different kinds of objects.
+        List<Shape> shapes = new List<Shape> { new Circle(2), new Rectangle(3, 4) };
+
+        Console.WriteLine("=== Warsha starter ===");
+        foreach (Shape shape in shapes)
+        {
+            Console.WriteLine(shape.Describe()); // each class answers in its own way
+        }
+
+        double total = 0;
+        foreach (Shape shape in shapes)
+        {
+            total += shape.Area();
+        }
+        Console.WriteLine($"Total area = {total:F2}");
+
+        // Console.ReadLine waits for you to type one line into the console.
+        Console.Write("Your name: ");
+        string? name = Console.ReadLine();
+
+        Console.WriteLine($"Hello, {name}! Now open Shapes.cs and add a Square.");
+    }
+}
+`
+
+const CSHARP_STARTER_SHAPES_CS = `using System;
+
+/// <summary>A very small shapes library: one base class and two shapes.</summary>
+class Shape
+{
+    // A read-only property: other classes can read Name, only this one sets it.
+    public string Name { get; }
+
+    // A constructor builds the object.
+    public Shape(string name)
+    {
+        Name = name;
+    }
+
+    // virtual means a subclass may replace this method with its own version.
+    public virtual double Area()
+    {
+        return 0.0;
+    }
+
+    public string Describe()
+    {
+        return $"{Name}: area = {Area():F2}";
+    }
+}
+
+/// <summary>A Circle is a Shape. ": Shape" reuses everything Shape has.</summary>
+class Circle : Shape
+{
+    private readonly double radius;
+
+    public Circle(double radius) : base("Circle") // let Shape store the name
+    {
+        this.radius = radius;
+    }
+
+    // override takes over Area() for Circles.
+    public override double Area()
+    {
+        return Math.PI * radius * radius;
+    }
+}
+
+class Rectangle : Shape
+{
+    private readonly double width;
+    private readonly double height;
+
+    public Rectangle(double width, double height) : base("Rectangle")
+    {
+        this.width = width;
+        this.height = height;
+    }
+
+    public override double Area()
+    {
+        return width * height;
+    }
+}
+`
+
 export const templates: Template[] = [
   {
     id: 'python-basics',
@@ -377,6 +777,115 @@ export const templates: Template[] = [
       files: [
         { path: 'helpers/shapes.py', content: PY_HELPERS_SHAPES_PY },
         { path: 'main.py', content: PY_MAIN_PY },
+      ],
+    },
+  },
+  {
+    id: 'web-page',
+    name: 'Web page',
+    lang: 'web',
+    level: 'beginner',
+    blurb: 'HTML for the structure, CSS for the look — and a live preview.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_PAGE_INDEX_HTML },
+        { path: 'styles.css', content: WEB_PAGE_STYLES_CSS },
+      ],
+    },
+  },
+  {
+    id: 'web-js',
+    name: 'JavaScript basics',
+    lang: 'web',
+    level: 'beginner',
+    blurb: 'JavaScript on its own — a loop, a function, output in the Console.',
+    entry: 'script.js',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'script.js', content: WEB_JS_SCRIPT_JS }],
+    },
+  },
+  {
+    id: 'web-interactive',
+    name: 'Interactive page',
+    lang: 'web',
+    level: 'intermediate',
+    blurb: 'A button that reacts to clicks — HTML, CSS and JavaScript together.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_INTERACTIVE_INDEX_HTML },
+        { path: 'styles.css', content: WEB_INTERACTIVE_STYLES_CSS },
+        { path: 'script.js', content: WEB_INTERACTIVE_SCRIPT_JS },
+      ],
+    },
+  },
+  {
+    id: 'web-ts',
+    name: 'TypeScript basics',
+    lang: 'web',
+    level: 'beginner',
+    blurb: 'Types, an interface, and a typed function — output in the Console.',
+    entry: 'main.ts',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'main.ts', content: WEB_TS_MAIN_TS }],
+    },
+  },
+  {
+    id: 'web-ts-modules',
+    name: 'TypeScript modules',
+    lang: 'web',
+    level: 'intermediate',
+    blurb: 'Split a typed program across files with import and export.',
+    entry: 'main.ts',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'main.ts', content: WEB_TS_MODULES_MAIN_TS },
+        { path: 'shapes.ts', content: WEB_TS_MODULES_SHAPES_TS },
+      ],
+    },
+  },
+  {
+    id: 'csharp-basics',
+    name: 'C# basics',
+    lang: 'csharp',
+    level: 'beginner',
+    blurb: 'Print, typed variables, a loop, and Console.ReadLine — one file, top to bottom.',
+    entry: 'Program.cs',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'Program.cs', content: CSHARP_BASICS_PROGRAM_CS }],
+    },
+  },
+  {
+    id: 'csharp-methods',
+    name: 'C# methods',
+    lang: 'csharp',
+    level: 'intermediate',
+    blurb: 'Write static methods, average an array, and decide per value.',
+    entry: 'Program.cs',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'Program.cs', content: CSHARP_METHODS_PROGRAM_CS }],
+    },
+  },
+  {
+    id: 'csharp-starter',
+    name: 'C# (OOP starter)',
+    lang: 'csharp',
+    level: 'advanced',
+    blurb: 'A shapes class in its own file, inheritance, a loop over objects, and input.',
+    entry: 'Program.cs',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'Program.cs', content: CSHARP_STARTER_PROGRAM_CS },
+        { path: 'Shapes.cs', content: CSHARP_STARTER_SHAPES_CS },
       ],
     },
   },

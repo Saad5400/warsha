@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Roslyn (and the reference assemblies we hand it) must be readable as
+         plain PE/IL. The default WebCIL wrapper renames assemblies to *.wasm and
+         wraps the metadata, which Roslyn's MetadataReference cannot parse. With
+         WebCIL off, _framework/ carries real *.dll files we can fetch and
+         reference at runtime. Costs a little size; correctness first for M0. -->
+    <WasmEnableWebcil>false</WasmEnableWebcil>
+
+    <!-- Stable asset filenames (no content-hash suffix), so we can fetch
+         reference assemblies by their plain name (System.Console.dll). The
+         dotnet.js loader reads the boot manifest either way, so booting is
+         unaffected. M1 will instead read the fingerprinted map from getConfig(). -->
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+
+    <!-- The spike compiles user code in-process; no trimming, so the whole BCL
+         is present both to run against and to reference. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+</Project>

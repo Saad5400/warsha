@@ -168,9 +168,17 @@ if (typeof window === 'undefined') {
         // Cache-first for the shell and the runtime CDNs. Once a student has run
         // a language online its engine is served from Cache Storage — which
         // requestPersistence() (app/src/fs/health.ts) keeps from being evicted —
-        // so it works offline and is never re-downloaded. We store only `ok`,
-        // non-opaque responses: an opaque body cannot carry the CORP that
-        // isolate() needs and it pads the quota, so opaque stays on the network.
+        // so it works offline and is never re-downloaded.
+        //
+        // We store only `ok`, non-opaque responses. Two reasons an opaque
+        // response is refused: it cannot carry the CORP that isolate() needs, and
+        // Chrome PADS an opaque entry to a large phantom size for quota
+        // accounting — a handful would blow the origin quota and evict the
+        // student's OPFS files. This means Pyodide (fetched CORS from jsdelivr)
+        // caches fully and works offline, while CheerpJ — which pulls its loader
+        // via a no-cors `importScripts()` and lazily fetches runtime pieces it
+        // did not touch on the first run — is only partially cached and is not
+        // guaranteed offline. See tools/qa/offline-check.mjs and ARCHITECTURE §2.5.
         if (cacheable(r)) {
             event.respondWith((async () => {
                 const cached = await caches.match(r);

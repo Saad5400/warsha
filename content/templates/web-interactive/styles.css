@@ -1,0 +1,33 @@
+/* The look of the page. The button gets a hover and a pressed state. */
+
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  max-width: 40rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+}
+
+button {
+  font: inherit;
+  padding: 0.6em 1.2em;
+  color: #fff;
+  background: #b45309;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #92400e;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.hint {
+  color: #666;
+  font-size: 0.9em;
+}

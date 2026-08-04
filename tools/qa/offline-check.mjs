@@ -11,10 +11,12 @@
  *   cd tools/qa && node offline-check.mjs
  *
  * What it guarantees: the shell (HTML/JS/CSS) and Python (Pyodide, from
- * jsdelivr) both survive going offline. Java/CheerpJ offline is best-effort —
- * only its CORS/CORP-cacheable assets can be replayed — so it is reported as a
- * warning here, never a failure; verify it by hand when CheerpJ's asset
- * headers change.
+ * jsdelivr) both survive going offline. Java/CheerpJ offline is a KNOWN
+ * LIMITATION, not asserted here: CheerpJ loads via a no-cors `importScripts()`
+ * (an opaque response the SW refuses to cache, to avoid quota-padding OPFS out
+ * of existence) and lazily fetches runtime pieces a first run never touches, so
+ * it cannot be relied on with no network. Its bulk assets still cache (they are
+ * persisted, just not offline-complete).
  *
  * Overridable:
  *   WARSHA_URL   base URL of a served BUILD   (default http://127.0.0.1:8086/)

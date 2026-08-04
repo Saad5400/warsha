@@ -7,9 +7,17 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
-import type { LangId } from '../runtime'
 import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
 import { memberSource } from './members'
+
+/**
+ * The languages that carry Warsha's hand-written snippets, keyword lists and
+ * beginner API dictionaries. This is narrower than the runtime's `LangId`: web
+ * files (html/css/js) get syntax highlighting and identifier completion, but not
+ * a curated dictionary — so `completionSources` takes this type, and `null` for
+ * everything else, rather than the whole runtime key set.
+ */
+export type CompletionLang = 'java' | 'python'
 
 /**
  * Completions and snippets — the "where is the IntelliSense?" layer.
@@ -71,7 +79,7 @@ export const PYTHON_SNIPPETS: readonly Completion[] = [
 
 /* ------------------------------------------------------------------ keywords */
 
-const KEYWORDS: Record<LangId, readonly string[]> = {
+const KEYWORDS: Record<CompletionLang, readonly string[]> = {
   java: `abstract assert boolean break byte case catch char class continue default do double else enum extends
 final finally float for if implements import instanceof int interface long new package private protected public
 return short static super switch this throw throws try void while true false null`.split(/\s+/),
@@ -235,7 +243,7 @@ const pythonModuleCompletion = ([label, module, detail]: readonly [string, strin
   apply: applyWithImport((s) => pyImportInsertion(s, module)),
 })
 
-const staticOptions = (lang: LangId): Completion[] => {
+const staticOptions = (lang: CompletionLang): Completion[] => {
   const api = lang === 'java' ? JAVA_API : PYTHON_API
   const snippets = lang === 'java' ? JAVA_SNIPPETS : PYTHON_SNIPPETS
   const apiCompletions = api.map(([label, detail]): Completion => {
@@ -255,7 +263,7 @@ const staticOptions = (lang: LangId): Completion[] => {
  * typing `s` already offers `sout` — the abbreviations only pay off if they turn
  * up before you have finished typing them.
  */
-function staticSource(lang: LangId): CompletionSource {
+function staticSource(lang: CompletionLang): CompletionSource {
   const inner = completeFromList(staticOptions(lang))
   return (ctx: CompletionContext) => {
     if (!ctx.explicit && !ctx.matchBefore(WORD_BEFORE)) return null
@@ -307,7 +315,7 @@ export function wordsInSource(text: string): string[] {
  */
 const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComment', 'BlockComment']
 
-export function completionSources(lang: LangId | null, projectWords: () => readonly string[]): CompletionSource[] {
+export function completionSources(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
   const ident = ifNotIn(NOT_IN, identifierSource(projectWords))
   if (!lang) return [ident]
   return [

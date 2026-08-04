@@ -1,6 +1,7 @@
 /* Snippets + completion verification, against the built app on :8088.
  * No engines involved — this is all editor behaviour. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,7 +41,7 @@ await page.waitForTimeout(2500)
 await page.waitForSelector('[role="tree"]', { timeout: 20000 })
 
 /* ------------------------------------------------------------ Java snippets */
-await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('.cm-content', { timeout: 10000 })
 await page.waitForTimeout(800)
 

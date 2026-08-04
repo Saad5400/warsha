@@ -2,6 +2,7 @@
  * Drives LOCAL Chrome against the built app on :8088. No engines needed —
  * every check here is files, tabs or editor chrome. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +45,7 @@ check(await page.locator('.empty__title', { hasText: 'No files yet' }).isVisible
 await shot('empty-1280')
 
 /* ------------------------------------------------- 2. seed the Java starter */
-await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
 info(`tree seeded: ${await rows().count()} rows`)
 check((await rows().count()) >= 3, 'template produced a nested tree')

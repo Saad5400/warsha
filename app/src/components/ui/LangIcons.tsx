@@ -94,8 +94,68 @@ export const IconPython = ({ size = 20, ...rest }: IconProps) => (
   </svg>
 )
 
-export type IconLang = 'java' | 'python'
+/**
+ * The Web mark: a `</>` in the code font's spirit, drawn as strokes on the same
+ * 20-unit grid as the language logos above. There is no single vendor logo for
+ * "HTML + CSS + JS", and a monochrome angle-bracket pair is the universal shorthand
+ * for markup/code — which is exactly what this tile stands for. currentColor, like
+ * the others, so it inherits the badge ink.
+ */
+export const IconWeb = ({ size = 20, ...rest }: IconProps) => (
+  <svg
+    viewBox="0 0 20 20"
+    width={size}
+    height={size}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+    {...rest}
+  >
+    <path d="M7 6.5 3.5 10 7 13.5" />
+    <path d="M13 6.5 16.5 10 13 13.5" />
+    <path d="M11 5 9 15" />
+  </svg>
+)
+
+/**
+ * The C# mark: a "C" and a sharp, drawn as strokes on the same 20-unit grid as
+ * the others. Unlike Python's snakes or Java's cup, C#'s brand *is* its
+ * letterform, so a geometric "C#" is the mark here, not a placeholder — the same
+ * reasoning that lets IconWeb use a `</>`. currentColor, monochrome, like the
+ * rest. Two sharp strokes lean like a musical ♯ so it does not read as "C#" the
+ * hashtag.
+ */
+export const IconCSharp = ({ size = 20, ...rest }: IconProps) => (
+  <svg
+    viewBox="0 0 20 20"
+    width={size}
+    height={size}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+    {...rest}
+  >
+    <path d="M9 7.3A3.5 3.5 0 1 0 9 12.7" />
+    <path d="M12.7 6.9 12 13.1" />
+    <path d="M15.5 6.9 14.8 13.1" />
+    <path d="M11.4 9.3 15.9 9.3" />
+    <path d="M11.1 10.9 15.6 10.9" />
+  </svg>
+)
+
+export type IconLang = 'java' | 'python' | 'web' | 'csharp'
 
 export function LangIcon({ lang, ...rest }: { lang: IconLang } & IconProps) {
-  return lang === 'java' ? <IconJava {...rest} /> : <IconPython {...rest} />
+  if (lang === 'java') return <IconJava {...rest} />
+  if (lang === 'web') return <IconWeb {...rest} />
+  if (lang === 'csharp') return <IconCSharp {...rest} />
+  return <IconPython {...rest} />
 }

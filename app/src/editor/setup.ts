@@ -10,7 +10,7 @@ import {
   highlightSpecialChars,
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { indentOnInput, bracketMatching, indentUnit, language, type LanguageSupport } from '@codemirror/language'
+import { indentOnInput, bracketMatching, indentUnit, language, LanguageSupport, StreamLanguage } from '@codemirror/language'
 import {
   autocompletion,
   closeBrackets,
@@ -19,9 +19,33 @@ import {
   acceptCompletion,
 } from '@codemirror/autocomplete'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { langForPath, type LangId } from '../runtime'
 import { indentGuides } from './indentGuides'
-import { completionSources } from './completions'
+import { completionSources, type CompletionLang } from './completions'
+
+/**
+ * The language the *editor* colours a file in — one per file, and finer-grained
+ * than the runtime's `LangId`: a web project is one runtime (`web`) but its files
+ * are html, css and javascript individually, each with its own grammar. Kept
+ * here rather than in runtime/index.ts because it is an editor concern (which
+ * Lezer grammar to parse with), not a "which engine runs this" one.
+ */
+export type EditorLang = 'java' | 'python' | 'csharp' | 'html' | 'css' | 'javascript'
+
+export function editorLangForPath(path: string): EditorLang | null {
+  if (path.endsWith('.java')) return 'java'
+  if (path.endsWith('.py')) return 'python'
+  if (path.endsWith('.cs')) return 'csharp'
+  if (/\.html?$/i.test(path)) return 'html'
+  if (/\.css$/i.test(path)) return 'css'
+  if (/\.(m?js|jsx|ts|tsx)$/i.test(path)) return 'javascript'
+  return null
+}
+
+/** Only Java and Python carry curated snippets/dictionaries; the rest get
+ *  grammar highlighting and identifier completion (see completions.ts). */
+function completionLang(lang: EditorLang | null): CompletionLang | null {
+  return lang === 'java' || lang === 'python' ? lang : null
+}
 
 /**
  * CodeMirror wiring, kept out of the React component so the component stays a
@@ -213,12 +237,37 @@ const chromeTheme = EditorView.theme(
 )
 
 /** Lezer grammars are the bulk of the bundle, so they load on demand. */
-const langCache = new Map<LangId, LanguageSupport>()
-async function loadLanguage(lang: LangId): Promise<LanguageSupport> {
+const langCache = new Map<EditorLang, LanguageSupport>()
+async function loadLanguage(lang: EditorLang): Promise<LanguageSupport> {
   const cached = langCache.get(lang)
   if (cached) return cached
-  const support =
-    lang === 'java' ? (await import('@codemirror/lang-java')).java() : (await import('@codemirror/lang-python')).python()
+  let support: LanguageSupport
+  switch (lang) {
+    case 'java':
+      support = (await import('@codemirror/lang-java')).java()
+      break
+    case 'python':
+      support = (await import('@codemirror/lang-python')).python()
+      break
+    case 'csharp':
+      // No official Lezer grammar for C#; the clike legacy stream mode covers it
+      // (keywords, strings, comments, numbers) — enough for syntax colour.
+      support = new LanguageSupport(
+        StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).csharp),
+      )
+      break
+    case 'html':
+      // lang-html brings its own embedded css/js highlighting for <style>/<script>.
+      support = (await import('@codemirror/lang-html')).html()
+      break
+    case 'css':
+      support = (await import('@codemirror/lang-css')).css()
+      break
+    case 'javascript':
+      // jsx/typescript on so a .jsx or .ts a later phase adds still highlights.
+      support = (await import('@codemirror/lang-javascript')).javascript({ jsx: true, typescript: true })
+      break
+  }
   langCache.set(lang, support)
   return support
 }
@@ -319,12 +368,12 @@ export function createEditor(
    * was a unit, a file that gained a `.py` extension could get Python colours
    * while still being offered Java's snippets.
    */
-  const languageExtensions = (lang: LangId | null) => {
+  const languageExtensions = (lang: EditorLang | null) => {
     const support = lang ? langCache.get(lang) : undefined
     return [
       support ? [support] : [],
       autocompletion({
-        override: completionSources(lang, projectWords),
+        override: completionSources(completionLang(lang), projectWords),
         // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
         // what a student who has used an IDE before will reach for.
         activateOnTyping: true,
@@ -337,7 +386,7 @@ export function createEditor(
     ]
   }
 
-  const extensions = (lang: LangId | null) => [
+  const extensions = (lang: EditorLang | null) => [
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightActiveLine(),
@@ -394,7 +443,7 @@ export function createEditor(
   ]
 
   const stateFor = (p: string, content: string) =>
-    EditorState.create({ doc: content, extensions: extensions(langForPath(p)) })
+    EditorState.create({ doc: content, extensions: extensions(editorLangForPath(p)) })
 
   const view = new EditorView({ parent, state: stateFor('', '') })
 
@@ -415,7 +464,7 @@ export function createEditor(
    * the rest of the session.
    */
   const syncLanguage = (p: string) => {
-    const lang = langForPath(p)
+    const lang = editorLangForPath(p)
     const support = lang ? langCache.get(lang) : undefined
     if (lang && !support) {
       void loadLanguage(lang).then(() => {

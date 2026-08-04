@@ -1,0 +1,25 @@
+/* CSS is the look: colours, spacing, fonts. Change a value and press Run. */
+
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  max-width: 40rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+h1 {
+  color: #b45309; /* try changing this colour */
+}
+
+code {
+  background: #eaeaea;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+li {
+  margin: 0.25em 0;
+}

@@ -37,6 +37,13 @@ export interface RunnerState {
   busy: boolean
   /** Set when the last run could not start. Cleared by the next Run. */
   failure: RunFailure | null
+  /**
+   * The document a `kind: 'preview'` run is showing, for the shell to load into
+   * the preview iframe. Null for a console run (Java/Python) and between runs.
+   * A web page's `console.log` still arrives through the normal stdout channel,
+   * so the Console panel is unaffected by this.
+   */
+  previewDoc: string | null
 }
 
 /** Ignore taps for a moment after the control swaps role (spec §5.3). */
@@ -96,6 +103,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     progress: null,
     busy: false,
     failure: null,
+    previewDoc: null,
   })
 
   const session = useRef<RunSession | null>(null)
@@ -151,7 +159,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       }
       activeRuntime.current = null
       if (note) buffer.line(note, failure ? 'err' : 'meta')
-      setState({ status, exitCode: null, progress: null, busy: false, failure })
+      setState({ status, exitCode: null, progress: null, busy: false, failure, previewDoc: null })
     },
     [buffer],
   )
@@ -203,17 +211,16 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       forceStopTimer.current = window.setTimeout(() => {
         forceStopTimer.current = 0
         if (token.current !== mine) return
-        abandonRun(
-          { kind: 'engine', message: COPY.engineLost, hint: COPY.engineLostHint },
-          COPY.engineLost,
-          'failed',
-        )
+        // A lost worker is not the student's fault and has one obvious next step
+        // (press Run), so it gets the single red line and no failure card.
+        buffer.line(COPY.engineLost, 'err')
+        abandonRun(null, '', 'failed')
       }, FORCE_STOP_MS)
       return
     }
     // Killed during engine load: invalidate so nothing lands later.
     abandonRun(null, COPY.runStopped, 'stopped')
-  }, [state.busy, abandonRun])
+  }, [state.busy, abandonRun, buffer])
 
   const run = useCallback(async () => {
     if (state.busy) return
@@ -236,13 +243,13 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     const entry = entryPath && candidates.includes(entryPath) ? entryPath : candidates[0]
     if (!entry) {
       buffer.line(COPY.noEntry, 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null })
+      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, previewDoc: null })
       return
     }
     const runtime = runtimeFor(entry)
     if (!runtime) {
       buffer.line(COPY.cannotRun(entry), 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null })
+      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, previewDoc: null })
       return
     }
 
@@ -266,7 +273,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     activeRuntime.current = runtime
     buffer.clear()
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
-    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null })
+    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, previewDoc: null })
 
     // Escalation: dead air is what makes a student conclude the app is broken.
     clearTimers()
@@ -301,12 +308,15 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       }
       armStall()
 
-      await runtime.load((report) => {
-        if (token.current !== mine) return
-        armStall()
-        const p = normalizeProgress(report)
-        setState((s) => ({ ...s, progress: p }))
-      })
+      await runtime.load(
+        (report) => {
+          if (token.current !== mine) return
+          armStall()
+          const p = normalizeProgress(report)
+          setState((s) => ({ ...s, progress: p }))
+        },
+        { files, entry },
+      )
       if (token.current !== mine) return
       clearTimers()
 
@@ -319,6 +329,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
         },
         onStderr: (t) => {
           if (token.current === mine) buffer.write(t, 'err')
+        },
+        // Only a preview runtime calls this; the shell loads the string into the
+        // preview iframe. An empty string blanks it (a stopped page).
+        onRender: (srcdoc) => {
+          if (token.current === mine) setState((s) => ({ ...s, previewDoc: srcdoc === '' ? null : srcdoc }))
         },
         onStdinRequest: () => {
           if (token.current !== mine) return
@@ -355,6 +370,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
             progress: null,
             busy: false,
             failure: null,
+            previewDoc: null,
           })
         },
       })
@@ -383,7 +399,14 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
   return { ...state, run, stop, submitStdin, bindStdinFocus, clearFailure }
 }
 
-/** "Java" / "Python", for a sentence a student reads. */
+/** The language name, for a sentence a student reads in a failure message. */
 function langName(entryPath: string): string {
-  return entryPath.endsWith('.java') ? 'Java' : 'Python'
+  if (entryPath.endsWith('.java')) return 'Java'
+  if (entryPath.endsWith('.py')) return 'Python'
+  if (entryPath.endsWith('.cs')) return 'C#'
+  if (/\.(tsx?|mts|cts)$/i.test(entryPath)) return 'TypeScript'
+  if (/\.(m?js|cjs|jsx)$/i.test(entryPath)) return 'JavaScript'
+  if (/\.html?$/i.test(entryPath)) return 'the web preview'
+  if (/\.css$/i.test(entryPath)) return 'the web preview'
+  return 'the language'
 }

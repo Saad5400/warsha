@@ -42,12 +42,19 @@ export interface RunBarProps {
   entryPath: string | null
   consoleOpen: boolean
   canRun: boolean
+  /** A web project has a preview surface; the pane then offers Preview | Console. */
+  previewActive?: boolean
+  /** Which face the output pane is showing. Only meaningful when previewActive. */
+  view?: OutputView
+  onView?(view: OutputView): void
   onEntryChange(path: string): void
   onRun(): void
   onStop(): void
   onClear(): void
   onToggleConsole(): void
 }
+
+export type OutputView = 'preview' | 'console'
 
 /**
  * The console header — and the home of Run/Stop (spec §5.3).
@@ -63,10 +70,13 @@ export interface RunBarProps {
  * mode" to be in.
  */
 export function RunBar(props: RunBarProps) {
-  const { status, exitCode, busy, candidates, entryPath, consoleOpen, canRun } = props
+  const { status, exitCode, busy, candidates, entryPath, consoleOpen, canRun, previewActive, view } = props
   const narrow = useMedia('(max-width: 899px)')
   const entry = resolveEntry(entryPath, candidates)
   const run: RunControlState = { status, busy, canRun, entry, onRun: props.onRun, onStop: props.onStop }
+  // Copy/Clear act on the transcript, so they belong to the Console face only.
+  // For a web project showing the Preview, there is no transcript on screen.
+  const showTranscriptActions = consoleOpen && (!previewActive || view === 'console')
 
   return (
     <div className={HEADER}>
@@ -113,16 +123,26 @@ export function RunBar(props: RunBarProps) {
         </span>
       ) : null}
 
+      {/* A web project shows a live page and a log; this switches the pane
+          between them. Only appears when there is a preview to show — a
+          Java/Python run has no second face and never renders it. */}
+      {previewActive && consoleOpen && view ? (
+        <ViewToggle view={view} onView={props.onView} />
+      ) : null}
+
       {/* Five controls do not fit 390px, and squeezing them is how buttons end up
           under 44px and labels end up clipped. On a phone with the console open,
           the status *line* above the input row carries the same glyph and word in
           the same tone, one line further down — so the pill stands down there and
-          comes back the moment the console is collapsed and the line is gone. */}
-      {!narrow || !consoleOpen ? <StatusPill status={status} exitCode={exitCode} /> : null}
+          comes back the moment the console is collapsed and the line is gone.
+          Preview showing: no status line under it, so keep the pill. */}
+      {!narrow || !consoleOpen || (previewActive && view === 'preview') ? (
+        <StatusPill status={status} exitCode={exitCode} />
+      ) : null}
 
       <div className="ml-auto flex min-w-0 items-center gap-2">
         {/* Transcript actions only while there is a transcript on screen. */}
-        {consoleOpen ? (
+        {showTranscriptActions ? (
           <>
             {/* A hairline before the trailing controls, so a wide header reads
                 as a deliberate toolbar with two groups rather than two things
@@ -159,6 +179,46 @@ export function RunBar(props: RunBarProps) {
           {consoleOpen ? <IconChevronDown /> : <IconChevronUp />}
         </IconButton>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The Preview / Console switch for a web project. A two-segment control, sized
+ * so its buttons keep a 40px hit area (the after: pseudo restores it into the
+ * row's gap) while the visible chrome stays compact enough for a 390px header.
+ * The selected segment carries a fill *and* an accent underline — never colour
+ * alone, per Design's rule that adjacent surfaces are invisible on a phone.
+ */
+function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputView) => void }) {
+  const segment = (v: OutputView, label: string) => {
+    const selected = view === v
+    return (
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selected}
+        onClick={() => onView?.(v)}
+        className={
+          "relative flex-none min-h-8 px-2.5 font-ui text-micro font-semibold touch-manipulation " +
+          "after:absolute after:-inset-y-1 after:inset-x-0 after:content-[''] " +
+          (selected
+            ? 'bg-surface-4 text-text-1 shadow-[inset_0_-2px_0_0_var(--accent)]'
+            : 'text-text-3 hover:text-text-2')
+        }
+      >
+        {label}
+      </button>
+    )
+  }
+  return (
+    <div
+      role="tablist"
+      aria-label="Output view"
+      className="flex flex-none items-center overflow-hidden rounded-md border border-border-control bg-surface-2"
+    >
+      {segment('preview', COPY.viewPreview)}
+      {segment('console', COPY.viewConsole)}
     </div>
   )
 }
