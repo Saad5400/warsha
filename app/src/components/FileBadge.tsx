@@ -7,10 +7,12 @@
  * which is the opposite of what a badge is for, and it carries nothing for a
  * student who does not already know the answer.
  *
- * The tones are unchanged and still do the greyscale-safe work: Java = warn on
- * warn-soft (7.76:1), Python = info on info-soft (7.75:1). The other extensions
- * keep their letter — "M" and "{}" are not standing in for a logo, so there is
- * no low-effort placeholder to fix there.
+ * The glyphs are monochrome (see LangIcons' header): this is a black/white UI,
+ * so both language badges use one neutral chip — surface-4 under a bright
+ * text-1 glyph (~11:1) — instead of the old warm/cool tones. The mark's shape,
+ * not its colour, does the identifying. The other extensions keep their letter
+ * — "M" and "{}" are not standing in for a logo, so there is no low-effort
+ * placeholder to fix there; they stay on the quieter plain tone.
  */
 import { LangIcon, type IconLang } from './ui/LangIcons'
 
@@ -30,8 +32,8 @@ const BADGE_SIZE: Record<BadgeSize, string> = {
   md: 'size-[24px] text-meta tracking-[-0.03em]',
 }
 const BADGE_TONE: Record<BadgeTone, string> = {
-  java: 'bg-warn-soft text-warn',
-  py: 'bg-info-soft text-info',
+  java: 'bg-surface-4 text-text-1',
+  py: 'bg-surface-4 text-text-1',
   plain: 'bg-surface-4 text-text-3',
 }
 

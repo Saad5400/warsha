@@ -2,6 +2,7 @@
  * compaction). data-kb is normally written by visualViewport, which a desktop
  * viewport never triggers, so we set it directly to exercise the CSS state. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
 const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
 const out = []
@@ -14,10 +15,10 @@ for (const motion of ['no-preference', 'reduce']) {
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: motion })
   const p = ctx.pages()[0] ?? await ctx.newPage()
   await p.goto(process.env.WARSHA_URL ?? 'http://localhost:8087/', { waitUntil: 'load' })
-  // WelcomePanel's cards lost their `template-card` class in a concurrent
-  // refactor; the accessible name is the durable handle.
-  await p.getByRole('button', { name: /starter/i }).first().waitFor({ timeout: 20000 })
-  await p.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+  // The single "New from a starter" card opens the picker; the durable handle is
+  // its accessible name.
+  await p.getByRole('button', { name: /New from a starter/ }).waitFor({ timeout: 20000 })
+  await seedStarter(p, { lang: 'Java', name: 'Java (OOP starter)' })
   await p.waitForSelector('[role="tab"]', { timeout: 15000 })
   await p.waitForTimeout(700)
   // The console starts collapsed on a fresh project, so none of its internals

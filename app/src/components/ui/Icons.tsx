@@ -212,6 +212,20 @@ export const IconWand = (p: IconProps) => (
   </Icon>
 )
 
+/**
+ * "Install Warsha" — an arrow landing INSIDE a device, not in a tray.
+ *
+ * Deliberately not the download glyph: IconImport is already an arrow into a
+ * tray, and the two actions sit one row apart in the same chrome. What is being
+ * installed is the app onto the phone, so the phone is the container.
+ */
+export const IconInstall = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 4.25A1.75 1.75 0 0 1 7.75 2.5h4.5A1.75 1.75 0 0 1 14 4.25v11.5a1.75 1.75 0 0 1-1.75 1.75h-4.5A1.75 1.75 0 0 1 6 15.75V4.25Z" />
+    <path d="M10 6.25v5.5M7.75 9.5 10 11.75l2.25-2.25" />
+  </Icon>
+)
+
 /** "Share as image" — the export-out arrow above a tray. */
 export const IconShare = (p: IconProps) => (
   <Icon {...p}>

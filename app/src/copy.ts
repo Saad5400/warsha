@@ -111,14 +111,11 @@ export const COPY = {
   cannotRun: (entry: string) => `Warsha does not know how to run ${entry} yet.`,
 
   // ---- storage (§8) ----
-  storageLocal: 'Your files are saved in this browser on this device.',
   /** The persistent banner. Never a toast: this condition does not go away. */
   storageQuotaTitle: 'This device is nearly out of space, so Warsha may stop saving.',
   storageQuotaHint: 'Delete a project you have finished, or export your work as a .zip.',
   storageFailedTitle: 'Warsha cannot save your files on this device right now.',
   storageFailedHint: 'Keep working — nothing is lost yet — but export a .zip before you close this tab.',
-  storageMemoryTitle: 'This browser will not let Warsha save files, so your work only lasts as long as this tab.',
-  storageMemoryHint: 'Export a .zip before you leave. Private browsing is the usual reason.',
   storageEvictedTitle: 'The project Warsha had open was not here any more, so it opened another one.',
   storageEvictedHint:
     'Some browsers clear saved files for sites you have not used in a while. Export a .zip to keep a copy.',
@@ -133,20 +130,57 @@ export const COPY = {
   // editor area carries this instead of a blank canvas — so a starter is an
   // action inside the IDE, never a gate in front of it, and the app never asks
   // "which language?" (the file extension answers that).
-  welcomePurpose: 'Write and run Java or Python. In your browser, on your phone.',
-  welcomeFirstRunNote:
-    'First time you run, Warsha downloads the language you picked — about 38 MB for Java, less for Python. It happens once per device, then it works offline.',
   welcomeNewFile: 'New file',
-  welcomeNewFileBlurb: 'One empty file, named by you. Warsha reads the language from the name.',
-  welcomeNewFileManifest: '1 file · Main.java, main.py, anything',
+  welcomeNewFileBlurb: 'An empty file. The name sets the language.',
+  welcomeNewFileManifest: 'Main.java, main.py, …',
+  welcomeNewProject: 'New from a starter',
+  welcomeNewProjectBlurb: 'Pick a language, then a starter for your level.',
   welcomeImport: 'Import a .zip',
+
+  // ---- the New-project template picker (languages.ts + TemplatePicker) ----
+  // One entry point for every starter, so the project menu holds a single "New
+  // project…" however many languages Warsha grows to. Step one is the language;
+  // step two is that language's starters, grouped beginner → advanced.
+  pickerTitle: 'New project',
+  pickerLangIntro: 'Pick a language to see its starters. You can rename the project after.',
+  pickerReadyHeading: 'Ready to run',
+  pickerSoonHeading: 'Coming soon',
+  // Said once, plainly: these are not broken, they are unbuilt. Warsha runs
+  // every language on the device, so each needs its own engine before it works.
+  pickerSoonNote: 'Warsha runs everything on your device, so each language needs its own engine. These are on the way.',
+  pickerSoonBadge: 'Soon',
+  /** The accessible name for a dimmed tile — the badge alone is silent. */
+  pickerSoonLabel: (lang: string) => `${lang} — coming soon`,
+  pickerBack: 'All languages',
+  pickerChooseTemplate: (lang: string) => `Choose a ${lang} starter`,
+  // Blank is still one tap from the picker — the old "New project…" default,
+  // folded in rather than kept as a second menu row.
+  pickerBlank: 'Start with an empty file instead',
+  levelBeginner: 'Beginner',
+  levelIntermediate: 'Intermediate',
+  levelAdvanced: 'Advanced',
+  /** A starter's one-line manifest: "1 file · main.py". */
+  templateManifest: (files: number, entry: string) => `${count(files, 'file')} · ${entry}`,
+
+  // ---- install to the home screen (ui/install.ts) ----
+  // The control is icon-only, so this string is its accessible name and its
+  // tooltip both. "Install Warsha", not "Install app": the student is looking at
+  // a title bar with two other unlabelled glyphs in it, and the product name is
+  // what tells them which app is being offered.
+  installAction: 'Install Warsha',
+  /**
+   * iOS and iPadOS only, where no button can ever work — Safari's WebKit fires
+   * no install event, so the Share sheet is the whole mechanism and naming it is
+   * all we can do. Says what it gets them, not just what to tap.
+   */
+  installIos:
+    'On iPhone and iPad: tap Share, then Add to Home Screen. Warsha then opens like any other app.',
 
   // ---- zip import / export ----
   importIntro: 'Pick a .zip of a project — one you exported from Warsha, or one a teacher gave you.',
   importDropHint: 'Drop a .zip here, or',
   importReplaces: (n: number) =>
     `This replaces the ${count(n, 'file')} you have now. Export a .zip first if you want to keep them.`,
-  importNothingToReplace: 'Your project is empty, so nothing of yours gets replaced.',
   importEmptyZip: 'That .zip has no files in it. Try another one.',
   importNotZip: 'That one is not a .zip. Pick a file whose name ends in .zip.',
   importUnreadable: (detail: string) => `That .zip could not be opened. (${detail})`,

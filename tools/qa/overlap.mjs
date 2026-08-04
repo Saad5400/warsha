@@ -24,6 +24,7 @@
  * Usage: node overlap.mjs
  */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -257,8 +258,8 @@ async function scenario(label, setup) {
 /* Seed a real project + open the console, then walk the widths. */
 async function seed() {
   await page.goto(URL_, { waitUntil: 'load' })
-  await page.waitForSelector('.template-card', { timeout: 20000 })
-  await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+  await page.getByRole('button', { name: /New from a starter/ }).waitFor({ timeout: 20000 })
+  await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
   await page.waitForSelector('[role="tab"]', { timeout: 15000 })
   await page.waitForTimeout(700)
   const show = page.getByRole('button', { name: 'Show output' })

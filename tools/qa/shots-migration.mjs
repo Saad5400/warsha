@@ -5,6 +5,7 @@
  *   WARSHA_URL=http://127.0.0.1:8098/ node shots-migration.mjs
  */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdirSync } from 'node:fs'
 
 const APP_URL = process.env.WARSHA_URL ?? 'http://127.0.0.1:8098/'
@@ -56,7 +57,7 @@ const WELCOME_ASSERTS = [
   ['.lockup', { display: 'flex', 'flex-direction': 'column', 'align-items': 'center', 'row-gap': '8px' }],
   ['.lockup__word', { 'font-size': '28px', 'font-weight': '600', color: 'rgb(232, 235, 240)' }],
   [
-    '.template-card',
+    '.start-card',
     {
       display: 'grid',
       'min-height': '88px',
@@ -99,19 +100,20 @@ for (const width of [1280, 390]) {
   const ctx = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 } })
   const page = await ctx.newPage()
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.template-card', { timeout: 20000 })
+  await page.waitForSelector('.start-card', { timeout: 20000 })
   await page.waitForTimeout(300)
 
   await page.screenshot({ path: `${SHOTS}/mig-${width}-welcome.png` })
   await assertStyles(page, WELCOME_ASSERTS, `${width} welcome`)
 
   // Hover a start card so the border/fill/arrow-accent transition is on record.
-  await page.hover('.template-card')
+  await page.hover('.start-card')
   await page.waitForTimeout(250)
   await page.screenshot({ path: `${SHOTS}/mig-${width}-card-hover.png` })
 
-  // Take a template so tabs, the editor and the console header are all real.
-  await page.click('.template-card:nth-of-type(2)')
+  // Take a starter (through the picker) so tabs, the editor and the console
+  // header are all real.
+  await seedStarter(page, { name: 'Python (OOP starter)' })
   await page.waitForSelector('[role="tab"]', { timeout: 20000 })
   await page.waitForTimeout(600)
   await page.screenshot({ path: `${SHOTS}/mig-${width}-ide.png` })

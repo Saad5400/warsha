@@ -140,9 +140,11 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
           </p>
         ) : null}
 
-        <div className={'mt-4 note ' + (replaces ? 'border-l-warn' : '')}>
-          <p className="note__text">{replaces ? COPY.importReplaces(currentFileCount) : COPY.importNothingToReplace}</p>
-        </div>
+        {replaces ? (
+          <div className="mt-4 note border-l-warn">
+            <p className="note__text">{COPY.importReplaces(currentFileCount)}</p>
+          </div>
+        ) : null}
 
         <div className="dlg-actions">
           <Button variant="ghost" large onClick={onCancel}>

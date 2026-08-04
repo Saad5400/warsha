@@ -5,6 +5,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -68,7 +69,8 @@ if (navigations === 2) pass('exactly ONE automatic reload on first visit', `${na
 else fail('exactly ONE automatic reload on first visit', `${navigations} navigations total`)
 
 // ------------------------------------------------------- 2. create Python project
-await page.getByRole('button', { name: /Python starter/ }).click()
+// The advanced starter is two files, so the entry picker and a tab strip appear.
+await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
 const tabs = await page.locator('[role="tab"]').allInnerTexts()
 info(`open tabs: ${JSON.stringify(tabs)}`)

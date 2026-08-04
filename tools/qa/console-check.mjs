@@ -2,6 +2,7 @@
  * Python boots in ~3s, so every console behaviour (streaming, stdin, exit codes,
  * autoscroll pause, 6000-line burst + Stop) is testable end to end. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -52,13 +53,9 @@ async function setEditor(text) {
 await page.goto(URL_, { waitUntil: 'load' })
 await page.waitForTimeout(1500)
 if (!(await page.locator('.cm-content').count())) {
-  await page.getByRole('button', { name: /Python starter/ }).click()
+  // Seeding an empty project fills it in place — no name prompt to confirm.
+  await seedStarter(page, { name: 'Python (OOP starter)' })
   await page.waitForTimeout(1200)
-  // Templates now open a "New project from …" dialog (name + Create).
-  for (const name of ['Create', 'Replace']) {
-    const b = page.getByRole('button', { name, exact: true })
-    if (await b.count()) { await b.first().click(); await page.waitForTimeout(1200); break }
-  }
 }
 if (await page.locator('.cm-content').count()) pass('project seeded with main.py')
 else { fail('project seeded with main.py'); await shot('seed-fail'); process.exit(1) }

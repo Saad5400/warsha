@@ -29,6 +29,7 @@ export function Modal({
   labelledBy,
   onEnterOutsideButton,
   open = true,
+  wide = false,
 }: {
   children: ReactNode
   onCancel: () => void
@@ -37,6 +38,9 @@ export function Modal({
   /** Enter pressed with nothing focusable focused — used to bind Enter to the
    *  safe answer in a destructive dialog, which has no submitting form. */
   onEnterOutsideButton?: () => void
+  /** A gallery-width card (the template picker) instead of the prompt's column.
+   *  Still caps at the viewport, so a phone gets the same full-bleed dialog. */
+  wide?: boolean
   /** Drive the exit animation. A caller that unmounts the Modal outright (the
    *  default, and what ImportZipDialog does) simply gets no exit — the element
    *  is gone before it could play. DialogHost holds the request one beat longer
@@ -104,7 +108,12 @@ export function Modal({
           <dialog
             ref={cardRef}
             open
-            className="fixed inset-0 z-(--z-dialog) m-auto h-fit max-h-[calc(var(--app-h,100dvh)-var(--sp-6))] w-[min(26rem,calc(100vw-var(--sp-6)))] border-none bg-transparent p-0 data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in"
+            className={
+              'fixed inset-0 z-(--z-dialog) m-auto h-fit max-h-[calc(var(--app-h,100dvh)-var(--sp-6))] border-none bg-transparent p-0 data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in ' +
+              (wide
+                ? 'w-[min(44rem,calc(100vw-var(--sp-6)))]'
+                : 'w-[min(26rem,calc(100vw-var(--sp-6)))]')
+            }
           >
             <div className="scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-6))] rounded-lg border border-border-subtle bg-surface-3 p-4 shadow-raised">
               {children}

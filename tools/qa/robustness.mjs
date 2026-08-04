@@ -20,6 +20,7 @@
  * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -152,14 +153,13 @@ async function openApp(page) {
 
 async function startPythonProject(page) {
   await openApp(page)
-  await page.getByRole('button', { name: /Python starter/ }).click()
+  await seedStarter(page, { name: 'Python (OOP starter)' })
   await waitForRunnable(page)
 }
 
 async function startJavaProject(page) {
   await openApp(page)
-  // The card reads "Java (OOP starter)", not "Java starter".
-  await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+  await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
   await waitForRunnable(page)
 }
 
@@ -501,7 +501,7 @@ await scenario('OPFS unavailable at startup', {
   body: async (page) => {
     await page.goto(BASE, { waitUntil: 'load' })
     const loaded = await page
-      .waitForSelector('button:has-text("Python starter"), .cm-content', { timeout: 30000 })
+      .waitForSelector('button:has-text("New from a starter"), .cm-content', { timeout: 30000 })
       .then(() => true)
       .catch(() => false)
     check(loaded, 'the IDE still loads with no usable storage')
@@ -515,7 +515,7 @@ await scenario('OPFS unavailable at startup', {
     if (shown) info((await banner.innerText()).replace(/\n/g, ' | '))
 
     // And it is a working IDE, not a read-only shell.
-    await page.getByRole('button', { name: /Python starter/ }).click()
+    await seedStarter(page, { name: 'Python (OOP starter)' })
     await page.waitForSelector('.cm-content', { timeout: 15000 })
     await typeProgram(page, 'print("memory only")')
     const editorText = await page.locator('.cm-content').innerText()
@@ -545,7 +545,7 @@ await scenario('remembered project has vanished', {
     await page.waitForLoadState('load')
 
     const loaded = await page
-      .waitForSelector('.cm-content, button:has-text("Python starter")', { timeout: 30000 })
+      .waitForSelector('.cm-content, button:has-text("New from a starter")', { timeout: 30000 })
       .then(() => true)
       .catch(() => false)
     check(loaded, 'the app opens something rather than crash-looping on a missing id')
@@ -566,7 +566,7 @@ await scenario('open in two tabs', {
     await startPythonProject(page)
     const second = await ctx.newPage()
     await second.goto(BASE, { waitUntil: 'load' })
-    await second.waitForSelector('.cm-content, button:has-text("Python starter")', { timeout: 30000 })
+    await second.waitForSelector('.cm-content, button:has-text("New from a starter")', { timeout: 30000 })
 
     const advisory = second.locator('.storage-banner[data-notice="multi-tab"]')
     const shown = await advisory.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)

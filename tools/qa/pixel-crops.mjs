@@ -31,6 +31,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -356,11 +357,11 @@ step('welcome / empty state (before any project exists)')
 await page.waitForTimeout(500)
 await shot('1280-welcome-full', { clip: { x: 0, y: 0, width: 1280, height: 900 }, pad: 0, note: 'start screen, whole viewport' })
 await shot('1280-welcome-lockup', { sel: S.lockup, pad: 16, note: 'logo lockup: mark over wordmark — the only place the brand appears in the app' })
-await shot('1280-welcome-card', { sel: 'button:has-text("Python starter")', pad: 12, note: 'starter card: badge, title, blurb insets' })
-await shot('1280-welcome-cards-gap', { rect: junction('button:has-text("Python starter")', 'button:has-text("Java")'), pad: 12, note: 'the two cards side by side: equal boxes?' })
+await shot('1280-welcome-card', { sel: 'button:has-text("New from a starter")', pad: 12, note: 'start card: badge, title, blurb insets' })
+await shot('1280-welcome-cards-gap', { rect: junction('button:has-text("New file")', 'button:has-text("New from a starter")'), pad: 12, note: 'the two cards side by side: equal boxes?' })
 
 step('create the Python starter project')
-await page.getByRole('button', { name: /Python starter/ }).click()
+await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForSelector(S.tab, { timeout: 15000 })
 await page.waitForTimeout(600)
 

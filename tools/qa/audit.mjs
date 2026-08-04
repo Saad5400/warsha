@@ -4,6 +4,7 @@
  *
  * Local Chrome on localhost:8087 so the engines get a secure context. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -528,7 +529,7 @@ p2.on('console', (m) => { if (m.type() === 'error') errs2.push(m.text()) })
 p2.on('pageerror', (e) => errs2.push('pageerror: ' + e.message))
 await p2.goto(URL_, { waitUntil: 'load' })
 await p2.getByRole('button', { name: /starter/i }).first().waitFor({ timeout: 20000 })
-await p2.getByRole('button', { name: /Python starter/ }).click()
+await seedStarter(p2, { name: 'Python (OOP starter)' })
 await p2.waitForSelector('[role="tab"]', { timeout: 15000 })
 await p2.waitForTimeout(800)
 await p2.getByRole('button', { name: 'Run', exact: true }).click()

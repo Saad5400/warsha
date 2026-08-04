@@ -18,6 +18,7 @@
  *   WARSHA_URL   base URL of a served build (default http://127.0.0.1:8093/)
  */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,12 +41,8 @@ await page.waitForFunction(() => self.crossOriginIsolated === true, null, { time
 await page.waitForSelector('[aria-label="Start a project"], .cm-content', { timeout: 20000 })
 await page.waitForTimeout(700)
 if (!(await page.locator('.cm-content').count())) {
-  await page.getByRole('button', { name: /Python starter/ }).click()
+  await seedStarter(page, { name: 'Python (OOP starter)' })
   await page.waitForTimeout(1500)
-  for (const n of ['Create', 'Replace']) {
-    const b = page.getByRole('button', { name: n, exact: true })
-    if (await b.count()) { await b.first().click(); await page.waitForTimeout(1200); break }
-  }
 }
 const show = page.getByRole('button', { name: 'Show output' })
 if (await show.count()) { await show.click(); await page.waitForTimeout(400) }

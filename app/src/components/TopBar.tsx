@@ -97,6 +97,17 @@ export interface TopBarProps {
    * redundancy, is why that one exists (spec §5.3).
    */
   runSlot?: ReactNode
+  /**
+   * "Install Warsha", when the browser has offered. A slot rather than a
+   * boolean because the control renders itself away in most sessions (see
+   * InstallControl) and this bar should not have to know the rule.
+   *
+   * It sits OUTSIDE Run/⋯: at ≥900px the order is install, Run, ⋯, so the one
+   * control that comes and goes is furthest from the two that never move — a
+   * button appearing next to Run would shift Run under a thumb already on its
+   * way there.
+   */
+  installSlot?: ReactNode
 }
 
 /**
@@ -113,6 +124,7 @@ export function TopBar({
   projectSlot,
   sidebarColumn,
   runSlot,
+  installSlot,
 }: TopBarProps) {
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
   /* Whatever occupies the bar's leading segment: the sidebar's empty column, or
@@ -147,6 +159,7 @@ export function TopBar({
       </span>
 
       <div className="ml-auto flex items-center gap-2 pl-2">
+        {installSlot}
         {runSlot}
         <IconButton
           label="More"

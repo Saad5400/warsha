@@ -32,7 +32,7 @@
       },
       "parent": {
         "tag": "span",
-        "cls": "inline-flex animate-glitch-mark motion-reduce:animate-none",
+        "cls": "inline-flex",
         "rect": {
           "x": 733.73,
           "y": 76,

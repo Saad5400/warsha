@@ -136,28 +136,6 @@
  *                 `motion-reduce:w-full motion-reduce:opacity-50`) says so at
  *                 the call site, because that is where the reader is.
  *
- * GLITCH (v3)     The one brand-specific effect, and it is used in exactly two
- *                 places, never a third without asking Design first:
- *                   `animate-glitch-mark` — the welcome lockup only
- *                     (WelcomePanel.tsx wraps <LogoLockup/>). An infinite
- *                     7s-period animation that sits still for ~92% of its
- *                     cycle and glitches for ~250ms — a rare tic, not a loop
- *                     you notice. The global reduced-motion block's
- *                     `animation-iteration-count: 1 !important` already makes
- *                     this a no-op under `prefers-reduced-motion`, so it needs
- *                     no extra override.
- *                   the console rail's run-state entry — `.console-panel`'s
- *                     existing `[data-state='preparing'|'running'|'waiting']`
- *                     selector (below) carries a one-shot (non-looping)
- *                     keyframe that fires exactly when the attribute starts
- *                     matching, i.e. the instant a run begins. Not a
- *                     `--animate-*` token, on purpose: it is not a reusable
- *                     utility, it is one transition tied to one selector this
- *                     file already owns.
- *                 NEVER on a reading surface (the editor canvas, console
- *                 transcript text, file rows) — glitch is a brand moment, not
- *                 a texture, and it would make code and output hard to read.
- *
  * SCROLLBARS      Styled globally in @layer base (`scrollbar-color` for Firefox,
  *                 `::-webkit-scrollbar*` for Blink/WebKit). Use `.scroller` for
  *                 any scrolling region: it adds `overscroll-behavior: contain`
@@ -387,12 +365,6 @@
   --animate-dot-pulse: warsha-pulse 1.4s var(--ease) infinite;
   --animate-sweep: warsha-sweep 1.4s var(--ease) infinite;
   --animate-spinner: warsha-spin 700ms linear infinite;
-  /* The one brand-specific animation (v3, GLITCH above). 7s period so the
-     welcome lockup sits still almost all the time and glitches for ~250ms —
-     used ONLY on WelcomePanel.tsx's <LogoLockup/> wrapper. `steps(1,end)`
-     rather than an eased curve: a glitch reads as broken frames, not a
-     smooth wobble. */
-  --animate-glitch-mark: warsha-glitch-mark 7s steps(1, end) infinite;
 
   /* Overlay motion, for the Radix primitives in components/ui. Enter is the
      180ms drawer/menu/dialog step, or the 120ms one for a panel that appears
@@ -407,6 +379,11 @@
      them. */
   --animate-fade-in: warsha-fade-in 180ms var(--ease) both;
   --animate-fade-out: warsha-fade-out 90ms var(--ease) both;
+  /* One interactive console line arriving. Short and small on purpose — a nudge
+     up into place, not a slide — so a handful landing together still reads as one
+     calm event. Only ever applied to a small, human-paced batch (Console.tsx's
+     FRESH_MAX_BATCH); a print burst is left instant, per §9. */
+  --animate-line-in: warsha-line-in 140ms var(--ease) both;
   --animate-dialog-in: warsha-dialog-in 180ms var(--ease) both;
   --animate-dialog-out: warsha-dialog-out 90ms var(--ease) both;
   /* A menu or a tooltip grows out of the edge nearest its trigger; the caller
@@ -628,6 +605,9 @@
     pointer-events: none;
   }
 
+  /* The leading 20px icon slot on a draft row (the new-file/-folder input).
+     Named for its history: it used to hold the folder twistie, dropped now that
+     the tree spends no width on a chevron column. */
   .tree-row__chevron {
     display: grid;
     place-items: center;
@@ -635,10 +615,6 @@
     width: 20px;
     height: 20px;
     color: var(--text-3);
-    transition: transform var(--dur-fast) var(--ease);
-  }
-  .tree-row[aria-expanded='true'] .tree-row__chevron {
-    transform: rotate(90deg);
   }
 
   /* The 6px accent dot for an unsaved file (spec §7.1). */
@@ -663,6 +639,54 @@
       opacity: 1;
     }
   }
+
+  /* ---- drag and drop (useTreeDnd) ---- */
+
+  /* The folder a drop would land in: a soft accent fill plus an inset ring, so
+     the target reads at a glance without shifting the row (an outset ring would
+     paint over the neighbours). Overrides the hover fill underneath it. */
+  .tree-row[data-drop='true'],
+  .tree-row[data-drop='true']:hover {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  /* A drop at the project root — over empty tree space — rings the whole panel
+     rather than any one row, since the root has no row of its own. */
+  [data-tree-root][data-drop-root='true'] {
+    box-shadow: inset 0 0 0 2px var(--accent);
+    border-radius: var(--r-md);
+  }
+  /* Once a drag is live the pointer is captured; block native scroll so it does
+     not compete with the drag (useTreeDnd auto-scrolls at the edges instead). */
+  [data-tree-root][data-dnd-active='true'] {
+    touch-action: none;
+  }
+
+  /* The label riding under the pointer during a drag. Fixed to the viewport and
+     inert, so it never intercepts the hit-test that finds the drop target. */
+  .tree-drag-chip {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    max-width: 60vw;
+    padding: var(--sp-1) var(--sp-2);
+    border-radius: var(--r-md);
+    background: var(--surface-3);
+    box-shadow: var(--shadow-raised);
+    font-size: var(--fs-row);
+    line-height: 1.2;
+    color: var(--text-1);
+    pointer-events: none;
+    /* A hair of transparency reads as "lifted", not "placed". */
+    opacity: 0.95;
+  }
+  .tree-drag-chip .truncate {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   /* ============================================================ console ==== */
 
   .console-panel {
@@ -674,9 +698,7 @@
        collapsed panel's 44px and push Run a pixel below the keyboard line. */
     box-shadow: inset 0 1px 0 0 var(--border-subtle);
     /* The third home of the accent signature (principle 3): the leading edge of
-       a running process. Reserved always, coloured only while it runs. A brief
-       glitch flicker marks the instant it starts — see GLITCH (v3) above and
-       the [data-state] rule + keyframe immediately below. */
+       a running process. Reserved always, coloured only while it runs. */
     border-left: var(--rail) solid transparent;
     transition: border-left-color var(--dur) var(--ease);
   }
@@ -684,12 +706,6 @@
   .console-panel[data-state='running'],
   .console-panel[data-state='waiting'] {
     border-left-color: var(--accent);
-    /* Fires once, exactly when the attribute starts matching (a run begins),
-       not on every re-render: a CSS animation only (re)starts when the rule
-       that names it newly applies. `1` iteration, not `infinite` — this is a
-       transition INTO the running state, not a loop, so it has nothing to
-       repeat. See GLITCH (v3) in the file header. */
-    animation: warsha-glitch-rail var(--dur-slow) steps(3, end) 1;
   }
 
   /* Spec §4.3 rule 4 — the single most important number in that section:
@@ -874,6 +890,12 @@
     color: var(--text-3);
     font-style: italic;
   }
+  /* A freshly-arrived interactive line fades up into place. Set by Console.tsx on
+     a small batch only, so a print burst never reaches this rule; transform +
+     opacity keep it §9-legal, and the reduced-motion block collapses it to 1ms. */
+  .console-row[data-fresh='true'] {
+    animation: var(--animate-line-in);
+  }
 
   /* Per-segment colour, so `Your name: Saad` is one line in two colours. */
   [data-seg='out'] {
@@ -919,6 +941,22 @@
        is also what survives the greyscale check. */
   .console-row.stdin-row[data-waiting='true'] {
     border-left-color: var(--info);
+  }
+  /* The post-Enter grace (LIVE_GRACE_MS in Console.tsx): the input element stays
+     mounted so two reads in a row don't blink the software keyboard shut between
+     them — but the program is NOT reading, so it must not look like a prompt. It
+     collapses to a 1px, fill-free, marker-less focus-holder (1px, not 0, so a
+     phone cannot blur a zero-box input and drop the keyboard mid-grace). This is
+     what stops an answered line from leaving a phantom "› " prompt hanging under
+     it and shoving the transcript while the reader is still reading the answer. */
+  .console-row.stdin-row[data-waiting='false'] {
+    min-height: 0;
+    background: transparent;
+  }
+  .console-row.stdin-row[data-waiting='false'] .stdin-input {
+    min-height: 0;
+    height: 1px;
+    padding: 0;
   }
   /* The row's text becomes a flex line so the input can take whatever width the
      prompt leaves, and wrap onto the next line when the prompt fills the row.
@@ -1247,6 +1285,27 @@ html[data-kb='open'] {
   --pad-panel: var(--sp-2);
 }
 
+/* Re-anchor the shell to the visible viewport while the keyboard is up.
+ *
+ * The shell is `fixed inset-0` (so `top: 0`) with `height: var(--app-h)`. On iOS
+ * the page scrolls up under the keyboard to reveal the focused input, leaving
+ * `visualViewport.offsetTop > 0` — and a top:0 fixed element then ends
+ * `--app-top` pixels above the keyboard, painting a blank band between the
+ * console and the keyboard (the reported bug). Moving `top` onto that offset puts
+ * the shell's bottom back on the keyboard's top edge.
+ *
+ * Unlayered on purpose, exactly like the `--pad-panel` rule above it: `inset-0`
+ * is a utility, and only unlayered CSS reliably outranks `@layer utilities`
+ * regardless of source order. Scoped to `data-kb='open'` so desktop and the
+ * keyboard-closed state never get a `top` other than the utility's 0 — and
+ * `--app-top` is 0 on Android and desktop anyway, so even mid-animation this is a
+ * no-op there. `top` (not `transform`) so the shell establishes no new containing
+ * block for the editor's fixed CodeMirror tooltips; toasts, dialogs and menus all
+ * portal to <body>, outside the shell entirely. */
+html[data-kb='open'] .app-shell {
+  top: var(--app-top, 0px);
+}
+
 /* ============================================================== motion ==== */
 
 @keyframes warsha-sweep {
@@ -1268,69 +1327,20 @@ html[data-kb='open'] {
   }
 }
 
+@keyframes warsha-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes warsha-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-/* GLITCH (v3) — see the file header note. Two effects, both CSS-only.
- *
- * warsha-glitch-mark: the welcome lockup's rare tic. Still for ~92% of the
- * 7s cycle (see --animate-glitch-mark), then a jittered RGB-split-style
- * stutter for the rest — transform + filter only, per MOTION's "animate only
- * transform and opacity" rule, `filter` being the one addition a glitch needs
- * to fake a channel split without literally splitting the SVG into layers. */
-@keyframes warsha-glitch-mark {
-  0%,
-  92%,
-  100% {
-    transform: translate(0, 0);
-    filter: none;
-    opacity: 1;
-  }
-  93% {
-    transform: translate(-2px, 1px);
-    filter: drop-shadow(2px 0 0 rgba(255, 255, 255, 0.5)) drop-shadow(-2px 0 0 rgba(255, 255, 255, 0.25));
-    opacity: 0.85;
-  }
-  95% {
-    transform: translate(2px, -1px);
-    filter: drop-shadow(-2px 0 0 rgba(255, 255, 255, 0.5));
-    opacity: 0.9;
-  }
-  97% {
-    transform: translate(-1px, 0);
-    filter: none;
-    opacity: 1;
-  }
-}
-
-/* warsha-glitch-rail: the console rail's run-state entry (one shot, see the
- * `.console-panel[data-state=...]` rule above). A stutter in the rail's own
- * width and brightness, not a colour change — colour already carries the
- * "running" meaning via --accent, so this only makes the moment it ARRIVES
- * feel like a switch being thrown rather than a CSS transition settling. */
-@keyframes warsha-glitch-rail {
-  0% {
-    border-left-width: var(--rail);
-    filter: none;
-  }
-  30% {
-    border-left-width: calc(var(--rail) * 2);
-    filter: brightness(1.6);
-  }
-  60% {
-    border-left-width: var(--rail);
-    filter: none;
-  }
-  80% {
-    border-left-width: calc(var(--rail) * 2);
-    filter: brightness(1.3);
-  }
-  100% {
-    border-left-width: var(--rail);
-    filter: none;
   }
 }
 

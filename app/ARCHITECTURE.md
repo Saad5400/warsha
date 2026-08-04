@@ -38,7 +38,7 @@ npm run preview   # serve dist/ on 8083
 | `src/hooks/useRunner.ts` | The run state machine: status, progress, stdin buffering, kill, escalation timers. |
 | `src/hooks/useMedia.ts` | `useMedia` (the <900px threshold) and `useKeyboardOpen` (reads `html[data-kb]`). |
 | `src/index.css` | Token import + Tailwind theme mapping + the few things utilities cannot express. |
-| `public/coi-serviceworker.js` | Vendored v0.1.7, unmodified. Buys cross-origin isolation on a header-less static host — see §2.5. |
+| `public/coi-serviceworker.js` | Vendored v0.1.7, **plus a Warsha offline caching layer**. Buys cross-origin isolation on a header-less static host, and serves the app shell + downloaded runtimes offline — see §2.5. |
 
 ### Components
 
@@ -148,6 +148,19 @@ a real Vite build and a real dev server.
   leaves the tag in `dist/index.html` and does not copy the file, giving a 404 in production and no
   `SharedArrayBuffer`. Verified in this build: `dist/coi-serviceworker.js` is emitted and the tag
   survives unbundled.
+
+  This same worker also carries **Warsha's offline caching layer** (added on top of upstream coi; the
+  header transform is byte-identical). On `install` it precaches the app shell — the build-hashed
+  JS/CSS, injected as `self.__WARSHA_PRECACHE__` by the `warsha:sw-precache` plugin in
+  `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
+  for the shell and the two runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) and
+  network-first for navigations with a cached-`index.html` fallback, so after one online visit the
+  app opens and its already-downloaded runtimes run with **no network**. Cache Storage is kept from
+  eviction by the same `requestPersistence()` (`fs/health.ts`) that protects OPFS. Two departures
+  from upstream: (a) it registers **even when the origin already sends the isolation headers**
+  (production nginx), because the worker is now needed for offline, not only for headers; (b) the
+  isolation *reload* is gated on `!crossOriginIsolated`, so a header-less host still reloads exactly
+  once and an already-isolated page registers with none.
 
 Effect, verified locally on `vite preview` (which sends no COOP/COEP headers of its own):
 `crossOriginIsolated === true`, `SharedArrayBuffer` present, and the capability warning banner

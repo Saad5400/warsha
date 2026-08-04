@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Project, TreeNode } from '../fs/project'
 import { FileBadge } from './FileBadge'
 import { Button, IconButton } from './ui/Button'
 import {
-  IconChevronRight,
   IconChevronUp,
   IconFiles,
   IconFolderOpen,
@@ -12,6 +11,7 @@ import {
   IconPlus,
 } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
+import { useTreeDnd, type DndNode } from '../hooks/useTreeDnd'
 
 export interface ExplorerProps {
   project: Project
@@ -28,6 +28,12 @@ export interface ExplorerProps {
   onRename(path: string, isDir: boolean, name?: string): void
   onDelete(path: string, isDir: boolean): void
   /**
+   * Drag-and-drop moved `path` into folder `toDir` (`''` is the project root).
+   * The shell owns the filesystem move, exactly as it owns rename — the explorer
+   * only reports where the row was dropped. See useTreeDnd for the gesture.
+   */
+  onMove(path: string, toDir: string): void
+  /**
    * The project row that sits between the EXPLORER label and the tree
    * (LAYOUT-VSCODE §2) — VSCode's folder row, and the home of project actions.
    * A slot rather than props, so the explorer stays a file tree and knows
@@ -41,8 +47,6 @@ export interface ExplorerProps {
    */
   onShowStarters?(): void
 }
-
-const LONG_PRESS_MS = 500
 
 /* The sidebar's own header bar. See the note at its call site for why the
  * divider is a shadow and the leading padding is --sp-3. */
@@ -127,8 +131,12 @@ export function Explorer(props: ExplorerProps) {
   }
 
   const rows: VisualRow[] = []
+  // A flat path→node index, rebuilt each render, so the drag can look up any
+  // row's kind by its `data-path` and reopen the menu on a long-press.
+  const nodeByPath = new Map<string, TreeNode>()
   const walk = (node: TreeNode, depth: number) => {
     for (const child of node.children) {
+      nodeByPath.set(child.path, child)
       rows.push({ kind: 'node', node: child, depth })
       if (child.kind === 'dir' && !collapsed.has(child.path)) {
         walk(child, depth + 1)
@@ -147,6 +155,21 @@ export function Explorer(props: ExplorerProps) {
   if (draft && draft.dir === '') rows.unshift({ kind: 'draft', key: 'draft', depth: 0, dir: '', makes: draft.makes })
 
   const hasFolders = rows.some((r) => r.kind === 'node' && r.node.kind === 'dir')
+
+  const dnd = useTreeDnd({
+    scroller: treeRef,
+    nodeAt: (path) => {
+      const n = nodeByPath.get(path)
+      return n ? { path: n.path, name: n.name, isDir: n.kind === 'dir' } : undefined
+    },
+    onMove: props.onMove,
+    onExpand: expand,
+    // A touch that lifts but never moves is the old long-press: reopen the menu.
+    onLongPress: (node, x, y) => {
+      const n = nodeByPath.get(node.path)
+      if (n) setMenu({ anchor: { x, y }, node: n })
+    },
+  })
 
   // Keep the explorer in step with the tab strip: selecting a tab elsewhere has
   // to bring its row into view, or the selection is highlighted off-screen.
@@ -221,7 +244,19 @@ export function Explorer(props: ExplorerProps) {
 
       {props.projectSlot ? <div className={PROJECT_ROW}>{props.projectSlot}</div> : null}
 
-      <div ref={treeRef} className="scroller flex-1 py-1" role="tree" aria-label="Project files">
+      <div
+        ref={treeRef}
+        className="scroller flex-1 py-1"
+        role="tree"
+        aria-label="Project files"
+        // Hooks for the drag: `data-tree-root` marks the root drop zone, and
+        // `data-drop-root` lights the whole panel when a drop would land here.
+        data-tree-root=""
+        data-drop-root={dnd.dropDir === '' ? 'true' : undefined}
+        // While a drag is live the tree owns the pointer; native scroll must not
+        // fight the captured drag (auto-scroll near the edges replaces it).
+        data-dnd-active={dnd.dragging ? 'true' : undefined}
+      >
         {rows.length === 0 ? (
           <div className="empty">
             <IconFolderOpen size={32} className="empty__glyph" />
@@ -286,6 +321,17 @@ export function Explorer(props: ExplorerProps) {
                 onCollapse={() => toggle(row.node.path)}
                 onMoveFocus={moveFocus}
                 onMenu={(anchor) => setMenu({ anchor, node: row.node })}
+                // The drop lands in a folder, so only folder rows light up; a
+                // file drop highlights its parent folder instead (or the root).
+                dropTarget={row.node.kind === 'dir' && dnd.dropDir === row.node.path}
+                onPointerDownRow={(e) =>
+                  dnd.onRowPointerDown(e, {
+                    path: row.node.path,
+                    name: row.node.name,
+                    isDir: row.node.kind === 'dir',
+                  })
+                }
+                consumeClick={dnd.consumeClick}
               />
             )
           })
@@ -300,6 +346,31 @@ export function Explorer(props: ExplorerProps) {
           onClose={() => setMenu(null)}
         />
       ) : null}
+
+      {dnd.dragging && dnd.chip ? (
+        <DragChip node={dnd.dragging} x={dnd.chip.x} y={dnd.chip.y} touch={dnd.chip.touch} />
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The label that rides under the pointer during a drag, so it is always clear
+ * what is being moved. On touch it floats above the finger — a chip pinned under
+ * the thumb is a chip you cannot see. Purely decorative: pointer-events none,
+ * aria-hidden, and the real move is announced by the tree updating.
+ */
+function DragChip({ node, x, y, touch }: { node: DndNode; x: number; y: number; touch: boolean }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="tree-drag-chip"
+      style={{ left: x, top: y, transform: touch ? 'translate(-50%, calc(-100% - 20px))' : 'translate(14px, 10px)' }}
+    >
+      <span className="grid size-5 shrink-0 place-items-center text-text-3">
+        {node.isDir ? <IconFiles size={20} /> : <FileBadge name={node.name} />}
+      </span>
+      <span className="truncate">{node.name}</span>
     </div>
   )
 }
@@ -350,6 +421,9 @@ function Row({
   onCollapse,
   onMoveFocus,
   onMenu,
+  dropTarget,
+  onPointerDownRow,
+  consumeClick,
 }: {
   node: TreeNode
   depth: number
@@ -366,15 +440,14 @@ function Row({
   onCollapse(): void
   onMoveFocus(from: HTMLElement, delta: number): void
   onMenu(anchor: MenuAnchor): void
+  /** True while a drop on this (folder) row would land here — lights the row. */
+  dropTarget: boolean
+  /** Starts the drag gesture. See useTreeDnd. */
+  onPointerDownRow(e: ReactPointerEvent<HTMLElement>): void
+  /** True right after a drag ends, so its trailing click does not open the row. */
+  consumeClick(): boolean
 }) {
-  const timer = useRef<number | undefined>(undefined)
-  const start = useRef({ x: 0, y: 0 })
   const isDir = node.kind === 'dir'
-
-  const cancel = () => {
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = undefined
-  }
 
   return (
     <div
@@ -387,11 +460,16 @@ function Row({
       // text-1 at weight 500, never by a fill change: adjacent surfaces are
       // ~1.1:1 apart and invisible on a phone. See `.tree-row` in index.css.
       data-state={active ? 'open' : undefined}
+      // Lit while a drop would land in this folder (see `.tree-row[data-drop]`).
+      data-drop={dropTarget ? 'true' : undefined}
       data-path={node.path}
       title={node.path}
       className="tree-row"
       style={rowPadding(depth)}
-      onClick={renaming ? undefined : onActivate}
+      onPointerDown={renaming ? undefined : onPointerDownRow}
+      // A drag ends in a pointerup that browsers still follow with a click; when
+      // the row was dragged, swallow that click so it does not also open.
+      onClick={renaming ? undefined : () => (consumeClick() ? undefined : onActivate())}
       // Double-click renames, as it does in every desktop file tree. Touch gets
       // the same action from long-press and from the ⋯ menu.
       onDoubleClick={(e) => {
@@ -423,35 +501,19 @@ function Row({
           onDelete()
         }
       }}
+      // Touch has no right-click: a press-and-hold that does not turn into a
+      // drag reopens this menu (see useTreeDnd's onLongPress). Desktop keeps the
+      // real context menu here.
       onContextMenu={(e) => {
         e.preventDefault()
         onMenu({ x: e.clientX, y: e.clientY })
       }}
-      onTouchStart={(e) => {
-        const t = e.touches[0]
-        start.current = { x: t.clientX, y: t.clientY }
-        cancel()
-        timer.current = window.setTimeout(() => onMenu({ x: start.current.x, y: start.current.y }), LONG_PRESS_MS)
-      }}
-      onTouchMove={(e) => {
-        const t = e.touches[0]
-        if (Math.abs(t.clientX - start.current.x) > 10 || Math.abs(t.clientY - start.current.y) > 10) cancel()
-      }}
-      onTouchEnd={cancel}
-      onTouchCancel={cancel}
     >
       <Guides depth={depth} />
 
-      {isDir ? (
-        <IconChevronRight size={20} className="tree-row__chevron" />
-      ) : (
-        // Files keep the chevron column so their names line up with folder names.
-        <span aria-hidden="true" className="size-5 shrink-0" />
-      )}
-
-      {/* A folder glyph as well as the chevron: the chevron says "there is more
-          in here", the folder says "this is not a file". Open and closed states
-          use the two shapes so a glance down the tree reads without the labels. */}
+      {/* No chevron column: a folder is told from a file by its glyph, and open
+          vs closed by the two folder shapes, so the row spends no width on a
+          twistie. Folders expand and collapse on click (onActivate → toggle). */}
       <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center text-text-3">
         {isDir ? open ? <IconFolderOpen size={20} /> : <IconFiles size={20} /> : <FileBadge name={node.name} />}
       </span>

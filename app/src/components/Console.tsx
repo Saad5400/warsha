@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ConsoleBuffer, ConsoleLine } from '../console/buffer'
+import type { ConsoleBuffer, ConsoleLine, ConsoleSnapshot } from '../console/buffer'
 import type { LoadProgress } from '../runtime/types'
 import type { RunFailure, RunStatus } from '../hooks/useRunner'
 import { useMedia } from '../hooks/useMedia'
@@ -72,6 +72,19 @@ const RENDER_WINDOW = 1200
 const LIVE_GRACE_MS = 900
 
 /**
+ * The largest batch of newly-arrived lines that still fades in.
+ *
+ * DESIGN-SPEC §9 says "never animate the console's own content", and it is right
+ * about the case it was written for: a runaway `for i in range(10000): print(i)`
+ * lands hundreds of lines in a single flush, and 1,200 rows fading at once is the
+ * jank that makes Stop feel dead (§7.3). So the fade is gated to small,
+ * human-paced batches — a prompt, an answer, a few lines of output — and a burst
+ * animates nothing at all. Softens §9 for interactive output only (founder
+ * ruling 2026-08-04); the burst path is untouched, which is the part §9 protects.
+ */
+const FRESH_MAX_BATCH = 8
+
+/**
  * The console is a transcript, not a log viewer (spec §7.3), and it has ONE
  * surface: output and input share the stream the way they do in a terminal.
  *
@@ -100,6 +113,15 @@ export function Console({
   const inputRef = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState('')
   const stick = useRef(true)
+  // Which trailing rows arrived just now, so ONLY they fade in. Recomputed once
+  // per snapshot (guarded on identity, so StrictMode's double render and the
+  // extra renders around grace/scroll state cost nothing), and it marks nothing
+  // fresh during a burst — see FRESH_MAX_BATCH.
+  const freshRef = useRef<{ snap: ConsoleSnapshot | null; prevMax: number; freshFrom: number }>({
+    snap: null,
+    prevMax: 0,
+    freshFrom: 0,
+  })
   /** Id of the last line the reader had seen when they scrolled up; null = stuck to the bottom. */
   const [pausedAt, setPausedAt] = useState<number | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -112,6 +134,11 @@ export function Console({
   /** Is there a cursor on the transcript's last line at all? */
   const live = waiting || (grace && busy)
 
+  // Always instant. An auto-follow during a print burst must not animate (it would
+  // lag a frame behind the output and read as stutter), and the resume pill's jump
+  // can span thousands of pixels, where a smooth scroll is a long, sluggish glide
+  // rather than "take me to the bottom now". The console's calmer feel comes from
+  // the per-line fade and the stdin choreography, not from animating the scroll.
   const scrollToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -271,6 +298,23 @@ export function Console({
   }
 
   const lines = snapshot.lines
+
+  // Ids only ascend and never reset, so a rising max is the honest "what is new".
+  // A small batch since the last snapshot is interactive output and fades; a large
+  // one is a burst and does not. prevMax is left alone on an empty snapshot (Clear
+  // / a new run) so the next run's first line still reads as one appended line, not
+  // a jump from zero that would suppress its fade.
+  const fr = freshRef.current
+  if (fr.snap !== snapshot) {
+    const maxId = lines.length ? lines[lines.length - 1].id : fr.prevMax
+    const appended = maxId - fr.prevMax
+    const canAnim = !progress && lines.length > 0 && appended > 0 && appended <= FRESH_MAX_BATCH
+    fr.freshFrom = canAnim ? fr.prevMax : maxId
+    if (lines.length) fr.prevMax = maxId
+    fr.snap = snapshot
+  }
+  const freshFrom = fr.freshFrom
+
   const hidden = showAll ? 0 : Math.max(0, lines.length - RENDER_WINDOW)
   const visible = hidden > 0 ? lines.slice(hidden) : lines
   const unseen = pausedAt === null ? 0 : countAfter(lines, pausedAt)
@@ -281,8 +325,14 @@ export function Console({
   // belongs ON it; otherwise it starts a fresh line and takes the `› ` marker —
   // which is exactly the choice `buffer.echo()` will make a moment later, so the
   // line does not reflow when the answer lands.
+  //
+  // Gated on `waiting`, not `live`: during the post-Enter grace the program is no
+  // longer reading, so the answered line stays a normal completed row instead of
+  // being pulled back up into a live row — which is what left a phantom "› "
+  // prompt hanging under every answer for ~900ms and shifting the transcript out
+  // from under the reader (founder ruling 2026-08-04).
   const tail = visible.length > 0 ? visible[visible.length - 1] : null
-  const joinTail = live && !!tail && !tail.complete
+  const joinTail = waiting && !!tail && !tail.complete
   const rows = joinTail ? visible.slice(0, -1) : visible
 
   return (
@@ -329,7 +379,7 @@ export function Console({
           {empty ? (
             <p className="console-empty">{cleared ? COPY.consoleCleared : COPY.consoleEmpty}</p>
           ) : (
-            rows.map((line) => <Row key={line.id} line={line} />)
+            rows.map((line) => <Row key={line.id} line={line} fresh={line.id > freshFrom} />)
           )}
 
           {live ? (
@@ -413,13 +463,16 @@ function LiveLine({
               {seg.text}
             </span>
           ))
-        ) : (
+        ) : waiting ? (
           // The same marker `buffer.echo()` writes when an answer starts its own
-          // line, so the row reads identically before and after Enter.
+          // line, so the row reads identically before and after Enter. Only while
+          // actually reading: in the post-Enter grace the input is a collapsed,
+          // invisible focus-holder (see `.stdin-row[data-waiting='false']`), so it
+          // must not paint a prompt marker for a read nobody asked for.
           <span aria-hidden="true" className="stdin-marker">
             ›{' '}
           </span>
-        )}
+        ) : null}
         <input
           ref={inputRef}
           value={value}
@@ -571,9 +624,13 @@ function useJustCleared(lineCount: number): boolean {
  * five thousand. This is a *design* requirement, not an optimisation: the visible
  * symptom of dropping it is that Stop stops responding (spec §7.3).
  */
-const Row = memo(function Row({ line }: { line: ConsoleLine }) {
+const Row = memo(function Row({ line, fresh }: { line: ConsoleLine; fresh?: boolean }) {
   return (
-    <div data-kind={line.kind} className="console-row">
+    // `data-fresh` fades a just-arrived interactive line in (transform + opacity,
+    // one shot). It flips off on the next snapshot, which re-renders only this row
+    // — memo keeps every settled row untouched, so a burst, where nothing is ever
+    // marked fresh, pays nothing.
+    <div data-kind={line.kind} data-fresh={fresh ? 'true' : undefined} className="console-row">
       <span className="console-row__text">
         {line.segments.length === 0
           ? ' '

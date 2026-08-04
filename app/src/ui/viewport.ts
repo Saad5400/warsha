@@ -6,8 +6,9 @@
  * pinned to the bottom ends up underneath it and the student types blind.
  * visualViewport is the only mechanism both platforms honour.
  *
- * Publishes three things onto <html>:
+ * Publishes four things onto <html>:
  *   --app-h    the height the shell should occupy
+ *   --app-top  the visual viewport's top offset (see the note by its write below)
  *   --kb-inset the software keyboard height (0 on Android / hardware keyboards)
  *   data-kb    "open" | "closed", for the compact layout state
  */
@@ -23,6 +24,14 @@ export function installViewport(): () => void {
     // iPad: innerHeight is unchanged, so this yields the true keyboard height.
     const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
     root.style.setProperty('--app-h', `${Math.round(vv.height)}px`)
+    // iOS scrolls the page up under the keyboard to reveal a focused input, which
+    // leaves visualViewport.offsetTop > 0. The shell is `fixed; top: 0` and sized
+    // to vv.height, so a positive offset drops its bottom edge that many pixels
+    // ABOVE the keyboard — a blank band between the console and the keyboard while
+    // the student types. Publishing the offset lets the shell re-anchor its top to
+    // it (CSS, keyboard-open only), so the shell tracks the visible viewport
+    // instead of the layout viewport it is fixed to. 0 on Android and desktop.
+    root.style.setProperty('--app-top', `${Math.max(0, Math.round(vv.offsetTop))}px`)
     root.style.setProperty('--kb-inset', `${kb}px`)
     // >100px so an attached Magic Keyboard or the iPad shortcut bar alone does
     // not trigger the compact layout.

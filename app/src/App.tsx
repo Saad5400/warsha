@@ -6,7 +6,7 @@ import { prefs, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates } from './runtime'
-import { templates, type Template } from './templates'
+import { type Template } from './templates'
 import { exportZip } from './zip'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
@@ -23,6 +23,7 @@ import { Console } from './components/Console'
 import { ConsoleDivider } from './components/ConsoleDivider'
 import { Editor } from './components/Editor'
 import { Explorer } from './components/Explorer'
+import { InstallControl } from './components/InstallControl'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
 import { RunBar } from './components/RunBar'
 import { RunControl, resolveEntry, type RunControlState } from './components/RunControl'
@@ -31,6 +32,7 @@ import { Tabs } from './components/Tabs'
 import { TopBar } from './components/TopBar'
 import { WelcomePanel } from './components/WelcomePanel'
 import { ImportZipDialog } from './components/ImportZipDialog'
+import { TemplatePicker } from './components/TemplatePicker'
 import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import type { MenuItem } from './components/ui/Menu'
@@ -138,6 +140,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   // Ln:Col for the status bar. Null until a file is open, because a caret
   // position for a document nobody is looking at is a small lie.
   const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null)
@@ -374,6 +377,23 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }
 
+  // Drag-and-drop in the explorer: move `path` into folder `toDir` ('' = root),
+  // reusing project.move and its rename bookkeeping exactly as renameEntry does.
+  const moveEntry = async (path: string, toDir: string) => {
+    const { name } = splitPath(path)
+    const to = toDir ? `${toDir}/${name}` : name
+    if (to === path) return
+    try {
+      const mapping = await project.move(path, to)
+      for (const [from, dest] of mapping) editorRef.current?.renamePath(from, dest)
+      setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
+      setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
+      setEntryPath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    }
+  }
+
   const deleteEntry = async (path: string, isDir: boolean) => {
     const ok = await dialogs.confirm({
       title: isDir ? 'Delete this folder?' : 'Delete this file?',
@@ -494,6 +514,20 @@ function Ide({ report }: { report: CapabilityReport }) {
     // Reached only if a starter is ever offered from a project that has files:
     // making a new project is the non-destructive answer.
     return newProject(t)
+  }
+
+  // The template picker resolves to a starter or to "blank". A starter goes
+  // through applyTemplate (fill this empty project, or make a new one). Blank is
+  // the old "New project…" default: an empty project you name, unless you are
+  // already sitting in one — then there is nothing to create, so open a file.
+  const pickStarter = (t: Template) => {
+    setPickerOpen(false)
+    void applyTemplate(t)
+  }
+  const startBlank = () => {
+    setPickerOpen(false)
+    if (project.isEmpty()) void newFile('')
+    else void newProject()
   }
 
   const startEmpty = async () => {
@@ -700,16 +734,14 @@ function Ide({ report }: { report: CapabilityReport }) {
   // the APP or to a file: new file, save, import, text size, handedness.
   const projectActions: MenuItem[] = [
     {
+      // One row, whatever the language list grows to: it opens the picker, where
+      // language and starter are chosen. The per-template rows this replaced did
+      // not survive twenty languages (languages.ts, TemplatePicker).
       label: 'New project…',
       icon: <IconFolderPlus size={18} />,
       startsGroup: true,
-      onSelect: () => void newProject(),
+      onSelect: () => setPickerOpen(true),
     },
-    ...templates.map((t) => ({
-      label: `New ${t.name} project…`,
-      icon: <IconFolderPlus size={18} />,
-      onSelect: () => void newProject(t),
-    })),
     {
       label: 'Rename this project…',
       icon: <IconFileLines size={18} />,
@@ -857,6 +889,10 @@ function Ide({ report }: { report: CapabilityReport }) {
           )
         }
         runSlot={narrow ? undefined : <RunControl run={runControl} placement="title" />}
+        // Unconditional, unlike runSlot: this is the one control a phone needs
+        // MORE than a laptop does, and it renders itself away when there is
+        // nothing to install (which is most sessions, at every width).
+        installSlot={<InstallControl />}
       />
 
       <div className={BODY}>
@@ -889,6 +925,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             onNewFolder={(dir, name) => void newFolder(dir, name)}
             onRename={(p, isDir, name) => void renameEntry(p, isDir, name)}
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
+            onMove={(p, toDir) => void moveEntry(p, toDir)}
             // The starters live in the workspace itself now, so from a drawer
             // the useful move is to get out of the way and show them. Docked,
             // they are already on screen and the button would be a no-op.
@@ -930,7 +967,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           {empty ? (
             <WelcomePanel
               onNewFile={() => void newFile('')}
-              onPickTemplate={(t) => void applyTemplate(t)}
+              onNewProject={() => setPickerOpen(true)}
               onImportZip={() => setImportOpen(true)}
             />
           ) : (
@@ -1053,6 +1090,14 @@ function Ide({ report }: { report: CapabilityReport }) {
           currentFileCount={project.paths().length}
           onCancel={() => setImportOpen(false)}
           onImport={(snapshot, name) => void onZipImported(snapshot, name)}
+        />
+      ) : null}
+
+      {pickerOpen ? (
+        <TemplatePicker
+          onPick={pickStarter}
+          onBlank={startBlank}
+          onCancel={() => setPickerOpen(false)}
         />
       ) : null}
     </div>

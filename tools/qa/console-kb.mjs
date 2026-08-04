@@ -3,6 +3,7 @@
  * state ui/viewport.ts publishes (html[data-kb], --kb-inset) directly — the same
  * inputs the layout reads on a real iPad. */
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,12 +30,8 @@ const hasOut = (s, t = 120000) => page.waitForFunction(
 
 await page.goto(URL_, { waitUntil: 'load' })
 await page.waitForTimeout(1500)
-await page.getByRole('button', { name: /Python starter/ }).click()
+await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForTimeout(1500)
-for (const n of ['Create', 'Replace']) {
-  const b = page.getByRole('button', { name: n, exact: true })
-  if (await b.count()) { await b.first().click(); await page.waitForTimeout(1300); break }
-}
 
 // The console starts collapsed on an empty project (App collapses it so the start
 // panel gets the room), and that choice persists — open it before inspecting it.

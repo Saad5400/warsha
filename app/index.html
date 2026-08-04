@@ -46,8 +46,10 @@
          before anything touches SharedArrayBuffer. It gives the page
          COOP: same-origin + COEP on a static host that sends no headers of its own,
          which is what makes crossOriginIsolated true — both engines need it.
-         Costs one automatic reload on a first visit. Vendored v0.1.7, unmodified;
-         see runtimes/python/INTEGRATION.md §3. -->
+         Costs one automatic reload on a first visit. Vendored v0.1.7 plus a Warsha
+         offline caching layer (it also precaches the app shell and caches the
+         downloaded runtimes so the installed PWA works offline; see
+         app/ARCHITECTURE.md §2.5). See runtimes/python/INTEGRATION.md §3. -->
     <script src="./coi-serviceworker.js"></script>
     <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
          student pinching into a stack trace. Double-tap zoom is killed per

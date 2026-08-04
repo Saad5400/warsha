@@ -5,6 +5,7 @@
  * app's coi-serviceworker works for Python; Java needs no isolation of its own). */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -122,7 +123,7 @@ await page.waitForFunction(() => self.crossOriginIsolated === true, null, { time
   .then(() => info('page is cross-origin isolated (Python needs it; Java does not)'))
   .catch(() => info('NOT isolated — Java should still work'))
 
-await page.getByRole('button', { name: /Java \(OOP starter\)/ }).click()
+await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
 const files = await page.locator('[role="treeitem"]').allInnerTexts()
 info(`explorer: ${JSON.stringify(files.map((f) => f.trim()))}`)

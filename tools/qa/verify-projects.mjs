@@ -6,6 +6,7 @@
  * hardwired workspace, and reopening the last project on the next visit. */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -107,15 +108,18 @@ if (rows.some((r) => /New project…/.test(r)) && rows.some((r) => /Delete this 
 else fail('project actions present', JSON.stringify(rows))
 
 // ============================== 2. python project from the start panel, then Run
-await page.getByRole('button', { name: /Python starter/ }).click()
+// One entry point now (New from a starter → language → starter); the advanced
+// starter is the two-file shapes project this suite runs. It fills the empty
+// first project in place and takes its name.
+await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForTimeout(1200)
 info(`explorer after python starter: ${JSON.stringify(await explorerFiles())}`)
 rows = await menuRows()
 info(`menu after python starter: ${JSON.stringify(rows)}`)
 if (rows.filter((r) => /Open$/.test(r)).length === 1) pass('exactly one project is marked Open')
 else fail('exactly one project is marked Open', JSON.stringify(rows))
-if (rows.some((r) => /^Python starter/.test(r)) && !rows.some((r) => /^My project/.test(r)))
-  pass('the empty first project became the Python project (no orphan left behind)', 'Python starter')
+if (rows.some((r) => /^Python \(OOP starter\)/.test(r)) && !rows.some((r) => /^My project/.test(r)))
+  pass('the empty first project became the Python project (no orphan left behind)', 'Python (OOP starter)')
 else fail('the empty first project became the Python project', JSON.stringify(rows))
 
 await runBtn().click()
@@ -135,7 +139,13 @@ await setEditor('print("python project fingerprint")\n')
 await page.waitForTimeout(600)
 
 // ================================================= 3. new java project from menu
-await clickMenu(/New Java \(OOP starter\) project…/)
+// The per-template menu rows are gone; "New project…" opens the picker, and from
+// a project that already has files a starter opens the "New project from …"
+// name prompt rather than replacing anything.
+await clickMenu(/New project…/)
+const picker = page.locator('dialog[open]')
+await picker.getByRole('button', { name: /^Java/ }).click()
+await picker.locator('.template-card').filter({ hasText: 'Java (OOP starter)' }).first().click()
 await dialogFill('Java work')
 await dialogConfirm('Create')
 await page.waitForTimeout(1200)
@@ -147,7 +157,7 @@ else fail('new java project opened with only its own files', javaFiles.join(', '
 
 rows = await menuRows()
 info(`menu with two projects: ${JSON.stringify(rows)}`)
-if (rows.some((r) => /^Java work.*Open$/.test(r)) && rows.some((r) => /^Python starter$/.test(r)))
+if (rows.some((r) => /^Java work.*Open$/.test(r)) && rows.some((r) => /^Python \(OOP starter\)$/.test(r)))
   pass('both projects listed, java marked Open')
 else fail('both projects listed, java marked Open', JSON.stringify(rows))
 
@@ -166,7 +176,7 @@ await page.screenshot({ path: `${SHOTS}/warsha-projects-java.png` })
 
 // ==================================== 4. switch back: python files must be intact
 await page.waitForTimeout(600)
-await clickMenu(/^Python starter$/)
+await clickMenu(/^Python \(OOP starter\)$/)
 await page.waitForTimeout(1400)
 const backFiles = await explorerFiles()
 info(`explorer back in python: ${JSON.stringify(backFiles)}`)
@@ -191,8 +201,8 @@ await page.waitForSelector('.cm-content', { timeout: 20000 })
 await page.waitForTimeout(1500)
 const afterReload = await explorerFiles()
 rows = await menuRows()
-if (afterReload.some((f) => f.includes('main.py')) && rows.some((r) => /^Python starter.*Open$/.test(r)))
-  pass('last-opened project auto-opens on the next visit', 'Python starter reopened')
+if (afterReload.some((f) => f.includes('main.py')) && rows.some((r) => /^Python \(OOP starter\).*Open$/.test(r)))
+  pass('last-opened project auto-opens on the next visit', 'Python (OOP starter) reopened')
 else fail('last-opened project auto-opens on the next visit', `${afterReload.join(', ')} | ${JSON.stringify(rows)}`)
 if ((await page.locator('.cm-content').innerText()).includes('python project fingerprint'))
   pass('project content persisted across reload (OPFS)')
@@ -204,7 +214,7 @@ await dialogConfirm('Delete')
 await page.waitForTimeout(1600)
 rows = await menuRows()
 info(`menu after delete: ${JSON.stringify(rows)}`)
-if (!rows.some((r) => /^Python starter/.test(r))) pass('deleted project is gone from the list')
+if (!rows.some((r) => /^Python \(OOP starter\)/.test(r))) pass('deleted project is gone from the list')
 else fail('deleted project is gone from the list', JSON.stringify(rows))
 if (rows.some((r) => /^Java work.*Open$/.test(r))) pass('deleting the open project opens the next one', 'Java work')
 else fail('deleting the open project opens the next one', JSON.stringify(rows))
@@ -217,7 +227,7 @@ else fail('the surviving project loaded its own files', afterDelete.join(', '))
 await page.reload({ waitUntil: 'load' })
 await page.waitForTimeout(1800)
 rows = await menuRows()
-if (!rows.some((r) => /^Python starter/.test(r))) pass('deletion survived a reload (really removed from OPFS)')
+if (!rows.some((r) => /^Python \(OOP starter\)/.test(r))) pass('deletion survived a reload (really removed from OPFS)')
 else fail('deletion survived a reload', JSON.stringify(rows))
 
 // ===================================== 7. rename, so the name is really stored
