@@ -7,12 +7,14 @@
   "scripts": {
     "python": "node verify.mjs",
     "java": "node verify-java.mjs",
+    "csharp": "node verify-csharp.mjs",
     "projects": "node verify-projects.mjs",
     "migration": "node verify-migration.mjs",
     "robustness": "node robustness.mjs",
     "offline": "node offline-check.mjs",
+    "sw-range": "node sw-range.mjs",
     "timings": "node measure-java.mjs",
-    "all": "node verify.mjs && node verify-java.mjs && node verify-projects.mjs && node verify-migration.mjs && node robustness.mjs"
+    "all": "node verify.mjs && node verify-java.mjs && node verify-csharp.mjs && node verify-projects.mjs && node verify-migration.mjs && node robustness.mjs && node sw-range.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.62.1"

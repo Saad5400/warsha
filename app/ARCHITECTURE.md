@@ -25,10 +25,11 @@ npm run preview   # serve dist/ on 8083
 | `src/console/buffer.ts` | The transcript. Chunk-based (not line-based), batched notification, 5000-line head-dropping cap. Plain TS, no React. |
 | `src/editor/setup.ts` | All CodeMirror wiring: per-file state cache, lazy grammars, compartments. Plain TS. |
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
-| `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunSession`, `RuntimeKind`, `Runtime`. |
+| `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
 | `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. No download, no worker. |
-| `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/mjs entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. JS *inside* a page is inlined by `WebRuntime` instead. |
+| `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/ts/mjs/tsx… entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. Plain one-file JS runs raw (instant); TypeScript or a script that imports another file is bundled first (`bundle.ts`). JS *inside* a page is inlined by `WebRuntime` instead. |
+| `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. Shared by `js.ts` (and, later, `web.ts`'s module scripts). |
 | `src/runtime/fake.ts` | `FakeRuntime` — fakes download/unpack/boot/run so the shell is demoable without an engine. |
 | `src/fs/types.ts` | `ProjectStore` + `FsSnapshot`: the storage seam. |
 | `src/fs/opfs.ts` | `OpfsStore` (default) and `MemoryStore` (fallback); `createStore()` picks. |
@@ -160,7 +161,14 @@ a real Vite build and a real dev server.
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
   for the shell and the two runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) and
   network-first for navigations with a cached-`index.html` fallback, so after one online visit the
-  app shell opens with **no network**. Cache Storage is kept from eviction by the same
+  app shell opens with **no network**. One carve-out is load-bearing: **requests carrying a `Range`
+  header bypass the cache entirely** (network only, never stored). CheerpJ reads `/app/ecj.jar` — a
+  same-origin GET, so otherwise cache-first — in many HTTP Range requests and needs a `206` +
+  `Content-Range` on each; the Cache API ignores the `Range` header and would replay the full stored
+  `200`, so a single cached full-body `ecj.jar` (CheerpJ's own whole-jar refetch after a flaky range
+  leaves one) would poison every later range read and Java would stop starting. Range requests going
+  straight to the network keep CheerpJ on the exact byte-range path it had before this layer existed;
+  `tools/qa/sw-range.mjs` guards it. Cache Storage is kept from eviction by the same
   `requestPersistence()` (`fs/health.ts`) that protects OPFS. Runtime coverage differs by engine and
   is deliberate: **Python (Pyodide) works fully offline** — jsdelivr serves it over CORS, so every
   piece caches. **Java (CheerpJ) is not guaranteed offline**: it pulls its loader via a no-cors
@@ -449,10 +457,11 @@ that compile and run with piped stdin but have not been through that review. Eac
   `CSharpRuntime` (.NET 9 wasm + Roslyn — compiles and runs student C# in a module worker;
   ~13–15 MB brotli, blocking `Console.ReadLine()` over `SharedArrayBuffer`; see
   `runtimes/csharp/INTEGRATION.md`), `web` → `WebRuntime` (a **page** — html/css — in a sandboxed
-  iframe), and `js` → `JsRuntime` (a **standalone script** run headless in a Web Worker, Node-like).
+  iframe), and `js` → `JsRuntime` (a **standalone script** — JavaScript or TypeScript — run headless
+  in a Web Worker, Node-like).
   All but `web` are `kind: 'console'`; `web` is `kind: 'preview'` — see §2's runtime contract. The
-  entry's extension picks the engine: `.cs` → `csharp`, html/css → `web`, js/mjs → `js`, and a `.js`
-  *referenced from a page* is inlined by `web`, never run by `js`. `src/runtime/fake.ts` is
+  entry's extension picks the engine: `.cs` → `csharp`, html/css → `web`, js/mjs/ts/tsx/… → `js`, and
+  a `.js`/`.ts` *referenced from a page* is inlined by `web`, never run by `js`. `src/runtime/fake.ts` is
   unreferenced — kept as the fastest way to demo the shell without an engine, and it documents the
   console contract by example.
 - **A preview's iframe is its execution.** For a page project the `Preview` iframe stays MOUNTED
@@ -460,13 +469,17 @@ that compile and run with piped stdin but have not been through that review. Eac
   because a display:none iframe keeps running — so the page's `console.log` fills the Console
   whichever tab you are on. Unmounting it on the Console tab was a bug where a page (and a lone
   script, before it moved to `JsRuntime`) only ran once you visited Preview.
-- **Web is Phase 1 of a larger plan and has deliberate limits.** A `<script type="module">` that
-  `import`s another *project* file does not resolve, and a standalone script cannot `import` another
-  project file either — cross-file ES modules need the bundling step that arrives with TypeScript
-  (Phase 2). `JsRuntime` has no stdin yet. Tailwind and the React/Vue/Svelte starter kits are later
-  phases. Local refs are inlined; network refs (a CDN) are left untouched, the seam those phases
-  build on. The output pane reuses the console panel's bottom strip, so on a phone the preview is
-  small — a larger, editor-adjacent preview is a follow-up.
+- **Web is a phased plan; Phase 2a (TypeScript + standalone modules) is in, 2b is not.** A standalone
+  script (`js` engine) now runs **TypeScript** and can `import` other *project* files — `bundle.ts`
+  (esbuild-wasm) transpiles and bundles it, downloaded once on the first such run and reported on the
+  progress bar; plain one-file JS keeps its zero-download instant path. TypeScript folds into the Web
+  tile (no separate picker tile), with two starters (`web-ts`, `web-ts-modules`). **Still open (Phase
+  2b):** a `<script type="module">` inside a *page* that imports another project file, or a `.ts`
+  script referenced from HTML, is not yet bundled by `WebRuntime` — that is the next slice. `JsRuntime`
+  has no stdin yet. Tailwind and the React/Vue/Svelte starter kits are later phases. Local refs are
+  inlined; network refs (a CDN) are left untouched, the seam those phases build on. The output pane
+  reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
+  editor-adjacent preview is a follow-up.
 - Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours) and its
   bootstrap compile costs 7–20 s on a fresh worker. Both are flagged for Product in
   `runtimes/java/INTEGRATION.md`.

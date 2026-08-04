@@ -143,6 +143,31 @@ if (typeof window === 'undefined') {
             })
             : r;
 
+        // Range requests bypass the cache ENTIRELY — straight to the network,
+        // never read from cache, never stored. CheerpJ reads /app/ecj.jar (a
+        // same-origin GET, so otherwise `cacheable`) in many HTTP Range requests
+        // and REQUIRES a `206 Partial Content` + `Content-Range` on every one;
+        // the moment it sees a `200` with the whole body it decides the host has
+        // no Range support and refuses to run — which surfaces to the student as
+        // "Warsha could not start Java" (the bootstrap compile fails). The Cache
+        // API cannot satisfy a range: `caches.match()` ignores the Range header
+        // and replays the full stored `200`, so a SINGLE full-body ecj.jar in the
+        // cache (one non-range probe, or a server that answers `bytes=0-` with
+        // `200`) poisons every subsequent range read for the life of that cache.
+        // Passing range requests through untouched keeps CheerpJ on the exact
+        // byte-range path it had before this caching layer existed. This does not
+        // cost offline support: a range read could never be served from Cache
+        // Storage anyway, and neither the app shell nor Pyodide uses Range.
+        // See runtimes/java/INTEGRATION.md ("The host must support HTTP Range").
+        if (r.headers.has("range")) {
+            event.respondWith(
+                fetch(request)
+                    .then((response) => isolate(response))
+                    .catch((e) => console.error(e))
+            );
+            return;
+        }
+
         // Navigations: network-first, so a fresh deploy is picked up the moment
         // the student is online, falling back to the cached shell when they are
         // not. This is the line that makes the installed app open with no
@@ -185,7 +210,14 @@ if (typeof window === 'undefined') {
                 if (cached) return isolate(cached);
 
                 const net = await fetch(request);
-                if (net && net.ok && net.type !== "opaque") {
+                // Never store a partial response. Range requests are handled
+                // above and never reach here; this is belt-and-suspenders so a
+                // `206`/`Content-Range` can never be cached and later replayed as
+                // if it were the whole resource. (`cache.put` already rejects a
+                // 206, but the guard makes the intent explicit and covers a 200
+                // that still carries Content-Range.)
+                if (net && net.ok && net.status !== 206 && net.type !== "opaque"
+                    && !net.headers.has("content-range")) {
                     const cache = await caches.open(isRuntimeHost(r.url) ? RUNTIME_CACHE : SHELL_CACHE);
                     cache.put(r, net.clone()).catch(() => {});
                 }
