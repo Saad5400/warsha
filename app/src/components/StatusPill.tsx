@@ -25,12 +25,22 @@ const PILL =
   // genuine failure is what makes red mean something.
   'data-[state=stopped]:bg-neutral-soft data-[state=stopped]:text-text-2'
 
-/* A filled capsule in a 26px status bar reads as a button, and VSCode's status
- * bar is text — so the same state renders as plain tinted text there. */
+/* v4: the bar variant is VSCode's remote-indicator block — a full-height chip
+ * flush against the status bar's left edge, plain-weight UI text. The fill
+ * carries only the states worth a fill: the accent remote colour while a run
+ * is live (preparing/running/waiting), the solid danger fill for a genuine
+ * failure, and no fill at all once the bar is at rest (idle/ok/stopped) —
+ * exactly VSCode's block, which colours up while something remote is
+ * happening and goes quiet after. White-on-accent and white-on-danger-fill
+ * are the two ratios THEME-V4 §6 clears for exactly this block. As everywhere,
+ * colour never travels alone — the glyph and the word go with it. */
 const BAR =
-  'inline-flex items-center gap-1 min-w-0 font-semibold tracking-[0.02em] whitespace-nowrap text-text-2 ' +
-  'data-[state=preparing]:text-success data-[state=running]:text-success data-[state=ok]:text-success ' +
-  'data-[state=waiting]:text-info data-[state=failed]:text-danger'
+  'status-remote h-full flex items-center gap-1 px-2 flex-none whitespace-nowrap ' +
+  'text-statusbar-fg ' +
+  'data-[state=preparing]:bg-statusbar-remote data-[state=preparing]:text-white ' +
+  'data-[state=running]:bg-statusbar-remote data-[state=running]:text-white ' +
+  'data-[state=waiting]:bg-statusbar-remote data-[state=waiting]:text-white ' +
+  'data-[state=failed]:bg-danger-fill data-[state=failed]:text-white'
 
 /* 12px: §3.2's floor applies to the glyph too. The box stays narrow so the
  * pill does not grow. */
@@ -54,10 +64,11 @@ export function StatusPill({
   status: RunStatus
   exitCode: number | null
   /**
-   * `pill` is the filled capsule in the console header. `bar` is the same state,
-   * the same word and the same glyph rendered as plain tinted text for the
-   * status bar, which is 26px tall and where VSCode uses text rather than a
-   * chip.
+   * `pill` is the filled capsule in the console header — shown only while a
+   * software keyboard hides the status bar, the one moment the bar variant is
+   * off screen. `bar` is the same state, the same word and the same glyph
+   * rendered as the status bar's leading remote-indicator block — VSCode's
+   * full-height filled chip at the bar's left edge, at every width.
    *
    * The variants share this component so the seven states can only ever be
    * worded once — but they must NOT share the `.pill` class: tools/qa reads

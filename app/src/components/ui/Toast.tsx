@@ -126,7 +126,11 @@ const toast = cva(
     variants: {
       kind: {
         info: 'border-border-subtle bg-surface-3 text-text-1',
-        success: 'border-success bg-surface-3 text-text-1',
+        // The glyph carries the tone; a full green frame floating over the tab
+        // strip was the loudest thing on screen for a message that says
+        // "everything worked" (founder, 2026-08-05). Errors keep their frame —
+        // they are the one kind worth interrupting for.
+        success: 'border-border-subtle bg-surface-3 text-text-1',
         error: 'border-danger bg-danger-soft text-danger',
       },
     },

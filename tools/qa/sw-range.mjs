@@ -97,7 +97,7 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('public class Main { public static void main(String[] a) { System.out.println("WARSHA_RANGE_OK"); } }')
 await page.waitForTimeout(700)
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 
 const out = await page
   .waitForFunction(

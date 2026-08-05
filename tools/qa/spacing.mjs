@@ -26,6 +26,11 @@ import { join } from 'node:path'
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8093/'
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 const SCALE = [0, 4, 8, 12, 16, 24, 32]
+/* DENSITY (VS Code parity, W1-C/W2-A): at a fine pointer the chrome adopts
+ * VS Code's OWN metrics, two of which are deliberately off the 4/8 grid — the
+ * 6px icon-label gap (tree rows, tabs) and the 10px tab leading inset. They
+ * are named additions, not a loosening: anything else off-grid still fails. */
+const DESK_SCALE = [...SCALE, 6, 10]
 
 const results = []
 const pass = (n, d = '') => { results.push(['PASS', n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
@@ -103,7 +108,7 @@ const offenders = await page.evaluate((scale) => {
     }
   }
   return out
-}, SCALE)
+}, (await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)) ? DESK_SCALE : SCALE)
 
 if (offenders.length === 0) pass('1. SCALE — every padding/margin/gap in the chrome is on the 4/8 scale')
 else {
@@ -134,7 +139,7 @@ const gaps = await page.evaluate(() => {
   })
 })
 info('icon+label gaps: ' + JSON.stringify(Object.fromEntries(gaps)))
-const badGap = gaps.filter(([, v]) => v !== null && !SCALE.includes(v))
+const badGap = gaps.filter(([, v]) => v !== null && !DESK_SCALE.includes(v))
 if (badGap.length === 0) pass('3. PAIRS — every icon/label gap is a scale value')
 else fail('3. PAIRS — off-scale gap', JSON.stringify(badGap))
 
@@ -169,14 +174,22 @@ else { fail('4. HUGGING — accidental sub-scale gaps', `${hugs.length}`); hugs.
 const rows = await page.locator('aside[aria-label="Files"] [role="treeitem"]').evaluateAll((els) =>
   els.map((e) => Math.round(e.getBoundingClientRect().height)))
 const rowSet = [...new Set(rows)]
-if (rowSet.length === 1 && rowSet[0] >= 44) pass('5. RHYTHM — every sidebar row is the same height', `${rowSet[0]}px × ${rows.length}`)
+// DENSITY (2026-08-05, retuned W1-C): this desktop harness gets the
+// fine-pointer compact chrome, where rows are VS Code's 22px (--row-tree); the
+// 44px floor binds on coarse pointers only.
+if (rowSet.length === 1 && rowSet[0] >= 22) pass('5. RHYTHM — every sidebar row is the same height', `${rowSet[0]}px × ${rows.length}`)
 else fail('5. RHYTHM — sidebar row heights vary', JSON.stringify(rowSet))
 
 /* ---- 6. BARS: controls clear their bar, dividers are shadows ------------- */
 const bars = await page.evaluate(() => {
-  const check = (barSel, ctrlSel, name) => {
+  // `seamSel`: the element whose box-shadow carries the bar's hairline. It
+  // defaults to the bar, but the console header deliberately owns no divider —
+  // VS Code's panel draws its ONE seam on the panel's top edge, so that bar's
+  // seam lives on `.console-panel` (index.css).
+  const check = (barSel, ctrlSel, name, seamSel = barSel) => {
     const bar = document.querySelector(barSel), ctrl = document.querySelector(ctrlSel)
-    if (!bar || !ctrl) return null
+    const seam = document.querySelector(seamSel)
+    if (!bar || !ctrl || !seam) return null
     const b = bar.getBoundingClientRect(), c = ctrl.getBoundingClientRect()
     const cs = getComputedStyle(bar)
     return {
@@ -184,13 +197,20 @@ const bars = await page.evaluate(() => {
       barH: Math.round(b.height), ctrlH: Math.round(c.height),
       top: Math.round(c.top - b.top), bottom: Math.round(b.bottom - c.bottom),
       borderBottom: parseFloat(cs.borderBottomWidth) || 0,
-      insetShadow: /inset/.test(cs.boxShadow),
+      insetShadow: /inset/.test(getComputedStyle(seam).boxShadow),
     }
   }
   return [
-    check('.top-bar', '.top-bar [aria-label^="Run "], .top-bar [aria-label^="Stop "]', 'title bar / Run'),
-    check('.top-bar', '.top-bar [aria-label="More"]', 'title bar / ⋯'),
-    check('.console-header', '.console-header button', 'console header / Run'),
+    // Run and ⋯ live in the tab strip's editor-actions corner (one shell,
+    // every size); the trailing group shares the strip's row, so the strip's
+    // own box is the bar to clear.
+    check('.tab-strip', 'button[aria-label^="Run "], button[aria-label^="Stop "]', 'tab strip / Run'),
+    check('.tab-strip', 'button[aria-label="More"]', 'tab strip / ⋯'),
+    // Not the header's first button: that is a CAPS panel tab (CONSOLE /
+    // PREVIEW), which fills the bar by design — VS Code's panel-title tabs are
+    // h-full, so "clearance" is not a number they owe. The icon controls in
+    // the trailing group are the ones that must clear the bar.
+    check('.console-header', '.console-header button:not([role="tab"])', 'console header / controls', '.console-panel'),
     check('aside[aria-label="Files"] .panel-label', 'aside[aria-label="Files"] .panel-label', 'sidebar header'),
   ].filter(Boolean)
 })
@@ -214,13 +234,16 @@ for (const b of bars) {
 /* ---- alignment grid: the corner the founder flagged ---------------------- */
 // One column, one grid line. The title bar carries no mark and no wordmark any
 // more (LAYOUT-VSCODE §1b), so what runs down the left of the app is the
-// sidebar's own stack: EXPLORER, the project row, the tree. Each of them starts
-// with a glyph or a word, and F-07 was those three starting at 60, 64 and 62.
+// sidebar's own stack: the Explorer label, the pane header, the tree.
 //
-// Measured at the CONTENT edge, never the box edge: the project row's button
-// carries 8px of its own padding and the tree row spends 2px on the reserved
-// accent border, and neither of those is an inset someone chose — they are what
-// has to be subtracted for the ink to line up.
+// The pane header (W1-C — `.sidebar-project-row`, VS Code's section row)
+// deliberately LEADS with its 16px twistie left of the label grid line, so it
+// is asserted present rather than aligned; what still shares the line is the
+// Explorer label and the tree rows' content edge.
+//
+// Measured at the CONTENT edge, never the box edge: the tree row spends 2px on
+// the reserved (transparent at desk) accent border, which is not an inset
+// someone chose — it is what has to be subtracted for the ink to line up.
 const grid = await page.evaluate(() => {
   const x = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().left) : null }
   const r = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().right) : null }
@@ -232,28 +255,29 @@ const grid = await page.evaluate(() => {
   }
   return {
     panelLabel: x('.panel-label'),
-    // `> :first-child` is the leading ink in either variant — the folder glyph
-    // in the sidebar's row, the name itself in the title bar's.
-    sidebarProject: x('.sidebar-project-row [aria-label^="Project:"] > :first-child'),
+    paneHeaders: document.querySelectorAll('.sidebar-project-row').length,
     treeRow: inner('.tree-row'),
     sidebarRight: r('aside[aria-label="Files"]'),
+    // The title bar's hairline sep is GONE by design (W1-B — the bar runs
+    // full-width over the rail, so there is no boundary for it to mark); the
+    // tab strip's own left edge now lands on the sidebar boundary instead.
     sep: x('.top-bar__sep'), tabStrip: x('.tab-strip'),
-    // Docked, the bar's leading segment is deliberately EMPTY and the sidebar's
-    // project row is the only project control on screen (§1b + §2). Two copies
-    // of the same name 50px apart read as a duplicate, not as two controls.
+    // Docked, project identity lives in the pane header and File > Open
+    // Recent; the bar carries no project control at all (§1b + W1-B). Two
+    // copies of the same name 50px apart read as a duplicate.
     titleProjects: document.querySelectorAll('.top-bar [aria-label^="Project:"]').length,
   }
 })
 info('alignment: ' + JSON.stringify(grid))
-if (grid.sidebarProject === grid.panelLabel && grid.treeRow === grid.panelLabel)
-  pass('7. GRID — EXPLORER label, project row and tree rows share a left grid line', `x=${grid.panelLabel}`)
+if (grid.treeRow === grid.panelLabel && grid.paneHeaders === 1)
+  pass('7. GRID — Explorer label and tree rows share a left grid line; the pane header is mounted', `x=${grid.panelLabel}`)
 else fail('7. GRID — one of them is out of step', JSON.stringify(grid))
 if (grid.titleProjects === 0)
   pass('7. GRID — no wordmark and no duplicate project name in the title bar (§1b)')
-else fail('7. GRID — the title bar duplicates the sidebar project row', `${grid.titleProjects} project control(s) in the bar`)
-if (grid.sep !== null && Math.abs(grid.sep - grid.sidebarRight) <= 1 && Math.abs(grid.sep - grid.tabStrip) <= 1)
-  pass('7. GRID — title-bar divider lands on the sidebar/editor boundary', `sep ${grid.sep}, sidebar ${grid.sidebarRight}, tabs ${grid.tabStrip}`)
-else fail('7. GRID — divider misses the boundary', JSON.stringify(grid))
+else fail('7. GRID — the title bar duplicates the project identity', `${grid.titleProjects} project control(s) in the bar`)
+if (grid.sep === null && grid.tabStrip !== null && Math.abs(grid.tabStrip - grid.sidebarRight) <= 1)
+  pass('7. GRID — no title-bar divider; the tab strip lands on the sidebar/editor boundary', `sidebar ${grid.sidebarRight}, tabs ${grid.tabStrip}`)
+else fail('7. GRID — boundary treatment', JSON.stringify(grid))
 
 const failed = results.filter((r) => r[0] === 'FAIL')
 console.log(`\n==== spacing sweep: ${results.length - failed.length}/${results.length} passed ====`)

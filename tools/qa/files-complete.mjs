@@ -6,7 +6,10 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+mkdirSync(SHOTS, { recursive: true })
 const results = []
 const pass = (n, d = '') => { results.push([1, n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
 const fail = (n, d = '') => { results.push([0, n, d]); console.log(`FAIL  ${n}${d ? ' :: ' + d : ''}`) }
@@ -14,7 +17,7 @@ const check = (ok, n, d = '') => (ok ? pass(n, d) : fail(n, d))
 const info = (m) => console.log('      ' + m)
 
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'warsha-cmp-')), {
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
   viewport: { width: 1280, height: 900 },
 })
@@ -36,7 +39,7 @@ async function fresh(text = '') {
   if (text) await page.keyboard.type(text)
 }
 
-await page.goto('http://localhost:8088/', { waitUntil: 'load' })
+await page.goto(process.env.WARSHA_URL ?? 'http://localhost:8088/', { waitUntil: 'load' })
 await page.waitForTimeout(2500)
 await page.waitForSelector('[role="tree"]', { timeout: 20000 })
 
@@ -58,10 +61,14 @@ const iconGlyph = await page.locator('.cm-tooltip-autocomplete li .cm-completion
 }))
 check(iconGlyph.glyph === '"{}"', 'snippets carry an ASCII {} icon, not an SMP glyph', JSON.stringify(iconGlyph))
 const rowH = (await options().first().boundingBox()).height
-check(rowH >= 44, 'completion rows are ≥44px so they can be tapped', `${rowH}px`)
+// DENSITY: completion rows are 44px where fingers tap them; at a fine pointer
+// the popup wears VS Code's own 22px rows (W2-D's desk completion styling).
+const rowDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
+check(rowH >= (rowDesk ? 22 : 44), `completion rows are ≥${rowDesk ? 22 : 44}px at this density`, `${rowH}px`)
 const matched = await page.locator('.cm-completionMatchedText').first().evaluate((el) => getComputedStyle(el).color)
-// THEME-V3: --accent #F2A94B (amber) -> #FAFAFA (white), rgb(242,169,75) -> rgb(250,250,250).
-check(matched === 'rgb(250, 250, 250)', 'the matched prefix is highlighted in accent', matched)
+// THEME-V4: matched characters take --list-highlight #2AAAFF (VS Code's list
+// filter-match blue), decoupled from --accent.
+check(matched === 'rgb(42, 170, 255)', 'the matched prefix is highlighted in --list-highlight', matched)
 await page.screenshot({ path: join(SHOTS, 'files-complete-sout-1280.png') })
 
 await page.keyboard.press('Tab')
@@ -149,7 +156,9 @@ await page.waitForTimeout(500)
 check(!(await popup().isVisible()), 'no popup inside a comment')
 
 /* ------------------------------------------------------- Python snippets */
-await page.getByRole('button', { name: 'More' }).click()
+// exact: the tab strip's ⋯ is "More"; the Explorer view header's is "More
+// actions" — distinct names, but getByRole matches by substring without it.
+await page.getByRole('button', { name: 'More', exact: true }).click()
 await page.waitForSelector('[role="menu"]')
 const menu = await page.locator('[role="menuitem"]').allInnerTexts()
 info('overflow menu: ' + JSON.stringify(menu))

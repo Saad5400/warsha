@@ -10,7 +10,18 @@ import {
   highlightSpecialChars,
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { indentOnInput, bracketMatching, indentUnit, language, LanguageSupport, StreamLanguage } from '@codemirror/language'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
+import {
+  indentOnInput,
+  bracketMatching,
+  indentUnit,
+  language,
+  LanguageSupport,
+  StreamLanguage,
+  HighlightStyle,
+  syntaxHighlighting,
+} from '@codemirror/language'
+import { tags as t } from '@lezer/highlight'
 import {
   autocompletion,
   closeBrackets,
@@ -18,9 +29,21 @@ import {
   completionKeymap,
   acceptCompletion,
 } from '@codemirror/autocomplete'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { indentGuides } from './indentGuides'
+import { rainbowBrackets } from './rainbowBrackets'
 import { completionSources, type CompletionLang } from './completions'
+
+/**
+ * The density gate, same expression as index.css's DENSITY media: desktop
+ * metrics only where the pointer can actually hit them. Used two ways — as an
+ * `@media` key inside theme objects, and via `matchMedia`. CAUTION: style-mod
+ * at-rule keys only tolerate child keys WITHOUT `&` (fontTheme). A `&`-key
+ * inside a media object gets the at-rule text substituted for `&`, emitting an
+ * unparsable selector that fails as `not all` — desk chrome rules therefore
+ * gate on the `.cm-desk` root class (an editorAttributes facet) instead.
+ */
+const DESK_MEDIA = '(min-width:900px) and (hover:hover) and (pointer:fine)'
+const DESK_KEY = `@media ${DESK_MEDIA}`
 
 /**
  * The language the *editor* colours a file in — one per file, and finer-grained
@@ -50,9 +73,46 @@ function completionLang(lang: EditorLang | null): CompletionLang | null {
 /**
  * CodeMirror wiring, kept out of the React component so the component stays a
  * ~40-line mount/unmount shell. Editor chrome colours come from `chromeTheme`
- * below; oneDark supplies only syntax colours. The completion sources and the
- * snippet library live in ./completions.ts.
+ * below; syntax colours from `syntaxColors` (VSCode Dark+ values). The
+ * completion sources and the snippet library live in ./completions.ts.
  */
+
+/**
+ * Syntax colours — the VSCode Dark+ family, replacing oneDark (founder,
+ * 2026-08-05: oneDark's red-leaning identifiers on our near-black canvas read
+ * garish, and "looks like the editor in every tutorial" is the product's own
+ * familiarity rule, LAYOUT-VSCODE). The hex values are Dark+'s, checked
+ * against the editor canvas (--surface-1): the dimmest ink here (#6A9955
+ * comments) clears 6:1, everything else 7:1+.
+ *
+ * These are the only colour literals outside tokens.css, deliberately: syntax
+ * colour is an editor-domain palette, not chrome — the chrome stays entirely
+ * on Design's tokens via `chromeTheme` below.
+ */
+const syntaxColors = HighlightStyle.define(
+  [
+    { tag: [t.keyword, t.modifier, t.operatorKeyword, t.definitionKeyword], color: '#569CD6' },
+    { tag: [t.controlKeyword, t.moduleKeyword], color: '#C586C0' },
+    { tag: [t.string, t.special(t.string), t.character, t.docString, t.regexp], color: '#CE9178' },
+    { tag: [t.number, t.integer, t.float], color: '#B5CEA8' },
+    { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: '#6A9955' },
+    { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: '#DCDCAA' },
+    { tag: [t.typeName, t.className, t.namespace], color: '#4EC9B0' },
+    { tag: [t.variableName, t.propertyName, t.attributeName], color: '#9CDCFE' },
+    { tag: [t.definition(t.variableName), t.definition(t.propertyName)], color: '#9CDCFE' },
+    { tag: [t.bool, t.null, t.atom, t.self], color: '#569CD6' },
+    { tag: [t.constant(t.variableName), t.standard(t.variableName), t.special(t.variableName)], color: '#4FC1FF' },
+    { tag: [t.operator, t.punctuation, t.bracket, t.separator, t.derefOperator], color: '#D4D4D4' },
+    { tag: [t.tagName], color: '#569CD6' },
+    { tag: [t.attributeValue], color: '#CE9178' },
+    { tag: [t.annotation, t.meta], color: '#DCDCAA' },
+    { tag: [t.escape], color: '#D7BA7D' },
+    { tag: [t.link, t.url], color: '#9CDCFE', textDecoration: 'underline' },
+    { tag: [t.heading], color: '#569CD6', fontWeight: 'bold' },
+    { tag: [t.invalid], color: '#F44747' },
+  ],
+  { themeType: 'dark' },
+)
 
 /**
  * Editor chrome in Design's tokens (§2.6). This has to be a CodeMirror theme
@@ -63,10 +123,10 @@ function completionLang(lang: EditorLang | null): CompletionLang | null {
  * unlayered rule beats a rule inside `@layer components` no matter how specific
  * that rule is. So the `.cm-*` block in index.css only ever took effect where it
  * said `!important` (the selection), and everything else silently lost: the
- * editor canvas was rendering oneDark's own `#282c34` instead of `--surface-1`
- * `#1A1D23`, which made the code area a visibly different grey from every panel
- * around it. Same story for the gutter, the active line, and a `#528bff` 1px
- * caret where the spec asks for a 2px amber one.
+ * editor canvas was rendering oneDark's own `#282c34` instead of `--surface-1`,
+ * which made the code area a visibly different grey from every panel around it.
+ * Same story for the gutter, the active line, and a `#528bff` 1px caret where
+ * the spec asks for a 2px `--code-caret` one.
  *
  * A theme extension is unlayered too, but *order* is not a reliable way to beat
  * oneDark: CodeMirror mounts the collected style modules reversed, so an
@@ -93,18 +153,11 @@ const chromeTheme = EditorView.theme(
     },
     '&.cm-editor .cm-activeLine': {
       backgroundColor: 'var(--code-active-line)',
-      // The active-line band used to break for 4px between the gutter and the
-      // line: `.cm-gutters` ends where `.cm-content` begins, and the 4px
-      // paddingLeft above holds the line itself off that edge, so the two
-      // highlights never met. Measured at 1280: gutter right 311.61, active line
-      // left 315.61 — a 4px stripe of bare canvas down the middle of the
-      // highlighted row.
-      //
-      // A shadow rather than a negative margin because `.cm-line`'s own
-      // paddingLeft is dynamic (indentGuides.ts rewrites it per line), so
-      // anything that has to stay in step with it will drift. This paints into
-      // the content's existing padding, costs no layout, and leaves the iOS
-      // selection-handle clearance the padding is there for.
+      // Touch-only seam patch: the 4px content padding above holds the line's
+      // fill off the gutter edge, so the shadow paints the band across the gap
+      // (a negative margin would drift — indentGuides.ts rewrites `.cm-line`
+      // padding per line). Desk overrides the whole model below: VS Code draws
+      // the active line as a 1px border, not a fill.
       boxShadow: '-4px 0 0 0 var(--code-active-line)',
     },
     // Flat gutter: same fill as the canvas, no border. A filled gutter costs
@@ -118,16 +171,19 @@ const chromeTheme = EditorView.theme(
       backgroundColor: 'var(--code-active-line)',
       color: 'var(--code-gutter-fg-active)',
     },
-    // oneDark writes the selection through `.cm-selectionLayer`, so the same
-    // path is spelled out here rather than hoping a shorter one is enough.
-    '&.cm-editor .cm-selectionBackground': { backgroundColor: 'var(--code-selection)' },
+    // The unqualified rule is what paints when the editor is *not* focused —
+    // VS Code keeps an unfocused selection visible but drops it to a neutral
+    // grey. The focused paint goes through `.cm-selectionLayer`, spelled out in
+    // full rather than hoping a shorter path is enough.
+    '&.cm-editor .cm-selectionBackground': { backgroundColor: 'var(--code-selection-inactive)' },
     '&.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
       backgroundColor: 'var(--code-selection)',
     },
     '&.cm-editor .cm-content ::selection': { backgroundColor: 'var(--code-selection)' },
     '&.cm-editor .cm-matchingBracket, &.cm-editor.cm-focused .cm-matchingBracket': {
       backgroundColor: 'var(--code-bracket)',
-      outline: '1px solid var(--border-control)',
+      outline: '1px solid var(--code-bracket-border)',
+      outlineOffset: '-1px',
       color: 'inherit',
     },
     '&.cm-editor.cm-focused .cm-nonmatchingBracket': {
@@ -136,10 +192,46 @@ const chromeTheme = EditorView.theme(
     },
     '&.cm-editor .cm-searchMatch': { backgroundColor: 'var(--code-search-match)' },
     '&.cm-editor .cm-searchMatch.cm-searchMatch-selected': {
-      backgroundColor: 'var(--accent)',
-      color: 'var(--accent-ink)',
+      // VS Code marks the current match by hue (darker amber), not by ink swap.
+      backgroundColor: 'var(--code-search-match-selected)',
+      color: 'inherit',
     },
-    '&.cm-editor .cm-selectionMatch': { backgroundColor: 'var(--code-search-match)' },
+    // Other occurrences of the selected text — dimmer than a search match.
+    '&.cm-editor .cm-selectionMatch': { backgroundColor: 'var(--code-selection-match)' },
+    // ---- Find widget (@codemirror/search, mounted with `top: true`). The
+    // container keeps no chrome of its own so the panel can float like
+    // VS Code's find widget; at desk it pins to the top-right corner (below).
+    '&.cm-editor .cm-panels': { backgroundColor: 'transparent' },
+    '&.cm-editor .cm-panels-top': { borderBottom: 'none' },
+    '&.cm-editor .cm-panel.cm-search': {
+      backgroundColor: 'var(--widget-bg)',
+      border: '1px solid var(--border-widget)',
+      borderRadius: '0 0 4px 4px',
+      boxShadow: 'var(--shadow-raised)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: '13px',
+      color: 'var(--text-2)',
+      padding: '4px 8px',
+    },
+    '&.cm-editor .cm-panel.cm-search input': {
+      backgroundColor: 'var(--input-bg)',
+      border: '1px solid var(--input-border)',
+      borderRadius: '2px',
+      color: 'var(--text-1)',
+    },
+    '&.cm-editor .cm-panel.cm-search input::placeholder': { color: 'var(--input-placeholder)' },
+    '&.cm-editor .cm-panel.cm-search input:focus': { borderColor: 'var(--accent)' },
+    '&.cm-editor .cm-panel.cm-search button.cm-button': {
+      backgroundImage: 'none',
+      backgroundColor: 'var(--btn-secondary-bg)',
+      border: '1px solid var(--btn-border)',
+      borderRadius: '2px',
+      color: 'var(--btn-secondary-fg)',
+    },
+    '&.cm-editor .cm-panel.cm-search button.cm-button:hover': {
+      backgroundColor: 'var(--btn-secondary-hover-bg)',
+    },
+    '&.cm-editor .cm-panel.cm-search [name="close"]': { color: 'var(--text-2)' },
     '&.cm-editor .cm-tooltip': {
       border: '1px solid var(--border-subtle)',
       borderRadius: 'var(--r-md)',
@@ -232,6 +324,86 @@ const chromeTheme = EditorView.theme(
       fontSize: 'var(--fs-meta)',
       color: 'var(--text-2)',
     },
+    // ---- Desktop (fine-pointer) metrics: VS Code's own editor chrome. Touch
+    // keeps every rule above untouched — these rules only override. Gated by
+    // the `.cm-desk` root class (an editorAttributes facet in `extensions()`,
+    // same mechanism as `.cm-hasSelection`), NOT by an `@media` key: style-mod
+    // substitutes the at-rule text for `&` inside a media object, which
+    // renders every `&`-key under it as an unparsable selector — the whole
+    // block silently becomes `not all`.
+    // Active line as a 1px border, not a fill; the border disappears while a
+    // selection exists, exactly as VS Code hides the line highlight during a
+    // selection.
+    '&.cm-editor.cm-desk .cm-activeLine': {
+      backgroundColor: 'transparent',
+      boxShadow: 'none',
+      outline: '1px solid var(--code-active-line-border)',
+      outlineOffset: '-1px',
+    },
+    '&.cm-editor.cm-desk.cm-hasSelection .cm-activeLine': { outline: 'none' },
+    '&.cm-editor.cm-desk .cm-activeLineGutter': {
+      backgroundColor: 'transparent',
+      color: 'var(--code-gutter-fg-active)',
+    },
+    // Line numbers breathe: 8px off the edge, 16px before the code. The
+    // content's 12px replaces the 4px iOS-handle clearance (no handles here).
+    '&.cm-editor.cm-desk .cm-lineNumbers .cm-gutterElement': { padding: '0 16px 0 8px' },
+    '&.cm-editor.cm-desk .cm-content': { paddingLeft: '12px' },
+    // No line wrap at desk (see `extensions()`), so the horizontal scrollbar
+    // exists — keep it thin and dark rather than the chunky platform default.
+    '&.cm-editor.cm-desk .cm-scroller::-webkit-scrollbar': { height: '10px', width: '10px' },
+    '&.cm-editor.cm-desk .cm-scroller::-webkit-scrollbar-track': { background: 'transparent' },
+    '&.cm-editor.cm-desk .cm-scroller::-webkit-scrollbar-thumb': {
+      background: 'var(--scrollbar-slider)',
+      borderRadius: '0',
+    },
+    '&.cm-editor.cm-desk .cm-scroller::-webkit-scrollbar-thumb:hover': {
+      background: 'var(--scrollbar-slider-hover)',
+    },
+    // Find widget pins to the editor's top-right corner and overlays the
+    // code instead of pushing it down (.cm-editor is position:relative, so
+    // the panels container collapses to nothing).
+    '&.cm-editor.cm-desk .cm-panel.cm-search': {
+      position: 'absolute',
+      top: '0',
+      right: '14px',
+      width: 'auto',
+      zIndex: '10',
+    },
+    // Completion popup on VS Code's suggest-widget metrics: flat dark panel,
+    // 22px rows, blue selection with white ink (no accent rail — the fill is
+    // now far above the 1.1:1 that made the rail necessary on touch).
+    '&.cm-editor.cm-desk .cm-tooltip': {
+      backgroundColor: 'var(--code-widget-bg)',
+      border: '1px solid var(--border-widget)',
+      borderRadius: '3px',
+    },
+    '&.cm-editor.cm-desk .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      minHeight: '22px',
+      paddingInline: '8px',
+      fontSize: '13px',
+    },
+    '&.cm-editor.cm-desk .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: 'var(--list-active-sel-bg)',
+      color: 'var(--list-active-sel-fg)',
+      boxShadow: 'none',
+    },
+    '&.cm-editor.cm-desk .cm-completionMatchedText': {
+      color: 'var(--list-highlight)',
+      fontWeight: '400',
+    },
+    // VS Code's suggest kind colours (an editor-domain palette like
+    // syntaxColors above, so literals are correct here — not chrome).
+    '&.cm-editor.cm-desk .cm-completionIcon-function, &.cm-editor.cm-desk .cm-completionIcon-method': {
+      color: '#B180D7',
+    },
+    '&.cm-editor.cm-desk .cm-completionIcon-variable, &.cm-editor.cm-desk .cm-completionIcon-constant': {
+      color: '#75BEFF',
+    },
+    '&.cm-editor.cm-desk .cm-completionIcon-class': { color: '#EE9D28' },
+    '&.cm-editor.cm-desk .cm-completionIcon-keyword, &.cm-editor.cm-desk .cm-completionIcon-snippet': {
+      color: 'var(--text-3)',
+    },
   },
   { dark: true },
 )
@@ -292,6 +464,12 @@ export interface EditorController {
    * No-ops if `content` is already what the document holds.
    */
   applyEdit(content: string): void
+  /**
+   * Move the caret to the start of `line` (1-based, clamped to the document)
+   * and scroll it into view. Consumed by the status bar's Ln/Col item and the
+   * quick-input `:` mode — the widget parses the number, the editor moves.
+   */
+  gotoLine(line: number): void
   destroy(): void
 }
 
@@ -345,9 +523,14 @@ export function createEditor(
    * on iPad"), and the gutter's leading is stated in px rather than inherited —
    * a unitless 1.6 against 13px line numbers is 20.8px against 24px code rows,
    * and the gutter drifts a line by the bottom of a long file.
+   *
+   * Leading is density-split: 1.6 on touch (finger-height rows), VS Code's
+   * tighter 1.35 at desk. The gutter also drops its fixed 13px at desk — VS
+   * Code renders line numbers at the code size.
    */
   const themeFor = (px: number) => {
     const leading = `${Math.round(px * 1.6)}px`
+    const deskLeading = `${Math.round(px * 1.35)}px`
     return EditorView.theme({
       '&': { fontSize: `${px}px`, height: '100%' },
       '.cm-content': {
@@ -358,6 +541,11 @@ export function createEditor(
       },
       '.cm-gutters': { fontSize: '13px', lineHeight: leading },
       '.cm-lineNumbers .cm-gutterElement': { lineHeight: leading },
+      [DESK_KEY]: {
+        '.cm-content': { lineHeight: deskLeading },
+        '.cm-gutters': { fontSize: `${px}px`, lineHeight: deskLeading },
+        '.cm-lineNumbers .cm-gutterElement': { lineHeight: deskLeading },
+      },
     })
   }
 
@@ -397,13 +585,35 @@ export function createEditor(
     indentOnInput(),
     bracketMatching(),
     closeBrackets(),
+    // The find widget mounts above the code (`top: true`), styled in
+    // chromeTheme as VS Code's floating top-right panel at desk.
+    search({ top: true }),
+    // Select a word and every other occurrence lights up (--code-selection-match).
+    highlightSelectionMatches(),
+    // VS Code hides the active-line highlight while a selection exists; the
+    // desk chromeTheme rules key off this class. An attributes facet rather
+    // than a ViewPlugin because facets may derive from state on every update,
+    // where a plugin writing DOM in update() is a documented foot-gun.
+    EditorView.editorAttributes.of((v) =>
+      v.state.selection.main.empty ? null : { class: 'cm-hasSelection' },
+    ),
+    // The desk chromeTheme rules key off `.cm-desk` on the root — a class, not
+    // an `@media` key, because style-mod cannot host `&`-keys inside an
+    // at-rule (see the note in chromeTheme). Evaluated once per state build,
+    // the same resize caveat as lineWrapping below.
+    window.matchMedia(DESK_MEDIA).matches
+      ? EditorView.editorAttributes.of({ class: 'cm-desk' })
+      : [],
     indentUnit.of('    '),
     // Python's control flow *is* its indentation, and line wrapping makes the
     // eye lose the column. One hairline per level puts it back.
     indentGuides(4),
-    // Wrap rather than scroll horizontally: a wrapped line is readable on a
-    // phone, a horizontally-scrolling one is not.
-    EditorView.lineWrapping,
+    // Wrap rather than scroll horizontally on touch: a wrapped line is readable
+    // on a phone, a horizontally-scrolling one is not. At desk it is the
+    // opposite — VS Code does not wrap — so the choice is evaluated once per
+    // state build (a resize across 900px mid-session keeps the old behavior
+    // until the next file open; acceptable, and cheaper than a reconfigure).
+    window.matchMedia(DESK_MEDIA).matches ? [] : EditorView.lineWrapping,
     // Not optional (spec §3.4). Without these, iPadOS actively corrupts student
     // code as it is typed: it capitalises the first word of every line and turns
     // " into a curly quote, which a beginner cannot possibly diagnose. This is
@@ -424,15 +634,29 @@ export function createEditor(
           return true
         },
       },
+      // Swallow defaultKeymap's insertBlankLine on Mod-Enter: returning true
+      // stops CodeMirror from editing the document, but the DOM event still
+      // bubbles, so the shell's run-file handler fires — without this, running
+      // via Ctrl+Enter also inserted a blank line at the caret.
+      { key: 'Mod-Enter', run: () => true },
+      ...searchKeymap,
+      // VS Code muscle memory: Mod-h opens the same panel (replace is part of
+      // the one widget here, not a separate surface).
+      { key: 'Mod-h', run: openSearchPanel },
       ...closeBracketsKeymap,
       ...defaultKeymap,
       ...historyKeymap,
       ...completionKeymap,
       indentWithTab,
     ]),
-    // oneDark first, for its syntax colours only; chromeTheme then takes the
-    // surfaces, gutter, caret and selection back to Design's tokens.
-    oneDark,
+    // Dark+ syntax colours (see syntaxColors above — oneDark is gone);
+    // chromeTheme keeps the surfaces, gutter, caret and selection on Design's
+    // tokens. With no unlayered oneDark module in the fight any more, the
+    // `&.cm-editor` specificity in chromeTheme is belt-and-braces, and cheap.
+    syntaxHighlighting(syntaxColors),
+    // After syntaxHighlighting so the depth marks beat the flat punctuation
+    // grey (#D4D4D4) on the same spans.
+    rainbowBrackets(),
     chromeTheme,
     fontTheme.of(themeFor(fontSize)),
     langConf.of(languageExtensions(lang)),
@@ -554,6 +778,12 @@ export function createEditor(
         selection: { anchor: pos },
         scrollIntoView: true,
       })
+    },
+    gotoLine(line) {
+      const doc = view.state.doc
+      const clamped = Math.max(1, Math.min(Math.floor(line), doc.lines))
+      view.dispatch({ selection: { anchor: doc.line(clamped).from }, scrollIntoView: true })
+      view.focus()
     },
     focus: () => view.focus(),
     currentPath: () => path,

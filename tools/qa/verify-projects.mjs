@@ -43,37 +43,78 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 240000) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle), s, { timeout: t })
-const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
+// Run lives in the tab strip's editor-actions corner and names its file
+// ("Run main.py") — hence the prefix match.
+const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 
 /**
- * Project actions live in the sidebar's project switcher now (LAYOUT-VSCODE
- * §2), not the top bar's "More" overflow menu -- that one only holds New
- * file / Save all / Import .zip / Format file / Share as image / text size.
- * `aside[aria-label="Files"] button[aria-haspopup="menu"]` is the Explorer's
- * project row; at >=900px with the Explorer docked (the default, and this
- * suite never touches the dock toggle) it is the only ProjectSwitcher in the
- * DOM -- the title-bar twin only mounts when the Explorer is undocked, so
- * there is nothing to disambiguate here.
+ * WHERE project switching lives no longer forks (one shell, founder ruling):
+ * the menu bar's File > Open Recent submenu is the project list at every size
+ * and pointer — one row per project, most recent first, the open one marked
+ * "Open" and unselectable. Above 1050px the File title sits in the bar; below,
+ * the bar collapses to the single ☰ "Application Menu" trigger and File is a
+ * submenu of it (VS Code's own behaviour). Lifecycle actions (rename / delete
+ * / empty) are File-menu rows AND 'Projects: …' palette commands; this desk
+ * harness drives the palette.
  */
-const projectSwitcher = () => page.locator('aside[aria-label="Files"] button[aria-haspopup="menu"]')
-const projectMenu = () => page.locator('[role="menu"][aria-label="Project menu"]')
+const isDesk = () => page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 
-/** Open the sidebar project switcher's menu and list its rows. */
+/** Open the File menu, wherever this width puts it, leaving it open. */
+async function openFileMenu() {
+  const wide = await page.evaluate(() => matchMedia('(min-width: 1050px)').matches)
+  if (wide) {
+    await page.getByRole('menuitem', { name: 'File', exact: true }).click()
+    await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+    return
+  }
+  await page.getByRole('button', { name: 'Application Menu' }).click()
+  await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+  // Radix opens a submenu on pointer hover of its trigger row.
+  await page.getByRole('menuitem', { name: 'File', exact: true }).hover()
+  await page.waitForFunction(() => document.querySelectorAll('[role="menu"]').length >= 2, null, { timeout: 5000 })
+}
+/** Open the project list (File > Open Recent) and return its rows' normalised
+ *  texts, leaving it open. */
 async function openMenu() {
-  await projectSwitcher().click()
-  await page.waitForSelector('[role="menu"][aria-label="Project menu"]', { timeout: 5000 })
-  return projectMenu().getByRole('menuitem').allInnerTexts()
+  await openFileMenu()
+  const menus = await page.locator('[role="menu"]').count()
+  await page.getByRole('menuitem', { name: 'Open Recent' }).hover()
+  await page.waitForFunction((n) => document.querySelectorAll('[role="menu"]').length > n, menus, { timeout: 5000 })
+  return page.locator('[role="menu"]').last().getByRole('menuitem').allInnerTexts()
 }
 async function menuRows() {
   const rows = await openMenu()
-  await page.keyboard.press('Escape')
+  // Escape once per open menu level (the submenu, its parents, and — below
+  // 1050px — the ☰ menu behind them all).
+  for (let i = 0; i < 4 && (await page.locator('[role="menu"]').count()); i++) {
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+  }
   await page.waitForTimeout(250)
   return rows.map((r) => r.replace(/\s+/g, ' ').trim())
 }
+/** Click a PROJECT row in the Open Recent submenu. */
 async function clickMenu(nameRe) {
   await openMenu()
-  await projectMenu().getByRole('menuitem').filter({ hasText: nameRe }).first().click()
+  await page.locator('[role="menu"]').last().getByRole('menuitem').filter({ hasText: nameRe }).first().click()
   await page.waitForTimeout(400)
+}
+/** Run a lifecycle command by its palette title ('Projects: Rename Project…').
+ *  The same actions are File-menu rows; `fileRowRe` drives those where the
+ *  palette's keyboard entry point is not the natural one (a touch profile). */
+async function runProjectCommand(paletteTitle, fileRowRe) {
+  if (await isDesk()) {
+    await page.keyboard.press('Control+Shift+P')
+    await page.waitForSelector('section[aria-label="Quick open"]', { timeout: 5000 })
+    await page.locator('input[aria-label="Search files by name"]').fill('>' + paletteTitle.replace(/^Projects: /, '').replace(/…$/, ''))
+    await page.waitForTimeout(300)
+    await page.locator('[role="option"]').filter({ hasText: paletteTitle }).first().click()
+    await page.waitForTimeout(400)
+  } else {
+    await openFileMenu()
+    await page.getByRole('menuitem', { name: fileRowRe }).first().click()
+    await page.waitForTimeout(400)
+  }
 }
 /** The prompt/confirm dialogs are native <dialog>. */
 async function dialogFill(value) {
@@ -100,12 +141,25 @@ await page.waitForSelector('[aria-label="Start a project"], .cm-content', { time
 await page.waitForTimeout(800)
 
 let rows = await menuRows()
-info(`menu on first visit: ${JSON.stringify(rows)}`)
+info(`project list on first visit: ${JSON.stringify(rows)}`)
 if (rows.some((r) => /^My project/.test(r))) pass('first visit has exactly one project, listed in the menu', rows.find((r) => /^My project/.test(r)))
 else fail('first visit has exactly one project, listed in the menu', JSON.stringify(rows))
-if (rows.some((r) => /New project…/.test(r)) && rows.some((r) => /Delete this project…/.test(r)))
-  pass('project actions present (new / rename / delete / export)')
-else fail('project actions present', JSON.stringify(rows))
+// One File menu at every size: creation, transfer AND lifecycle rows live in
+// it (the lifecycle pair is also 'Projects: …' palette commands, exercised for
+// real in sections 6 and 7).
+{
+  await openFileMenu()
+  const fileRows = (await page.locator('[role="menu"]').last().getByRole('menuitem').allInnerTexts()).map((r) => r.replace(/\s+/g, ' ').trim())
+  info(`File menu: ${JSON.stringify(fileRows)}`)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Escape') // below 1050px the ☰ menu is still behind
+  await page.waitForTimeout(150)
+  if (fileRows.some((r) => /New Project…/i.test(r)) && fileRows.some((r) => /Export as \.zip/.test(r)) &&
+      fileRows.some((r) => /Rename Project…/.test(r)) && fileRows.some((r) => /Delete Project…/.test(r)))
+    pass('project actions present in the File menu (New / Export / Rename / Delete)')
+  else fail('project actions present in the File menu', JSON.stringify(fileRows))
+}
 
 // ============================== 2. python project from the start panel, then Run
 // One entry point now (New from a starter → language → starter); the advanced
@@ -139,10 +193,13 @@ await setEditor('print("python project fingerprint")\n')
 await page.waitForTimeout(600)
 
 // ================================================= 3. new java project from menu
-// The per-template menu rows are gone; "New project…" opens the picker, and from
-// a project that already has files a starter opens the "New project from …"
-// name prompt rather than replacing anything.
-await clickMenu(/New project…/)
+// The per-template menu rows are gone; "New Project…" opens the picker (from
+// the one File menu, whatever the width), and from a project that already has
+// files a starter opens the "New project from …" name prompt rather than
+// replacing anything.
+await openFileMenu()
+await page.getByRole('menuitem', { name: /New Project…/i }).click()
+await page.waitForTimeout(400)
 const picker = page.locator('dialog[open]')
 await picker.getByRole('button', { name: /^Java/ }).click()
 await picker.locator('.template-card').filter({ hasText: 'Java (OOP starter)' }).first().click()
@@ -209,7 +266,7 @@ if ((await page.locator('.cm-content').innerText()).includes('python project fin
 else fail('project content persisted across reload (OPFS)')
 
 // ================================================== 6. delete the open project
-await clickMenu(/Delete this project…/)
+await runProjectCommand('Projects: Delete Project…', /^Delete Project…/)
 await dialogConfirm('Delete')
 await page.waitForTimeout(1600)
 rows = await menuRows()
@@ -231,7 +288,7 @@ if (!rows.some((r) => /^Python \(OOP starter\)/.test(r))) pass('deletion survive
 else fail('deletion survived a reload', JSON.stringify(rows))
 
 // ===================================== 7. rename, so the name is really stored
-await clickMenu(/Rename this project…/)
+await runProjectCommand('Projects: Rename Project…', /^Rename Project…/)
 await dialogFill('Renamed project')
 await dialogConfirm('Rename')
 await page.waitForTimeout(800)

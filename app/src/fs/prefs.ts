@@ -3,6 +3,10 @@ const KEY = 'warsha.prefs.v1'
 
 export interface Prefs {
   fontSize: number
+  /** Whole-UI zoom (View > Zoom In/Out, the Manage gear's View-scale slider).
+   *  0.7–1.3 in 0.05 steps, 1 = untouched. Rendered as CSS `zoom` on #root.
+   *  Deliberately separate from `fontSize`, which sizes the editor type only. */
+  uiScale: number
   consoleHeight: number
   consoleCollapsed: boolean
   openTabs: string[]
@@ -18,8 +22,17 @@ export interface Prefs {
   currentProjectId: string | null
 }
 
-const defaults: Prefs = {
-  fontSize: 15,
+/**
+ * The default type size is 14px — VS Code's own default — at BOTH densities
+ * (founder scale-down 2026-08-05; touch was 15). Only for *unstored* prefs —
+ * a size the student has chosen (stored) always wins. The density split is
+ * gone but the helper stays: the value is read per-launch, not at module
+ * load, and the split can come back by re-adding the matchMedia branch.
+ */
+const defaultFontSize = () => 14
+
+const defaults: Omit<Prefs, 'fontSize'> = {
+  uiScale: 1,
   consoleHeight: 220,
   consoleCollapsed: false,
   openTabs: [],
@@ -33,11 +46,12 @@ let cache: Prefs | null = null
 
 export function prefs(): Prefs {
   if (cache) return cache
+  const fresh: Prefs = { ...defaults, fontSize: defaultFontSize() }
   try {
     const raw = localStorage.getItem(KEY)
-    cache = raw ? { ...defaults, ...(JSON.parse(raw) as Partial<Prefs>) } : { ...defaults }
+    cache = raw ? { ...fresh, ...(JSON.parse(raw) as Partial<Prefs>) } : fresh
   } catch {
-    cache = { ...defaults }
+    cache = fresh
   }
   return cache
 }

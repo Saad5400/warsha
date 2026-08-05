@@ -21,7 +21,10 @@ const button = cva(
   // a selector hook, the same move Toast.tsx made for `.toast`: `audit.mjs`
   // reads `.btn` for cursor and 44px-target checks that have nothing to do
   // with which variant is on screen.
-  'btn inline-flex items-center justify-center gap-2 flex-none min-h-touch px-4 rounded-md border border-transparent ' +
+  // `min-h-touch` and `text-btn` both compact under the DENSITY media (44→28,
+  // 15→13) — see index.css. `desk:px-3` is the one compaction a token cannot
+  // carry: 16px of inline padding on a 28px control reads pill-shaped.
+  'btn inline-flex items-center justify-center gap-2 flex-none min-h-touch px-4 desk:px-3 desk:[&>svg]:size-4 rounded-md border border-transparent ' +
     'font-ui text-btn leading-[1.2] font-semibold select-none touch-manipulation cursor-pointer ' +
     'transition-[background-color,color,transform] duration-(--dur-fast) ease-standard active:scale-97 ' +
     'disabled:scale-100 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-surface-4 disabled:text-text-disabled',
@@ -104,7 +107,10 @@ export function Button({ variant = 'quiet', large, compact, className = '', chil
 const iconButton = cva(
   // Same selector-hook move as `btn` above — `.icon-btn` names nothing in CSS
   // any more but is still what `audit.mjs` and the pixel-crop harness find.
-  'icon-btn relative inline-grid place-items-center flex-none size-[40px] rounded-md text-[20px] leading-none text-text-2 ' +
+  // `size-icon-btn` is 40px on touch layouts, 28px under the DENSITY media —
+  // and the glyph follows the box down (20px → 16px) or it fills the button.
+  'icon-btn relative inline-grid place-items-center flex-none size-icon-btn rounded-md text-[20px] leading-none text-text-2 ' +
+    'desk:[&>svg]:size-4 ' +
     'after:absolute after:-inset-1 after:content-[""] ' +
     'touch-manipulation cursor-pointer transition-[background-color,color] duration-(--dur-fast) ease-standard ' +
     'hover:not-disabled:bg-surface-3 hover:not-disabled:text-text-1 ' +

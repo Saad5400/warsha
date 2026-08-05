@@ -105,7 +105,9 @@ const BREAK_OPFS_ENTIRELY = `
   })
 `
 
-const runBtn = (page) => page.getByRole('button', { name: 'Run', exact: true }).first()
+// Run's one home is the tab strip's editor-actions corner, where it names the
+// file it will start ("Run main.py") — hence the prefix match.
+const runBtn = (page) => page.getByRole('button', { name: /^Run\b/ }).first()
 const outputText = (page) => page.locator('[aria-label="Program output"]').innerText()
 const failureBlock = (page) => page.locator('[data-failure]')
 
@@ -122,7 +124,7 @@ async function waitForRunnable(page) {
   await page.waitForSelector('.cm-content', { timeout: 20000 })
   await page.waitForFunction(
     () => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Run')
+      const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b/.test(b.getAttribute('aria-label') ?? ''))
       return !!btn && !btn.disabled
     },
     null,
@@ -164,13 +166,22 @@ async function startJavaProject(page) {
 }
 
 /**
- * Open the project menu and click a row. The switcher labels itself
- * `Project: <name>` precisely so a test does not have to guess which of the two
- * on-screen copies it found.
+ * Click a project-scoped action. One home at every size (one shell): the menu
+ * bar's File menu. Above 1050px the titles sit in the bar; below, the bar
+ * collapses to the single ☰ "Application Menu" trigger and File is a submenu
+ * of it — VS Code's own behaviour.
  */
 async function clickProjectMenu(page, nameRe) {
-  await page.getByRole('button', { name: /^Project: / }).first().click()
-  await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+  const wide = await page.evaluate(() => matchMedia('(min-width: 1050px)').matches)
+  if (!wide) {
+    await page.getByRole('button', { name: 'Application Menu' }).click()
+    await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+    await page.getByRole('menuitem', { name: 'File', exact: true }).hover()
+    await page.waitForFunction(() => document.querySelectorAll('[role="menu"]').length >= 2, null, { timeout: 5000 })
+  } else {
+    await page.getByRole('menuitem', { name: 'File', exact: true }).click()
+    await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+  }
   await page.getByRole('menuitem', { name: nameRe }).first().click()
 }
 
@@ -339,7 +350,7 @@ await scenario('python download aborted mid-flight', {
     const appeared = await failureBlock(page).waitFor({ timeout: 120000 }).then(() => true).catch(() => false)
     check(appeared, 'a dropped download ends in a failure block')
     if (appeared) info(`kind=${await failureBlock(page).getAttribute('data-failure')}`)
-    const stuck = await page.getByRole('button', { name: 'Stop', exact: true }).count()
+    const stuck = await page.getByRole('button', { name: /^Stop\b/ }).count()
     check(stuck === 0, 'the control is no longer stuck on Stop')
     const unhandled = await page.evaluate(() => window.__warshaErrors ?? [])
     check(unhandled.length === 0, 'no unhandled rejection on a dropped download', unhandled.slice(0, 3).join(' | '))
@@ -402,16 +413,17 @@ await scenario('worker terminated mid-run', {
     check(killed, 'worker terminated from outside the engine')
 
     await page.waitForTimeout(1500)
-    const stillRunning = await page.getByRole('button', { name: 'Stop', exact: true }).count()
+    const stillRunning = await page.getByRole('button', { name: /^Stop\b/ }).count()
     info(`control shows Stop: ${stillRunning > 0} (expected — nothing tells the page its worker died)`)
 
     // Stop is what a student presses when it looks frozen, and it must always
     // get them out — even though no onExit is ever coming.
-    if (stillRunning > 0) await page.getByRole('button', { name: 'Stop', exact: true }).first().click()
+    if (stillRunning > 0) await page.getByRole('button', { name: /^Stop\b/ }).first().click()
     const recovered = await page
       .waitForFunction(
         () => {
-          const btn = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Run')
+          // Tab-strip Run names its file ("Run main.py") — prefix, not equality.
+          const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b/.test(b.getAttribute('aria-label') ?? ''))
           return !!btn && !btn.disabled
         },
         null,
@@ -539,7 +551,23 @@ await scenario('remembered project has vanished', {
     // is a genuinely nasty way for a test to lie to you.
     await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory()
-      for await (const [name] of root.entries()) await root.removeEntry(name, { recursive: true })
+      // The app's writes are open→write→close, but a debounced save (prefs
+      // touch, starter files, tab state) can still be IN FLIGHT here, and an
+      // open writable holds a lock that makes removeEntry throw
+      // NoModificationAllowedError. The app is behaving; the wipe retries
+      // until a full sweep completes with nothing mid-write, then reloads.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        let locked = false
+        for await (const [name] of root.entries()) {
+          try {
+            await root.removeEntry(name, { recursive: true })
+          } catch {
+            locked = true
+          }
+        }
+        if (!locked) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
       location.reload()
     })
     await page.waitForLoadState('load')
@@ -730,7 +758,7 @@ await scenario('runaway output stays bounded', {
     check(before.chars < 30_000_000, 'the transcript is bounded', `${before.chars} chars`)
 
     const stopT0 = Date.now()
-    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await page.getByRole('button', { name: /^Stop\b/ }).click()
     const stopped = await page
       .waitForFunction(
         () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('Stopped'),
@@ -833,7 +861,7 @@ if (RUN_JAVA) {
         info((await outputText(page)).slice(-400))
         return
       }
-      await page.getByRole('button', { name: 'Stop', exact: true }).click().catch(() => {})
+      await page.getByRole('button', { name: /^Stop\b/ }).click().catch(() => {})
       await page.waitForTimeout(800)
 
       // Delete a class the entry depends on, then reload so the JVM is rebuilt

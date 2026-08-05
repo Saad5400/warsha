@@ -159,3 +159,145 @@ export function LangIcon({ lang, ...rest }: { lang: IconLang } & IconProps) {
   if (lang === 'csharp') return <IconCSharp {...rest} />
   return <IconPython {...rest} />
 }
+
+/* ---- bare file icons (W2-A) ---------------------------------------------- *
+ *
+ * The tab strip, breadcrumbs and (at desk) the explorer tree render a bare
+ * 16px file icon instead of the chip badge — VS Code parity, where each file
+ * type carries its language's brand ink (the Seti convention). This is a
+ * deliberate, scoped amendment to the monochrome story in this file's header:
+ * chips stay single-ink; the BARE icons are the one place chroma identifies.
+ * The hex fills below are sanctioned here the way setup.ts's syntax colours
+ * are — they are the palette, not layout, and never leave this file.
+ *
+ * The letterform marks (JS, TS, #, {}, M↓) follow IconCSharp's precedent: for
+ * these languages the brand IS the letterform, so a geometric trace of it is
+ * the mark, not a placeholder.
+ */
+
+const Mark = ({ size = 20, ...rest }: IconProps & { children?: React.ReactNode }) => (
+  <svg
+    viewBox="0 0 20 20"
+    width={size}
+    height={size}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+    {...rest}
+  />
+)
+
+/** The "JS" letterform: J's stem-and-hook beside the S-curve. */
+const IconJSMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M8.6 6v6.3a2.3 2.3 0 0 1-4.6 0" />
+    <path d="M15.8 6.8C15.1 5.9 11.7 6 11.8 7.9C11.9 9.9 16 9 16 11.1C16 13.1 12.5 13.3 11.6 12.2" />
+  </Mark>
+)
+
+/** The "TS" letterform: same S as JS, T in place of the J. */
+const IconTSMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M3.4 6.3h5.2M6 6.3v7.4" />
+    <path d="M15.8 6.8C15.1 5.9 11.7 6 11.8 7.9C11.9 9.9 16 9 16 11.1C16 13.1 12.5 13.3 11.6 12.2" />
+  </Mark>
+)
+
+/** Markup's angle-bracket pair — IconWeb's shape without the slash. */
+const IconHtmlMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M7.5 6.5 4 10l3.5 3.5" />
+    <path d="M12.5 6.5 16 10l-3.5 3.5" />
+  </Mark>
+)
+
+/** The selector hash. */
+const IconCssMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M8.3 5.5 6.9 14.5M13.1 5.5l-1.4 9" />
+    <path d="M5.4 8.6h9.8M4.8 11.4h9.8" />
+  </Mark>
+)
+
+/** The brace pair. */
+const IconJsonMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M7.6 4.6c-1.6 0-2.2.9-2.2 2.1v1.4c0 1-.5 1.9-1.8 1.9 1.3 0 1.8.9 1.8 1.9v1.4c0 1.2.6 2.1 2.2 2.1" />
+    <path d="M12.4 4.6c1.6 0 2.2.9 2.2 2.1v1.4c0 1 .5 1.9 1.8 1.9-1.3 0-1.8.9-1.8 1.9v1.4c0 1.2-.6 2.1-2.2 2.1" />
+  </Mark>
+)
+
+/** Markdown's M-and-down-arrow. */
+const IconMarkdownMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M2.8 13.2V6.8l2.7 3.1 2.7-3.1v6.4" />
+    <path d="M13.6 6.8v6.2M11.3 10.9l2.3 2.3 2.3-2.3" />
+  </Mark>
+)
+
+/** The plain-document outline for txt and anything unrecognised. */
+const IconDocMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M5 3.25h6.5L15 6.75v10A1 1 0 0 1 14 17.75H6a1 1 0 0 1-1-1V4.25a1 1 0 0 1 1-1Z" />
+    <path d="M11.25 3.5v3.25h3.5M7.75 11h4.5M7.75 13.75h3" />
+  </Mark>
+)
+
+/** ext → brand ink. Values are the VS Code Seti fills (W2-A task 4). */
+const FILE_FILLS: Record<string, string> = {
+  py: '#519aba',
+  java: '#e76f00',
+  cs: '#68217a',
+  js: '#cbcb41',
+  mjs: '#cbcb41',
+  jsx: '#cbcb41',
+  ts: '#519aba',
+  tsx: '#519aba',
+  html: '#e37933',
+  htm: '#e37933',
+  css: '#519aba',
+  json: '#cbcb41',
+  md: '#519aba',
+}
+
+/** txt and unknown extensions: the neutral document grey. */
+const DOC_FILL = '#c5c5c5'
+
+/**
+ * The bare colored file icon, keyed by extension. Every glyph draws in
+ * currentColor, so the fill rides in as an inline `color` — consumers can
+ * still override it via `style` if a context ever needs the neutral ink.
+ */
+export function FileIcon({ ext, size = 16, style, ...rest }: { ext: string } & IconProps) {
+  const props = { size, style: { color: FILE_FILLS[ext] ?? DOC_FILL, ...style }, ...rest }
+  switch (ext) {
+    case 'py':
+      return <IconPython {...props} />
+    case 'java':
+      return <IconJava {...props} />
+    case 'cs':
+      return <IconCSharp {...props} />
+    case 'js':
+    case 'mjs':
+    case 'jsx':
+      return <IconJSMark {...props} />
+    case 'ts':
+    case 'tsx':
+      return <IconTSMark {...props} />
+    case 'html':
+    case 'htm':
+      return <IconHtmlMark {...props} />
+    case 'css':
+      return <IconCssMark {...props} />
+    case 'json':
+      return <IconJsonMark {...props} />
+    case 'md':
+      return <IconMarkdownMark {...props} />
+    default:
+      return <IconDocMark {...props} />
+  }
+}

@@ -7,14 +7,21 @@
  * which is the opposite of what a badge is for, and it carries nothing for a
  * student who does not already know the answer.
  *
- * The glyphs are monochrome (see LangIcons' header): this is a black/white UI,
- * so both language badges use one neutral chip — surface-4 under a bright
- * text-1 glyph (~11:1) — instead of the old warm/cool tones. The mark's shape,
- * not its colour, does the identifying. The other extensions keep their letter
- * — "M" and "{}" are not standing in for a logo, so there is no low-effort
- * placeholder to fix there; they stay on the quieter plain tone.
+ * Two renderings now live here (W2-A):
+ *
+ * - The CHIP — the surface-4 box with a monochrome glyph or letter pair — is
+ *   the touch rendering, and stays the only rendering for the welcome cards
+ *   (via badgeClass/LangBadge, which are untouched).
+ * - The BARE icon — a 16px colored glyph from LangIcons' FileIcon, each file
+ *   type in its language's brand ink (VS Code parity) — is what the tab strip,
+ *   the breadcrumbs and the explorer tree show on a fine-pointer desktop. The
+ *   swap is CSS-gated on the `desk:` variant, not a JS fork, so the explorer's
+ *   16px desk slot (W1-C) picks it up without passing anything.
+ *
+ * The `bare` prop skips the chip entirely — for desk-only surfaces like the
+ * breadcrumbs, where a hidden chip would be dead weight in the DOM.
  */
-import { LangIcon, type IconLang } from './ui/LangIcons'
+import { FileIcon, LangIcon, type IconLang } from './ui/LangIcons'
 
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.')
@@ -62,18 +69,31 @@ const letters: Record<string, string> = {
 /** Inset inside the 20px / 24px badge box so the glyph is not flush to the fill. */
 const ICON_SIZE = { sm: 18, md: 20 } as const
 
-export function FileBadge({ name, size = 'sm' }: { name: string; size?: BadgeSize }) {
+export function FileBadge({ name, size = 'sm', bare = false }: { name: string; size?: BadgeSize; bare?: boolean }) {
   const ext = extOf(name)
   const lang = langs[ext]
 
-  if (lang) {
-    return <LangBadge lang={lang} size={size} />
-  }
+  // The bare colored icon (desk rendering). aria-hidden like the chip: the
+  // accessible name always lives on the row or tab that holds the badge.
+  const icon = (
+    <FileIcon ext={ext} size={16} aria-hidden="true" className={bare ? undefined : 'hidden desk:block'} />
+  )
+  if (bare) return icon
 
-  return (
-    <span aria-hidden="true" className={badgeClass(size, 'plain')}>
+  const chip = lang ? (
+    <span aria-hidden="true" className={`${badgeClass(size, lang === 'java' ? 'java' : 'py')} desk:hidden`}>
+      <LangIcon lang={lang} size={ICON_SIZE[size]} />
+    </span>
+  ) : (
+    <span aria-hidden="true" className={`${badgeClass(size, 'plain')} desk:hidden`}>
       {letters[ext] ?? '·'}
     </span>
+  )
+  return (
+    <>
+      {chip}
+      {icon}
+    </>
   )
 }
 

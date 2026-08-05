@@ -17,25 +17,27 @@
  *  3. CLIP       — an element is cut off by a non-scrollable `overflow: hidden`
  *                  ancestor, i.e. content is silently invisible.
  *  4. INVARIANT  — named pairs from the brief's (a)-(g) list that must never
- *                  overlap whatever else is true: the console's status foot vs
- *                  the transcript, Run vs the drag handle, tabs vs top bar, and
- *                  everything vs the keyboard inset.
+ *                  overlap whatever else is true: the console header vs the
+ *                  drag handle, tabs vs top bar, and everything vs the
+ *                  keyboard inset.
  *
  * Usage: node overlap.mjs
  */
 import { chromium } from 'playwright-core'
 import { seedStarter } from './lib/seed.mjs'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8087/'
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+mkdirSync(SHOTS, { recursive: true })
 const findings = []
 let checks = 0
 
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'warsha-ovl-')), {
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
   viewport: { width: 1280, height: 860 },
   deviceScaleFactor: 1,
@@ -187,15 +189,14 @@ const PROBE = () => {
   const box = (s) => { const e = q(s); return e && vis(e) ? R(e) : null }
   const inv = {
     // `.stdin-input` / `.stdin-row` are the live line and exist only while the
-    // program is blocked on a read — usually null in this sweep, which is correct.
-    // `.console-foot` (the status line) is the console's permanent bottom row and
-    // is what the keyboard invariant is really about.
+    // program is blocked on a read — usually null in this sweep, which is
+    // correct. The console foot is gone (one shell): the status bar carries
+    // the run state at every width, so the console's bottom edge is the panel.
     stdin: box('.stdin-input'),
-    foot: box('.console-foot'),
     transcript: box('.console-transcript'),
-    // RunBar's root lost its `console-header` class in a concurrent refactor.
-    header: box('.console-header') ?? box('section[aria-label="Console"] > div:first-of-type'),
-    runBtn: (() => { const b = document.querySelector('.console-header button, section[aria-label="Console"] > div:first-of-type button'); return b && vis(b) ? R(b) : null })(),
+    header: box('.console-header'),
+    headerBtn: (() => { const b = document.querySelector('.console-header button'); return b && vis(b) ? R(b) : null })(),
+    statusBar: box('footer[aria-label="Status bar"]'),
     divider: box('[role="separator"]'),
     tabStrip: box('.tab-strip'),
     topBar: box('.top-bar'),
@@ -224,20 +225,20 @@ function report(scenario, { out, inv }) {
 
   const gap = (a, b) => Math.round(b - a)
   // The input is inside the transcript now, so "transcript vs input row" is no
-  // longer a thing that can overlap. What still must not overlap is the transcript
-  // and the status line under it — that is the row that tells a student the
-  // program is waiting, and output running under it hides the state.
-  if (inv.transcript && inv.foot && inv.transcript.bottom > inv.foot.top + 1)
-    add('INVARIANT-a', `transcript bottom (${Math.round(inv.transcript.bottom)}) is below the console foot's top (${Math.round(inv.foot.top)}) — output can run under the status line`)
-  if (inv.divider && inv.runBtn && inv.divider.bottom > inv.runBtn.top + 1)
-    add('INVARIANT-b', `drag handle bottom (${Math.round(inv.divider.bottom)}) overlaps Run top (${Math.round(inv.runBtn.top)}) by ${gap(inv.runBtn.top, inv.divider.bottom)}px`)
+  // longer a thing that can overlap. The status line under the transcript is
+  // gone too (the status bar carries the run state at every width) — what must
+  // not overlap is the transcript and the bar itself.
+  if (inv.transcript && inv.statusBar && inv.transcript.bottom > inv.statusBar.top + 1)
+    add('INVARIANT-a', `transcript bottom (${Math.round(inv.transcript.bottom)}) is below the status bar's top (${Math.round(inv.statusBar.top)}) — output can run under the run state`)
+  if (inv.divider && inv.headerBtn && inv.divider.bottom > inv.headerBtn.top + 1)
+    add('INVARIANT-b', `drag handle bottom (${Math.round(inv.divider.bottom)}) overlaps a console-header control's top (${Math.round(inv.headerBtn.top)}) by ${gap(inv.headerBtn.top, inv.divider.bottom)}px`)
   if (inv.tabStrip && inv.topBar && inv.tabStrip.top < inv.topBar.bottom - 1)
     add('INVARIANT-c', `tab strip top (${Math.round(inv.tabStrip.top)}) is above top bar bottom (${Math.round(inv.topBar.bottom)})`)
   if (inv.drawer && inv.editorPane && inv.drawer.right > inv.editorPane.left + 1)
     findings.push({ scenario, kind: 'INFO-d', msg: `drawer overlays editor by ${gap(inv.editorPane.left, inv.drawer.right)}px (expected below 900px: it is an overlay drawer)` })
   if (inv.kbInset > 100) {
     const kbTop = inv.innerH - inv.kbInset
-    for (const [label, r] of [['stdin input', inv.stdin], ['Run/Stop', inv.runBtn], ['console foot', inv.foot]])
+    for (const [label, r] of [['stdin input', inv.stdin], ['console header control', inv.headerBtn], ['transcript', inv.transcript]])
       if (r && r.bottom > kbTop + 1) add('INVARIANT-f', `${label} bottom (${Math.round(r.bottom)}) is under the keyboard (top ${Math.round(kbTop)})`)
   }
   return findings.filter((f) => f.scenario === scenario)
@@ -279,9 +280,9 @@ for (const w of widths) {
   })
 }
 
-/* Console dragged to min and max (≥900px only — the divider is a wide-screen
-   affordance). Driven through localStorage because that is the same seam the
-   drag writes to, and it survives the reload. */
+/* Console dragged to min and max (the divider renders at every width now;
+   dragging is exercised at 1280). Driven through localStorage because that is
+   the same seam the drag writes to, and it survives the reload. */
 for (const [label, h] of [['min', 100], ['max', 4000]]) {
   await scenario(`1280px · console dragged to ${label}`, async () => {
     await page.setViewportSize({ width: 1280, height: 860 })
@@ -363,17 +364,20 @@ for (const w of [430, 390]) {
 }
 await lowerKeyboard()
 
+/* One control at every size: the activity bar's Explorer item (docked pane at
+   ≥900px, overlay drawer below). It TOGGLES, so open only when it is closed. */
+const ensureExplorerOpen = async () => {
+  if (await page.locator('aside[aria-label="Files"][data-state="open"]').count()) return
+  await page.locator('nav[aria-label="Activity bar"] button[aria-label="Explorer"]').click()
+  await page.waitForTimeout(450)
+}
+
 /* Long file name — ellipsis, not spill (brief item g). */
 await scenario('390px · very long file name', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   // Below 900px the explorer is an off-canvas drawer, so its rows are not
   // clickable until it is open.
-  // `exact: true`: the loose match also picks up the welcome cards' file-count
-  // line ("3 files · ..."), which contains "files" as a case-insensitive
-  // substring — a strict-mode violation the moment the welcome panel is on
-  // screen alongside the real hamburger.
-  const files = page.getByRole('button', { name: 'Files', exact: true })
-  if (await files.count()) { await files.click(); await page.waitForTimeout(450) }
+  await ensureExplorerOpen()
   const menu = page.locator('[role="treeitem"]', { hasText: 'Person.java' }).first()
   if (await menu.count()) {
     await menu.click({ button: 'right' })
@@ -395,15 +399,10 @@ await page.screenshot({ path: `${SHOTS}/ovl-390-longname.png` })
 
 /* Mid-width drawer, around the 900px breakpoint (brief item d). */
 for (const w of [880, 899, 900, 920]) {
-  await scenario(`${w}px · drawer open across the 900px breakpoint`, async () => {
+  await scenario(`${w}px · explorer open across the 900px breakpoint`, async () => {
     await page.setViewportSize({ width: w, height: 800 })
     await page.waitForTimeout(250)
-    // `exact: true`: the loose match also picks up the welcome cards' file-count
-  // line ("3 files · ..."), which contains "files" as a case-insensitive
-  // substring — a strict-mode violation the moment the welcome panel is on
-  // screen alongside the real hamburger.
-  const files = page.getByRole('button', { name: 'Files', exact: true })
-    if (await files.count()) await files.click()
+    await ensureExplorerOpen()
   })
   await page.keyboard.press('Escape').catch(() => {})
 }
@@ -412,7 +411,9 @@ for (const w of [880, 899, 900, 920]) {
 await scenario('1280px · progress block during real cold boot', async () => {
   await page.setViewportSize({ width: 1280, height: 860 })
   await page.waitForTimeout(300)
-  const run = page.getByRole('button', { name: 'Run', exact: true })
+  // Run lives in the tab strip's editor-actions corner and names its file
+  // ("Run Main.java") — hence the prefix match.
+  const run = page.getByRole('button', { name: /^Run\b/ })
   // Enabled, not just present. Run is disabled whenever the project has no entry
   // candidate, and clicking a disabled button is a 30s timeout that takes the
   // whole sweep with it rather than a failed scenario. Say so loudly instead:
@@ -429,8 +430,11 @@ await scenario('1280px · progress block during real cold boot', async () => {
 })
 await page.screenshot({ path: `${SHOTS}/ovl-1280-progress.png` })
 
-/* Toast + menu + dialog while the keyboard is up (brief item f). */
-await scenario('390px · toast visible with keyboard open', async () => {
+/* Chrome geometry while the keyboard is up (brief item f). Ctrl+S is a SILENT
+ * save now (W3-A — the dirty-dot machinery is the signal, no 'Saved' toast),
+ * so this scenario proves the keystroke disturbs nothing rather than that a
+ * toast clears the keyboard. */
+await scenario('390px · keyboard open + Ctrl+S (silent save)', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   await raiseKeyboard()
   await page.waitForTimeout(400)

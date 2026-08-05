@@ -1,180 +1,231 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RunStatus } from '../hooks/useRunner'
-import { useMedia } from '../hooks/useMedia'
 import { activeBuffer } from '../console/buffer'
 import { Button, IconButton } from './ui/Button'
 import { IconChevronDown, IconChevronUp, IconClear } from './ui/Icons'
-import { RunControl, resolveEntry, type RunControlState } from './RunControl'
+import { resolveEntry } from './RunControl'
 import { StatusPill } from './StatusPill'
 import { COPY } from '../copy'
 
-/* The console header. Its divider is an inset shadow, not a border: a 1px
- * border comes out of the bar's own height, and a flush control inside it
- * then overflows by a pixel — which once pushed Run under the keyboard line.
- * `hand-left` mirrors the row so left-handed students get Run/Stop on the
- * leading edge (spec §5.3). At ≤460px only decoration goes: the inter-control
- * gap tightens and the group divider hides, which is what keeps the collapse
- * control on screen on a 360px phone.
- *
- * `h-bar-console` is 44px below 900px and 52px at and above it (index.css) —
- * PIXEL-FINDINGS F-12: this header held the SAME 0px-clearance defect the
- * title bar was fixed for (a 44px Run flush in a 44px bar, its 10px radius
- * running into the divider). Scoped to ≥900px, unlike the title bar's fix,
- * because this Run is on screen at every width and a phone console has no
- * vertical budget to spare for it (§4.3 rule 4's floor is "the single most
- * important number" in that section). Founder ruling since shrank Run itself
- * to 40px throughout (RunControl.tsx) — the bar did not follow it down; a 40px
- * control in a 52px bar is 6px of clearance a side rather than 4, which reads
- * fine (crops in the PR), and the phone-width 44px bar now holds a 40px
- * control with 2px a side instead of 0. */
+/* The panel header — ONE composition at every size and pointer (founder ruling:
+ * the VS Code desktop shell everywhere, touch gets metric adjustments only).
+ * Height rides --bar-console: 44px on touch, VS Code's 35px under DENSITY.
+ * No bottom hairline at any density: VS Code draws no rule under a panel
+ * title — the panel's own 1px top seam is its one boundary.
+ * `hand-left` mirrors the row so the toolbar lands on a left-hander's thumb
+ * side (spec §5.3). At ≤460px only decoration goes: the inter-control gap
+ * tightens, which is what keeps the collapse control on screen at 360px. */
 /* `console-header` carries no styling — tools/qa reads it. */
 const HEADER =
   'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
-  'shadow-[inset_0_-1px_0_0_var(--border-subtle)] hand-left:flex-row-reverse ' +
+  'hand-left:flex-row-reverse ' +
   'pl-[max(var(--sp-2),env(safe-area-inset-left))] pr-[max(var(--sp-2),env(safe-area-inset-right))]'
 
+/* VS Code's toolbar-icon hover — --toolbar-hover-bg, the ONE token shared with
+ * the menu bar's title selection (global dedupe; see MenuBar.tsx). Trailing `!`
+ * because Button's own quiet hover (surface-3) is an equal-specificity utility
+ * and layer order between the two is Tailwind's to pick, not ours. Hover is
+ * desk-scoped; a coarse pointer has no hover to dress. */
+const TOOLBAR_HOVER = 'desk:hover:not-disabled:bg-toolbar-hover!'
+
+/* VS Code's panel-title tab voice — 11px caps, no box, normal weight and
+ * tracking (the uppercasing alone does the work). The active tab carries a 1px
+ * --panel-tab-active bottom rule as an inset shadow (BARS recipe: a border
+ * would come out of the header's height). Shared by the web pair below and the
+ * lone CONSOLE tab, so both read as one system. The tabs stretch the full bar
+ * height, so on touch they are 44px targets with no extra dress.
+ * Overflow (founder pass 2026-08-05): min-w-10 floor + shrink instead of
+ * flex-none — when the trailing toolbar needs the room the caps truncate
+ * (the label span inside carries the ellipsis; a flex button clips its own
+ * anonymous text box instead of eliding it) rather than shoving controls off
+ * the 320px edge. px tightens with the header's ≤460px step. */
+const CAPS_TAB =
+  'relative flex h-full min-w-10 shrink cursor-pointer touch-manipulation items-center px-2 max-[460px]:px-1 font-ui text-[11px] leading-none font-normal uppercase tracking-normal '
+/* The elidable caps label inside a CAPS_TAB. */
+const CAPS_TAB_LABEL = 'min-w-0 truncate'
+const CAPS_TAB_ACTIVE = 'text-text-2 shadow-[inset_0_-1px_0_0_var(--panel-tab-active)]'
+const CAPS_TAB_IDLE = 'text-text-3 hover:text-text-2'
+
+/* The toolbar-button recipe: icon-only, VS Code's quiet glyph. The visual box
+ * is min-w-touch × min-h-run-h (44×40 touch, 28×28 desk); the after: pseudo
+ * restores a ≥44px hit area into the row's gap on touch. min-h-run-h!: founder
+ * ruling — `min-h-touch` in Button's base always wins a plain min-h utility
+ * regardless of class order, so the override has to be important. */
+const TOOLBAR_BTN =
+  "min-w-touch shrink-0 min-h-run-h! relative after:absolute after:-inset-1 after:content-[''] " +
+  TOOLBAR_HOVER
+
 export interface RunBarProps {
+  /** Drives the header's keyboard-time status pill; Run itself lives in the
+   *  tab strip's trailing group (its ONE home — see Tabs.tsx). */
   status: RunStatus
   exitCode: number | null
-  busy: boolean
   /** Entry-point candidates; the picker only appears when there are 2+. */
   candidates: string[]
   entryPath: string | null
   consoleOpen: boolean
-  canRun: boolean
   /** A web project has a preview surface; the pane then offers Preview | Console. */
   previewActive?: boolean
   /** Which face the output pane is showing. Only meaningful when previewActive. */
   view?: OutputView
   onView?(view: OutputView): void
   onEntryChange(path: string): void
-  onRun(): void
-  onStop(): void
   onClear(): void
   onToggleConsole(): void
+  /** VS Code's "Maximize Panel Size" chevron. Optional so the button never
+   *  renders when App withholds the handler — never a dead control. */
+  maximized?: boolean
+  onToggleMaximize?(): void
 }
 
 export type OutputView = 'preview' | 'console'
 
 /**
- * The console header — and the home of Run/Stop (spec §5.3).
+ * The panel header (VS Code's, at every size): caps PREVIEW/CONSOLE tabs on
+ * the leading edge, then the toolbar — entry picker, Copy, Clear,
+ * Maximize/Restore, collapse — trailing, exactly where VS Code puts a panel's
+ * controls. Run/Stop is NOT here: its one home is the tab strip's trailing
+ * group (founder ruling — one layout, one Run).
  *
- * Not the top-right: on a tablet held in two hands that is the least reachable
- * corner. Here the control sits in the bottom third (thumb territory), is part
- * of the layout so it can never overlap code, and rides up with --kb-inset when
- * the keyboard opens. It is ONE button that swaps role rather than a Run beside
- * a disabled Stop. `html[data-hand="left"]` mirrors the row for left-handers.
+ * Touch differs by metrics only: the bar is 44px instead of 35px
+ * (--bar-console), the toolbar buttons keep ≥44px hit areas via the after:
+ * pseudo recipe, and while the software keyboard hides the status bar the
+ * run-state pill steps back in here so "waiting for you" is never off screen.
  *
  * Language is per file, never per page: Run always starts the project's entry
- * point, and the picker beside it says which file that is. There is no "Python
- * mode" to be in.
+ * point, and the picker in the toolbar says which file that is. There is no
+ * "Python mode" to be in.
  */
 export function RunBar(props: RunBarProps) {
-  const { status, exitCode, busy, candidates, entryPath, consoleOpen, canRun, previewActive, view } = props
-  const narrow = useMedia('(max-width: 899px)')
+  const { status, exitCode, candidates, entryPath, consoleOpen, previewActive, view } = props
   const entry = resolveEntry(entryPath, candidates)
-  const run: RunControlState = { status, busy, canRun, entry, onRun: props.onRun, onStop: props.onStop }
   // Copy/Clear act on the transcript, so they belong to the Console face only.
   // For a web project showing the Preview, there is no transcript on screen.
   const showTranscriptActions = consoleOpen && (!previewActive || view === 'console')
 
+  /* What Run will start. Two candidates or more and it is a picker; one and it
+   * is a label, because a select with a single option is a lie. It sits in the
+   * trailing toolbar group (VS Code puts a panel's controls on the right — see
+   * the OUTPUT channel picker) in the OUTPUT-channel-picker dress: no box of
+   * its own (the utilities out-layer `.field`'s @layer components recipe), UI
+   * face at 13px in the toolbar's quiet grey. `.field`'s min-height is --touch,
+   * so the select keeps its 44px target on touch with no extra dress. */
+  /* min-w-[3.5rem]: the picker shrinks with the row but keeps a floor — before
+   * this it had bare min-w-0 and the fixed-width icon buttons squeezed the
+   * label to "m…" while keeping their own full boxes (founder pass 2026-08-05).
+   * Icon-only controls stay fixed; the label gives way only down to the floor,
+   * and every fixed neighbour has its own hide/tighten step, so the row still
+   * sums under 320px (see the ≤460/≤360 steps in this header). */
+  const entryPicker =
+    candidates.length > 1 ? (
+      <div className="relative flex min-w-[3.5rem] shrink items-center">
+        <select
+          value={entry ?? ''}
+          onChange={(e) => props.onEntryChange(e.target.value)}
+          aria-label="File to run"
+          title="Choose which file Run starts"
+          className="field min-w-0 appearance-none truncate pr-7 pl-2 bg-transparent border-transparent font-ui text-[13px] text-text-2"
+        >
+          {candidates.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <IconChevronDown
+          size={16}
+          className="pointer-events-none absolute right-2 text-text-3"
+        />
+      </div>
+    ) : entry ? (
+      <span
+        title={`Run starts ${entry}`}
+        className="min-w-[3.5rem] max-w-[26ch] truncate font-ui text-[13px] text-text-2"
+      >
+        {entry}
+      </span>
+    ) : null
+
   return (
     <div className={HEADER}>
-      {/* Run/Stop — first in DOM order so it is the first tab stop and so
-          data-hand="left" (row-reverse) puts it on the leading edge. 40px
-          (founder ruling) at every width, never the spec's 48px: a 48px button
-          would overflow the 44px phone-width bar, and 40px stays consistent
-          with the title bar's copy of the same control above 900px rather than
-          being a second size to keep in sync (see F-12 above for why the
-          header itself grows to 52px there instead).
-          The title bar renders the same control at ≥900px; see RunControl. */}
-      <RunControl run={run} placement="console" />
-
-      {/* What Run will start. Two candidates or more and it is a picker; one and
-          it is a label, because a select with a single option is a lie. Either
-          way it carries the amber leading rule, which is what ties it to the
-          amber Run button beside it instead of looking bolted on. */}
-      {candidates.length > 1 ? (
-        <div className="relative flex min-w-0 items-center">
-          <select
-            value={entry ?? ''}
-            onChange={(e) => props.onEntryChange(e.target.value)}
-            aria-label="File to run"
-            title="Choose which file Run starts"
-            className="field min-w-0 appearance-none truncate border-l-2 border-l-accent pr-7 pl-2"
+      {/* The pane's name as VS Code's panel-title caps. A script project has
+          one face, so its tablist holds a lone, always-selected CONSOLE tab
+          (same role=tablist "Output view" contract as the web pair — the two
+          never render together). Clicking it while the panel is collapsed
+          shows the console, which is exactly what clicking a panel title does
+          in VS Code; clicking the already-shown face is VS Code's no-op. */}
+      {previewActive ? (
+        consoleOpen && view ? <ViewToggle view={view} onView={props.onView} /> : null
+      ) : (
+        <div role="tablist" aria-label="Output view" className="flex min-w-0 shrink items-stretch self-stretch">
+          <button
+            type="button"
+            role="tab"
+            aria-selected="true"
+            onClick={consoleOpen ? undefined : props.onToggleConsole}
+            className={CAPS_TAB + CAPS_TAB_ACTIVE}
           >
-            {candidates.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <IconChevronDown
-            size={16}
-            className="pointer-events-none absolute right-2 text-text-3"
-          />
+            <span className={CAPS_TAB_LABEL}>{COPY.viewConsole}</span>
+          </button>
         </div>
-      ) : entry ? (
-        <span
-          title={`Run starts ${entry}`}
-          className="hidden min-w-0 max-w-[26ch] truncate border-l-2 border-l-accent pl-2 font-code text-meta text-text-2 min-[900px]:block"
-        >
-          {entry}
-        </span>
-      ) : null}
+      )}
 
-      {/* A web project shows a live page and a log; this switches the pane
-          between them. Only appears when there is a preview to show — a
-          Java/Python run has no second face and never renders it. */}
-      {previewActive && consoleOpen && view ? (
-        <ViewToggle view={view} onView={props.onView} />
-      ) : null}
-
-      {/* Five controls do not fit 390px, and squeezing them is how buttons end up
-          under 44px and labels end up clipped. On a phone with the console open,
-          the status *line* above the input row carries the same glyph and word in
-          the same tone, one line further down — so the pill stands down there and
-          comes back the moment the console is collapsed and the line is gone.
-          Preview showing: no status line under it, so keep the pill. */}
-      {!narrow || !consoleOpen || (previewActive && view === 'preview') ? (
+      {/* The run-state pill, keyboard-time only. Everywhere else the status
+          bar's remote block says the same word at the same moment — but the
+          status bar stands down while a software keyboard is up (§4.3 rule 4's
+          floor gets its pixels before decoration), and "waiting for you" must
+          never be off screen while the student could be typing an answer.
+          CSS-owned visibility (html[data-kb]), the same mechanism as kb-hide. */}
+      <span className="hidden kb-open:flex min-w-0 items-center">
         <StatusPill status={status} exitCode={exitCode} />
-      ) : null}
+      </span>
 
-      <div className="ml-auto flex min-w-0 items-center gap-2">
+      <div className="ml-auto flex min-w-0 items-center gap-2 max-[460px]:gap-1">
+        {/* The entry picker — VS Code's panel controls corner. */}
+        {entryPicker}
         {/* Transcript actions only while there is a transcript on screen. */}
         {showTranscriptActions ? (
           <>
-            {/* A hairline before the trailing controls, so a wide header reads
-                as a deliberate toolbar with two groups rather than two things
-                and a void. */}
-            <span aria-hidden="true" className="kb-hide w-px h-[24px] flex-none mx-1 bg-border-subtle max-[460px]:hidden" />
             <CopyOutputButton />
-            {/* Keyboard open: the label goes, the icon and the box stay
-                (spec §4.3 rule 3 — collapse decoration, never function). */}
             <Button
               variant="quiet"
               onClick={props.onClear}
               aria-label={COPY.clearOutput}
               title={COPY.clearOutput}
-              // The ≤460px rule tightens .console-header .btn padding to 8px,
-              // which takes an icon-only button down to 38px wide. Height was
-              // never the problem; the box is the target, so floor the width.
-              // min-h-10!: founder ruling, same override RunControl needs and
-              // for the same reason — `min-h-touch` in Button's base always
-              // wins a plain `min-h-10` regardless of class order. The after:
-              // pseudo restores the ≥44px hit area into this row's gap-2.
-              className="min-w-touch shrink-0 min-h-10! relative after:absolute after:-inset-1 after:content-['']"
+              className={TOOLBAR_BTN}
             >
               <IconClear />
-              <span className="kb-hide hidden min-[900px]:inline">Clear</span>
             </Button>
           </>
+        ) : null}
+
+        {/* VS Code's Maximize Panel Size / Restore Panel Size chevron — at
+            every size, like the rest of the header. The one keyboard-time
+            caveat: while the OSK owns the panel's height the toggle only
+            takes effect once the keyboard closes.
+            max-[359px]:hidden (founder overflow pass): below 360px the row
+            cannot seat every control and this is the one whose job survives
+            it — the divider drag still resizes the panel and collapse stays.
+            QA note: the "Maximize output" control is absent under 360px. */}
+        {consoleOpen && props.onToggleMaximize ? (
+          <IconButton
+            // "Maximize output"/"Restore output" verbatim — the ARCHITECTURE §4
+            // contract names both, and the collapse control below owns the
+            // frozen "Hide output"/"Show output" pair; this button must never
+            // answer to either of those.
+            label={props.maximized ? 'Restore output' : 'Maximize output'}
+            onClick={props.onToggleMaximize}
+            className={TOOLBAR_HOVER + ' max-[359px]:hidden'}
+          >
+            {props.maximized ? <IconChevronDown /> : <IconChevronUp />}
+          </IconButton>
         ) : null}
 
         <IconButton
           label={consoleOpen ? 'Hide output' : 'Show output'}
           aria-expanded={consoleOpen}
           onClick={props.onToggleConsole}
+          className={TOOLBAR_HOVER}
         >
           {consoleOpen ? <IconChevronDown /> : <IconChevronUp />}
         </IconButton>
@@ -184,11 +235,12 @@ export function RunBar(props: RunBarProps) {
 }
 
 /**
- * The Preview / Console switch for a web project. A two-segment control, sized
- * so its buttons keep a 40px hit area (the after: pseudo restores it into the
- * row's gap) while the visible chrome stays compact enough for a 390px header.
- * The selected segment carries a fill *and* an accent underline — never colour
- * alone, per Design's rule that adjacent surfaces are invisible on a phone.
+ * The Preview / Console switch for a web project: VS Code's panel-title tabs —
+ * PREVIEW CONSOLE in 11px caps, no box, the active one bright with a 1px
+ * --panel-tab-active bottom rule (crop-panel.png). One dress at every size;
+ * on touch the tabs stretch the 44px bar, so the target height comes free.
+ * The uppercasing is CSS, so the accessible names stay "Preview" / "Console"
+ * and the role=tablist contract (aria-label "Output view") never changes.
  */
 function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputView) => void }) {
   const segment = (v: OutputView, label: string) => {
@@ -199,24 +251,14 @@ function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputVie
         role="tab"
         aria-selected={selected}
         onClick={() => onView?.(v)}
-        className={
-          "relative flex-none min-h-8 px-2.5 font-ui text-micro font-semibold touch-manipulation " +
-          "after:absolute after:-inset-y-1 after:inset-x-0 after:content-[''] " +
-          (selected
-            ? 'bg-surface-4 text-text-1 shadow-[inset_0_-2px_0_0_var(--accent)]'
-            : 'text-text-3 hover:text-text-2')
-        }
+        className={CAPS_TAB + (selected ? CAPS_TAB_ACTIVE : CAPS_TAB_IDLE)}
       >
-        {label}
+        <span className={CAPS_TAB_LABEL}>{label}</span>
       </button>
     )
   }
   return (
-    <div
-      role="tablist"
-      aria-label="Output view"
-      className="flex flex-none items-center overflow-hidden rounded-md border border-border-control bg-surface-2"
-    >
+    <div role="tablist" aria-label="Output view" className="flex min-w-0 shrink items-stretch self-stretch gap-1">
       {segment('preview', COPY.viewPreview)}
       {segment('console', COPY.viewConsole)}
     </div>
@@ -259,15 +301,15 @@ function CopyOutputButton() {
       title={label}
       data-state={state}
       // The result has to be visible, not only in the tooltip: a copy that
-      // silently failed is worse than no button. min-h-10!/after: — see Clear,
-      // above: same founder-ruling override, same reason.
+      // silently failed is worse than no button — so the glyph itself swaps
+      // and takes the state's colour.
       className={
-        "min-w-touch shrink-0 min-h-10! relative after:absolute after:-inset-1 after:content-[''] " +
+        TOOLBAR_BTN +
+        ' ' +
         (state === 'done' ? 'text-success' : state === 'failed' ? 'text-danger' : '')
       }
     >
       {state === 'done' ? <IconCheck /> : <IconCopy />}
-      <span className="kb-hide hidden min-[1100px]:inline">{state === 'done' ? COPY.copyOutputDone : 'Copy'}</span>
     </Button>
   )
 }

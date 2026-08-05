@@ -83,14 +83,17 @@ for (const [label, needle] of [['main.py', 'main.py'], ['helpers/', 'helpers'], 
   else fail(`migrated file present: ${label}`, files.join(', '))
 }
 
-// The project's name/Open badge lives in the sidebar's project switcher menu
-// (LAYOUT-VSCODE §2), not the top bar's "More" overflow -- that one only ever
-// held file actions (New file / Save all / Import .zip / Format file / Share
-// as image / text size), even before this assertion started failing, so this
-// was reading the wrong menu, not a stale item list.
-await page.locator('aside[aria-label="Files"] button[aria-haspopup="menu"]').click()
-await page.waitForSelector('[role="menu"][aria-label="Project menu"]')
-const rows = (await page.locator('[role="menu"][aria-label="Project menu"] [role="menuitem"]').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
+// One shell: the project list is File > Open Recent at every size (this
+// harness is wide, so the File title sits in the menu bar; below 1050px it
+// would live behind the ☰ "Application Menu" trigger).
+let rows
+await page.getByRole('menuitem', { name: 'File', exact: true }).click()
+await page.waitForSelector('[role="menu"]', { timeout: 5000 })
+await page.getByRole('menuitem', { name: 'Open Recent' }).hover()
+await page.waitForFunction(() => document.querySelectorAll('[role="menu"]').length >= 2, null, { timeout: 5000 })
+rows = (await page.locator('[role="menu"]').last().getByRole('menuitem').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
+await page.keyboard.press('Escape')
+await page.waitForTimeout(150)
 await page.keyboard.press('Escape')
 info(`menu after upgrade: ${JSON.stringify(rows.slice(0, 3))}`)
 if (rows.some((r) => /^My project.*Open$/.test(r))) pass('legacy workspace became a real, named project', 'My project')
@@ -146,7 +149,7 @@ else fail('legacy root retired after the copy verified', 'warsha-project/ still 
 // The migrated project must actually run.
 await page.locator('[role="treeitem"]', { hasText: 'main.py' }).first().click()
 await page.waitForTimeout(500)
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('old single-workspace'),
   null, { timeout: 240000 })

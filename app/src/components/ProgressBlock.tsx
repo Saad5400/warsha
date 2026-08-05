@@ -2,8 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
 
+/* The one voice for system loading (founder ruling 2026-08-05): the phase name
+ * is the headline, and the engine's own `message` is deliberately never
+ * rendered — engines narrate in their own words ("Preparing the Java
+ * compiler…"), and two differently-worded texts about the same moment is
+ * exactly what read as three competing progress reports. The `phase` field is
+ * the engine's message, distilled; these four labels are the entire loading
+ * vocabulary. */
 const phaseLabel: Record<LoadProgress['phase'], string> = {
-  download: 'Downloading',
+  download: 'Downloading the language',
   unpack: 'Unpacking',
   boot: 'Starting up',
   compile: 'Compiling your code',
@@ -14,7 +21,9 @@ const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 /* A transcript block, not a card. It used to be a rounded --surface-3 panel,
  * which read as a dialog that had wandered into the output; flush with the rows
  * on the same left grid, with the same 3px leading rule `.console-row` uses,
- * boot progress looks like the first thing the program printed. */
+ * boot progress looks like the first thing the program printed — while the
+ * accent rule and tinted fill keep it unmistakably Warsha's, never the
+ * program's. */
 const BLOCK =
   'progress-block mb-2 px-3 pt-1 pb-2 border-l-[3px] border-l-accent ' +
   'bg-[color-mix(in_srgb,var(--accent-soft)_45%,transparent)]'
@@ -28,13 +37,14 @@ const TRACK = 'progress-track relative flex-1 h-1 overflow-hidden rounded-pill b
 const FILL = 'h-full rounded-pill bg-accent transition-[width] duration-200 ease-linear'
 const SWEEP = 'w-[30%] animate-sweep motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
 
-/** Does the engine's message already say what phase this is? */
-const namesThePhase = (message: string, phase: LoadProgress['phase']) =>
-  message.toLowerCase().includes(phaseLabel[phase].split(' ')[0].toLowerCase())
-
 /**
  * The first-run engine download (spec §7.6). Renders in the console, never in a
  * modal, so the student can keep reading their code while it happens.
+ *
+ * Anatomy is fixed, whatever the phase: one short headline (the phase name),
+ * the bar, one line of numbers. Nothing else — the old always-on reassurance
+ * sentences and the timed "still going" transcript rows collapsed into the
+ * single first-run note below (founder ruling 2026-08-05).
  *
  * The contract is that something numeric changes on screen at least every two
  * seconds, from the first tap to the first line of output — because this is the
@@ -43,27 +53,29 @@ const namesThePhase = (message: string, phase: LoadProgress['phase']) =>
  * live byte counter, and a phase with no bytes at all shows elapsed seconds.
  */
 export function ProgressBlock({ progress }: { progress: LoadProgress }) {
-  const { loaded, total, phase, message } = progress
+  const { loaded, total, phase } = progress
   const determinate = typeof loaded === 'number' && typeof total === 'number' && total > 0
   const pct = determinate ? Math.min(100, Math.round((loaded! / total!) * 100)) : null
   const elapsed = useElapsedSeconds(phase, !determinate)
   const eta = useEta(phase, determinate ? loaded! : null, determinate ? total! : null)
+  const slowFirstRun = useSlowFirstDownload(phase)
 
-  // Phase first: naming the phase is what turns dead time into visible progress
-  // (spec §7.6), so it leads the line and the numbers qualify it.
+  // Numbers only, in one line: bytes, percent, estimate, elapsed. The headline
+  // above already named the phase; this line only ever qualifies it.
   const detail = [
     typeof loaded === 'number'
       ? determinate
         ? `${mb(loaded)} of ${mb(total!)}`
         : mb(loaded)
       : null,
+    pct !== null ? `${pct}%` : null,
     eta,
     elapsed !== null ? `${elapsed}s` : null,
   ].filter(Boolean)
 
   return (
     <div data-phase={phase} className={BLOCK}>
-      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{message}</p>
+      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel[phase]}</p>
 
       <div className="mt-2 flex items-center gap-2">
         <div className={TRACK}>
@@ -76,20 +88,12 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
             <div className={FILL + ' ' + SWEEP} />
           )}
         </div>
-        {pct !== null ? (
-          <span className="min-w-[4ch] text-right text-meta tabular-nums text-text-2">{pct}%</span>
-        ) : null}
       </div>
 
-      <p className={META + ' mt-2'}>
-        {/* The engine's own message usually names the phase ("Downloading
-            Python…"); repeating it under the bar reads as a stutter. */}
-        {namesThePhase(message, phase) ? null : (
-          <span className="font-semibold text-text-2">{phaseLabel[phase]}{detail.length > 0 ? ' · ' : null}</span>
-        )}
-        {detail.join(' · ')}
-      </p>
-      <p className={META}>{COPY.runtimeNextInstant}</p>
+      <p className={META + ' mt-2'}>{detail.join(' · ')}</p>
+      {slowFirstRun ? (
+        <p className="m-0 font-ui text-meta leading-normal text-text-3">{COPY.runtimeFirstRunNote}</p>
+      ) : null}
     </div>
   )
 }
@@ -100,8 +104,8 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
  *
  * A phase with no byte counts can last a long time with nothing to report:
  * Java's in-browser bootstrap compile measured 7 s warm and up to 20 s cold
- * (runtimes/java/INTEGRATION.md), during which `message` never changes. A frozen
- * string under a looping CSS sweep reads as a hang, so count the seconds.
+ * (runtimes/java/INTEGRATION.md), during which nothing else changes. A frozen
+ * block under a looping CSS sweep reads as a hang, so count the seconds.
  * Suppressed while a determinate bar is doing that job.
  */
 function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): number | null {
@@ -122,7 +126,28 @@ function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): numbe
 }
 
 /**
- * "about 40 seconds left", from the observed transfer rate (spec §7.6 anatomy).
+ * True once the download phase has run 8 s without finishing — the one moment
+ * reassurance earns its line. A cached engine clears `download` in well under
+ * that, so the note only ever appears on a genuine first run over a slow
+ * connection, and it appears inside the block, never as a transcript row.
+ */
+function useSlowFirstDownload(phase: LoadProgress['phase']): boolean {
+  const [slow, setSlow] = useState(false)
+
+  useEffect(() => {
+    if (phase !== 'download') {
+      setSlow(false)
+      return
+    }
+    const id = window.setTimeout(() => setSlow(true), 8000)
+    return () => window.clearTimeout(id)
+  }, [phase])
+
+  return slow
+}
+
+/**
+ * "about 40s left", from the observed transfer rate (spec §7.6 anatomy).
  *
  * Measured against the first sample of this phase rather than instantaneously,
  * which is what keeps the estimate from swinging wildly on school Wi-Fi, and it
@@ -159,7 +184,7 @@ function useEta(phase: LoadProgress['phase'], loaded: number | null, total: numb
 function humanEta(seconds: number): string | null {
   if (!Number.isFinite(seconds)) return null
   if (seconds < 10) return 'a few seconds left'
-  if (seconds < 90) return `about ${Math.round(seconds / 5) * 5} seconds left`
+  if (seconds < 90) return `about ${Math.round(seconds / 5) * 5}s left`
   if (seconds < 150) return 'about a minute left'
-  return `about ${Math.round(seconds / 60)} minutes left`
+  return `about ${Math.round(seconds / 60)} min left`
 }

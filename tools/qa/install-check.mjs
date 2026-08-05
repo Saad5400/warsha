@@ -120,18 +120,24 @@ await offerInstall(page)
 await page.waitForTimeout(200)
 check('the control appears the moment the browser offers', (await page.locator(INSTALL).count()) === 1)
 
-// It sits between the identity run and Run/⋯ — leftmost of the trailing group,
-// so the control that comes and goes never displaces the two that do not.
+// It takes the leading slot of the trailing group, so the control that comes
+// and goes never displaces the ones that do not. One shell: the bar's fixed
+// trailing pair is the sidebar/panel toggles at EVERY size (Run and ⋯ live in
+// the tab strip).
 const order = await page.$$eval('.top-bar button', (bs) => bs.map((b) => b.getAttribute('aria-label')))
+const deskIC = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 check(
-  'it takes the leading slot of the trailing group, ahead of Run and ⋯',
-  order.indexOf('Install Warsha') < order.indexOf('More') &&
-    order.indexOf('Install Warsha') < order.findIndex((l) => /^Run/.test(l ?? '')),
+  'it takes the leading slot of the trailing group',
+  order.indexOf('Install Warsha') < order.indexOf('Toggle Primary Side Bar') &&
+    order.indexOf('Install Warsha') < order.indexOf('Toggle Panel'),
   order.join(' | '),
 )
 
+// 40px per the icon-only founder ruling on touch layouts; the DENSITY media
+// compacts every icon-btn to 28px at a fine pointer (this 1280px window).
 const box = await page.locator(INSTALL).boundingBox()
-check('40px box, per the icon-only founder ruling', box.width === 40 && box.height === 40, `${box.width}x${box.height}`)
+const wantBox = deskIC ? 28 : 40
+check(`${wantBox}px box at this density`, box.width === wantBox && box.height === wantBox, `${box.width}x${box.height}`)
 
 // ---------------------------------------------------------------- one tap
 await page.locator(INSTALL).click()

@@ -5,7 +5,7 @@ import { readyLanguages } from '../languages'
 import { badgeClass } from './FileBadge'
 import { LogoLockup } from './Logo'
 import { Button } from './ui/Button'
-import { IconArrowRight, IconFolderPlus, IconPlus } from './ui/Icons'
+import { IconArrowRight, IconFolderPlus } from './ui/Icons'
 
 /* Same pane geometry as Editor's — this panel occupies the editor canvas.
  * `editor-pane` below carries no styling; it is a contract selector tools/qa
@@ -15,10 +15,9 @@ const EDITOR_PANE = 'editor-pane relative flex-1 min-w-0 min-h-editor-min overfl
 /* The whole card is one 88px+ target — no nested buttons. The 1px
  * --border-control edge does the work, since surface-3 on surface-1 is only
  * ~1.1:1 and invisible on a phone. The rows are head / blurb / manifest with
- * the blurb taking the slack, so the manifest lines up along the bottom of both
- * cards even when one title wraps. `start-card` carries no styling — it is a
+ * the blurb taking the slack. `start-card` carries no styling — it is a
  * contract selector tools/qa reads (the picker's cards are `.template-card`;
- * these first-run start cards are distinct). */
+ * this first-run start card is distinct). */
 const CARD =
   'start-card group grid grid-rows-[auto_1fr_auto] gap-2 min-h-[88px] p-4 text-left border border-border-control ' +
   'rounded-lg bg-surface-3 cursor-pointer touch-manipulation ' +
@@ -29,6 +28,14 @@ export interface WelcomePanelProps {
   onNewFile(): void
   onNewProject(): void
   onImportZip(): void
+  /**
+   * The student's OTHER projects, most recently opened first — the same
+   * ordering as File > Open Recent (App's projectRows). The open project is
+   * excluded: this panel only shows on an empty project, and a link back to
+   * where you already are is a dead link.
+   */
+  recent: { id: string; name: string }[]
+  onOpenProject(id: string): void
 }
 
 /**
@@ -41,12 +48,13 @@ export interface WelcomePanelProps {
  * explorer, tabs, console and Run control are all present and real behind it,
  * so the student never crosses a threshold to "get into" the editor.
  *
- * Two ways to begin: an empty file, or a starter. "New file" opens straight
- * into typing; "New from a starter" opens the language picker (TemplatePicker),
- * which is the one place that scales as Warsha grows past Java and Python — the
- * cards here never multiply with the language list.
+ * The starter leads (founder ruling 2026-08-05): "New from a starter" is the
+ * one card-shaped choice and the primary way in — it opens the language picker
+ * (TemplatePicker), the one place that scales as Warsha grows past Java and
+ * Python. "New file" and "Import a .zip" survive as quiet secondary actions
+ * below it, for the student who already knows exactly what they want.
  */
-export function WelcomePanel({ onNewFile, onNewProject, onImportZip }: WelcomePanelProps) {
+export function WelcomePanel({ onNewFile, onNewProject, onImportZip, recent, onOpenProject }: WelcomePanelProps) {
   // Read here rather than threaded down from App: this is a fact about the
   // device, not about the project, and every other prop on this panel is an
   // action the workspace owns.
@@ -57,49 +65,67 @@ export function WelcomePanel({ onNewFile, onNewProject, onImportZip }: WelcomePa
       {/* In-flow, never a full-page gate: as an absolute z-30 layer this panel
           painted OVER the explorer drawer (z-20) and its scrim on a phone. */}
       <div className="scroller relative z-0 h-full bg-surface-1" role="region" aria-label="Start a project">
-        {/* Weighted above centre — the lockup lands in the upper third, where
-            the eye starts, and nothing important sits where a keyboard would.
-            Tighter than the old full-page welcome: this column shares the
-            height with the console, so the rhythm drops from 24px to 16px. */}
-        <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-4 mx-auto px-5 py-5 min-[1024px]:max-w-[40rem]">
+        {/* Vertically centred in the pane (founder ruling 2026-08-05): the
+            column takes the pane's full height and centres, so an empty project
+            greets the student mid-canvas instead of top-anchored under the tab
+            strip. min-h-full is border-box, so the padding stays inside it and
+            nothing scrolls until the pane is genuinely shorter than the
+            content. Tighter than the old full-page welcome: this column shares
+            the height with the console, so the rhythm is 16px, not 24px. */}
+        <div className="flex min-h-full w-full max-w-[30rem] flex-col items-stretch justify-center gap-4 mx-auto px-5 py-5 min-[1024px]:max-w-[40rem]">
           <div className="flex flex-col items-center gap-4">
             <span className="inline-flex">
               <LogoLockup />
             </span>
           </div>
 
-          {/* Two cards, stacked on a phone and side by side on a laptop. Same
-              anatomy for both, because "an empty file" and "a starter" are the
-              same kind of choice here — a way to begin, not a mode. */}
-          <div className="grid gap-3 min-[1024px]:grid-cols-2">
-            <StartCard
-              autoFocus
-              badge={
-                <span aria-hidden="true" className={badgeClass('md', 'plain')}>
-                  <IconPlus size={14} />
-                </span>
-              }
-              title={COPY.welcomeNewFile}
-              blurb={COPY.welcomeNewFileBlurb}
-              manifest={COPY.welcomeNewFileManifest}
-              onPick={onNewFile}
-            />
-            <StartCard
-              badge={
-                <span aria-hidden="true" className={badgeClass('md', 'plain')}>
-                  <IconFolderPlus size={14} />
-                </span>
-              }
-              title={COPY.welcomeNewProject}
-              blurb={COPY.welcomeNewProjectBlurb}
-              manifest={`${readyLanguages.length} languages ready · more soon`}
-              onPick={onNewProject}
-            />
+          {/* One card, one lead (founder ruling 2026-08-05): the starter is
+              THE way to begin, so it is the only card-shaped choice on the
+              panel and takes first focus. "New file" and "Import a .zip" are
+              the same tier of quiet action below — there for the student who
+              already knows exactly what they want. */}
+          <StartCard
+            autoFocus
+            badge={
+              <span aria-hidden="true" className={badgeClass('md', 'plain')}>
+                <IconFolderPlus size={14} />
+              </span>
+            }
+            title={COPY.welcomeNewProject}
+            blurb={COPY.welcomeNewProjectBlurb}
+            manifest={`${readyLanguages.length} languages ready · more soon`}
+            onPick={onNewProject}
+          />
+
+          <div className="flex items-stretch gap-2">
+            <Button variant="ghost" onClick={onNewFile} className="flex-1 justify-center">
+              {COPY.welcomeNewFile}
+            </Button>
+            <Button variant="ghost" onClick={onImportZip} className="flex-1 justify-center">
+              {COPY.welcomeImport}
+            </Button>
           </div>
 
-          <Button variant="ghost" onClick={onImportZip} className="justify-center">
-            {COPY.welcomeImport}
-          </Button>
+          {/* VS Code's welcome "Recent" list. Link-styled rows (the `.link`
+              recipe), because these GO somewhere rather than make something —
+              the two cards above stay the only card-shaped choices. */}
+          <section aria-label="Recent" className="flex flex-col items-start gap-1">
+            <h2 className="m-0 text-btn leading-[1.3] font-semibold text-text-1">Recent</h2>
+            {recent.length === 0 ? (
+              <p className="m-0 text-meta leading-normal text-text-3">Projects you create appear here.</p>
+            ) : (
+              recent.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onOpenProject(p.id)}
+                  className="link border-0 bg-transparent p-0 text-left text-meta leading-[1.8]"
+                >
+                  {p.name}
+                </button>
+              ))
+            )}
+          </section>
 
           {/* iOS and iPadOS only. Everywhere else the title bar's install
               control does this job with one tap; on WebKit no control can

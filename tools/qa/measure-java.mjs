@@ -19,7 +19,7 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(),'jm
   executablePath: CHROME, headless: true, viewport: { width: 1280, height: 900 } })
 const page = ctx.pages()[0]
 const out = () => page.locator('[aria-label="Program output"]').innerText()
-const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
+const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 
 async function sampler() {
   await page.evaluate(() => {

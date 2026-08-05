@@ -3,15 +3,17 @@
  * viewport never triggers, so we set it directly to exercise the CSS state. */
 import { chromium } from 'playwright-core'
 import { seedStarter } from './lib/seed.mjs'
-import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+import { mkdtempSync, mkdirSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+mkdirSync(SHOTS, { recursive: true })
 const out = []
 const pass = (n, d='') => { out.push(1); console.log(`PASS  ${n}${d?' :: '+d:''}`) }
 const fail = (n, d='') => { out.push(0); console.log(`FAIL  ${n}${d?' :: '+d:''}`) }
 
 for (const motion of ['no-preference', 'reduce']) {
   const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'w-m-')), {
-    executablePath: '/usr/bin/google-chrome', headless: true,
+    executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', headless: true,
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: motion })
   const p = ctx.pages()[0] ?? await ctx.newPage()
   await p.goto(process.env.WARSHA_URL ?? 'http://localhost:8087/', { waitUntil: 'load' })
@@ -23,12 +25,12 @@ for (const motion of ['no-preference', 'reduce']) {
   await p.waitForTimeout(700)
   // The console starts collapsed on a fresh project, so none of its internals
   // exist yet — open it, or the keyboard-geometry checks measure an unmounted
-  // subtree and report null. Nothing is running here, so there is deliberately no
-  // stdin input to wait for: `.console-foot` (the status line) is the bottom-most
-  // thing the console always has.
+  // subtree and report null. Nothing is running here, so there is deliberately
+  // no stdin input to wait for: `.console-header` (a styling-free contract
+  // class on RunBar's root) is the thing the console always has.
   const show = p.getByRole('button', { name: 'Show output' })
   if (await show.count()) { await show.click(); await p.waitForTimeout(400) }
-  await p.waitForSelector('.console-foot', { timeout: 5000 })
+  await p.waitForSelector('.console-header', { timeout: 5000 })
 
   const drawer = await p.evaluate(() => {
     const el = document.querySelector('.drawer')
@@ -65,7 +67,9 @@ for (const motion of ['no-preference', 'reduce']) {
   }
 
   // ---- §4.3 keyboard-open compaction
-  await p.getByRole('button', { name: 'Files', exact: true }).click()
+  // The drawer opens from the activity bar's Explorer item — the same control
+  // that toggles the docked pane at desk (one shell).
+  await p.locator('nav[aria-label="Activity bar"] button[aria-label="Explorer"]').click()
   await p.waitForTimeout(400)
   if (motion === 'no-preference') await p.screenshot({ path: `${SHOTS}/final-390-drawer-open.png` })
   await p.keyboard.press('Escape')
@@ -89,9 +93,12 @@ for (const motion of ['no-preference', 'reduce']) {
   const kb = await p.evaluate(() => {
     const shell = getComputedStyle(document.querySelector('.app-shell'))
     const panel = document.querySelector('.console-panel')
-    const stdin = document.querySelector('.console-foot')
-    // RunBar's root lost its `console-header` class in a concurrent refactor.
-    const runBtn = document.querySelector('.console-header button, section[aria-label="Console"] > div:first-of-type button')
+    // The console foot is gone (one shell): the status bar carries the run
+    // state at every width, and while the keyboard hides IT, the header's
+    // kb-open-only StatusPill stands in. Geometry-wise the bottom-most console
+    // ink is the panel itself.
+    const pill = document.querySelector('.console-header .pill')
+    const headBtn = document.querySelector('.console-header button')
     const vh = window.innerHeight
     const kbTop = vh - 336
     return {
@@ -99,8 +106,10 @@ for (const motion of ['no-preference', 'reduce']) {
       pad: getComputedStyle(document.documentElement).getPropertyValue('--pad-panel').trim(),
       panelMb: panel ? getComputedStyle(panel).marginBottom : null,
       panelMinH: panel ? getComputedStyle(panel).minHeight : null,
-      stdinBottom: stdin ? Math.round(stdin.getBoundingClientRect().bottom) : null,
-      runBottom: runBtn ? Math.round(runBtn.getBoundingClientRect().bottom) : null,
+      panelBottom: panel ? Math.round(panel.getBoundingClientRect().bottom) : null,
+      pillShown: pill ? pill.getBoundingClientRect().width > 0 : false,
+      statusBarShown: !!document.querySelector('footer[aria-label="Status bar"]'),
+      headBtnBottom: headBtn ? Math.round(headBtn.getBoundingClientRect().bottom) : null,
       keyboardTop: kbTop,
       clearLabels: [...document.querySelectorAll('.kb-hide')].filter((e) => e.getBoundingClientRect().width > 0).length,
     }
@@ -119,12 +128,15 @@ for (const motion of ['no-preference', 'reduce']) {
     else fail('§4.3 r1. console-lift must stay removed', kb.panelMb)
     if (kb.clearLabels === 0) pass('§4.3 r3. decorative labels (Clear, wordmark, entry) are hidden, controls stay')
     else fail('§4.3 r3. kb-hide', String(kb.clearLabels))
-    if (kb.stdinBottom !== null && kb.stdinBottom <= kb.keyboardTop)
-      pass('9. the console foot (status line) sits ABOVE the keyboard, fully visible', `foot bottom ${kb.stdinBottom} ≤ keyboard top ${kb.keyboardTop}`)
-    else fail('9. console foot above the keyboard', JSON.stringify(kb))
-    if (kb.runBottom !== null && kb.runBottom <= kb.keyboardTop)
-      pass('12. Run/Stop rides up with the console and is never covered', `Run bottom ${kb.runBottom} ≤ ${kb.keyboardTop}`)
-    else fail('12. Run above the keyboard', JSON.stringify(kb))
+    if (kb.panelBottom !== null && kb.panelBottom <= kb.keyboardTop)
+      pass('9. the console panel ends ABOVE the keyboard, fully visible', `panel bottom ${kb.panelBottom} ≤ keyboard top ${kb.keyboardTop}`)
+    else fail('9. console panel above the keyboard', JSON.stringify(kb))
+    if (kb.headBtnBottom !== null && kb.headBtnBottom <= kb.keyboardTop)
+      pass('12. the console header controls ride up with the console, never covered', `bottom ${kb.headBtnBottom} ≤ ${kb.keyboardTop}`)
+    else fail('12. header controls above the keyboard', JSON.stringify(kb))
+    if (!kb.statusBarShown && kb.pillShown)
+      pass('kb-open: the status bar stands down and the header pill carries the run state')
+    else fail('kb-open run-state handoff (bar down, pill up)', JSON.stringify({ statusBarShown: kb.statusBarShown, pillShown: kb.pillShown }))
     await p.screenshot({ path: `${SHOTS}/final-390-keyboard-open.png` })
     console.log('      shot -> final-390-keyboard-open.png')
   }

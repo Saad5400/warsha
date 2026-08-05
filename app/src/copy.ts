@@ -10,16 +10,12 @@
  */
 export const COPY = {
   // ---- runtime bootstrap (§7.6, §8) ----
-  runtimeFirstRun: (lang: string, mb: number) =>
-    `Getting ${lang} ready — this happens once (about ${mb} MB). Next time it starts instantly, even offline.`,
-  runtimeNextInstant: 'Next time this is instant, even offline.',
-  runtimeSlow: 'Still going — a big first download can take a minute on slow Wi-Fi.',
-  runtimeKeepEditing: 'You can keep editing while this finishes.',
-  /** PLACEHOLDER — Design to confirm the 60s escalation wording. */
-  runtimeVerySlow: 'Still downloading. You can tap Stop and try again; the download picks up where it left off.',
-  /** PLACEHOLDER — shown when the engine itself throws. */
-  runtimeBroken: (detail: string) =>
-    `Warsha could not start the language engine. Check your connection, then tap Run to try again. (${detail})`,
+  // One progress voice (founder ruling 2026-08-05): the console's ProgressBlock
+  // is the only place system loading speaks — a phase headline, the bar, and a
+  // line of numbers. This is its one auxiliary sentence, shown only while a
+  // first-run download has gone on long enough to worry about (a cached engine
+  // never lingers there). Nothing about loading is ever a transcript row.
+  runtimeFirstRunNote: 'First-time download — next run starts instantly, even offline.',
 
   // ---- engine failures the student can act on (see useRunner's RunFailure) ----
   // Each is a headline plus one hint. The engine's own text is kept out of both:
@@ -44,7 +40,9 @@ export const COPY = {
     'Warsha could not save to this device, so it ran what is on screen. Export a .zip to keep a copy.',
 
   // ---- run lifecycle (§8) ----
-  running: (entry: string) => `Running ${entry}…`,
+  // No "Running <entry>…" transcript row (founder ruling 2026-08-05): the status
+  // line and pill already say the program is running, and system text in the
+  // transcript is what students mistook for their program's own output.
   runOk: 'Finished. (exit code 0)',
   runFailed: (code: number) =>
     `Your program stopped early — exit code ${code}. The red lines above say why.`,
@@ -81,10 +79,11 @@ export const COPY = {
   stdinWaitingPlaceholder: 'Type your answer, then press Enter',
 
   // ---- console status line: the current state, in words (§7.3 states) ----
+  // No 'preparing' sentence, on purpose: while the engine loads, the transcript's
+  // ProgressBlock is the one progress voice (founder ruling 2026-08-05) and the
+  // status line keeps only its pulsing glyph.
   statusIdle: 'Ready when you are — press Run.',
   statusIdleShortcut: (shortcut: string) => `Ready when you are — press Run, or ${shortcut}.`,
-  statusPreparing: 'Getting the language ready — the console will fill up shortly.',
-  statusPreparingShort: 'Getting the language ready…',
   statusRunning: 'Your program is running.',
   statusOk: 'Finished — exit code 0.',
   statusFailed: (code: number) => `Stopped early — exit code ${code}. The red lines say why.`,
@@ -126,6 +125,8 @@ export const COPY = {
   storageQuotaHint: 'Delete a project you have finished, or export your work as a .zip.',
   storageFailedTitle: 'Warsha cannot save your files on this device right now.',
   storageFailedHint: 'Keep working — nothing is lost yet — but export a .zip before you close this tab.',
+  storageMemoryTitle: 'This browser will not let Warsha save files, so your work only lasts as long as this tab.',
+  storageMemoryHint: 'Export a .zip before you leave. Private browsing is the usual reason.',
   storageEvictedTitle: 'The project Warsha had open was not here any more, so it opened another one.',
   storageEvictedHint:
     'Some browsers clear saved files for sites you have not used in a while. Export a .zip to keep a copy.',
@@ -139,10 +140,10 @@ export const COPY = {
   // Warsha opens straight into the workspace. When the project is empty, the
   // editor area carries this instead of a blank canvas — so a starter is an
   // action inside the IDE, never a gate in front of it, and the app never asks
-  // "which language?" (the file extension answers that).
+  // "which language?" (the file extension answers that). The starter is the
+  // primary way in (founder ruling 2026-08-05): "New file" and "Import a .zip"
+  // are quiet secondary actions wherever the empty project offers them.
   welcomeNewFile: 'New file',
-  welcomeNewFileBlurb: 'An empty file. The name sets the language.',
-  welcomeNewFileManifest: 'Main.java, main.py, …',
   welcomeNewProject: 'New from a starter',
   welcomeNewProjectBlurb: 'Pick a language, then a starter for your level.',
   welcomeImport: 'Import a .zip',

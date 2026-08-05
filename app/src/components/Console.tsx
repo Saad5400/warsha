@@ -10,9 +10,7 @@ import {
 import type { ConsoleBuffer, ConsoleLine, ConsoleSnapshot } from '../console/buffer'
 import type { LoadProgress } from '../runtime/types'
 import type { RunFailure, RunStatus } from '../hooks/useRunner'
-import { useMedia } from '../hooks/useMedia'
 import { afterViewportSettles } from '../ui/viewport'
-import { runShortcutLabel } from '../ui/shortcut'
 import { ProgressBlock } from './ProgressBlock'
 import { IconChevronDown } from './ui/Icons'
 import { COPY } from '../copy'
@@ -20,12 +18,6 @@ import { COPY } from '../copy'
 export interface ConsoleProps {
   buffer: ConsoleBuffer
   status: RunStatus
-  /**
-   * Optional: the status line names the exit code when it has one. The runner
-   * owns it and App passes it to the header pill; until it is passed here too the
-   * line reads "Stopped early — the red lines say why", which is still complete.
-   */
-  exitCode?: number | null
   progress: LoadProgress | null
   /**
    * A run that could not start — the engine download blocked, the browser
@@ -99,7 +91,6 @@ const FRESH_MAX_BATCH = 8
 export function Console({
   buffer,
   status,
-  exitCode = null,
   progress,
   failure = null,
   onRetry,
@@ -127,7 +118,6 @@ export function Console({
   const [showAll, setShowAll] = useState(false)
   /** True for LIVE_GRACE_MS after Enter — see the constant. */
   const [grace, setGrace] = useState(false)
-  const narrow = useMedia('(max-width: 899px)')
   const waiting = status === 'waiting'
   const busy = status === 'preparing' || status === 'running' || status === 'waiting'
   const cleared = useJustCleared(snapshot.lines.length)
@@ -413,12 +403,6 @@ export function Console({
           </button>
         ) : null}
       </div>
-
-      {/* The one fixed row the console keeps: what the program is doing now.
-          Sticky, so a software keyboard can never cover it (spec §4.3 rule 1). */}
-      <div className="console-foot">
-        <StatusLine status={status} exitCode={exitCode} narrow={narrow} />
-      </div>
     </div>
   )
 }
@@ -496,95 +480,6 @@ function LiveLine({
         />
       </span>
     </div>
-  )
-}
-
-/**
- * Per-state glyph, and whether the state is a live one.
- *
- * No colours here: `.console-status[data-state]` owns the tone, so the palette
- * stays in one file and the line can never drift from the pill beside it.
- */
-const statusTone: Record<RunStatus, { glyph: string; live: boolean }> = {
-  idle: { glyph: '○', live: false },
-  preparing: { glyph: '●', live: true },
-  running: { glyph: '●', live: true },
-  waiting: { glyph: '▸', live: true },
-  ok: { glyph: '✓', live: false },
-  failed: { glyph: '✕', live: false },
-  stopped: { glyph: '■', live: false },
-}
-
-function statusText(status: RunStatus, exitCode: number | null, narrow: boolean): string {
-  switch (status) {
-    case 'idle':
-      // The shortcut is worth teaching where there is a keyboard to press it on,
-      // and is noise on a phone.
-      return narrow ? COPY.statusIdle : COPY.statusIdleShortcut(runShortcutLabel())
-    case 'preparing':
-      return narrow ? COPY.statusPreparingShort : COPY.statusPreparing
-    case 'running':
-      return COPY.statusRunning
-    case 'waiting':
-      return narrow ? COPY.stdinHintShort : COPY.stdinHint
-    case 'ok':
-      return COPY.statusOk
-    case 'failed':
-      return exitCode === null
-        ? COPY.statusFailedNoCode
-        : narrow
-          ? COPY.statusFailedShort(exitCode)
-          : COPY.statusFailed(exitCode)
-    case 'stopped':
-      return COPY.statusStopped
-  }
-}
-
-/**
- * The line under the transcript: what the program is doing *now*, in a sentence,
- * in the state's own tone.
- *
- * The header pill is a badge — a glyph and a word, readable when the console is
- * collapsed. This is the sentence that tells a beginner what to do about it, and
- * it is the only permanent chrome the console has: with the input gone from the
- * bottom of the panel, this row is what makes "waiting for your answer" a state
- * you cannot miss even if the cursor has scrolled out of view. §10.5 of ACCEPTANCE
- * is exactly this confusion: waiting-for-input must never read as loading.
- */
-function StatusLine({
-  status,
-  exitCode,
-  narrow,
-}: {
-  status: RunStatus
-  exitCode: number | null
-  narrow: boolean
-}) {
-  const tone = statusTone[status]
-  const text = statusText(status, exitCode, narrow)
-  return (
-    <p
-      role="status"
-      aria-live="polite"
-      data-state={status}
-      title={text}
-      // PIXEL-FINDINGS F-15: `.console-status`'s own `padding: 4px 16px` put
-      // this row's ink at x=306 against the header's and transcript scroller's
-      // shared 8px (`--sp-2`) container padding, x=298 — an outlier `.console-*`
-      // rule never got moved onto the console's own inset. Overridden here
-      // rather than in index.css (that file is ui-theme's for now): `px-2`
-      // lands in `@layer utilities`, which outranks the `@layer components`
-      // rule regardless of source order or specificity, so this wins.
-      className="console-status px-2"
-    >
-      <span
-        aria-hidden="true"
-        className={'console-status__glyph' + (tone.live ? ' animate-pulse motion-reduce:animate-none' : '')}
-      >
-        {tone.glyph}
-      </span>
-      <span className="console-status__text">{text}</span>
-    </p>
   )
 }
 

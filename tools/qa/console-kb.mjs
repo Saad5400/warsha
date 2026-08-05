@@ -8,15 +8,18 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
 const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8091/'
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+mkdirSync(SHOTS, { recursive: true })
 const results = []
 const pass = (n, d = '') => { results.push(['PASS', n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
 const fail = (n, d = '') => { results.push(['FAIL', n, d]); console.log(`FAIL  ${n}${d ? ' :: ' + d : ''}`) }
 const info = (m) => console.log(`      ${m}`)
 
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'warsha-kb-')), {
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
   viewport: { width: 390, height: 780 },
   deviceScaleFactor: 2,
@@ -49,13 +52,10 @@ if (await picker.count()) {
   const box = await picker.boundingBox()
   const value = await picker.inputValue()
   pass('entry picker present with 2+ candidates', `${value}, ${Math.round(box.width)}x${Math.round(box.height)}`)
-  const rule = await picker.evaluate((el) => getComputedStyle(el).borderLeftColor + ' ' + getComputedStyle(el).borderLeftWidth)
-  info(`picker leading rule: ${rule}`)
 } else info('only one runnable file — picker correctly absent')
 
-// RunBar's root lost its `console-header` class in a concurrent refactor; accept
-// either spelling so this suite reports console regressions rather than that one.
-const HEADER_SEL = '.console-header, section[aria-label="Console"] > div:first-of-type'
+// `console-header` is a styling-free contract class on RunBar's root.
+const HEADER_SEL = '.console-header'
 const overflow = await page.evaluate((sel) => {
   const h = document.querySelector(sel)
   return { scrollW: h.scrollWidth, clientW: h.clientWidth, docScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth }
@@ -64,7 +64,9 @@ if (overflow.scrollW <= overflow.clientW + 1) pass('console header fits 390px wi
 else fail('console header overflows at 390px', JSON.stringify(overflow))
 
 // ------------------------------------------------------------- run to the prompt
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+// Run's one home is the tab strip's editor-actions corner, where it names the
+// file it will start ("Run main.py") — hence the prefix match.
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await hasOut('name')
 await page.screenshot({ path: `${SHOTS}/con-390-waiting.png` })
 
@@ -126,7 +128,11 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
       state: document.documentElement.dataset.kb,
     },
     input: r('[aria-label="Program input"]'),
-    status: r('p[role="status"][data-state]'),
+    // The status bar is suppressed while the keyboard is up; the header's
+    // kb-open-only StatusPill (`.console-header .pill`) carries the run state
+    // for exactly that window.
+    status: r('.console-header .pill'),
+    statusBarShown: !!document.querySelector('footer[aria-label="Status bar"]'),
     header: r(HEADER_SEL),
     visibleRows: rows.filter((b) => b.bottom <= keyboardTop + 1 && b.height > 0).length,
     totalRows: rows.length,
@@ -137,7 +143,6 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
     deadSpace: keyboardTop - (r('section[aria-label="Console"]')?.b ?? keyboardTop),
     transcriptH: r('.console-transcript')?.h,
     transcript: r('.console-transcript'),
-    foot: r('.console-foot'),
   }
 }, [KB_PX, HEADER_SEL])
 info(JSON.stringify(kb))
@@ -149,10 +154,12 @@ else fail('the live input stays above the keyboard', JSON.stringify(kb.input))
 if (kb.input && kb.transcript && kb.input.bottom <= kb.transcript.bottom + 1 && kb.input.top >= kb.transcript.top - 1)
   pass('the live input is inside the transcript viewport, not scrolled out of it', `input ${Math.round(kb.input.top)}–${Math.round(kb.input.bottom)} within ${Math.round(kb.transcript.top)}–${Math.round(kb.transcript.bottom)}`)
 else fail('live input clipped by the transcript', JSON.stringify({ input: kb.input, transcript: kb.transcript }))
-if (kb.status && kb.status.bottom <= kb.keyboardTop + 1) pass('status line stays above the keyboard')
-else fail('status line stays above the keyboard', JSON.stringify(kb.status))
-if (kb.header && kb.header.bottom <= kb.keyboardTop + 1) pass('Run/Stop stays above the keyboard')
-else fail('Run/Stop stays above the keyboard', JSON.stringify(kb.header))
+if (kb.status && kb.status.bottom <= kb.keyboardTop + 1) pass('the kb-open header pill carries the run state, above the keyboard')
+else fail('the kb-open header pill carries the run state', JSON.stringify(kb.status))
+if (!kb.statusBarShown) pass('the status bar stands down while the keyboard is up (the pill covers for it)')
+else fail('status bar should be suppressed while the keyboard is up')
+if (kb.header && kb.header.bottom <= kb.keyboardTop + 1) pass('the console header and its controls stay above the keyboard')
+else fail('console header stays above the keyboard', JSON.stringify(kb.header))
 if (kb.visibleRows >= 3) pass('the question is still readable while typing the answer', `${kb.visibleRows} output rows visible above the keyboard`)
 else fail('output rows visible with the keyboard up', `${kb.visibleRows} of ${kb.totalRows}`)
 if (!kb.clearLabelShown) pass('kb-hide decoration collapses with the keyboard up')

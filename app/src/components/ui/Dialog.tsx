@@ -159,7 +159,19 @@ export interface ConfirmRequest {
   resolve: (value: boolean) => void
 }
 
-export type DialogRequest = PromptRequest | ConfirmRequest
+/** A statement, not a question: one OK, no Cancel. A confirm pressed into this
+ *  role grows a Cancel button that means nothing — the exact dead control the
+ *  About dialog used to ship. Message is a node so a caller can lay out more
+ *  than one line (About's name + version). */
+export interface AlertRequest {
+  kind: 'alert'
+  title: string
+  message?: ReactNode
+  okLabel?: string
+  resolve: () => void
+}
+
+export type DialogRequest = PromptRequest | ConfirmRequest | AlertRequest
 
 /** Long enough for the 90ms exit plus a frame; short enough that a student
  *  pressing Create twice cannot get between the two. */
@@ -189,6 +201,8 @@ export function DialogHost({ request }: { request: DialogRequest | null }) {
 
   return shown.kind === 'prompt' ? (
     <PromptDialog key="prompt" request={shown} open={open} />
+  ) : shown.kind === 'alert' ? (
+    <AlertDialog key="alert" request={shown} open={open} />
   ) : (
     <ConfirmDialog key="confirm" request={shown} open={open} />
   )
@@ -332,6 +346,38 @@ function ConfirmDialog({ request, open }: { request: ConfirmRequest; open: boole
           {body}
         </form>
       )}
+    </Modal>
+  )
+}
+
+function AlertDialog({ request, open }: { request: AlertRequest; open: boolean }) {
+  const okRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+
+  // OK takes focus, so Enter and Escape both close — the only two things an
+  // alert can do are the same thing.
+  useEffect(() => {
+    okRef.current?.focus()
+  }, [])
+
+  return (
+    <Modal open={open} onCancel={request.resolve} dismissible labelledBy={titleId}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          request.resolve()
+        }}
+      >
+        <h2 id={titleId} className={TITLE}>
+          {request.title}
+        </h2>
+        {request.message ? <div className={MESSAGE}>{request.message}</div> : null}
+        <div className={ACTIONS}>
+          <Button ref={okRef} variant="primary" large type="submit">
+            {request.okLabel ?? 'OK'}
+          </Button>
+        </div>
+      </form>
     </Modal>
   )
 }

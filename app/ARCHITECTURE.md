@@ -50,14 +50,19 @@ Small and boring on purpose — roughly one file per box on screen.
 
 | Component | Notes |
 | --- | --- |
-| `TopBar` | Docked (≥900px, explorer open): an empty leading spacer, sized to the sidebar column, purely so its trailing divider still lands on the sidebar/editor boundary. Collapsed (≥900px, explorer off): the project switcher takes that spot instead, since there is no sidebar to carry it. Phone: hamburger + file title + overflow menu. No logo, no wordmark anywhere in it (LAYOUT-VSCODE §1b) — brand lives on the welcome panel, the favicon and the OG image only. |
-| `Explorer` | Tree, long-press/⋯ menu, create/rename/delete. |
-| `Tabs` | Horizontal strip, dirty dot, close. |
+| `TopBar` | ONE composition at every size (founder ruling 2026-08-05): `MenuBar` leading (it collapses itself to the ☰ `aria-label="Application Menu"` below 1050px), the centred `● file — project — Warsha` window title (hidden while the software keyboard compacts the bar), sidebar/panel toggles + install control trailing. No logo, no wordmark anywhere in it (LAYOUT-VSCODE §1b) — brand lives on the welcome panel, the favicon and the OG image only. |
+| `MenuBar` | File / Edit / View / Run / Help, mapped to real app actions only. File owns every project-scoped job (New/Open Recent/Import/Export/Rename/Empty/Delete) — the old `ProjectSwitcher` component is deleted. |
+| `ActivityBar` | The 48px icon rail, rendered at all widths; below 900px its Explorer item drives the sidebar as an overlay drawer. |
+| `Explorer` | Pane header (project label + New file / New folder / Collapse trio, hover-revealed at desk, always visible on touch) over the tree; long-press/⋯ menu, create/rename/delete. |
+| `Tabs` | Horizontal strip, dirty dot, close ×, plus the trailing editor-actions corner — `RunControl` and the ⋯ More menu — at every size. Run's only home. |
+| `Breadcrumbs` | The path trail under the tab strip, all widths (`--bar-crumbs`: 28px touch / 22px desk). |
 | `Editor` | ~40-line shell around `editor/setup.ts`. |
-| `Console` | The transcript, the live stdin line inside it, and the sticky status foot. |
+| `Console` | The transcript and the live stdin line inside it. (The old sticky status foot is gone — the status bar carries run state; see `RunBar`.) |
 | `Preview` | The output pane's second face: one sandboxed iframe (`allow-scripts`, **no** `allow-same-origin`) that loads the Web runtime's assembled `srcdoc`. Shown for a web project; the Console shows the transcript for Java/Python. |
-| `RunBar` | The console header: Run/Stop, status pill, entry picker, Clear, collapse — plus the Preview \| Console toggle for a web project. |
-| `ConsoleDivider` | Drag-resize handle (≥900px only). |
+| `RunBar` | The panel header, one VS Code panel-toolbar composition at every size: PREVIEW/CONSOLE caps tabs leading, then entry picker, Copy, Clear, Maximize/Restore, collapse. NO Run — that lives in the tab strip. Also carries the kb-open-only `StatusPill`, shown only while the software keyboard hides the status bar. |
+| `ConsoleDivider` | Drag-resize handle, all widths — visible grip bar on touch, VS Code's invisible sash at desk. |
+| `StatusBar` | Bottom bar, all widths (30px touch / 22px desk); run state left, language/entry/cursor/font right. Hidden only while the software keyboard is open. |
+| `QuickInput` | Ctrl+P / Ctrl+Shift+P quick open + command palette (`section[aria-label="Quick open"]`). |
 | `ProgressBlock` | First-run engine download (bar, byte counter, phase). |
 | `StatusPill` | The seven run states. |
 | `WelcomePanel` | The empty project's editor area, and the whole first-run experience: two start cards (New file / New from a starter → the picker) plus Import .zip, the first-run download note and the storage line. Rendered by `App` **instead of** `Tabs` + `Editor` while `project.isEmpty()`, so there is no welcome page, no route and no language gate — a starter is an action inside the IDE, and language comes from file extensions. |
@@ -204,8 +209,8 @@ Two stores, deliberately separate:
 
 - **Project files → OPFS** (`navigator.storage.getDirectory()`), under `warsha-project/`. `Project` is
   the in-memory source of truth; the store is write-behind. Editor keystrokes call
-  `Project.setContent()` → memory updates immediately, the file is marked dirty (amber dot in tab and
-  tree), and the write flushes after a **350 ms debounce**. Structural changes (create/rename/delete/
+  `Project.setContent()` → memory updates immediately, the file is marked dirty (the `.dot-dirty` dot
+  in tab and tree), and the write flushes after a **350 ms debounce**. Structural changes (create/rename/delete/
   import/template) write through immediately. `Run` calls `saveAll()` first, so an engine never sees
   stale bytes; `visibilitychange` flushes too. Swapping storage means implementing `ProjectStore` and
   changing `createStore()` — nothing else touches it.
@@ -237,11 +242,11 @@ a newline. Row-level styling uses the line's kind, which becomes `err` if *any* 
 
 `ui/viewport.ts` is the whole answer to DESIGN-SPEC §4. `100dvh` is correct on Android and wrong on
 iPadOS, where the layout viewport does not shrink for the software keyboard — so `visualViewport`
-drives `--app-h` and `--kb-inset`, and `html[data-kb="open"]` switches on the compact layout. The
-console's status foot is `position: sticky; bottom: 0` so the state sentence can never end up under
-the keyboard, and the live stdin line — which now lives inside the scrolling transcript — is kept in
-view by a `ResizeObserver` on the transcript that re-sticks it to the bottom whenever the panel
-changes size. There is deliberately **no** `.console-lift`: `--app-h` is `visualViewport.height`,
+drives `--app-h` and `--kb-inset`, and `html[data-kb="open"]` switches on the compact layout. While
+the keyboard hides the status bar, the run state moves to the kb-open-only `StatusPill` in the panel
+header (CSS-owned via `html[data-kb]`), so the state words are never under the keyboard; the live
+stdin line — which lives inside the scrolling transcript — is kept in view by a `ResizeObserver` on
+the transcript that re-sticks it to the bottom whenever the panel changes size. There is deliberately **no** `.console-lift`: `--app-h` is `visualViewport.height`,
 which is already the height above the keyboard, so subtracting `--kb-inset` again double-counts it
 (index.css says this at length, with the measurements).
 
@@ -251,6 +256,14 @@ which is already the height above the keyboard, so subtracting `--kb-inset` agai
 
 This app was built to be restyled without refactoring. The visual pass should not need to touch
 component logic.
+
+**One shell, pointer-adaptive density** (founder rulings, 2026-08-05 — `docs/design/DENSITY.md`):
+the VS Code desktop chrome renders at EVERY size and pointer; structure never forks. One media
+condition, `(min-width: 900px) and (hover: hover) and (pointer: fine)`, compacts the control tokens
+(`--touch` 44→28, bars, UI type) to VSCode-grade metrics and is also exposed as the `desk:` Tailwind
+variant; coarse pointers keep the §5.2 touch metrics on the same furniture. Before changing a size,
+check whether it is one of the forked tokens in DENSITY.md's table — a literal px is probably wrong
+at one of the two densities.
 
 **Where the tokens live.** `docs/design/tokens.css` is canonical and is imported *in place* by
 `src/index.css` (Vite's `server.fs.allow: ['..']` permits it) — there is no copy to drift.
@@ -267,12 +280,16 @@ component logic.
 | `--sp-1…6`, `--pad-panel` | `p-1…p-6`, `px-panel` |
 | `--touch`, `--touch-lg`, `--bar-top`, `--rail`, `--explorer-w`, `--drawer-w` | `size-touch`, `min-h-touch-lg`, `h-bar`, `border-l-rail`, `w-explorer`, `w-drawer` |
 | `--r-sm/md/lg/pill` | `rounded-sm/md/lg/pill` |
+| the Dark Modern chrome families — `--titlebar-*`, `--statusbar-*`, `--ab-*`, `--tab-*`, `--menu-*`, `--list-*`, `--tree-guide*`, `--qi-*`, `--kbd-*`, `--badge-*`, `--btn-*`, `--input-*`, `--sash-hover`, `--toolbar-hover-bg`, `--ansi-*` (THEME-V4) | `bg-titlebar`, `text-ab-fg`, `bg-list-hover`, `bg-sash-hover`, … — every one mapped in the same `@theme` block |
 
 To change a colour, size or radius: edit `docs/design/tokens.css`. Components carry **no colour
-literals** — the only hex in `src/components/` is the `var(--logo-ink, #FAFAFA)` fallback inside
-`Logo.tsx`, copied from Design's own `logo.svg` so the mark is still correct if the custom property is
-ever missing. Brand v3 dropped the second, `--logo-accent` fallback along with the amber workpiece —
-the mark is one colour now.
+literals**, with two deliberate exceptions in `src/components/`: the `var(--logo-ink, #FAFAFA)`
+fallback inside `Logo.tsx` (copied from Design's own `logo.svg` so the mark is still correct if the
+custom property is ever missing — brand v3 dropped the second, `--logo-accent` fallback along with the
+amber workpiece), and the per-language brand fills in `ui/LangIcons.tsx` (`#519aba`, `#e76f00`, … —
+VS Code's Seti file-icon palette, which is *identity* colour, not theme colour, and must not follow
+the accent). `editor/setup.ts` holds the third sanctioned hex pocket: the Dark+ syntax and completion-kind
+colours, which live outside the token system for the same reason.
 
 ### 4.1 Three ways CSS silently does nothing here
 
@@ -288,11 +305,12 @@ in devtools.
    dead class, so audit greps keep reporting hits after the real bug is fixed.
 2. **Unlayered CSS beats every `@layer`, at any specificity.** `tokens.css` sets `--pad-panel` from an
    unlayered `@media` rule, so overriding it inside `@layer components` lost (§4.3's keyboard-open
-   padding reduction did nothing); CodeMirror mounts oneDark as an unlayered `StyleModule`, which made
-   a whole `.cm-*` block in `index.css` inert except for its two `!important` rules. Editor chrome
-   therefore lives in `editor/setup.ts`'s `chromeTheme`, where every selector is qualified with
-   `&.cm-editor` to outrank oneDark — and ordering does not help, because CodeMirror mounts collected
-   modules in reverse.
+   padding reduction did nothing); CodeMirror mounts every theme as an unlayered `StyleModule`, which
+   in the oneDark era made a whole `.cm-*` block in `index.css` inert except for its two `!important`
+   rules. Editor chrome therefore lives in `editor/setup.ts`'s `chromeTheme`, where every selector is
+   qualified with `&.cm-editor` — oneDark itself is gone (the Dark+ pass replaced it with an in-house
+   `syntaxColors` highlight), but the rule stands: ordering does not help, because CodeMirror mounts
+   collected modules in reverse, so `.cm-*` styling in `index.css` stays off-limits.
 3. **`focus:outline-none` outranks the global `:focus-visible` ring** and removes the keyboard focus
    indicator entirely. Never use it.
 
@@ -319,24 +337,30 @@ which no token exists. If Design wants them tokenised, add the token and swap th
 
 | Value | Where | What it is |
 | --- | --- | --- |
-| `[3px]` | `Console.tsx`, `CapabilityScreens.tsx` ×2 | the leading rule on console lines and note blocks (§7.3) |
-| `[6px]` | `Tabs.tsx`, `Explorer.tsx` | the dirty/modified dot (§7.1, §7.2) |
-| `[20px]` | `ui/Button.tsx` | icon-button glyph size (§5.2) |
-| `[14px]` | `Tabs.tsx` | the close × glyph (§7.2) |
-| `[12px]` | `RunBar.tsx` | the Run/Stop play/square glyph |
+| `[3px]` | `CapabilityScreens.tsx` ×2, `ProgressBlock.tsx`, `StorageBanner.tsx` | the leading rule on note and progress blocks (§7.3) |
+| `[3px]` / `top-[6px]` | `ConsoleDivider.tsx` | the touch drag-handle grip bar and its hairline (desk uses the sash instead) |
+| `[6px]` | `StatusPill.tsx` | the running-state pulse dot |
+| `[20px]` | `ui/Button.tsx` | icon-button glyph size (§5.2; the `.icon-btn` recipe drops it to 16px at desk) |
+| `size={24}` | `ActivityBar.tsx` | the rail's glyph size — VS Code's own 24px codicons in the 48px column (was 22 pre-parity) |
+| `size={16}` | `Tabs.tsx`, `RunBar.tsx` | the tab close × and the panel-toolbar glyphs (Run/Stop's 16px glyphs ride the tab-strip corner now) |
+| `var(--pane-action)` (inline style) | `Explorer.tsx` | pane-header action boxes — 44px touch / 22px desk, token defined on `.sidebar-project-row` |
 | `[28px]` | `Logo.tsx` | welcome lockup wordmark (§7.7) |
-| `[1024px]` / `[900px]` | `WelcomePanel.tsx`, `Tabs.tsx` | breakpoints: start cards side by side, close × on all tabs |
+| `[1024px]` | `WelcomePanel.tsx` | breakpoint: start cards side by side |
 
-Most of that table used to be longer. The badge sizes, the console-line rule, the note blocks, the
-dots, the glyph sizes and the toast glyph now live in `index.css` as `.badge--sm/md`, `.console-row`,
-`.note`, `.dot-dirty`, `.icon-btn` and `.toast__glyph`, so components no longer carry them. Two
-literals were also *wrong* against the spec and were raised to the §3.2 floor: the language badge was
-10px and the status-pill glyph 10px, where 12px (`--fs-micro`) is the smallest type the app ships.
+Most of that table used to be longer. The badge sizes, the console-line rule, the dirty dots and the
+toast glyph now live in `index.css` as `.badge--sm/md`, `.console-row`, `.note`, `.dot-dirty`,
+`.icon-btn` and `.toast__glyph`, so components no longer carry them; the tab's close/dirty slot is the
+`--tab-close` token (40px touch, VS Code's 20px at desk — it rides *inside* the larger tab target, the
+one sanctioned sub-24px hit box). Two literals were also *wrong* against the spec and were raised to
+the §3.2 floor: the language badge was 10px and the status-pill glyph 10px, where 12px (`--fs-micro`)
+is the smallest type the app ships.
 
-`app/index.html` carries two unavoidable colour literals — `#09090b` and `#FAFAFA` in the first-paint
-style and the `#boot` splash mark. They run before any stylesheet exists, equal `--surface-0` and
-`--text-1` (brand v3 also made `--accent` equal to `--text-1`, so one literal now covers both), and
-must be kept in sync by hand. They sit **above** the
+`app/index.html` carries three unavoidable colour literals, hand-synced to THEME-V4 — `#1F1F1F`
+(first-paint background and `#boot` splash, equals `--surface-1`, the editor canvas the app resolves
+to), `#181818` (the `theme-color` meta, equals `--surface-0`, the chrome the browser UI abuts) and
+`#CCCCCC` (the splash mark, equals `--text-1`). They run before any stylesheet exists and must be
+kept in sync by hand — a token sweep that skips them flashes the old palette on every cold load.
+They sit **above** the
 `coi-serviceworker` script deliberately: that script is parser-blocking, so anything after it is not
 parsed until it has executed, and `color-scheme: dark` is what makes the UA paint its default canvas
 dark in the meantime. Do not reorder that head without re-running a first-paint screencast.
@@ -349,7 +373,7 @@ target states without reading component code:
 | `html[data-kb]` | `open` / `closed` | keyboard up or down |
 | `html[data-hand]` | `right` / `left` | Run/Stop edge (§5.3 handedness) |
 | `section[aria-label="Console"][data-state]` | `idle` `preparing` `running` `waiting` `ok` `failed` `stopped` | run status |
-| `.console-header button[data-state]` | same | the Run/Stop control |
+| `button[aria-label="Run"][data-state]` (or `"Stop"`) | same | the Run/Stop control, in the tab strip's trailing corner (its one home) |
 | `[role="tab"][data-state]` | `active` / `inactive` | tab strip |
 | `[role="treeitem"][data-state]` | `open` (the file being edited) | explorer row |
 | `aside[data-state]` | `open` / `closed` | explorer / drawer |
@@ -357,6 +381,34 @@ target states without reading component code:
 | `[data-seg]` | `out` `err` `echo` `meta` | a styled span *within* a row — this is what makes `Your name: Saad` one line, two colours |
 | `.stdin-row[data-waiting]` | `true` / `false` | the live line — `true` only while the program is blocked on a read |
 | `[data-phase]` | `download` `unpack` `boot` `compile` | progress block |
+
+**Shell handles added by the VS Code-parity waves**, equally load-bearing for `tools/qa`:
+
+- **Quick open** (Ctrl+P): `section[aria-label="Quick open"]` is the widget root — in the DOM only
+  while open, so its count is the open/closed assertion. Inside it, the input is
+  `aria-label="Search files by name"` (a `role="combobox"` over
+  `[aria-label="Quick open results"]`), and result rows are `role="option"`. In command mode (`>`
+  prefix) each option's visible text is the verbatim **`Category: Title`** string ("Run: Stop",
+  "View: Toggle Console") — future suites can drive any app action through these rows without new
+  selectors.
+- **Breadcrumbs**: the `.breadcrumbs` class and `aria-label="Breadcrumbs"` name the path row under
+  the tab strip (`--bar-crumbs`: 28px touch / 22px desk). Renders at ALL widths — a touch viewport
+  finds one, not zero.
+- **Explorer rows**: every `[role="treeitem"]` carries `data-path` with the file's project-relative
+  path — the one stable way to reach a *specific* row (labels repeat; `Main.java` can exist twice).
+- **Menu system**: `aria-label="Application Menu"` names the menu root at EVERY size — the full
+  `role="menubar"` when the window is wide, a single ☰ trigger (same label, titles as submenus)
+  below 1050px, phones included. The old touch-only drawer hamburger labelled `Files` is deleted;
+  `Files` now names only the `aside` itself, and the drawer is opened via the activity bar's
+  Explorer item, the title-bar toggle, View > Toggle Explorer or Mod+B.
+  `aria-label="Manage"` is the activity bar's gear.
+- **Console maximize**: the panel-toolbar chevron's accessible names are **`Maximize output`** /
+  **`Restore output`** verbatim, state told apart by name exactly like `Run` / `Stop`. Renders at
+  every width (the desk-only gate is gone).
+- **StatusPill**: the `.pill` contract class rides ONLY the panel-header capsule variant — which is
+  in the DOM only while the software keyboard hides the status bar (`hidden kb-open:flex`). The
+  status-bar `bar` variant renders the same words but must never carry `.pill` — suites read
+  `document.querySelector('.pill')` unscoped, and a second match makes the assertion ambiguous.
 
 **The console has one surface, and no standing input.** This is a hard behavioural contract, not a
 style choice, and re-adding an always-visible input bar is a regression:
@@ -373,14 +425,17 @@ style choice, and re-adding an always-visible input bar is a regression:
   otherwise unmount and remount the element between them, and the blur in that gap slams a phone's
   software keyboard shut and reopens it. During the grace the element carries no placeholder and
   `data-waiting="false"`; anything typed goes through the runner's type-ahead queue.
-- The only permanent chrome under the transcript is `.console-foot`, which holds the status line —
-  sticky, so §4.3 rule 1 still holds for the sentence that says the program is waiting.
+- There is NO permanent chrome under the transcript — `.console-foot` is deleted. The state sentence
+  lives in the status bar at every width, and while the software keyboard hides that bar, in the
+  panel header's kb-open-only `StatusPill` — so §4.3 rule 1 still holds for the sentence that says
+  the program is waiting.
 
 The stable handles, all relied on by `tools/qa`: `aria-label="Program output"` (the scroller),
 `aria-label="Program input"` (the live input), the placeholder string
 **`Type your answer, then press Enter`** verbatim, `.stdin-row` / `.stdin-input` (kept from the old
-input bar — it is the same thing, moved into the stream), `.console-foot`, `.console-transcript`,
-`section[aria-label="Console"][data-state]`, and the exact button names `Run` / `Stop`.
+input bar — it is the same thing, moved into the stream), `.console-transcript`,
+`section[aria-label="Console"][data-state]`, and the exact button names `Run` / `Stop` (tab-strip
+corner).
 
 **Console keyboard and pointer behaviour**, also asserted: `Ctrl+L` clears (the handler is on the
 console panel, so the browser's own Ctrl+L is untouched everywhere else); right-click with a
@@ -389,10 +444,14 @@ native menu opens as usual; a click anywhere in the console while it is waiting 
 input (on `click`, not `pointerup` — the transcript is focusable for Ctrl+L, and the browser moves
 focus to it on the mousedown that follows a tap). The transcript is `tabindex="0"`.
 
-**Two rules from Design that the code obeys and a restyle must keep.** Never put white text on
-`--accent` (1.99:1 — amber fills take `--accent-ink`). Never signal a state by surface colour alone
-(adjacent surfaces are ~1.1:1 apart and invisible on a phone) — the active tab, the open explorer row
-and stderr each carry an accent rule or border in addition to any fill.
+**Two rules from Design that the code obeys and a restyle must keep.** Text on `--accent` fills is
+always `--accent-ink`, never a hardcoded white or a text token — THEME-V4's #FFFFFF-on-#0078D4 is
+4.53:1, which passes AA only at the ≥13px UI sizes the app uses on accent; the pairing is audited as
+a unit, so swapping either half alone breaks it. Never signal a state by surface colour alone —
+THEME-V4 made this *stronger*: adjacent chrome surfaces are now identical by design (`--surface-0` ==
+`--surface-2`) and separated by 1px borders, so a fill-only state is not merely faint but invisible.
+The active tab, the open explorer row and stderr each carry an accent rule or border in addition to
+any fill.
 
 **Class strings** are plain template literals in each component, so they can be replaced wholesale.
 There are no inline `style` attributes except where a value is computed at runtime (drawer transform,
@@ -400,7 +459,8 @@ console height, progress bar width, explorer indent, toast keyboard offset).
 
 CodeMirror is the one place utilities cannot reach, **and its chrome is not in `index.css`** — see
 §4.1 rule 2. It lives in `editor/setup.ts`'s `chromeTheme`, reading the same `--code-*` tokens;
-oneDark supplies only syntax colours. Sizes that depend on the student's font-size preference (code
+syntax colours are that file's own `syntaxColors` (VS Code Dark+ hexes — a sanctioned literal
+pocket, since they are theme identity, not chrome). Sizes that depend on the student's font-size preference (code
 size, and the gutter leading that has to match it exactly or the gutter drifts) are computed there too,
 because they are recomputed when the preference changes.
 
@@ -411,7 +471,7 @@ built `dist/` (screenshots and scripts under the session scratchpad):
 
 | Script | What it proves |
 | --- | --- |
-| `overlap.mjs` | The **overlap sweep**: 20 scenarios across 1280/1024/768/430/390px, console dragged to min and max plus live handle drags, collapsed/open, keyboard-open at two widths, long filenames, the 900px drawer breakpoint, live progress, and a toast with the keyboard up. Detects four classes — a child spilling a fixed-size parent, in-flow siblings overlapping within one stacking root, content lost to a non-scrollable `overflow: hidden`, and named invariants (transcript vs the console's status foot, drag handle vs Run, tabs vs top bar, everything vs `--kb-inset`). |
+| `overlap.mjs` | The **overlap sweep**: 20 scenarios across 1280/1024/768/430/390px, console dragged to min and max plus live handle drags, collapsed/open, keyboard-open at two widths, long filenames, the 900px drawer breakpoint, live progress, and a toast with the keyboard up. Detects four classes — a child spilling a fixed-size parent, in-flow siblings overlapping within one stacking root, content lost to a non-scrollable `overflow: hidden`, and named invariants (transcript vs the panel header, drag handle vs the header controls, tabs vs top bar, everything vs `--kb-inset`) — some of its scenario prose predates the one-shell unification and is repaired with the rest of tools/qa. |
 | `audit.mjs` | The DESIGN-SPEC numbers in the real DOM: fills, the type scale, gutter leading, 44px targets, the 16px input floor, the 12px floor, iPad content attributes, the 144px/96px floors, cold-boot progress ticking, stderr's three-way distinction, and the Python template end to end. |
 | `motion.mjs` | `prefers-reduced-motion` at both settings, the drawer's 180ms transform, and the keyboard-open layout measured against a simulated 336px inset. |
 
@@ -511,5 +571,6 @@ that compile and run with piped stdin but have not been through that review. Eac
   plain-but-token-correct, and the design engineer owns the styling pass.
 - Progress escalation covers 8s / 25s / 60s as console notes; the spec's separate `Cancel` /
   `Try again` buttons are not built (Stop serves as cancel).
-- No editor search UI, no multi-file find, no drag-and-drop in the tree, no git.
+- No multi-file find, no drag-and-drop in the tree, no git. (In-editor find/replace exists —
+  `@codemirror/search`, styled as VS Code's top-right widget.)
 - `content/exercises/` is not surfaced in the UI yet.

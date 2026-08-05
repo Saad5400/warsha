@@ -6,8 +6,8 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
  *
  * CodeMirror ships no such extension, and on a phone this is not decoration:
  * Python's whole control flow *is* the indentation, and with `EditorView.
- * lineWrapping` on (which we need, §3.1) a wrapped line makes the eye lose the
- * column it was following. The guides are what put it back.
+ * lineWrapping` on (which touch needs, §3.1; desk scrolls instead) a wrapped
+ * line makes the eye lose the column it was following. The guides put it back.
  *
  * Drawn as a background rather than as widgets, so there is nothing extra in the
  * DOM per line and nothing to keep in sync with the caret: a repeating gradient
@@ -26,8 +26,8 @@ const LINE_PAD = '6px'
 
 const cache = new Map<string, Decoration>()
 
-function decoFor(depth: number, hang: number): Decoration {
-  const key = `${depth}:${hang}`
+function decoFor(depth: number, hang: number, active: number, unit: number): Decoration {
+  const key = `${unit}:${depth}:${hang}:${active}`
   let deco = cache.get(key)
   if (!deco) {
     // Negative text-indent against a matching padding-left is the hanging-indent
@@ -36,9 +36,15 @@ function decoFor(depth: number, hang: number): Decoration {
     // back to column 0. On a phone, where nearly every Java line wraps, this is
     // the difference between reading a continuation and mistaking it for a new
     // statement.
-    const style =
-      `--cm-guides:${depth}` +
-      (hang > 0 ? `;padding-left:calc(${LINE_PAD} + ${hang}ch);text-indent:-${hang}ch` : '')
+    let style = `--cm-guides:${depth}`
+    if (hang > 0) style += `;padding-left:calc(${LINE_PAD} + ${hang}ch);text-indent:-${hang}ch`
+    // The caret's own level re-paints in --code-indent-guide-active via a
+    // second background layer (see the theme below); switching the layer on is
+    // just giving its 0-width default a width and a position.
+    if (active > 0)
+      style +=
+        `;--cm-guide-active-x:calc(${LINE_PAD} + ${(active - 1) * unit}ch)` +
+        ';--cm-guide-active-w:1px'
     deco = Decoration.line({ attributes: { class: 'cm-indentGuides', style } })
     cache.set(key, deco)
   }
@@ -56,9 +62,23 @@ function leadingColumns(text: string, tabSize: number): number {
   return n
 }
 
+/**
+ * The nesting level the caret sits in — the guide at this level is the "active"
+ * one, VS Code's highlightActiveIndentation. A blank caret line inherits the
+ * nearest non-blank line above, matching the carried depth the guides draw with.
+ */
+function caretDepth(view: EditorView, unit: number): number {
+  const { doc, tabSize, selection } = view.state
+  let line = doc.lineAt(selection.main.head)
+  let n = line.number
+  while (n > 1 && line.text.trim().length === 0) line = doc.line(--n)
+  return Math.floor(leadingColumns(line.text, tabSize) / unit)
+}
+
 function build(view: EditorView, unit: number): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
   const { doc, tabSize } = view.state
+  const activeDepth = caretDepth(view, unit)
   for (const range of view.visibleRanges) {
     // A blank line inside a block has no indentation of its own; it inherits the
     // level above it, or the guides break into dashes down a function body.
@@ -71,7 +91,13 @@ function build(view: EditorView, unit: number): DecorationSet {
       const depth = blank ? carried : Math.floor(cols / unit)
       if (!blank) carried = depth
       // A blank line needs the guide but has nothing to wrap, so no hang.
-      if (depth > 0) builder.add(line.from, line.from, decoFor(depth, Math.min(cols, MAX_HANG)))
+      // Only lines deep enough to *have* the active level's guide light it up.
+      if (depth > 0)
+        builder.add(
+          line.from,
+          line.from,
+          decoFor(depth, Math.min(cols, MAX_HANG), depth >= activeDepth ? activeDepth : 0, unit),
+        )
       if (line.to + 1 <= pos) break
       pos = line.to + 1
     }
@@ -87,7 +113,9 @@ export function indentGuides(unit = 4) {
         this.decorations = build(view, unit)
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) this.decorations = build(update.view, unit)
+        // selectionSet too: the active level follows the caret.
+        if (update.docChanged || update.viewportChanged || update.selectionSet)
+          this.decorations = build(update.view, unit)
       }
     },
     { decorations: (value) => value.decorations },
@@ -95,7 +123,13 @@ export function indentGuides(unit = 4) {
 
   const theme = EditorView.theme({
     '.cm-indentGuides': {
-      backgroundImage: `repeating-linear-gradient(to right, var(--code-indent-guide) 0 1px, transparent 1px ${unit}ch)`,
+      // Two layers: the active-level rule (a plain 1px gradient whose width
+      // defaults to 0 until decoFor switches it on per line), then the
+      // repeating base hairlines. Painted brightest-first so the active rule
+      // sits over its base twin.
+      backgroundImage:
+        'linear-gradient(var(--code-indent-guide-active), var(--code-indent-guide-active)), ' +
+        `repeating-linear-gradient(to right, var(--code-indent-guide) 0 1px, transparent 1px ${unit}ch)`,
       backgroundRepeat: 'no-repeat',
       // Positioned off the padding box and nudged past `.cm-line`'s own 6px, not
       // off the content box: the hanging indent above moves the content edge, and
@@ -103,8 +137,9 @@ export function indentGuides(unit = 4) {
       // the content box would also crop the active-line fill this same element
       // carries, leaving indented lines highlighted narrower than the rest.
       backgroundOrigin: 'padding-box',
-      backgroundPositionX: LINE_PAD,
-      backgroundSize: `calc(var(--cm-guides, 0) * ${unit}ch) 100%`,
+      backgroundPositionX: `var(--cm-guide-active-x, 0px), ${LINE_PAD}`,
+      backgroundSize:
+        `var(--cm-guide-active-w, 0px) 100%, calc(var(--cm-guides, 0) * ${unit}ch) 100%`,
     },
   })
 

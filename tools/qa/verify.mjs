@@ -71,8 +71,13 @@ else fail('exactly ONE automatic reload on first visit', `${navigations} navigat
 // ------------------------------------------------------- 2. create Python project
 // The advanced starter is two files, so the entry picker and a tab strip appear.
 await seedStarter(page, { name: 'Python (OOP starter)' })
-await page.waitForSelector('[role="tab"]', { timeout: 10000 })
-const tabs = await page.locator('[role="tab"]').allInnerTexts()
+// Two tablists live in the shell now — the file tabs ("Open files") and the
+// panel header's face tabs ("Output view", whose lone CONSOLE tab mounts
+// before any file tab does). A bare [role="tab"] resolves against whichever
+// appears first, so every tab query here is scoped to the file strip.
+const FILE_TABS = '[role="tablist"][aria-label="Open files"] [role="tab"]'
+await page.waitForSelector(FILE_TABS, { timeout: 10000 })
+const tabs = await page.locator(FILE_TABS).allInnerTexts()
 info(`open tabs: ${JSON.stringify(tabs)}`)
 if (tabs.some((t) => t.includes('main.py'))) pass('Python template project created', `tabs: ${tabs.join(', ')}`)
 else fail('Python template project created', `tabs: ${tabs.join(', ')}`)
@@ -91,7 +96,9 @@ await page.evaluate(() => {
 })
 
 // ------------------------------------------------------------------- 3. first Run
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+// Run lives in the tab strip's editor-actions corner and names its file
+// ("Run main.py") — hence the prefix match.
+await page.getByRole('button', { name: /^Run\b/ }).click()
 
 // The template's input() prompt must be painted BEFORE input is requested.
 await page.waitForFunction(
@@ -158,7 +165,7 @@ await page.keyboard.press('Control+a')
 await page.keyboard.type('while True: print("spin")')
 await page.waitForTimeout(600) // let the 350ms debounce flush to OPFS
 
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 20,
   null,
@@ -166,7 +173,7 @@ await page.waitForFunction(
 )
 pass('infinite loop is running', 'many "spin" lines streaming')
 
-await page.getByRole('button', { name: 'Stop', exact: true }).click()
+await page.getByRole('button', { name: /^Stop\b/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('Stopped.'),
   null,
@@ -186,7 +193,7 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('print("run again works")')
 await page.waitForTimeout(600)
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('run again works'),
   null,
@@ -203,7 +210,7 @@ await page.reload({ waitUntil: 'load' })
 await page.waitForSelector('.cm-content', { timeout: 20000 })
 await page.waitForTimeout(1000)
 const persisted = await page.locator('.cm-content').innerText()
-const persistedTabs = await page.locator('[role="tab"]').allInnerTexts()
+const persistedTabs = await page.locator(FILE_TABS).allInnerTexts()
 info(`after reload, editor content: ${JSON.stringify(persisted.slice(0, 80))}`)
 info(`after reload, tabs: ${JSON.stringify(persistedTabs)}`)
 if (persisted.includes('run again works')) pass('project persisted across reload (OPFS)', 'edited main.py came back')
@@ -219,7 +226,7 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('import sys\nprint("Python", sys.version.split()[0], "in the browser")\nfor i in range(3): print("  line", i)\n')
 await page.waitForTimeout(600)
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('in the browser'),
   null,

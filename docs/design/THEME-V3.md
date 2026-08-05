@@ -1,5 +1,13 @@
 # Warsha — Theme v3 addendum (Catodemy-style black/white + glitch)
 
+> **SUPERSEDED, 2026-08-05:** the v3 black/white/glitch values were replaced
+> wholesale by the VS Code **Dark Modern** parity sweep — current values and
+> rationale live in [`THEME-V4.md`](./THEME-V4.md), canonical hex in
+> [`tokens.css`](./tokens.css). Nothing below governs any more; this document
+> stays as the historical record of the v3 pass (its architecture notes on
+> *how* a values-only restyle ships are still accurate, and v4 used the same
+> mechanism).
+
 **Founder directive, 2026-08-02:** replace the amber/dark theme with a
 Catodemy-style black-and-white "glitched/hacked" system — "mostly black and
 white… but still nice UI/UX and easy on the eye." This document is an

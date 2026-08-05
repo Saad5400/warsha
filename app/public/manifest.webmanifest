@@ -9,8 +9,8 @@
   "orientation": "any",
   "lang": "en",
   "dir": "ltr",
-  "background_color": "#09090B",
-  "theme_color": "#09090B",
+  "background_color": "#1F1F1F",
+  "theme_color": "#181818",
   "categories": ["education", "developer"],
   "icons": [
     {

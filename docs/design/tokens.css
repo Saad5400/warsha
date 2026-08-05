@@ -1,88 +1,217 @@
-/* Warsha design tokens — v3, Catodemy-style black/white + glitch accents.
+/* Warsha design tokens — v4, VS Code "Dark Modern" parity.
  *
  * Canonical values live here; the rationale and every contrast ratio live in
- * DESIGN-SPEC.md §2-§5 (v1 baseline) and THEME-V3.md (this pass's overrides —
- * old→new value table, the glitch-usage rules, what did NOT change). If you
- * change a colour, re-check the ratio and update THEME-V3.md — the stated
- * ratios are the reason a reviewer trusts it.
+ * DESIGN-SPEC.md §2-§5 (v1 baseline) and THEME-V4.md (this pass — the full
+ * old→new table, the WCAG re-check, and the two rules v4 relaxes on purpose).
+ * If you change a colour, re-check the ratio and update THEME-V4.md — the
+ * stated ratios are the reason a reviewer trusts it.
  *
- * v1→v3, one sentence: the token NAMES did not move, only their VALUES —
- * every component already consumes `var(--accent)` / `var(--surface-2)` /
- * etc. rather than a literal, so this file is almost the entire theme sweep.
- * Amber is gone; --accent is now white/near-white (the brand's interactive
- * signature), surfaces are a deeper near-black 240-hue neutral ramp, and the
- * four semantic colours (success/danger/warn/info) keep their v1 hex — they
- * were already the only chroma in the UI, and darkening the surfaces under
- * them only improved their contrast (see THEME-V3.md §2 for the recheck).
+ * v3→v4, one sentence: the pre-existing token NAMES did not move, only their
+ * VALUES — every component already consumes `var(--accent)` /
+ * `var(--surface-2)` rather than a literal — plus a large block of NEW names
+ * (lists, tree, bars, tabs, menus, widgets, quick input, terminal) that the
+ * parity work consumes, so this file is still almost the entire theme sweep.
+ * The v3 "accent is now white" story is over: --accent is VS Code's #0078D4
+ * blue, and one edit to it moves the active-tab rule, the activity-bar
+ * indicator, the focus ring, Run, the console rail and the menu selection
+ * together. Anything that must NOT follow the accent gets its own decoupled
+ * token — --code-caret is the mandatory example: VS Code's caret is #AEAFAD,
+ * and aliasing it to --accent turns the caret blue.
  *
  * Two rules that are easy to break by accident:
- *   1. Never put black text on --danger-fill or coloured text where
- *      --accent-ink belongs — --accent-ink is tuned for --accent, not for
- *      the semantic colours, which already clear AA on every surface.
- *   2. Adjacent surfaces are still only ~1.1-1.2:1 apart. A state signalled by
- *      a surface change alone is invisible on a phone. Add a rule or a border
- *      — this did not change just because the ramp got darker.
+ *   1. Adjacent chrome surfaces are now IDENTICAL by design (--surface-0 ==
+ *      --surface-2): Dark Modern separates the title bar, sidebar, panel and
+ *      status bar with 1px --border-subtle hairlines, not luminance. A
+ *      boundary you need to see must be drawn with a border token — a fill
+ *      difference cannot carry it, because there isn't one.
+ *   2. --border-control (#3C3C3C) does NOT clear the old 3:1 outline-contrast
+ *      rule. That is a deliberate drop, not an oversight — VS Code ships this
+ *      value — stated and scoped in THEME-V4.md §4. Do not "fix" it locally;
+ *      where a boundary is load-bearing, pair it with a fill, weight or glyph.
  */
 
 :root {
   color-scheme: dark;
 
   /* ---- surfaces ---------------------------------------------------------- */
-  --surface-0: #09090B;   /* app frame, top bar, gaps                         */
-  --surface-1: #0E0E11;   /* editor canvas — the reading surface              */
-  --surface-2: #151519;   /* panels: explorer, console, tab strip             */
-  --surface-3: #242429;   /* raised: menus, dialogs, cards, hover             */
-  --surface-4: #323239;   /* inputs, pressed states, progress track           */
+  /* -0 == -2 on purpose — see header rule 1. -1 (the editor) is the lighter
+     reading surface; the chrome around it is one flat #181818. */
+  --surface-0: #181818;   /* app frame, title bar, status bar, gaps           */
+  --surface-1: #1F1F1F;   /* editor canvas — the reading surface              */
+  --surface-2: #181818;   /* panels: explorer, console, tab strip             */
+  --surface-3: #202020;   /* raised: dialogs, cards, editor widgets           */
+  --surface-4: #313131;   /* inputs, pressed states, progress track           */
 
   /* ---- text ------------------------------------------------------------- */
-  --text-1: #FAFAFA;          /* 18.47 on -1 · 17.45 on -2                    */
-  --text-2: #BABAC4;          /* 10.01 on -1 ·  9.46 on -2                    */
-  --text-3: #8B8B9C;          /*  5.76 on -1 ·  5.44 on -2 — lowest AA text   */
-  --text-disabled: #6A6A7C;   /* disabled controls only (WCAG-exempt)         */
+  --text-1: #CCCCCC;          /* 10.3 on -1 · 11.0 on -0/-2                   */
+  --text-2: #9D9D9D;          /*  6.1 on -1 ·  6.5 on -0/-2                   */
+  --text-3: #868686;          /*  4.53 on -1 — the AA edge: never below 12px
+                                 on the editor canvas ·  4.9 on -0/-2         */
+  --text-disabled: #6E7681;   /* disabled controls only (WCAG-exempt)         */
 
-  /* ---- accent (brand + interactive) — was amber, now white --------------- */
-  --accent: #FAFAFA;          /* 18.47 on -1 · 17.45 on -2 · 14.8 on -3       */
-  --accent-hover: #DFDFE2;
-  --accent-press: #C5C5C9;
-  --accent-ink: #09090B;      /* 19.06 on --accent.                          */
-  --accent-soft: #29292E;
+  /* ---- accent (brand + interactive) — was white, now VS Code blue -------- */
+  --accent: #0078D4;
+  --accent-hover: #026EC1;
+  --accent-press: #025A9F;
+  --accent-ink: #FFFFFF;      /* 4.53 on --accent — AA for the 13px UI type   */
+  --accent-soft: #04395E;     /* selection-strength fill; 12.0 with #FFFFFF   */
 
-  /* ---- semantic — unchanged hex; recheck lives in THEME-V3.md §2 -------- */
-  --success: #6BD68F;         /* 10.09 on -2 (was 8.74 on v1's lighter -2)     */
-  --success-soft: #16301F;    /* 7.88 with --success                          */
-  --danger: #FF8A8F;          /* 8.05 on -2 — light on purpose: stderr is     */
-                              /* body text and must clear 4.5:1               */
-  --danger-soft: #3A2226;     /* 6.46 with --danger                           */
-  --danger-fill: #A32126;     /* 7.49 with #FFF — destructive confirm only    */
-  --warn: #E5B95C;            /* 9.91 on -2                                   */
-  --warn-soft: #33291A;       /* independent of --accent now — accent is no   */
-                              /* longer amber, so this keeps its own warm tint*/
-  --info: #7FC4F5;            /* 9.64 on -2                                   */
-  --info-soft: #1B2A38;
-  --neutral-soft: #242429;    /* 8.02 with --text-2 — "stopped by you" pill;  */
-                              /* = --border-subtle, as in v1                 */
+  /* ---- semantic ---------------------------------------------------------- */
+  --success: #89D185;         /*  9.0 on -1 ·  9.7 on -0/-2                   */
+  --success-soft: #1B2B1E;    /* softs re-derived on the #181818 ground       */
+  --danger: #F85149;          /*  4.9 on -1 ·  5.3 on -0/-2 — stderr is body
+                                 text and must clear 4.5:1                    */
+  --danger-soft: #351B1B;
+  --danger-fill: #B91007;     /* 6.7 with #FFF — destructive confirm only     */
+  --warn: #CCA700;            /*  7.7 on -0/-2                                */
+  --warn-soft: #2E2717;
+  --info: #4DAAFC;            /*  7.2 on -0/-2                                */
+  --info-soft: #172939;
+  --neutral-soft: #2A2D2E;    /* "stopped by you" pill; == --list-hover-bg    */
 
   /* ---- borders, rings, overlays ----------------------------------------- */
-  --border-subtle: #242429;   /* dividers, decorative                        */
-  --border-control: #8D8D9A;  /* control boundaries: 5.88/-1 5.56/-2 4.71/-3  */
-                              /* 3.88/-4 — clears 3:1 on -4 too (v1 gap: 2.71)*/
+  --border-subtle: #2B2B2B;   /* the load-bearing hairline between identical
+                                 surfaces — see header rule 1                 */
+  --border-control: #3C3C3C;  /* control boundaries. Below 3:1 on every
+                                 surface — deliberate, see header rule 2      */
   --focus-ring: var(--accent);
-  --scrim: rgba(4, 4, 5, 0.7);
-  --shadow-raised: 0 8px 24px -6px rgba(0, 0, 0, 0.75);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 0 8px 2px rgba(0, 0, 0, 0.36);  /* VS Code widget-shadow */
+
+  /* ---- lists + tree (explorer rows, menus' cousins, quick-input rows) ---- */
+  --list-hover-bg: #2A2D2E;
+  --list-active-sel-bg: #04395E;      /* focused list, selected row           */
+  --list-active-sel-fg: #FFFFFF;
+  --list-inactive-sel-bg: #37373D;    /* selected row when the list is not
+                                         focused — fg stays the row's own     */
+  --list-focus-outline: var(--accent);
+  --list-highlight: #2AAAFF;          /* matched characters in filtered lists */
+  --list-drop-bg: #383B3D;            /* row-level drag-over fill, flat       */
+  --sidebar-drop-bg: rgba(83, 89, 93, 0.5);  /* whole-panel (root) drag-over  */
+  --tree-guide: #585858;              /* indent guide at the active level     */
+  --tree-guide-inactive: rgba(88, 88, 88, 0.4);
 
   /* ---- editor chrome (override oneDark's chrome, keep its syntax colours) */
   --code-bg: var(--surface-1);
   --code-gutter-bg: var(--surface-1);       /* flat: no separate gutter fill  */
-  --code-gutter-fg: #8D8D9A;                /* 5.88 on --code-bg             */
-  --code-gutter-fg-active: var(--text-2);
-  --code-active-line: #1D1D20;              /* text-1 on it: 16.11           */
-  --code-selection: #35353B;                /* text-1 on it: 11.67           */
-  --code-search-match: #423C2E;             /* warm-neutral on purpose — kept*/
-                              /* distinguishable from the cool selection grey */
-                              /* without reintroducing amber; text-1 on it: 10.49 */
-  --code-caret: var(--accent);              /* white, was amber              */
-  --code-bracket: #4F4F59;
-  --code-indent-guide: #222226;
+  --code-gutter-fg: #6E7681;
+  --code-gutter-fg-active: #CCCCCC;         /* literal, NOT var(--text-2): the
+                                               active line number steps to full
+                                               text strength and must not move
+                                               if the text ramp is retuned    */
+  --code-active-line: #1D1D20;              /* touch fill only — desk uses the
+                                               bordered treatment (below)     */
+  --code-active-line-border: #282828;
+  --code-selection: #264F78;
+  --code-selection-inactive: #3A3D41;       /* selection while unfocused      */
+  --code-selection-match: rgba(173, 214, 255, 0.15);
+  --code-search-match: rgba(234, 92, 0, 0.33);
+  --code-search-match-selected: #9E6A03;
+  --code-caret: #AEAFAD;                    /* decoupled from --accent on
+                                               purpose — mandatory (header)   */
+  --code-bracket: rgba(0, 100, 0, 0.1);     /* matching-bracket fill…         */
+  --code-bracket-border: #888888;           /* …and its 1px outline           */
+  --code-bracket-1: #FFD700;                /* rainbow bracket depth cycle    */
+  --code-bracket-2: #DA70D6;
+  --code-bracket-3: #179FFF;
+  --code-indent-guide: #404040;
+  --code-indent-guide-active: #707070;
+  --code-whitespace: rgba(227, 228, 226, 0.16);  /* rendered-whitespace dots  */
+  --code-widget-bg: #202020;                /* completion popup, hover cards  */
+
+  /* ---- bars: title, status, activity ------------------------------------ */
+  --titlebar-bg: #181818;
+  --titlebar-fg: #CCCCCC;
+  --titlebar-border: #2B2B2B;
+  --statusbar-bg: #181818;
+  --statusbar-fg: #CCCCCC;
+  --statusbar-border: #2B2B2B;
+  --statusbar-remote-bg: var(--accent);     /* the leading remote/run block   */
+  --statusbar-item-hover: rgba(255, 255, 255, 0.12);
+  --statusbar-item-active: rgba(255, 255, 255, 0.18);
+  --ab-fg: #D7D7D7;                         /* activity bar, active/hover —
+                                               never pure white               */
+  --ab-fg-inactive: #868686;
+  --ab-active-border: var(--accent);
+
+  /* ---- tabs -------------------------------------------------------------- */
+  --tab-active-bg: var(--surface-1);        /* == editor bg: the active tab
+                                               runs seamlessly into the canvas*/
+  --tab-active-fg: #FFFFFF;
+  --tab-inactive-fg: var(--text-2);
+  --tab-accent-top: var(--accent);          /* the 1px rule sits on TOP in v4 */
+  --tab-hover-bg: var(--surface-1);
+
+  /* ---- panel + toolbars -------------------------------------------------- */
+  --panel-tab-active: var(--accent);        /* caps-tab 1px bottom rule       */
+  --sash-hover: var(--accent);              /* resize sash hover/drag band    */
+  --toolbar-hover-bg: rgba(90, 93, 94, 0.31);  /* ONE token for toolbar-icon
+                                               hover AND menubar selection    */
+
+  /* ---- menus ------------------------------------------------------------- */
+  --menu-bg: #1F1F1F;
+  --menu-border: #454545;
+  --menu-sep: #454545;
+  --menu-sel-bg: var(--accent);
+  --menu-sel-fg: #FFFFFF;
+
+  /* ---- inputs + floating widgets ----------------------------------------- */
+  --input-bg: #313131;
+  --input-border: var(--border-control);
+  --input-placeholder: #989898;
+  --widget-bg: #202020;                     /* find widget, editor overlays   */
+  --border-widget: rgba(204, 204, 204, 0.2);
+
+  /* ---- quick input (Ctrl+P / palette — Wave 3 consumes) ------------------ */
+  --qi-bg: #222222;
+  --qi-border: #313131;
+  --qi-input-bg: #313131;
+  --qi-input-border: #3C3C3C;
+  --picker-group-fg: #3794FF;
+  --picker-group-border: #3C3C3C;
+  --kbd-bg: rgba(128, 128, 128, 0.17);      /* keybinding chips               */
+  --kbd-fg: #CCCCCC;
+  --kbd-border: rgba(51, 51, 51, 0.6);
+  --kbd-border-b: rgba(68, 68, 68, 0.6);    /* the heavier bottom edge that
+                                               makes a chip read as a keycap  */
+
+  /* ---- badges + buttons -------------------------------------------------- */
+  --badge-bg: #616161;
+  --badge-fg: #F8F8F8;
+  --badge-accent-bg: var(--accent);
+  --badge-accent-fg: #FFFFFF;
+  --btn-border: rgba(255, 255, 255, 0.1);
+  --btn-secondary-bg: #313131;
+  --btn-secondary-fg: #CCCCCC;
+  --btn-secondary-hover-bg: #3C3C3C;
+
+  /* ---- scrollbars --------------------------------------------------------- */
+  --scrollbar-slider: rgba(121, 121, 121, 0.4);
+  --scrollbar-slider-hover: rgba(100, 100, 100, 0.7);
+  --scrollbar-slider-active: rgba(191, 191, 191, 0.4);
+
+  /* ---- terminal (contract only — no renderer consumes these yet) ---------- */
+  --ansi-black: #000000;
+  --ansi-red: #CD3131;
+  --ansi-green: #0DBC79;
+  --ansi-yellow: #E5E510;
+  --ansi-blue: #2472C8;
+  --ansi-magenta: #BC3FBC;
+  --ansi-cyan: #11A8CD;
+  --ansi-white: #E5E5E5;
+  --ansi-bright-black: #666666;
+  --ansi-bright-red: #F14C4C;
+  --ansi-bright-green: #23D18B;
+  --ansi-bright-yellow: #F5F543;
+  --ansi-bright-blue: #3B8EEA;
+  --ansi-bright-magenta: #D670D6;
+  --ansi-bright-cyan: #29B8DB;
+  --ansi-bright-white: #E5E5E5;
+  --terminal-sel: #264F78;
+
+  /* ---- misc --------------------------------------------------------------- */
+  --progress: var(--accent);
+  --link: #4DAAFC;
 
   /* ---- type ------------------------------------------------------------- */
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
@@ -94,31 +223,50 @@
                "Droid Sans Mono", "Roboto Mono", "Liberation Mono",
                "Courier New", monospace;
 
-  --fs-code: 15px;        --lh-code: 1.6;    /* 24px rows: touch caret room   */
+  --fs-code: 14px;        --lh-code: 1.6;    /* ~22px rows: touch caret room.
+                             Was 15 — founder scale-down 2026-08-05: 14 is
+                             VS Code's own editor default, both densities.
+                             fs/prefs.ts defaultFontSize() mirrors this.      */
   --fs-console: 14px;     --lh-console: 1.5;
   --fs-input: 16px;       /* HARD FLOOR: below this iOS zooms on focus        */
   --fs-tab: 13px;
   --fs-row: 14px;
-  --fs-btn: 15px;
+  --fs-btn: 14px;         /* was 15 — founder scale-down 2026-08-05           */
   --fs-meta: 13px;
   --fs-micro: 12px;       /* absolute smallest text in the app               */
-  --fs-dlg-title: 17px;
+  --fs-dlg-title: 16px;   /* was 17 — founder scale-down 2026-08-05           */
 
   /* ---- spacing, radii, geometry ----------------------------------------- */
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
   --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
 
-  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 999px;
+  /* Tightened again 4/6/10 → 2/5/6 (Dark Modern parity, 2026-08-05): VS Code
+     rounds badges/inputs at 2px, buttons and menus at 5px, dialogs at 6px.
+     Same three roles, VS Code's arcs. */
+  --r-sm: 2px; --r-md: 5px; --r-lg: 6px; --r-pill: 999px;
 
-  --touch: 44px;              /* every interactive element, minimum           */
-  --touch-lg: 48px;           /* Run/Stop, primary dialog actions             */
-  --rail: 2px;                /* the amber signature rule (tabs, logo, rows)  */
-  --bar-top: 44px;
-  --bar-console: 44px;
+  --touch: 44px;              /* MINIMUM EFFECTIVE hit area — no longer every
+                                 control's visual box. Founder scale-down
+                                 (2026-08-05, phone testing): visual boxes may
+                                 shrink below 44 only where the `after:` hit-
+                                 area pseudo (ui/Button.tsx) or a full-width
+                                 row restores the target. Still the visual box
+                                 for menu rows, the stdin line, completions.  */
+  --touch-lg: 48px;           /* primary dialog actions                       */
+  --rail: 2px;                /* the reserved leading-rule width (tree rows,
+                                 console rail) — no longer a brand signature  */
+  --bar-top: 40px;            /* was 44 — founder scale-down 2026-08-05; its
+                                 36px icon buttons keep 44 effective via the
+                                 after: pseudo                                */
+  --bar-console: 40px;        /* tracks --bar-top (was 44)                    */
   --explorer-w: 240px;
   --drawer-w: 280px;
   --editor-min-h: 96px;
   --console-min-h-stdin: 144px;   /* 4 output lines + input row + padding     */
+  --row-tree: 36px;           /* explorer row VISUAL height (was var(--touch));
+                                 the tap target is the full-width row itself.
+                                 DENSITY retunes to 22px                      */
+  --tree-indent: 16px;        /* per-level tree indent; DENSITY retunes to 8px */
 
   /* ---- motion ----------------------------------------------------------- */
   --dur-fast: 120ms;

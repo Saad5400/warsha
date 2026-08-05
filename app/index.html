@@ -15,19 +15,20 @@
          document.currentScript.src (unaffected by a preceding meta or style) and
          only needs to run before anything touches SharedArrayBuffer, which a
          stylesheet does not. Do not reorder without re-running the screencast.
-         The literals are unavoidable pre-CSS and equal --surface-0 / --text-1 /
-         --accent; keep them in sync with docs/design/tokens.css. -->
+         The literals are unavoidable pre-CSS: #1F1F1F equals --surface-1 (the
+         editor canvas the app resolves to) and the mark's #CCCCCC below equals
+         --text-1; keep them in sync with docs/design/tokens.css. -->
     <meta name="color-scheme" content="dark" />
     <style>
       html {
-        background: #09090b;
+        background: #1F1F1F;
       }
       #boot {
         position: fixed;
         inset: 0;
         display: grid;
         place-items: center;
-        background: #09090b;
+        background: #1F1F1F;
       }
       @media (prefers-reduced-motion: no-preference) {
         #boot > svg {
@@ -61,7 +62,7 @@
     <!-- Matches --surface-0 and the manifest's theme_color. Keep all three in
          step; a theme-color that disagrees with the painted background shows up
          as a seam under the status bar on Android. -->
-    <meta name="theme-color" content="#09090B" />
+    <meta name="theme-color" content="#181818" />
 
     <!-- No webfont ships in v1 (DESIGN-SPEC §3.1): a 40 MB runtime download is
          already the budget, and system-ui / ui-monospace resolve to San
@@ -127,27 +128,27 @@
              clean-silhouette tier — this renders at 40px, well under the
              ~180px floor where the founder's actual glitch texture stays
              legible; see the note atop docs/design/mark.svg). Literal colours
-             because this paints before any stylesheet; #FAFAFA equals
-             --logo-ink / --text-1 in docs/design/tokens.css. No amber — brand
-             v3 killed the accent workpiece. If the mark changes, this and
-             components/Logo.tsx are the two hand-maintained copies that will
-             not update themselves. -->
+             because this paints before any stylesheet; #CCCCCC equals
+             --text-1 in docs/design/tokens.css (v4 Dark Modern — see
+             THEME-V4.md), on the #1F1F1F / --surface-1 boot background above.
+             If the mark changes, this and components/Logo.tsx are the two
+             hand-maintained copies that will not update themselves. -->
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
             d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
-            stroke="#FAFAFA"
+            stroke="#CCCCCC"
             stroke-width="3.3"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
           <path
             d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
-            stroke="#FAFAFA"
+            stroke="#CCCCCC"
             stroke-width="3.3"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
-          <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#FAFAFA" />
+          <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#CCCCCC" />
         </svg>
       </div>
     </div>

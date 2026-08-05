@@ -210,7 +210,7 @@ check('…and the file is untouched while Python is not loaded', (await docText(
 // runtime is done against its own throwaway file instead.
 await newFile('warmup.py')
 await setContent('print("ready for black")\n')
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => /ready for black/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''),
   null,
@@ -249,7 +249,7 @@ check(
 // this proves an uncaught exception still renders correctly afterward.
 await newFile('throws.py')
 await setContent('raise ValueError("boom")\n')
-await page.getByRole('button', { name: 'Run', exact: true }).click()
+await page.getByRole('button', { name: /^Run\b/ }).click()
 await page.waitForFunction(
   () => /ValueError|Traceback|positional argument/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''),
   null,

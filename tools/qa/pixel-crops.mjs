@@ -56,20 +56,21 @@ const ONLY = process.env.WARSHA_ONLY ? new RegExp(process.env.WARSHA_ONLY) : nul
 
 /* Semantic first, class as fallback. See rule 2 above. */
 const S = {
-  /* The bar holds no mark and no wordmark any more (LAYOUT-VSCODE §1b), so the
-     fallback is keyed to the one control that is in it at every width. */
-  topbar: '.top-bar, header:has([aria-label="More"])',
+  /* The bar holds no mark, no wordmark and (post W1-B) no sep hairline — it
+     runs full-width over the rail with the centred window title. `.top-bar`
+     is the standing contract class. */
+  topbar: '.top-bar',
   identity: '.top-bar__identity',
-  sep: '.top-bar__sep',
   project: '[aria-label^="Project:"]',
-  topRun: '.top-bar [aria-label^="Run "], .top-bar [aria-label^="Stop "]',
+  /* Run/Stop's one home is the tab strip's trailing group at every size
+     (one shell): the long-form labels ("Run main.py") name the file. */
+  topRun: '[aria-label^="Run "], [aria-label^="Stop "]',
   more: '[aria-label="More"]',
-  hamburger: '[aria-label="Files"]',
 
   activitybar: 'nav[aria-label="Activity bar"]',
   actExplorer: 'nav[aria-label="Activity bar"] [aria-label="Explorer"]',
   actSearch: 'nav[aria-label="Activity bar"] [aria-label^="Search"]',
-  actSettings: 'nav[aria-label="Activity bar"] [aria-label^="Settings"]',
+  actManage: 'nav[aria-label="Activity bar"] [aria-label^="Manage"]',
 
   panelLabel: '.panel-label',
   projectRow: '.sidebar-project-row',
@@ -90,16 +91,16 @@ const S = {
   gutterActive: '.cm-activeLineGutter',
   content: '.cm-content',
 
-  /* The console header has no class of its own any more; the Run/Stop button
-     inside it is `aria-label="Run"`/`"Stop"` exactly (the title-bar copy is
-     "Run main.py"), so its parent IS the header. */
-  consoleRun: '[aria-label="Run"], [aria-label="Stop"]',
+  /* Run left the console header (one home, the tab strip); `console-header`
+     is a styling-free contract class on RunBar's root. */
+  consoleHeader: '.console-header',
   divider: '[aria-label="Resize output"]',
   transcript: '[aria-label="Program output"]',
   rowOut: '[data-kind="out"]',
   rowErr: '[data-kind="err"]',
-  consoleStatus: '[role="status"][data-state]',
-  consoleFoot: '.console-foot',
+  /* kb-open only: the header pill that stands in while the software keyboard
+     hides the status bar. The console foot is gone. */
+  consoleStatus: '.console-header .pill',
   stdinRow: '.stdin-row',
   stdinInput: '[aria-label="Program input"]',
   scrollPill: '.scroll-pill',
@@ -109,7 +110,6 @@ const S = {
   statusbar: 'footer[aria-label="Status bar"]',
   statusGroup: '.status-bar__group',
   statusGroupEnd: '.status-bar__group--end',
-  statusSep: '.status-sep',
   statusStepper: '.status-stepper',
 
   menu: '[role="menu"]',
@@ -291,8 +291,8 @@ function around(sel, dx, dy, w, h, { nth = 0 } = {}) {
   }
 }
 
-/* The console header, resolved through the one thing in it with a contract. */
-const HEADER = parentRect(S.consoleRun, 1)
+/* The console header, by its own contract class. */
+const HEADER = parentRect(S.consoleHeader, 0)
 
 const hasOut = (t, timeout = 180000) =>
   page.waitForFunction(
@@ -397,15 +397,15 @@ await setSource(
 /* The progress block exists only while an engine is downloading, so it has to be
  * caught mid-run rather than set up and shot afterwards — and caught FAST: on a
  * warm disk cache the whole download is over in well under a second. */
-await page.getByRole('button', { name: 'Run', exact: true }).first().click()
+await page.getByRole('button', { name: /^Run\b/ }).first().click()
 const sawProgress = await page.waitForSelector(S.progress, { timeout: 30000 }).then(() => true).catch(() => false)
 if (sawProgress) {
   await shot('1280-progress-block', { sel: S.progress, note: 'boot progress: title, track, %, meta lines' })
   await shot('1280-progress-track', { sel: S.progressTrack, pad: 16, note: 'track/fill ends and the % label baseline' })
   await shot('1280-progress-meta', { rect: slice(S.progress, 'bottom', 46), probe: S.progress, pad: 0, note: 'the two meta lines under the track' })
-  await shot('1280-console-header-running', { rect: HEADER, probe: { sel: S.consoleRun, up: 1 }, pad: 6, note: 'console header in the Stop state' })
-  await shot('1280-status-running', { sel: S.consoleStatus, pad: 12, note: 'status line, running' })
-  await shot('1280-topbar-run-busy', { sel: S.topRun, pad: 14, note: 'title-bar control in its busy state — same box as Run?' })
+  await shot('1280-console-header-running', { rect: HEADER, probe: { sel: S.consoleHeader, up: 0 }, pad: 6, note: 'console header in the Stop state' })
+  await shot('1280-status-running', { sel: S.consoleStatus, pad: 12, optional: true, note: 'kb-open header pill — off screen without a software keyboard' })
+  await shot('1280-tabstrip-run-busy', { sel: S.topRun, pad: 14, note: 'tab-strip run control in its busy state — same box as Run?' })
 }
 const atPrompt = await waitOut('Your name:')
 if (atPrompt) log('  reached the input() prompt')
@@ -421,14 +421,13 @@ if (atPrompt) {
 }
 
 /* --------------------------------------------------------------- 1. 1280 wide */
-step('1280 — title bar')
-await shot('1280-titlebar-full', { sel: S.topbar, pad: 6, note: 'whole bar' })
-await shot('1280-titlebar-left', { rect: slice(S.topbar, 'left', 400), probe: S.identity, note: 'FOUNDER §1b: no mark, no wordmark — project, separator, file title' })
-await shot('1280-titlebar-right', { rect: slice(S.topbar, 'right', 300), probe: S.topbar, note: 'Run + ⋯ and the bar edge past them' })
-await shot('1280-titlebar-run', { sel: S.topRun, pad: 14, note: 'FOUNDER P0: does Run overflow the bar box?' })
-await shot('1280-titlebar-more', { sel: S.more, pad: 14, note: 'overflow ⋯; compare its box with Run' })
-await shot('1280-titlebar-project', { sel: S.project, pad: 12, note: 'project chip: padding symmetry, and its label on the EXPLORER grid line' })
-await shot('1280-titlebar-sep', { sel: S.sep, pad: 18, note: 'separator height and vertical centring' })
+step('1280 — title bar + tab-strip trailing group')
+await shot('1280-titlebar-full', { sel: S.topbar, pad: 6, note: 'whole bar: menu bar, centred window title, toggle icons' })
+await shot('1280-titlebar-left', { rect: slice(S.topbar, 'left', 400), probe: S.topbar, note: 'menu bar titles: insets and hover boxes (touch identity span is desk-hidden)' })
+await shot('1280-titlebar-right', { rect: slice(S.topbar, 'right', 300), probe: S.topbar, note: 'sidebar/panel toggle icons and the bar edge past them' })
+await shot('1280-tabstrip-run', { sel: S.topRun, pad: 14, note: 'tab-strip Run: VS Code editor-actions corner, fits the 35px strip?' })
+await shot('1280-tabstrip-more', { sel: S.more, pad: 14, note: 'file-scoped ⋯ beside Run; compare the two boxes' })
+await shot('1280-titlebar-project', { sel: S.project, pad: 12, optional: true, note: 'legacy project chip — gone everywhere now (identity lives in the pane header and File menu)' })
 await shot('1280-titlebar-tablist-seam', { rect: junction(S.topbar, S.tablist), pad: 0, note: 'SEAM: bottom of title bar into top of tab strip' })
 await shot('1280-corner-topleft', { clip: { x: 0, y: 0, width: 110, height: 96 }, pad: 0, probe: S.topbar, note: 'FOUNDER: rail / project row / EXPLORER alignment in the corner' })
 await shot('1280-corner-topright', { clip: { x: 1170, y: 0, width: 110, height: 96 }, pad: 0, probe: S.topbar, note: 'top-right corner' })
@@ -445,8 +444,8 @@ step('1280 — activity bar')
 await shot('1280-activitybar-full', { sel: S.activitybar, pad: 6, note: 'whole rail' })
 await shot('1280-activitybar-explorer', { sel: S.actExplorer, pad: 12, note: 'active icon: border / indicator treatment' })
 await shot('1280-activitybar-search', { sel: S.actSearch, pad: 12, note: 'FOUNDER: bordered the same as the active one?' })
-await shot('1280-activitybar-settings', { sel: S.actSettings, pad: 12, note: 'third icon; compare all three' })
-await shot('1280-activitybar-stack', { rect: slice(S.activitybar, 'top', 190), probe: S.activitybar, note: 'the three buttons together: equal gaps?' })
+await shot('1280-activitybar-manage', { sel: S.actManage, pad: 12, note: 'the Manage gear at the rail foot; compare with the top pair' })
+await shot('1280-activitybar-stack', { rect: slice(S.activitybar, 'top', 190), probe: S.activitybar, note: 'the top buttons together: equal gaps?' })
 await shot('1280-activitybar-topbar-seam', { rect: junction(S.topbar, S.activitybar), pad: 0, note: 'SEAM: title bar meets the rail' })
 await shot('1280-activitybar-sidebar-seam', { rect: around(S.activitybar, 34, 0, 34, 300), probe: S.activitybar, pad: 0, note: 'SEAM: rail into sidebar — one divider or two?' })
 
@@ -460,8 +459,8 @@ await shot('1280-sidebar-actions', { rect: async () => {
   const s = await box('.w-explorer, aside')
   return l && { x: (s ? s.x + s.width : l.x + 260) - 170, y: l.y - 15, width: 170, height: 60 }
 }, probe: S.panelLabel, pad: 0, note: 'New file / New folder: equal gaps and right inset' })
-await shot('1280-sidebar-project-row', { sel: S.projectRow, pad: 8, note: 'project row: padding vs the header above it' })
-await shot('1280-sidebar-header-row-seam', { rect: junction(S.panelLabel, S.projectRow), pad: 8, note: 'SEAM: header rule into the project row' })
+await shot('1280-sidebar-project-row', { sel: S.projectRow, pad: 8, note: 'pane header (W1-C): twistie + bold 11px folder name + hover actions' })
+await shot('1280-sidebar-header-row-seam', { rect: junction(S.panelLabel, S.projectRow), pad: 8, note: 'SEAM: header rule into the pane header' })
 
 step('1280 — explorer rows')
 await shot('1280-explorer-tree', { sel: S.tree, pad: 6, note: 'whole tree' })
@@ -507,9 +506,9 @@ await shot('1280-editor-sidebar-seam', { rect: async () => {
 }, probe: S.gutters, pad: 0, note: 'SEAM: sidebar divider into the gutter' })
 
 step('1280 — console')
-await shot('1280-console-header', { rect: HEADER, probe: { sel: S.consoleRun, up: 1 }, pad: 6, note: 'whole header' })
-await shot('1280-console-header-left', { rect: slice(HEADER, 'left', 360), probe: { sel: S.consoleRun, up: 1 }, note: 'Run + the file-to-run field: accent rule and left inset' })
-await shot('1280-console-header-right', { rect: slice(HEADER, 'right', 420), probe: { sel: S.consoleRun, up: 1 }, note: 'Clear / Copy: equal gaps and right inset' })
+await shot('1280-console-header', { rect: HEADER, probe: { sel: S.consoleHeader, up: 0 }, pad: 6, note: 'whole header' })
+await shot('1280-console-header-left', { rect: slice(HEADER, 'left', 360), probe: { sel: S.consoleHeader, up: 0 }, note: 'Run + the file-to-run field: accent rule and left inset' })
+await shot('1280-console-header-right', { rect: slice(HEADER, 'right', 420), probe: { sel: S.consoleHeader, up: 0 }, note: 'Clear / Copy: equal gaps and right inset' })
 await shot('1280-console-divider', { sel: S.divider, pad: 12, note: 'resize handle: hairline centred in its box?' })
 await shot('1280-console-divider-seam', { rect: junction(S.divider, HEADER), probe: S.divider, pad: 0, note: 'SEAM: handle into header — a double hairline?' })
 await shot('1280-console-editor-seam', { rect: junction(S.editorPane, S.divider), pad: 0, note: 'SEAM: editor bottom into the handle' })
@@ -529,16 +528,13 @@ await shot('1280-console-echo', { rect: async () => {
   return null
 }, probe: S.rowOut, pad: 8, note: 'prompt and echoed answer share a line' })
 await shot('1280-console-transcript-top', { rect: slice(S.transcript, 'top', 40), probe: S.transcript, note: 'first transcript line: top inset' })
-await shot('1280-console-status', { sel: S.consoleStatus, pad: 12, note: 'status line: glyph vs text baseline' })
-await shot('1280-console-foot', { sel: S.consoleFoot, pad: 6, note: 'foot: divider and status-line insets' })
-await shot('1280-console-statusbar-seam', { rect: junction(S.consoleFoot, S.statusbar), pad: 0, note: 'SEAM: console foot into status bar' })
+await shot('1280-console-status', { sel: S.consoleStatus, pad: 12, optional: true, note: 'kb-open header pill — off screen without a software keyboard' })
 
 step('1280 — status bar')
 await shot('1280-statusbar-full', { sel: S.statusbar, pad: 6, note: 'whole bar' })
 await shot('1280-statusbar-left', { rect: slice(S.statusbar, 'left', 340), probe: S.statusGroup, note: 'left end: inset from the screen edge' })
 await shot('1280-statusbar-right', { rect: slice(S.statusbar, 'right', 420), probe: S.statusGroupEnd, note: 'right end: separators, stepper, right inset' })
 await shot('1280-statusbar-stepper', { sel: S.statusStepper, pad: 12, note: 'text-size stepper: equal button boxes?' })
-await shot('1280-statusbar-sep', { sel: S.statusSep, pad: 15, note: 'separator height and centring in a 26px bar' })
 
 step('1280 — overflow menu')
 await page.locator(S.more).first().click()
@@ -548,7 +544,7 @@ await shot('1280-menu-row', { sel: S.menuitem, pad: 10, note: 'a row: icon/label
 await shot('1280-menu-top', { rect: slice(S.menu, 'top', 62), probe: S.menu, pad: 0, note: 'first row against the rounded top edge' })
 await shot('1280-menu-bottom', { rect: slice(S.menu, 'bottom', 62), probe: S.menu, pad: 0, note: 'last row against the rounded bottom edge' })
 await shot('1280-menu-anchor', { rect: junction(S.more, S.menu), pad: 8, note: 'menu alignment against the button that opened it' })
-await shot('1280-menu-separator', { sel: `${S.menu} hr, ${S.menu} [role="separator"]`, pad: 14, note: 'separator insets' })
+await shot('1280-menu-separator', { sel: `${S.menu} hr, ${S.menu} [role="separator"]`, pad: 14, optional: true, note: 'separator insets — the desk ⋯ menu is two file-scoped rows with no separator; the menu-bar menus carry them' })
 await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
 
@@ -561,8 +557,10 @@ await shot('1280-menu-row-gap', { rect: junction(S.menuitem, S.menuitem, { bNth:
 await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
 
-step('1280 — dialog (delete confirm, from a row menu)')
-const gotDialog = await page.locator(S.rowMore).first().click({ timeout: 4000 }).then(async () => {
+step('1280 — dialog (delete confirm, from the row context menu)')
+/* The per-row ⋯ is display:none at desk (W1-C) — the right-click context menu
+ * is the desktop route to the same rows. */
+const gotDialog = await page.locator('[data-path="geometry_calculations_helper.py"]').click({ button: 'right', timeout: 4000 }).then(async () => {
   await page.waitForTimeout(300)
   const del = page.getByRole('menuitem', { name: /Delete/ })
   if (await del.count()) { await del.first().click(); await page.waitForTimeout(400); return true }
@@ -581,7 +579,9 @@ if (gotDialog && (await page.locator(S.dialog).count())) {
 }
 
 step('1280 — import-zip dialog (input + drop zone)')
-await page.locator(S.more).first().click()
+/* Import moved to the menu bar's File menu at desk (W1-B); the tab-strip ⋯
+ * keeps only the file-scoped rows. */
+await page.getByRole('menuitem', { name: 'File', exact: true }).click()
 await page.waitForTimeout(300)
 const imp = page.getByRole('menuitem', { name: /Import/ })
 if (await imp.count()) {
@@ -604,12 +604,12 @@ await shot('1280-toast', { sel: S.toast, pad: 16, note: 'toast: icon/text baseli
 
 step('1280 — stopped state')
 await setSource('while True: print("spin")')
-await page.getByRole('button', { name: 'Run', exact: true }).first().click()
+await page.getByRole('button', { name: /^Run\b/ }).first().click()
 await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 12,
   null, { timeout: 60000 },
 ).catch(() => {})
-await shot('1280-titlebar-stop', { sel: S.topRun, pad: 14, note: 'title bar in the Stop state — same box as Run?' })
+await shot('1280-tabstrip-stop', { sel: S.topRun, pad: 14, note: 'tab-strip control in the Stop state — same box as Run?' })
 
 /* The scroll pill exists only while output is STREAMING and the student has
  * scrolled away from the bottom. Scrolling a finished transcript does not
@@ -622,10 +622,10 @@ await shot('1280-scroll-pill-context', { rect: around(S.scrollPill, -140, -34, 3
 await page.locator(S.transcript).evaluate((el) => { el.scrollTop = el.scrollHeight }).catch(() => {})
 await page.waitForTimeout(250)
 
-await page.getByRole('button', { name: 'Stop', exact: true }).first().click()
+await page.getByRole('button', { name: /^Stop\b/ }).first().click()
 await waitOut('Stopped', 20000)
 await page.waitForTimeout(400)
-await shot('1280-status-stopped', { sel: S.consoleStatus, pad: 12, note: 'stopped status line' })
+await shot('1280-status-stopped', { sel: 'footer[aria-label="Status bar"] .status-remote', pad: 12, note: 'status bar remote block, stopped state' })
 await shot('1280-statusbar-stopped', { rect: slice(S.statusbar, 'left', 340), probe: S.statusGroup, note: 'status bar, stopped' })
 
 /* -------------------------------------------------------------- 2. 390 narrow */
@@ -634,24 +634,24 @@ await page.setViewportSize({ width: 390, height: 780 })
 await page.waitForTimeout(800)
 
 await shot('390-full', { clip: { x: 0, y: 0, width: 390, height: 780 }, pad: 0, note: 'whole phone viewport' })
-await shot('390-titlebar', { sel: S.topbar, pad: 6, note: 'compact bar: hamburger, file title, no Run' })
+await shot('390-titlebar', { sel: S.topbar, pad: 6, note: 'compact bar: \u2630 menu, centred window title, sidebar/panel toggles' })
 await shot('390-titlebar-left', { rect: slice(S.topbar, 'left', 220), probe: S.topbar, note: 'left end insets' })
 await shot('390-titlebar-right', { rect: slice(S.topbar, 'right', 150), probe: S.topbar, note: 'right end insets' })
-await shot('390-tablist', { sel: S.tablist, pad: 6, note: 'strip at 390: fade edges, no × on inactive tabs' })
+await shot('390-tablist', { sel: S.tablist, pad: 6, note: 'strip at 390: fade edges, × on every tab (no hover to reveal it)' })
 await shot('390-tab-active', { sel: S.tabActive, pad: 12, note: 'active tab at 390' })
-await shot('390-console-header', { rect: HEADER, probe: { sel: S.consoleRun, up: 1 }, pad: 6, note: 'header at 390: the select and Run must fit' })
-await shot('390-console-header-right', { rect: slice(HEADER, 'right', 230), probe: { sel: S.consoleRun, up: 1 }, note: 'right cluster at 390' })
+await shot('390-console-header', { rect: HEADER, probe: { sel: S.consoleHeader, up: 0 }, pad: 6, note: 'header at 390: caps tabs, the select and the icon controls must fit' })
+await shot('390-console-header-right', { rect: slice(HEADER, 'right', 230), probe: { sel: S.consoleHeader, up: 0 }, note: 'right cluster at 390' })
 await shot('390-console-transcript', { sel: S.transcript, pad: 6, note: 'transcript at 390' })
-await shot('390-console-status', { sel: S.consoleStatus, pad: 10, note: 'status line at 390' })
-await shot('390-console-divider', { sel: S.divider, pad: 12, optional: true, note: 'resize handle — pointer layouts only' })
+await shot('390-console-status', { sel: 'footer[aria-label="Status bar"] .status-remote', pad: 10, note: 'status bar remote block at 390' })
+await shot('390-console-divider', { sel: S.divider, pad: 12, optional: true, note: 'resize handle — renders at every width now' })
 await shot('390-editor-gutter', { rect: async () => {
   const g = await box(S.gutters)
   return g && { x: g.x, y: g.y, width: 190, height: Math.min(160, g.height) }
 }, probe: S.gutters, note: 'gutter at 390' })
-await shot('390-statusbar', { sel: S.statusbar, pad: 6, optional: true, note: 'status bar — pointer layouts only' })
+await shot('390-statusbar', { sel: S.statusbar, pad: 6, note: 'status bar at 390 — renders at every width' })
 
 step('390 — explorer drawer')
-await page.locator(S.hamburger).first().click().catch(() => {})
+await page.locator(S.actExplorer).first().click().catch(() => {})
 await page.waitForTimeout(500)
 await shot('390-drawer', { clip: { x: 0, y: 0, width: 390, height: 780 }, pad: 0, note: 'drawer open over the scrim' })
 await shot('390-drawer-header', { sel: S.panelLabel, pad: 18, note: 'EXPLORER label at 390' })
@@ -662,7 +662,7 @@ await page.waitForTimeout(450)
 
 step('390 — keyboard open (simulated the way ui/viewport.ts publishes it)')
 await setSource('name = input("Your name: ")\nprint("Hi", name)\n')
-await page.getByRole('button', { name: 'Run', exact: true }).first().click()
+await page.getByRole('button', { name: /^Run\b/ }).first().click()
 await waitOut('Your name:', 90000)
 /* Two passes: the console answers the shrink with a ResizeObserver scroll, which
  * cannot land inside the same evaluate() that forced it. See console-kb.mjs. */
@@ -679,7 +679,7 @@ await page.evaluate(raiseKeyboard)
 await page.waitForTimeout(350)
 await shot('390-kb-full', { clip: { x: 0, y: 0, width: 390, height: 440 }, pad: 0, note: 'everything above the simulated keyboard' })
 await shot('390-kb-titlebar', { sel: S.topbar, pad: 6, note: 'bar compacts to 40px: do the icon buttons still fit?' })
-await shot('390-kb-console-header', { rect: HEADER, probe: { sel: S.consoleRun, up: 1 }, pad: 6, note: 'header with the keyboard up' })
+await shot('390-kb-console-header', { rect: HEADER, probe: { sel: S.consoleHeader, up: 0 }, pad: 6, note: 'header with the keyboard up' })
 await shot('390-kb-stdin', { sel: S.stdinRow, pad: 12, note: 'the live row the student is typing on' })
 await shot('390-kb-transcript', { sel: S.transcript, pad: 6, note: 'four output lines must survive here' })
 await page.evaluate(() => {

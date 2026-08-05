@@ -78,6 +78,18 @@ export function StorageBanner({
       dismissible: false,
     })
   }
+  if (migration?.kind === 'storage-unavailable') {
+    notices.push({
+      id: 'memory-only',
+      tone: 'danger',
+      title: COPY.storageMemoryTitle,
+      hint: COPY.storageMemoryHint,
+      offerExport: true,
+      // Not dismissible either: the condition stands for the whole session,
+      // and so must the warning.
+      dismissible: false,
+    })
+  }
   if (quotaTight && !problem) {
     notices.push({
       id: 'quota-tight',

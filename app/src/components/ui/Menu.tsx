@@ -2,6 +2,7 @@ import * as RContextMenu from '@radix-ui/react-context-menu'
 import * as RMenu from '@radix-ui/react-dropdown-menu'
 import { cva, cx } from 'class-variance-authority'
 import { Fragment, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { IconChevronRight } from './Icons'
 
 export interface MenuItem {
   /** Reconciliation key. Give one whenever the label can repeat — project names
@@ -9,7 +10,8 @@ export interface MenuItem {
    *  label, which is stable for the fixed rows. */
   id?: string
   label: string
-  onSelect: () => void
+  /** Absent on a submenu parent — `items` is what that row does. */
+  onSelect?: () => void
   /** Destructive: red ink, sorted last, behind a divider (spec §5.2). */
   danger?: boolean
   /** 20px leading glyph. Decorative — the label always carries the meaning. */
@@ -19,6 +21,18 @@ export interface MenuItem {
   /** Draws a divider above this item, so related actions read as one group. */
   startsGroup?: boolean
   disabled?: boolean
+  /** A submenu (File > Open Recent). Rendered via Radix Sub/SubTrigger/
+   *  SubContent, so hover-open, ArrowRight-open and ArrowLeft-close all come
+   *  from Radix rather than being hand-rolled. */
+  items?: MenuItem[]
+  /** A custom CONTROL row (the Manage gear's View-scale slider), rendered
+   *  verbatim instead of a Radix Item: interacting with it never
+   *  select-and-closes the menu, and Radix's roving focus skips it (pointer
+   *  users reach the control directly; keyboard users have the command
+   *  equivalents). The caller owns the row's layout and its onKeyDown
+   *  stopPropagation if the control needs arrow keys. Wins over `onSelect`/
+   *  `items`; `label`/`startsGroup` still key and group the row. */
+  render?: ReactNode
 }
 
 export interface MenuAnchor {
@@ -34,32 +48,56 @@ const MARGIN = 8
 /** The 90ms exit plus a frame. See `close` below for why this exists. */
 const EXIT_MS = 110
 
+/** The DENSITY media (index.css), for the one JS decision this file makes:
+ *  a fine-pointer desktop dismisses its menus instantly — the 90ms exit is
+ *  touch furniture, and VS Code menus vanish the frame you release. */
+const DESK_MQ = '(min-width: 900px) and (hover: hover) and (pointer: fine)'
+
 /**
  * The panel. `origin-(--radix-popper-transform-origin)` is what makes the 0.98
  * scale grow out of the trigger rather than out of the panel's own middle, and
  * the four data-side pairs pick the matching 4px direction — Radix rewrites
  * data-side when it flips the menu above its anchor, so the animation flips
  * with it for free.
+ *
+ * At desk the chrome retunes to VS Code's menu widget — --menu-* tokens, 5px
+ * radius — and the pop animation is off entirely (`desk:animate-none!` — the
+ * bang because the pop classes carry two data-attributes of specificity that a
+ * plain desk override would lose to).
  */
 const PANEL = cx(
   'z-(--z-menu) min-w-[13rem] rounded-md border border-border-subtle bg-surface-3 p-1 shadow-raised',
-  'scroller max-h-[calc(var(--app-h,100dvh)-var(--sp-4))] max-w-[min(20rem,calc(100vw-var(--sp-4)))]',
+  'desk:rounded-[5px] desk:border-(--menu-border) desk:bg-(--menu-bg)',
+  /* Height is the SMALLER of the app viewport and what Radix's positioner says
+   * is actually left between the anchor and the screen edge (it already nets
+   * out collisionPadding) — so a long menu scrolls inside `scroller` instead
+   * of running off a phone. The fallbacks only exist for the first frame,
+   * before the size middleware has written the vars. */
+  'scroller max-h-[min(calc(var(--app-h,100dvh)-var(--sp-4)),var(--radix-popper-available-height,100dvh))]',
+  'max-w-[min(20rem,calc(100vw-var(--sp-4)),var(--radix-popper-available-width,100vw))]',
   'origin-(--radix-popper-transform-origin)',
   'data-[state=open]:data-[side=top]:animate-pop-from-bottom',
   'data-[state=open]:data-[side=bottom]:animate-pop-from-top',
   'data-[state=open]:data-[side=left]:animate-pop-from-right',
   'data-[state=open]:data-[side=right]:animate-pop-from-left',
   'data-[state=closed]:animate-pop-out',
+  'desk:animate-none!',
 )
 
 /**
  * A row. The hover and press fills are gated on `enabled:` rather than undone
  * by a later `disabled:` rule, so the two can never fight over source order —
  * a disabled row simply has no hover state to lose.
+ *
+ * At desk the selection is VS Code's: the full row fills --menu-sel-bg
+ * (accent) with --menu-sel-fg ink, replacing the touch surface-4 hover.
+ * `data-[highlighted]` is Radix's roving highlight (keyboard AND pointer), and
+ * `data-[state=open]` keeps a submenu's parent row lit while the child is out.
  */
 const row = cva(
   cx(
     'group/item flex min-h-touch w-full cursor-pointer items-center gap-3 rounded-sm px-3 text-left text-row',
+    'desk:min-h-[26px] desk:text-[13px]',
     'touch-manipulation transition-colors duration-(--dur-fast) ease-standard',
     'disabled:cursor-not-allowed disabled:bg-transparent disabled:text-text-disabled',
   ),
@@ -68,7 +106,13 @@ const row = cva(
       /* Destructive actions are never adjacent to frequent ones: Delete is
          last, separated by a divider (spec §5.2), and red the whole way. */
       tone: {
-        normal: 'text-text-1 enabled:hover:bg-surface-4 enabled:active:bg-surface-4',
+        normal: cx(
+          'text-text-1 enabled:hover:bg-surface-4 enabled:active:bg-surface-4',
+          'desk:enabled:hover:bg-(--menu-sel-bg) desk:enabled:hover:text-(--menu-sel-fg)',
+          'desk:enabled:active:bg-(--menu-sel-bg) desk:enabled:active:text-(--menu-sel-fg)',
+          'desk:data-[highlighted]:bg-(--menu-sel-bg) desk:data-[highlighted]:text-(--menu-sel-fg)',
+          'desk:data-[state=open]:bg-(--menu-sel-bg) desk:data-[state=open]:text-(--menu-sel-fg)',
+        ),
         danger: 'text-danger enabled:hover:bg-danger-soft enabled:active:bg-danger-soft',
       },
     },
@@ -78,17 +122,28 @@ const row = cva(
 
 /** The icon slot is reserved whether or not a row has one, so labels do not step
  *  in and out as the eye runs down the menu. 20px is the spec §5.2 glyph size,
- *  not a spacing step — `size-5` would resolve to --sp-5, which is 24px. */
+ *  not a spacing step — `size-5` would resolve to --sp-5, which is 24px.
+ *  On the accent selection at desk the glyph takes the selection ink too. */
 const ICON = cx(
   'grid size-[20px] flex-none place-items-center text-text-3',
   'group-hover/item:text-text-2 group-disabled/item:text-text-disabled!',
+  'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
 const LABEL = 'min-w-0 flex-1 truncate'
-const HINT = 'ml-4 flex-none text-micro tabular-nums text-text-3 group-disabled/item:text-text-disabled!'
-const SEPARATOR = 'm-2 border-t border-border-subtle'
+const HINT = cx(
+  'ml-4 flex-none text-micro tabular-nums text-text-3 group-disabled/item:text-text-disabled!',
+  'desk:ml-auto desk:text-[13px] desk:text-text-2',
+  'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
+)
+/** Submenu marker — same trailing slot as HINT, but a glyph. */
+const SUB_HINT = cx(
+  'ml-auto flex-none text-text-3',
+  'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
+)
+const SEPARATOR = 'm-2 border-t border-border-subtle desk:border-(--menu-sep)'
 
-/** Dropdown and context menus expose the same Item/Separator contract, so the
- *  rows are written once against whichever pair is in play. */
+/** Dropdown and context menus expose the same Item/Sub/Separator contract, so
+ *  the rows are written once against whichever family is in play. */
 interface RowParts {
   Item: ComponentType<{
     asChild?: boolean
@@ -97,30 +152,136 @@ interface RowParts {
     children?: ReactNode
   }>
   Separator: ComponentType<{ className?: string }>
+  Sub: ComponentType<{ children?: ReactNode }>
+  SubTrigger: ComponentType<{ asChild?: boolean; disabled?: boolean; children?: ReactNode }>
+  SubContent: ComponentType<{
+    className?: string
+    avoidCollisions?: boolean
+    collisionPadding?: number
+    sticky?: 'partial' | 'always'
+    sideOffset?: number
+    children?: ReactNode
+  }>
+  Portal: ComponentType<{ children?: ReactNode }>
 }
 
-function rows(items: MenuItem[], { Item, Separator }: RowParts) {
+/**
+ * `plain` drops the reserved leading icon column — the menu-bar dropdowns have
+ * no icon gutter (VS Code reserves the left inset for checkmarks only, and
+ * nothing here is checkable yet). Plain menus are desk-only surfaces, so the
+ * touch menus keep their 20px glyph column untouched.
+ *
+ * `drill` swaps the submenu mechanism: instead of a Radix Sub flyout beside the
+ * parent (which has nowhere to go on a phone), a parent row is a plain item
+ * that hands itself to `drill` — TriggerMenu then re-renders the SAME panel
+ * with the child rows and a "‹ Back" row. The row keeps its ▸ chevron and
+ * aria-haspopup, so it still reads as "leads somewhere".
+ */
+function rows(items: MenuItem[], parts: RowParts, plain = false, drill?: (item: MenuItem) => void): ReactNode {
+  const { Item, Separator, Sub, SubTrigger, SubContent, Portal } = parts
   const ordered = [...items.filter((i) => !i.danger), ...items.filter((i) => i.danger)]
   const firstDanger = ordered.findIndex((i) => i.danger)
 
-  return ordered.map((item, i) => (
-    <Fragment key={item.id ?? item.label}>
-      {i > 0 && (item.startsGroup || i === firstDanger) ? <Separator className={SEPARATOR} /> : null}
-      {/* A real <button>, not Radix's div: `:disabled` is how a dead row greys
-          and how it leaves the tab order, and the app's QA selects
-          `[role="menuitem"]`, which Radix puts on whatever element it is
-          given. */}
-      <Item asChild disabled={item.disabled} onSelect={() => item.onSelect()}>
-        <button type="button" disabled={item.disabled} className={row({ tone: item.danger ? 'danger' : 'normal' })}>
+  return ordered.map((item, i) => {
+    const body = (
+      <>
+        {plain ? null : (
           <span aria-hidden="true" className={ICON}>
             {item.icon}
           </span>
-          <span className={LABEL}>{item.label}</span>
-          {item.hint ? <span className={HINT}>{item.hint}</span> : null}
-        </button>
-      </Item>
-    </Fragment>
-  ))
+        )}
+        <span className={LABEL}>{item.label}</span>
+        {item.hint ? <span className={HINT}>{item.hint}</span> : null}
+      </>
+    )
+
+    return (
+      <Fragment key={item.id ?? item.label}>
+        {i > 0 && (item.startsGroup || i === firstDanger) ? <Separator className={SEPARATOR} /> : null}
+        {item.render ? (
+          /* Custom control row (see MenuItem.render): rendered verbatim, no
+             Radix Item wrapper, so interacting with it cannot select-and-close
+             the menu. */
+          item.render
+        ) : item.items && drill ? (
+          /* Drill-in parent: selecting it swaps the panel's rows for the
+             child's. preventDefault on the select event is what keeps the menu
+             open through the swap. ArrowRight mirrors the flyout keyboarding. */
+          <Item
+            asChild
+            disabled={item.disabled || item.items.length === 0}
+            onSelect={(e) => {
+              e.preventDefault()
+              drill(item)
+            }}
+          >
+            <button
+              type="button"
+              aria-haspopup="menu"
+              disabled={item.disabled}
+              className={row({ tone: item.danger ? 'danger' : 'normal' })}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowRight') return
+                e.preventDefault()
+                drill(item)
+              }}
+            >
+              {body}
+              <span aria-hidden="true" className={SUB_HINT}>
+                <IconChevronRight size={14} />
+              </span>
+            </button>
+          </Item>
+        ) : item.items ? (
+          <Sub>
+            {/* A real <button> for the same reasons as Item below. Radix opens
+                the child on hover, ArrowRight and Enter, and closes it on
+                ArrowLeft — the parent row stays lit via data-state=open. */}
+            <SubTrigger asChild disabled={item.disabled || item.items.length === 0}>
+              <button
+                type="button"
+                disabled={item.disabled}
+                className={row({ tone: item.danger ? 'danger' : 'normal' })}
+              >
+                {body}
+                <span aria-hidden="true" className={SUB_HINT}>
+                  <IconChevronRight size={14} />
+                </span>
+              </button>
+            </SubTrigger>
+            <Portal>
+              {/* sticky="always": on a cramped screen the flyout detaches from
+                  its trigger row rather than leave the viewport; the PANEL cap
+                  makes an over-tall child scroll instead of overflow. */}
+              <SubContent
+                className={PANEL}
+                avoidCollisions
+                collisionPadding={MARGIN}
+                sticky="always"
+                sideOffset={2}
+              >
+                {rows(item.items, parts, plain)}
+              </SubContent>
+            </Portal>
+          </Sub>
+        ) : (
+          /* A real <button>, not Radix's div: `:disabled` is how a dead row
+             greys and how it leaves the tab order, and the app's QA selects
+             `[role="menuitem"]`, which Radix puts on whatever element it is
+             given. */
+          <Item asChild disabled={item.disabled} onSelect={() => item.onSelect?.()}>
+            <button
+              type="button"
+              disabled={item.disabled}
+              className={row({ tone: item.danger ? 'danger' : 'normal' })}
+            >
+              {body}
+            </button>
+          </Item>
+        )}
+      </Fragment>
+    )
+  })
 }
 
 /**
@@ -141,11 +302,14 @@ export function Menu({
   items,
   onClose,
   label,
+  plain,
 }: {
   anchor: MenuAnchor
   items: MenuItem[]
   onClose: () => void
   label: string
+  /** No leading icon column — see `rows`. Desk-only menu surfaces set this. */
+  plain?: boolean
 }) {
   const [open, setOpen] = useState(true)
   const exit = useRef(0)
@@ -161,11 +325,13 @@ export function Menu({
 
   // The caller unmounts us the moment onClose fires, and an unmounted panel
   // cannot animate out — so the panel closes now, and the caller is told once
-  // the exit has played.
+  // the exit has played. At desk there is no exit to play (the pop animation
+  // is off), so the caller is told immediately.
   const close = () => {
     setOpen(false)
     clearTimeout(exit.current)
-    exit.current = window.setTimeout(onClose, EXIT_MS)
+    if (window.matchMedia(DESK_MQ).matches) onClose()
+    else exit.current = window.setTimeout(onClose, EXIT_MS)
   }
 
   return (
@@ -187,7 +353,16 @@ export function Menu({
           aria-hidden="true"
           tabIndex={-1}
           className="pointer-events-none fixed size-0 border-0 bg-transparent p-0"
-          style={{ left: anchor.x, top: anchor.y }}
+          // Anchor coords are pointer/viewport px, but this marker renders
+          // inside the zoomed #root (index.css view scale), where a px length
+          // paints multiplied by --ui-scale — divide it back out or every
+          // point-opened menu (tab ⋯, explorer right-click) drifts toward the
+          // origin at scale < 1. The menu PANEL itself portals to <body>,
+          // outside the zoom, and needs nothing.
+          style={{
+            left: `calc(${anchor.x}px / var(--ui-scale, 1))`,
+            top: `calc(${anchor.y}px / var(--ui-scale, 1))`,
+          }}
         />
       </RMenu.Trigger>
 
@@ -200,7 +375,9 @@ export function Menu({
           side="bottom"
           align={anchor.fromRight ? 'end' : 'start'}
           sideOffset={0}
+          avoidCollisions
           collisionPadding={MARGIN}
+          sticky="always"
           // Escape must close the menu WITHOUT also reaching the shell's own
           // Escape handler and closing the drawer underneath it. Radix listens
           // in the capture phase, so stopping here stops the whole path — and
@@ -212,11 +389,143 @@ export function Menu({
           onCloseAutoFocus={(e) => e.preventDefault()}
           className={PANEL}
         >
-          {rows(items, RMenu)}
+          {rows(items, RMenu, plain)}
         </RMenu.Content>
       </RMenu.Portal>
     </RMenu.Root>
   )
+}
+
+/**
+ * The same panel and rows, opened from a REAL trigger element rather than a
+ * point. Built for the menu bar (MenuBar.tsx): Radix owns the toggle-on-press,
+ * aria-haspopup/aria-expanded, and — unlike `Menu` above — hands focus back to
+ * the trigger on close, which is exactly the "Escape returns focus to the
+ * title" behaviour a menu bar owes its keyboard user.
+ *
+ * Controlled, because the menu bar coordinates several of these (ArrowLeft/
+ * ArrowRight and pointerenter move the one open menu between titles).
+ *
+ * `drillIn` replaces side flyouts with in-place navigation — the VS Code
+ * mobile-web pattern. A submenu parent (File) swaps the panel's rows for its
+ * children plus a "‹ Back" row, so nothing ever opens BESIDE the panel and
+ * nothing can leave a phone's screen. ArrowRight drills, ArrowLeft backs out,
+ * Escape still closes the whole menu. The path resets every time the menu
+ * closes — reopening always starts at the top.
+ */
+export function TriggerMenu({
+  trigger,
+  items,
+  label,
+  open,
+  onOpenChange,
+  plain,
+  drillIn,
+}: {
+  trigger: ReactNode
+  items: MenuItem[]
+  label: string
+  open: boolean
+  onOpenChange(open: boolean): void
+  plain?: boolean
+  /** In-place submenu navigation instead of side flyouts (coarse pointers). */
+  drillIn?: boolean
+}) {
+  /* The open submenu trail, root-first, as item KEYS — App rebuilds the menu
+   * arrays every render, so object identity would go stale immediately. */
+  const [path, setPath] = useState<string[]>([])
+  const content = useRef<HTMLDivElement | null>(null)
+  const refocus = useRef(false)
+
+  /* After a drill or back the rows just swapped under the user's finger or
+   * focus; hand focus to the first row so arrows and type-ahead keep working
+   * (and so focus cannot fall out of the menu, which would dismiss it). Runs
+   * after every render, acts only when a handler armed it. */
+  useEffect(() => {
+    if (!refocus.current) return
+    refocus.current = false
+    content.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled):not([data-menu-back])')
+      ?.focus()
+  })
+
+  const level = drillIn ? levelOf(items, path) : items
+  const enter = (item: MenuItem) => {
+    refocus.current = true
+    setPath((p) => [...p, item.id ?? item.label])
+  }
+  const back = () => {
+    refocus.current = true
+    setPath((p) => p.slice(0, -1))
+  }
+
+  return (
+    <RMenu.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setPath([])
+        onOpenChange(next)
+      }}
+      modal={false}
+    >
+      <RMenu.Trigger asChild>{trigger}</RMenu.Trigger>
+      <RMenu.Portal>
+        <RMenu.Content
+          ref={content}
+          aria-label={label}
+          side="bottom"
+          align="start"
+          sideOffset={0}
+          avoidCollisions
+          collisionPadding={MARGIN}
+          sticky="always"
+          onEscapeKeyDown={(e) => e.stopPropagation()}
+          onKeyDown={
+            drillIn && path.length > 0
+              ? (e) => {
+                  if (e.key !== 'ArrowLeft' || e.defaultPrevented) return
+                  e.preventDefault()
+                  back()
+                }
+              : undefined
+          }
+          className={PANEL}
+        >
+          {drillIn && path.length > 0 ? (
+            <>
+              <RMenu.Item
+                asChild
+                onSelect={(e) => {
+                  e.preventDefault()
+                  back()
+                }}
+              >
+                <button type="button" data-menu-back className={row({ tone: 'normal' })}>
+                  {plain ? null : <span aria-hidden="true" className={ICON} />}
+                  <span className={LABEL}>‹ Back</span>
+                </button>
+              </RMenu.Item>
+              <RMenu.Separator className={SEPARATOR} />
+            </>
+          ) : null}
+          {rows(level, RMenu, plain, drillIn ? enter : undefined)}
+        </RMenu.Content>
+      </RMenu.Portal>
+    </RMenu.Root>
+  )
+}
+
+/** Walk a drill path (item keys, root-first) down the menu tree. A stale key —
+ *  the menus were rebuilt without it (a project renamed away mid-open) —
+ *  falls back to the root rather than crashing. */
+function levelOf(items: MenuItem[], path: string[]): MenuItem[] {
+  let level = items
+  for (const key of path) {
+    const next = level.find((it) => (it.id ?? it.label) === key)?.items
+    if (!next) return items
+    level = next
+  }
+  return level
 }
 
 /**
@@ -234,7 +543,9 @@ export function ContextMenu({ items, label, children }: { items: MenuItem[]; lab
       <RContextMenu.Portal>
         <RContextMenu.Content
           aria-label={label}
+          avoidCollisions
           collisionPadding={MARGIN}
+          sticky="always"
           onEscapeKeyDown={(e) => e.stopPropagation()}
           className={PANEL}
         >

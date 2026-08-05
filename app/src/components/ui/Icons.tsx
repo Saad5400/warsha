@@ -6,7 +6,8 @@
  * whatever the platform has, so `▶` can arrive as a colour emoji on some Android
  * builds, `⋯` is missing from several OEM fonts, and none of them share a stroke
  * weight with each other. A single 20px grid at 1.6px is what makes the chrome
- * read as one system.
+ * read as one system. (One deliberate exception: IconFilesStack below is a
+ * fill-based 24px codicon trace — see its comment.)
  *
  * Every icon is aria-hidden: the accessible name always lives on the button.
  */
@@ -116,6 +117,20 @@ export const IconFiles = (p: IconProps) => (
   <Icon {...p}>
     <path d="M2.75 6A1.25 1.25 0 0 1 4 4.75h2.9l1.35 1.9H16A1.25 1.25 0 0 1 17.25 7.9v6.35A1.25 1.25 0 0 1 16 15.5H4a1.25 1.25 0 0 1-1.25-1.25V6Z" />
   </Icon>
+)
+
+/**
+ * The activity bar's Explorer glyph: VS Code's "files" codicon, two overlapping
+ * documents. Path data traced from microsoft/vscode-codicons (MIT), fill-based
+ * on a 24px grid — the one deliberate exception to this file's 20px/1.6px-stroke
+ * rule, because the rail renders VS Code's own shape at VS Code's own size and a
+ * restroked approximation reads as a knock-off. Used by ActivityBar only;
+ * everything else that means "files" keeps IconFiles's folder above.
+ */
+export const IconFilesStack = ({ size = 24, ...p }: IconProps) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true" focusable="false" {...p}>
+    <path d="M7.5 22.5H17.595C17.07 23.4 16.11 24 15 24H7.5C4.185 24 1.5 21.315 1.5 18V6C1.5 4.89 2.1 3.93 3 3.405V18C3 20.475 5.025 22.5 7.5 22.5ZM21 8.121V18C21 19.6545 19.6545 21 18 21H7.5C5.8455 21 4.5 19.6545 4.5 18V3C4.5 1.3455 5.8455 0 7.5 0H12.879C13.4715 0 14.0505 0.24 14.4705 0.6585L20.3415 6.5295C20.766 6.954 21 7.5195 21 8.121ZM13.5 6.75C13.5 7.164 13.8375 7.5 14.25 7.5H19.1895L13.5 1.8105V6.75ZM19.5 18V9H14.25C13.0095 9 12 7.9905 12 6.75V1.5H7.5C6.672 1.5 6 2.1735 6 3V18C6 18.8265 6.672 19.5 7.5 19.5H18C18.828 19.5 19.5 18.8265 19.5 18Z" />
+  </svg>
 )
 
 export const IconArrowRight = (p: IconProps) => (

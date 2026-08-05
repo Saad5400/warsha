@@ -173,51 +173,121 @@
 :root {
   /* The top bar compacts when the software keyboard is up (spec §4.3 rule 3).
      Named so anything pinned below the bar can track it instead of repeating 40. */
-  --bar-top-kb: 40px;
-  /* ...and the two icon buttons inside it compact with it. §4.3 rule 3 (drop the
-     bar to 40px) and §5.2 (44px targets) are in direct conflict for exactly these
-     two controls, and leaving both literal meant 44px buttons spilling 2px out of
-     a 40px bar and over the tab strip — a real overlap, found in the sweep.
-     Resolved in favour of the bar, narrowly: the hamburger and the overflow menu
-     are the two rarest taps in the app (§5.2 itself puts rarely-tapped chrome at
-     the top), 40px still clears WCAG 2.2 AA's 24px comfortably, and it applies
-     only while the student is actually typing. Everything tapped often — Run,
-     tabs, file rows, the console input — stays 44px in every state. */
-  --touch-kb: 40px;
+  --bar-top-kb: 40px; /* == --bar-top since the 2026-08-05 scale-down took the
+                         resting bar to 40 — the kb rule is now a no-op kept
+                         so the kb-open: class contract and anything pinned
+                         below the bar still read one token. */
+  /* ...and the icon buttons inside it compact with it. §4.3 rule 3 (drop the
+     bar to 40px) and §5.2 (44px targets) are in direct conflict for exactly
+     these controls, and leaving both literal meant 44px buttons spilling 2px
+     out of a 40px bar and over the tab strip — a real overlap, found in the
+     sweep. Resolved in favour of the bar, narrowly: the ☰ Application Menu and
+     the title-bar view toggles are among the rarest taps in the app (§5.2
+     itself puts rarely-tapped chrome at the top), 40px still clears WCAG 2.2
+     AA's 24px comfortably, and it applies only while the student is actually
+     typing. Everything tapped often — Run, tabs, file rows, the console input
+     — stays 44px in every state. */
+  --touch-kb: var(--icon-btn); /* was a literal 40px compaction of 44px
+                         buttons; after the scale-down the resting icon
+                         button (36px) already fits the 40px bar, so this
+                         must never EXCEED --icon-btn or the kb-open:
+                         size-touch-kb classes would GROW their buttons
+                         when the keyboard opens. */
 
-  /* VSCode's floor plan (docs/design/LAYOUT-VSCODE.md), both ≥900px only.
-     The activity bar is the plan's stated 48px. The status bar is 26px — the
-     middle of the plan's 24-28px band, and the one surface in the app that is
-     deliberately under the 44px target floor: it renders only on pointer
-     layouts, and its single interactive item (the text-size stepper) keeps a
-     44px row in the overflow menu as well, so no function lives only in a small
-     target. See StatusBar.tsx. */
+  /* VSCode's floor plan (docs/design/LAYOUT-VSCODE.md), now at EVERY width —
+     one shell (founder ruling). The activity bar is the plan's stated 48px;
+     its 48px slots clear the touch floor on their own. The status bar is 24px
+     on touch layouts (was 30 — founder scale-down 2026-08-05) — the one
+     surface in the app deliberately under the 44px target floor, sitting
+     exactly on WCAG 2.2 AA's 24px pointer minimum: its interactive items keep
+     44px homes elsewhere (text size in the View menu, Ln/Col via Go to Line),
+     so no function lives only in a small target. The DENSITY block compacts
+     it to VSCode's 22px on a fine pointer. See StatusBar.tsx. */
   --activity-w: 48px;
-  --bar-status: 26px;
+  --bar-status: 24px;
 
   /* The TITLE bar is the one bar that is not --bar-top, and it has to be its own
-     token rather than a literal because the toast pins itself under it.
-     Why 52 and not 44 at ≥900px: the title bar is the only bar that holds a
-     FILLED control (Run). At 44px a 44px button is flush top and bottom, so its
-     10px radius runs straight into the bar's 1px divider — measured at exactly
-     0px clearance, which at loupe zoom reads as the button hanging out of its
-     own bar (founder, 2026-08-02). 44 + 4 + 4 keeps the control at its 44px
-     touch size, centres it, and gives the divider something to clear. Below
-     900px there is no Run up here and the bar stays 44. */
+     token rather than a literal because the toast pins itself under it. With
+     Run gone from this bar for good (its one home is the tab strip's trailing
+     group), every coarse-pointer layout keeps the plain 40px bar (44 until the
+     2026-08-05 scale-down; the old 52px ≥900px override existed only to clear
+     the filled Run) and the DENSITY block compacts it to VSCode's 35px on a
+     fine pointer. */
   --bar-title: var(--bar-top);
+
+  /* Control metrics that the DENSITY block below retunes for a fine pointer.
+     Defaults are the touch values the components carried as literals until the
+     density pass (founder, 2026-08-05); consumed via the @theme spacing map
+     (size-icon-btn, min-h-run-h, h-bar-tabs, …) so both densities read one
+     source. */
+  --icon-btn: 36px;     /* IconButton box (40 until the 2026-08-05 scale-down;
+                           the after:-inset-1 pseudo makes it 44 effective —
+                           exactly the floor, so -inset-1 may not shrink)      */
+  --run-h: 36px;        /* Run/Stop + console header buttons (was 40); same
+                           after: pseudo carries the 44px effective target     */
+  --run-minw: 104px;    /* Run/Stop min-width across the Run→Stop swap         */
+  --tab-close: 40px;    /* the tab's close/dirty slot — full --bar-tabs height
+                           now, kept at 40 because the × has NO hit-area
+                           pseudo (tabs stack flush), so the slot IS the
+                           target and must not shrink with the bar            */
+  --bar-tabs: var(--bar-top);   /* tab strip height                            */
+  --bar-crumbs: 28px;   /* breadcrumbs row — plain-span path trail, no tap
+                           targets yet, so it sits under the 44px rule; the
+                           moment segments become pickers this must grow      */
+  --bar-side: var(--bar-top);   /* sidebar header (EXPLORER row) height        */
 }
-@media (min-width: 900px) {
+/* There is deliberately no ≥900px --bar-console override any more. The old
+   one (PIXEL-FINDINGS F-12) existed only to clear the 40px Run flush in the
+   then-44px header; with Run gone to the tab strip's trailing group for good,
+   the header's biggest control is a 36px toolbar button and every
+   coarse-pointer layout keeps the plain 40px bar — the DENSITY block compacts
+   it to VSCode's 35px on a fine pointer, the same move --bar-title makes
+   above. */
+
+/* ============================================================ DENSITY ====
+ * Founder, 2026-08-05: 44px rows and 44px tabs are touch furniture; on a
+ * desktop with a mouse they read as a toy, not an IDE. On a fine-pointer
+ * desktop the chrome compacts to VSCode-grade metrics. Every coarse-pointer
+ * device — phone, iPad by finger — matches neither condition and keeps the
+ * §5.2 touch rules untouched, which is where they were written for.
+ *
+ * This is ONE media query, and the `desk:` custom variant below the @theme
+ * block is defined on the same condition — keep the two in step, or a
+ * component compacts its box while its tokens stay touch-sized.
+ *
+ * It must sit AFTER the ≥900px block above: both are unlayered :root rules,
+ * so source order is the only thing that lets this one win when both apply.
+ *
+ * --touch is overridden knowingly: at a fine pointer it is no longer a touch
+ * floor but the app's one "control height" token, and shrinking it compacts
+ * every consumer at once — tree rows, buttons, menu rows, the completion
+ * list, the console floor calc. WCAG 2.2 AA asks 24px for pointer targets;
+ * nothing here goes below 28 except decorative slots. */
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
   :root {
-    --bar-title: calc(var(--touch) + var(--sp-1) + var(--sp-1));
-    /* PIXEL-FINDINGS F-12: the console header has carried the SAME 0px-clearance
-       defect as the title bar, unfixed, since --bar-console (tokens.css) is also
-       44px around a 44px Run. Unlike the title bar, this one's Run is on screen
-       at every width, so the fix is scoped to ≥900px only rather than applied
-       everywhere: a phone console has no vertical budget to spare (§4.3 rule 4's
-       144px floor is "the single most important number" there), while a desktop
-       console does. --console-floor derives from --bar-console below and picks
-       up the extra 8px automatically. */
-    --bar-console: calc(var(--touch) + var(--sp-1) + var(--sp-1));
+    --touch: 28px;
+    --touch-lg: 32px;
+    --icon-btn: 28px;
+    --run-h: 28px;
+    --run-minw: 84px;
+    --tab-close: 20px;  /* VSCode's close slot; rides inside the larger tab   */
+    --bar-tabs: 35px;    /* VSCode's own tab height                            */
+    --bar-crumbs: 22px;  /* VSCode's breadcrumbs row                           */
+    --bar-side: 35px;    /* aligns the sidebar header with the tab strip       */
+    --bar-title: 35px;   /* VSCode's title bar. Possible only because Run left
+                            this bar for the tab strip (W1-B, same wave) — the
+                            28px menu buttons and icon squares clear it with
+                            3-4px a side.                                      */
+    --bar-console: 35px; /* VSCode's panel header — same 35 as the tab strip   */
+    --lh-console: 1.36;  /* VSCode's output line-height (touch keeps 1.5; the
+                            --console-line floor calc derives and follows)      */
+    --bar-status: 22px;  /* VSCode's status bar                                */
+    --row-tree: 22px;    /* VSCode's explorer row (touch keeps 36px)           */
+    --tree-indent: 8px;  /* VSCode's per-level indent (touch keeps 16px)       */
+    --explorer-w: 300px; /* VSCode's default sidebar width (240px below 900)   */
+    --fs-row: 13px;      /* UI type at desktop density (VSCode is 13px)        */
+    --fs-btn: 13px;
+    --fs-input: 14px;    /* the 16px iOS zoom floor is a touch-device rule     */
   }
 }
 
@@ -252,28 +322,20 @@
   /* What the console PANEL has to be tall enough for, as opposed to what its
      transcript needs. tokens.css's --console-min-h-stdin (144px) is the spec's
      own sum — 4 output lines + the input row + padding — but §4.3 rule 4 wrote it
-     as the floor for the *console*, and the panel also contains its own 44px
-     header. So 144 was always short by a header, and short again by the status
-     line. Measured consequence with a keyboard up: a 17px transcript, well under
-     the one line, where the rule asks for four. Derived here so it cannot drift
-     from --bar-console again.
+     as the floor for the *console*, and the panel also contains its own header.
+     So 144 was always short by a header. Measured consequence with a keyboard
+     up: a 17px transcript, well under the one line, where the rule asks for
+     four. Derived here so it cannot drift from --bar-console again.
 
      The --touch term is still here now that the input has moved into the
      transcript: it is the 44px live line the student types on, which is inside
      the transcript rather than under it but still has to fit on screen with the
-     four output lines above it. */
+     four output lines above it. (There is no separate stdin-pending floor any
+     more: the sticky status foot it budgeted an extra line for is gone — the
+     status bar carries the run state at every width now.) */
   --console-floor: calc(
     var(--bar-console) + (4 * var(--console-line)) + var(--touch) + var(--sp-4)
   );
-  /* Stdin pending: the status line under the transcript is on screen too, and this
-     is the case rule 4 actually legislates for.
-     The trailing --sp-1 is slack, not padding, and it is deliberate: the status
-     line is 21.4px (its own 17.4px line box plus 4px of lead-in) and the foot that
-     holds it carries a 1px divider. Budgeting the status line as exactly one output
-     line left the transcript at 82px against the 84px four lines need — measured.
-     A floor computed to the pixel is a floor that fails on the next rounding, so
-     this one rounds up rather than encoding another component's line-height. */
-  --console-floor-stdin: calc(var(--console-floor) + var(--console-line) + var(--sp-1));
 }
 
 @theme inline {
@@ -312,6 +374,118 @@
   /* borders */
   --color-border-subtle: var(--border-subtle);
   --color-border-control: var(--border-control);
+  --color-border-widget: var(--border-widget);
+
+  /* v4 parity tokens (tokens.css). Naming rule: a token ending in `-bg` drops
+     the suffix here, so the utility reads `bg-titlebar`, `bg-menu-sel`,
+     `bg-list-hover` — never `bg-titlebar-bg`. Every other suffix (-fg,
+     -border, …) is kept verbatim. The raw parenthesis form `bg-(--menu-bg)`
+     stays equally valid; these exist so the common spellings are short. */
+
+  /* lists + tree */
+  --color-list-hover: var(--list-hover-bg);
+  --color-list-active-sel: var(--list-active-sel-bg);
+  --color-list-active-sel-fg: var(--list-active-sel-fg);
+  --color-list-inactive-sel: var(--list-inactive-sel-bg);
+  --color-list-focus-outline: var(--list-focus-outline);
+  --color-list-highlight: var(--list-highlight);
+  --color-list-drop: var(--list-drop-bg);
+  --color-sidebar-drop: var(--sidebar-drop-bg);
+  --color-tree-guide: var(--tree-guide);
+  --color-tree-guide-inactive: var(--tree-guide-inactive);
+
+  /* bars */
+  --color-titlebar: var(--titlebar-bg);
+  --color-titlebar-fg: var(--titlebar-fg);
+  --color-titlebar-border: var(--titlebar-border);
+  --color-statusbar: var(--statusbar-bg);
+  --color-statusbar-fg: var(--statusbar-fg);
+  --color-statusbar-border: var(--statusbar-border);
+  --color-statusbar-remote: var(--statusbar-remote-bg);
+  --color-statusbar-item-hover: var(--statusbar-item-hover);
+  --color-statusbar-item-active: var(--statusbar-item-active);
+  --color-ab-fg: var(--ab-fg);
+  --color-ab-fg-inactive: var(--ab-fg-inactive);
+  --color-ab-active-border: var(--ab-active-border);
+
+  /* tabs */
+  --color-tab-active: var(--tab-active-bg);
+  --color-tab-active-fg: var(--tab-active-fg);
+  --color-tab-inactive-fg: var(--tab-inactive-fg);
+  --color-tab-accent-top: var(--tab-accent-top);
+  --color-tab-hover: var(--tab-hover-bg);
+
+  /* panel + toolbars */
+  --color-panel-tab-active: var(--panel-tab-active);
+  --color-sash-hover: var(--sash-hover);
+  --color-toolbar-hover: var(--toolbar-hover-bg);
+
+  /* menus */
+  --color-menu: var(--menu-bg);
+  --color-menu-border: var(--menu-border);
+  --color-menu-sep: var(--menu-sep);
+  --color-menu-sel: var(--menu-sel-bg);
+  --color-menu-sel-fg: var(--menu-sel-fg);
+
+  /* inputs + widgets */
+  --color-input: var(--input-bg);
+  --color-input-border: var(--input-border);
+  --color-input-placeholder: var(--input-placeholder);
+  --color-widget: var(--widget-bg);
+
+  /* quick input */
+  --color-qi: var(--qi-bg);
+  --color-qi-border: var(--qi-border);
+  --color-qi-input: var(--qi-input-bg);
+  --color-qi-input-border: var(--qi-input-border);
+  --color-picker-group: var(--picker-group-fg);
+  --color-picker-group-border: var(--picker-group-border);
+  --color-kbd: var(--kbd-bg);
+  --color-kbd-fg: var(--kbd-fg);
+  --color-kbd-border: var(--kbd-border);
+  --color-kbd-border-b: var(--kbd-border-b);
+
+  /* badges + buttons */
+  --color-badge: var(--badge-bg);
+  --color-badge-fg: var(--badge-fg);
+  --color-badge-accent: var(--badge-accent-bg);
+  --color-badge-accent-fg: var(--badge-accent-fg);
+  --color-btn-border: var(--btn-border);
+  --color-btn-secondary: var(--btn-secondary-bg);
+  --color-btn-secondary-fg: var(--btn-secondary-fg);
+  --color-btn-secondary-hover: var(--btn-secondary-hover-bg);
+
+  /* scrollbars */
+  --color-scrollbar-slider: var(--scrollbar-slider);
+  --color-scrollbar-slider-hover: var(--scrollbar-slider-hover);
+  --color-scrollbar-slider-active: var(--scrollbar-slider-active);
+
+  /* terminal (contract only — mapped for completeness; nothing renders them yet) */
+  --color-ansi-black: var(--ansi-black);
+  --color-ansi-red: var(--ansi-red);
+  --color-ansi-green: var(--ansi-green);
+  --color-ansi-yellow: var(--ansi-yellow);
+  --color-ansi-blue: var(--ansi-blue);
+  --color-ansi-magenta: var(--ansi-magenta);
+  --color-ansi-cyan: var(--ansi-cyan);
+  --color-ansi-white: var(--ansi-white);
+  --color-ansi-bright-black: var(--ansi-bright-black);
+  --color-ansi-bright-red: var(--ansi-bright-red);
+  --color-ansi-bright-green: var(--ansi-bright-green);
+  --color-ansi-bright-yellow: var(--ansi-bright-yellow);
+  --color-ansi-bright-blue: var(--ansi-bright-blue);
+  --color-ansi-bright-magenta: var(--ansi-bright-magenta);
+  --color-ansi-bright-cyan: var(--ansi-bright-cyan);
+  --color-ansi-bright-white: var(--ansi-bright-white);
+  --color-terminal-sel: var(--terminal-sel);
+
+  /* misc */
+  --color-progress: var(--progress);
+  --color-link: var(--link);
+  /* The --code-* family is deliberately NOT mapped: CodeMirror chrome lives
+     only in editor/setup.ts (see the note at the end of this file), which
+     reads the raw custom properties — a `bg-code-*` utility would only invite
+     the inert `.cm-*`-in-CSS mistake back. */
 
   /* type */
   --font-ui: var(--font-ui);
@@ -339,12 +513,25 @@
   --spacing-touch: var(--touch);
   --spacing-touch-lg: var(--touch-lg);
   --spacing-touch-kb: var(--touch-kb);
-  --spacing-bar: var(--bar-top);
+  /* Named `bar-top`, never bare `bar`: with a bare `bar` key Tailwind reads the
+     semantic class `top-bar` (a QA contract selector) as the utility top-(bar)
+     and emits `top: var(--bar-top)` on the title bar — shoving it a full 44px
+     into the body row. */
+  --spacing-bar-top: var(--bar-top);
   --spacing-bar-title: var(--bar-title);
   --spacing-bar-console: var(--bar-console);
   --spacing-bar-status: var(--bar-status);
+  --spacing-bar-tabs: var(--bar-tabs);
+  --spacing-bar-crumbs: var(--bar-crumbs);
+  --spacing-bar-side: var(--bar-side);
+  --spacing-icon-btn: var(--icon-btn);
+  --spacing-run-h: var(--run-h);
+  --spacing-run-minw: var(--run-minw);
+  --spacing-tab-close: var(--tab-close);
   --spacing-activity: var(--activity-w);
   --spacing-explorer: var(--explorer-w);
+  --spacing-row-tree: var(--row-tree);
+  --spacing-tree-indent: var(--tree-indent);
   --spacing-drawer: var(--drawer-w);
   --spacing-editor-min: var(--editor-min-h);
   --spacing-console-min: var(--console-min-h-stdin);
@@ -406,6 +593,10 @@
    Usage: `kb-open:min-h-touch-kb`, `hand-left:flex-row-reverse`. */
 @custom-variant kb-open (html[data-kb='open'] &);
 @custom-variant hand-left (html[data-hand='left'] &);
+/* Fine-pointer desktop — the DENSITY media above, as a variant, so a component
+   can say `desk:px-3` / `desk:opacity-0` for the handful of compactions a
+   token cannot carry. Keep its condition identical to the DENSITY block's. */
+@custom-variant desk (@media (min-width: 900px) and (hover: hover) and (pointer: fine));
 
 /* ---------------------------------------------------------------- base ---- */
 @layer base {
@@ -451,10 +642,11 @@
     outline-offset: 0;
   }
 
-  /* Dark scrollbars. Firefox gets the standard properties, WebKit/Blink the
-     pseudo-elements; both stay inside the surface ramp. */
+  /* VS Code scrollbars: translucent grey sliders (the --scrollbar-slider
+     family in tokens.css), square ends, no track. Firefox gets the standard
+     properties, WebKit/Blink the pseudo-elements. */
   * {
-    scrollbar-color: var(--surface-4) transparent;
+    scrollbar-color: var(--scrollbar-slider) transparent;
     scrollbar-width: thin;
   }
   ::-webkit-scrollbar {
@@ -462,18 +654,36 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--surface-4);
-    border-radius: var(--r-pill);
+    background: var(--scrollbar-slider);
+    border-radius: 0;
+    /* Touch keeps the 2px inset so the thumb stays the slim bar it was; the
+       desk block below removes it for VS Code's full-gutter slider. */
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--border-control);
+    background: var(--scrollbar-slider-hover);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: var(--scrollbar-slider-active);
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-track,
   ::-webkit-scrollbar-corner {
     background: transparent;
+  }
+  /* Width changes are desk-only (same condition as the DENSITY block): VS
+     Code's stock slider is a flat 14px filling its gutter edge to edge. */
+  @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 14px;
+      height: 14px;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 0;
+      background-clip: border-box;
+    }
   }
 
   ::selection {
@@ -538,12 +748,47 @@
     z-index: var(--z-drawer);
   }
 
+  /* The Explorer pane header (Explorer.tsx PANE_HEADER) — one structure at
+     every size. Its action buttons box to --pane-action (an inline style
+     reads it, so no class-order fight with size-icon-btn): the row's own
+     36px on coarse pointers, VS Code's 22px inside the 22px --row-tree row
+     under the desk media. The hover-reveal below is desk-only — touch has no
+     hover, so the actions stay visible there (founder rule: no dead UI). */
+  .sidebar-project-row {
+    /* Was var(--touch): a 44px box overflowed the row once --row-tree went to
+       36 (scale-down, 2026-08-05). Boxing to the row keeps the trio flush
+       inside it; their after:content-none stands, so 36px IS the effective
+       target here (>WCAG 24, under the app's 44 — recorded in DENSITY.md). */
+    --pane-action: var(--row-tree);
+  }
+  @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    .sidebar-project-row {
+      --pane-action: 22px;
+    }
+    /* VS Code hides view actions at rest: pane-header actions and the sidebar
+       title row's ⋯ (`.explorer-head`) appear on the row's hover or while one
+       of them holds focus. */
+    .sidebar-project-row .icon-btn,
+    .explorer-head .icon-btn {
+      opacity: 0;
+    }
+    .sidebar-project-row:hover .icon-btn,
+    .sidebar-project-row:focus-within .icon-btn,
+    .explorer-head:hover .icon-btn,
+    .explorer-head:focus-within .icon-btn {
+      opacity: 1;
+    }
+  }
+
   .tree-row {
     position: relative;
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    min-height: var(--touch);
+    /* --row-tree is 36px on touch layouts (visual box — the full-width row is
+       the tap target) and VS Code's 22px under the DENSITY media — one token,
+       both densities. */
+    min-height: var(--row-tree);
     padding-right: var(--sp-1);
     cursor: pointer;
     touch-action: manipulation;
@@ -588,20 +833,22 @@
 
   /* Nesting guides: one hairline per level, so depth is readable without
      counting indents. Drawn from the row so they tile into a continuous rule. */
-  /* --border-subtle, not --code-indent-guide (which the EDITOR's guides keep).
-     The editor's guides only ever sit on one fill; a tree row has three, and
-     --code-indent-guide rgb(39,44,52) is a channel delta of 8 against the tree's
-     resting --surface-2 but only 1 against the --surface-3 hover fill — so the
-     guide vanished exactly on the row the pointer was over (PIXEL-FINDINGS
-     F-08). --border-subtle rgb(42,47,56) reads 11 at rest and 4-5 hovered: one
-     colour down the whole line, which a per-state colour could not give without
-     turning the guide into a lit 44px segment in an otherwise quiet rule. */
+  /* --tree-guide-inactive, not --code-indent-guide (which the EDITOR's guides
+     keep): VS Code's own tree guide, and — being translucent grey — it reads
+     as one colour over all three of a row's fills (rest, hover, selection),
+     the property the old --border-subtle choice existed to protect
+     (PIXEL-FINDINGS F-08). The solid --tree-guide is reserved for an
+     active-level guide, not shipped yet.
+     --guide-nudge is the half-slot that centres the guide on the twistie
+     column (Explorer.tsx reads it in the guide's `left` calc): the icon slot
+     is 20px on touch, 16px at desk, so the DENSITY block below retunes it. */
   .tree-row__guide {
+    --guide-nudge: 9px;
     position: absolute;
     top: 0;
     bottom: 0;
     width: 1px;
-    background: var(--border-subtle);
+    background: var(--tree-guide-inactive);
     pointer-events: none;
   }
 
@@ -617,13 +864,22 @@
     color: var(--text-3);
   }
 
-  /* The 6px accent dot for an unsaved file (spec §7.1). */
+  /* The dot for an unsaved file (spec §7.1). currentColor, not the accent:
+     it takes the ink of whatever slot holds it — in the tab strip that is the
+     close slot's label colour, so dot, × and label always read as one tone
+     (VS Code's own behaviour). 6px on touch; 9px at desk, VS Code's size. */
   .dot-dirty {
     flex: none;
     width: 6px;
     height: 6px;
     border-radius: var(--r-pill);
-    background: var(--accent);
+    background: currentColor;
+  }
+  @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    .dot-dirty {
+      width: 9px;
+      height: 9px;
+    }
   }
 
   /* The per-row ⋯ is noise when it is on every row at once. With a real
@@ -687,6 +943,90 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+
+  /* ---- tree at desk (same condition as the DENSITY block / desk variant) ----
+     VS Code's list model. The 2px reserved border-left stays at all densities
+     (so rowPadding's -var(--rail) correction holds), but at desk it never
+     takes colour: selection is a full-row fill — blue while the tree holds
+     focus, grey when it does not — instead of the touch accent rail. This
+     block sits AFTER the touch rules above; where a touch rule has equal
+     specificity, source order is what lets these win. */
+  @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    .tree-row {
+      gap: 6px;
+    }
+    .tree-row:hover,
+    .tree-row:active {
+      background: var(--list-hover-bg);
+    }
+    .tree-row[data-state='open'],
+    .tree-row[data-state='open']:hover {
+      border-left-color: transparent;
+      background: var(--list-inactive-sel-bg);
+    }
+    .tree-row[data-state='open'] .tree-row__label {
+      color: var(--text-1);
+      font-weight: 400;
+    }
+    [data-tree-root]:focus-within .tree-row[data-state='open'],
+    [data-tree-root]:focus-within .tree-row[data-state='open']:hover {
+      background: var(--list-active-sel-bg);
+    }
+    [data-tree-root]:focus-within .tree-row[data-state='open'] .tree-row__label,
+    [data-tree-root]:focus-within .tree-row[data-state='open'] .tree-row__chevron {
+      color: var(--list-active-sel-fg);
+    }
+    /* Same ring as the global :focus-visible, pulled inside the row: a 22px
+       row flush against its neighbours has no slack for an outward ring. */
+    .tree-row:focus-visible {
+      outline: 1px solid var(--list-focus-outline);
+      outline-offset: -1px;
+    }
+    /* VS Code weights nothing in the tree: folders and the open file read by
+       position and fill, not boldness. */
+    .tree-row__label--dir {
+      font-weight: 400;
+    }
+    .tree-row__chevron {
+      width: 16px;
+      height: 16px;
+      color: var(--text-1);
+    }
+    /* The draft rows park 20px glyphs in the same slot; follow it down. */
+    .tree-row__chevron > svg {
+      width: 16px;
+      height: 16px;
+    }
+    .tree-row__guide {
+      --guide-nudge: 8px;
+    }
+    /* The tabs keep their dirty dot; the tree's is touch-only (VS Code marks
+       unsaved state in the tab strip alone). */
+    .tree-row .dot-dirty {
+      display: none;
+    }
+    /* The per-row ⋯ is gone at desk, not just hidden-until-hover: the
+       right-click context menu covers it (Explorer.tsx onContextMenu). The
+       hiding itself is `desk:hidden` on the button — a components-layer
+       `display: none` here would lose the @layer fight to the icon-btn
+       recipe's own `inline-grid` utility. */
+    /* Drop feedback goes flat: a plain fill on the target folder, a translucent
+       wash over the whole panel for a root drop — no rings, no radius. */
+    .tree-row[data-drop='true'],
+    .tree-row[data-drop='true']:hover {
+      background: var(--list-drop-bg);
+      box-shadow: none;
+    }
+    [data-tree-root][data-drop-root='true'] {
+      background: var(--sidebar-drop-bg);
+      box-shadow: none;
+      border-radius: 0;
+    }
+    /* No chip riding the cursor at desk — the flat drop fills say it all. */
+    .tree-drag-chip {
+      display: none;
+    }
+  }
   /* ============================================================ console ==== */
 
   .console-panel {
@@ -694,18 +1034,12 @@
     flex: none;
     flex-direction: column;
     background: var(--surface-2);
-    /* Divider as an inset shadow: a 1px border-top would come out of the
-       collapsed panel's 44px and push Run a pixel below the keyboard line. */
+    /* The panel's ONE seam (VS Code's panel border), as an inset shadow: a 1px
+       border-top would come out of the collapsed panel's bar height and push
+       its header controls a pixel below the keyboard line. There is no accent
+       rail on the leading edge any more at ANY width — VS Code's panel has
+       none, and the status bar (now at every width) carries the running state. */
     box-shadow: inset 0 1px 0 0 var(--border-subtle);
-    /* The third home of the accent signature (principle 3): the leading edge of
-       a running process. Reserved always, coloured only while it runs. */
-    border-left: var(--rail) solid transparent;
-    transition: border-left-color var(--dur) var(--ease);
-  }
-  .console-panel[data-state='preparing'],
-  .console-panel[data-state='running'],
-  .console-panel[data-state='waiting'] {
-    border-left-color: var(--accent);
   }
 
   /* Spec §4.3 rule 4 — the single most important number in that section:
@@ -741,35 +1075,18 @@
   .console-panel--open {
     /* min() so an unsatisfiable floor can never make the panel overflow its own
        container and clip its stdin row off the bottom — which is the one thing
-       §4.3 rule 1 says may never happen. */
+       §4.3 rule 1 says may never happen. One floor for every state: the stdin
+       case no longer needs a taller one, because --console-floor already
+       budgets the live line and the sticky status foot it used to add a line
+       for is gone. */
     min-height: min(var(--console-floor), 100%);
     flex-shrink: 1;
   }
-  /* The program is waiting for the student to type: this panel is the one being
-     used, so it claims the room for four output lines, the status line and the
-     input row. §4.3 scopes rule 4 to exactly this state ("console floor when
-     stdin is pending"), which is why it is not the resting floor. */
-  .console-panel--open[data-state='waiting'] {
-    min-height: min(var(--console-floor-stdin), 100%);
-  }
-  /* Smallest phones (360px, and the 320px iPhone SE): the header runs out of width
-     and used to push the collapse control off the screen. Only decoration goes —
-     the group divider and the inter-control gap.
 
-     The button padding is deliberately NOT tightened here. It used to be
-     `padding-inline: var(--sp-2)`, which took the icon-only Copy and Clear to 38px
-     wide: 44 tall but 38 across, so an earlier comment here claiming "every
-     control stays 44px" was true on one axis only (caught and measured by
-     ui-console). The pressure that made it necessary is gone, because on a phone
-     the status pill now stands down from the header — the status line at the foot
-     of the console already carries the same glyph, word and tone.
-     Measured at 390px: Run 104 + Copy 44 + Clear 44 + collapse 44 ends at
-     x=382 of 388, nothing clipped, with this rule in force. */
-  
   .console-transcript {
     flex: 1;
-    /* Tight left gutter: the rows carry their own 3px rule + 8px, so the text
-       lands ~15px in — a terminal's rhythm, not a document's margin. The bottom
+    /* Tight left gutter: the rows carry their own 8px inset, so the text lands
+       ~12px in — a terminal's rhythm, not a document's margin. The bottom
        pad is the breathing room under the last line / the live one. */
     padding: var(--sp-2) var(--sp-2) var(--sp-3);
     font-family: var(--font-code);
@@ -791,7 +1108,7 @@
      so this is one dim monospace line on the transcript's own grid. Doubles as
      the "Cleared." state (§7.5). */
   .console-empty {
-    padding: var(--sp-1) 0 0 calc(3px + var(--sp-2) + var(--sp-3));
+    padding: var(--sp-1) 0 0 calc(var(--sp-2) + var(--sp-3));
     color: var(--text-3);
     font-style: italic;
   }
@@ -857,12 +1174,12 @@
     overflow-wrap: anywhere;
   }
 
-  /* One transcript row. Each is a flex row: a 3px leading rule, then content.
-     stderr carries three differences from stdout — hue, the rule, and a row
-     tint — so it still separates in a greyscale screenshot. */
+  /* One transcript row — VS Code's flat output rows at EVERY width (one shell;
+     the leading rules, row tints and accent rail were touch-only dress and are
+     gone). stderr separates by its red ink: [data-seg='err'] below, the same
+     one signal VS Code's output gives it. */
   .console-row {
     display: flex;
-    border-left: 3px solid transparent;
     padding-left: var(--sp-2);
   }
   .console-row__text {
@@ -877,13 +1194,6 @@
     padding-left: var(--sp-3);
     text-indent: calc(-1 * var(--sp-3));
     color: var(--text-1);
-  }
-  .console-row[data-kind='err'] {
-    border-left-color: var(--danger);
-    background: color-mix(in srgb, var(--danger-soft) 55%, transparent);
-  }
-  .console-row[data-kind='echo'] {
-    border-left-color: var(--info);
   }
   .console-row[data-kind='meta'] .console-row__text {
     font-size: var(--fs-meta);
@@ -931,17 +1241,10 @@
    * `.stdin-row` / `.stdin-input`, and it is the same thing (the place a student
    * types), moved into the stream.
    */
-  .console-row.stdin-row {
-    /* A current-line band. Faint on purpose: the leading rule, the caret and the
-       status line are what announce the state; this only says "here". */
-    background: color-mix(in srgb, var(--info-soft) 55%, transparent);
-  }
-  /* Waiting is marked by an --info control boundary, never by a fill alone
-       (§4.3/§7.3) — here the boundary is the row's own 3px leading rule, which
-       is also what survives the greyscale check. */
-  .console-row.stdin-row[data-waiting='true'] {
-    border-left-color: var(--info);
-  }
+  /* The stdin row carries no band and no leading rule at any width (the flat
+     desk rows are the reference): the --info caret, the italic prompt marker,
+     the input's own --info focus ring and the status bar's "Waiting for you"
+     are what announce the state. */
   /* The post-Enter grace (LIVE_GRACE_MS in Console.tsx): the input element stays
      mounted so two reads in a row don't blink the software keyboard shut between
      them — but the program is NOT reading, so it must not look like a prompt. It
@@ -951,7 +1254,6 @@
      it and shoving the transcript while the reader is still reading the answer. */
   .console-row.stdin-row[data-waiting='false'] {
     min-height: 0;
-    background: transparent;
   }
   .console-row.stdin-row[data-waiting='false'] .stdin-input {
     min-height: 0;
@@ -983,7 +1285,9 @@
        target even though the rows around it are 21px. It doubles as the reason
        the waiting line is impossible to overlook. */
     min-height: var(--touch);
-    padding: 0;
+    /* Inset the text from the focus ring so it doesn't sit flush against the
+       box while typing. */
+    padding: 0 var(--sp-2);
     border: 0;
     background: transparent;
     font-family: var(--font-code);
@@ -1021,62 +1325,13 @@
     outline-offset: -1px;
   }
 
-  /* The console's permanent bottom row. It carries the status line and nothing
-     else — sticky, so a software keyboard can never cover the one sentence that
-     says whether the program is waiting for the student (§4.3 rule 1). */
-  .console-foot {
-    position: sticky;
-    bottom: 0;
-    flex: none;
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 0 var(--border-subtle);
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  /* The console status line: one sentence naming what the program just did, per
-     run state. Tone comes from [data-state] so the component sets no colours. */
-  .console-status {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    min-height: var(--sp-5);
-    padding: var(--sp-1) var(--pad-panel);
-    font-family: var(--font-ui);
-    font-size: var(--fs-micro);
-    line-height: 1.45;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--text-3);
-  }
-  .console-status__glyph {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 12px;
-    font-size: var(--fs-micro);
-    line-height: 1;
-  }
-  .console-status__text {
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .console-status[data-state='preparing'],
-  .console-status[data-state='running'],
-  .console-status[data-state='ok'] {
-    color: var(--success);
-  }
-  .console-status[data-state='waiting'] {
-    color: var(--info);
-  }
-  .console-status[data-state='failed'] {
-    color: var(--danger);
-  }
-  .console-status[data-state='stopped'] {
-    color: var(--text-2);
-  }
+  /* THERE IS DELIBERATELY NO `.console-foot` OR `.console-status` ANY MORE —
+     do not re-add them. The sticky status line under the transcript was the
+     touch layout's stand-in for a status bar; the status bar now renders at
+     every width and says the same word at the same moment, and the one job the
+     foot had left — keyboard time, when the status bar hides — moved into the
+     panel header's kb-open pill (RunBar.tsx). There is likewise no DENSITY
+     override block for the console: the flat desk rows above ARE the base now. */
 
   /* "↓ 12 new lines" — floats bottom-trailing inside the transcript when the
      reader has scrolled up and output is still arriving. Accent while there is
@@ -1303,7 +1558,35 @@ html[data-kb='open'] {
  * block for the editor's fixed CodeMirror tooltips; toasts, dialogs and menus all
  * portal to <body>, outside the shell entirely. */
 html[data-kb='open'] .app-shell {
-  top: var(--app-top, 0px);
+  /* Divided by the view scale for the same reason the shell's height is (see
+   * the #root rule below): --app-top is measured in unzoomed viewport px, and
+   * inside the zoomed #root a px length paints multiplied by --ui-scale. */
+  top: calc(var(--app-top, 0px) / var(--ui-scale, 1));
+}
+
+/* ========================================================== view scale ==== *
+ *
+ * The founder's "everything feels really zoomed in" slider (Manage gear >
+ * View scale, View > Zoom In/Out — App.tsx writes `--ui-scale` onto <html>
+ * from prefs.uiScale, 0.7–1.3). CSS `zoom`, NEVER `transform: scale` — zoom
+ * re-runs layout at the new size (Chromium/WebKit/FF126+), transform only
+ * paints smaller and breaks every hit-test and measurement.
+ *
+ * Geometry contract, reasoned once here so nobody re-derives it wrong:
+ *   - viewport UNITS (dvh/vw) and the ICB of fixed elements are divided by
+ *     the effective zoom per spec, so `inset-0` overlays and `100dvh`
+ *     fallbacks inside #root stay full-viewport with no correction;
+ *   - px lengths from JS-MEASURED viewport vars do render multiplied by the
+ *     zoom, so their consumers divide back out: the shell's height
+ *     (App.tsx SHELL, --app-h), the kb-open `top` rule above (--app-top),
+ *     and Menu.tsx's point-anchor marker (pointer coords);
+ *   - portalled overlays (menus, dialogs, toasts, dialog::backdrop) mount on
+ *     <body>, OUTSIDE this rule, and keep true viewport coordinates — they
+ *     stay at 100% deliberately, the way OS menus ignore app zoom.
+ * Unlayered like its two neighbours, and on #root rather than <html>/<body>
+ * so those portalled surfaces never inherit the zoom. */
+#root {
+  zoom: var(--ui-scale, 1);
 }
 
 /* ============================================================== motion ==== */

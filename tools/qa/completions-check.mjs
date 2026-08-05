@@ -8,7 +8,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const URL_ = process.env.WARSHA_URL ?? 'http://127.0.0.1:8102/'
-const SHOTS = process.env.WARSHA_SHOTS ?? '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+import { fileURLToPath } from 'node:url'
+import { mkdirSync as __mkdirSync } from 'node:fs'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+__mkdirSync(SHOTS, { recursive: true })
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'warsha-completions-')), {

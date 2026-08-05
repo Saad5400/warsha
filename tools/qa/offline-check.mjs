@@ -60,7 +60,7 @@ async function setEditor(code) {
 }
 
 async function run() {
-  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await page.getByRole('button', { name: /^Run\b/ }).click()
 }
 
 // ---------------------------------------------------------------- 1. online boot

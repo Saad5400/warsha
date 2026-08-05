@@ -7,8 +7,11 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
 const URL_ = process.env.WARSHA_URL ?? 'http://localhost:8091/'
-const SHOTS = '/tmp/claude-1000/-home-saad-phpstorm-projects/bbe7e559-3593-441c-9d09-b825a1ae50ea/scratchpad'
+const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
+mkdirSync(SHOTS, { recursive: true })
 const W = Number(process.argv[2] ?? 1280)
 const H = Number(process.argv[3] ?? 900)
 const TAG = process.argv[4] ?? String(W)
@@ -20,7 +23,7 @@ const fail = (n, d = '') => { results.push(['FAIL', n, d]); console.log(`FAIL  $
 const info = (m) => console.log(`      ${m}`)
 
 const ctx = await chromium.launchPersistentContext(profile, {
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
   viewport: { width: W, height: H },
   deviceScaleFactor: 2,
@@ -33,14 +36,23 @@ page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 120000) => page.waitForFunction(
   (n) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(n), s, { timeout: t })
-const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
-const stopBtn = () => page.getByRole('button', { name: 'Stop', exact: true })
+/* Run's one home is the tab strip's editor-actions corner, at every size and
+ * pointer (one shell, founder ruling) — where it names the file it will start
+ * ("Run main.py" / "Stop main.py"). Hence the prefix match. */
+const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 const input = () => page.locator('[aria-label="Program input"]')
-const statusLine = () => page.locator('p[role="status"][data-state]')
+/* The run state lives in ONE place at every width: the status bar's remote
+ * block — StatusPill variant="bar", class `.status-remote`. (The console foot
+ * is gone; the header's `.pill` appears only while a software keyboard hides
+ * the bar, which console-kb.mjs asserts.) */
+const runState = async () => {
+  const el = page.locator('footer[aria-label="Status bar"] .status-remote')
+  return { state: await el.getAttribute('data-state'), text: (await el.innerText()).trim(), where: 'status bar' }
+}
 const shot = (n) => page.screenshot({ path: `${SHOTS}/con-${TAG}-${n}.png` })
-// RunBar's root lost its `console-header` class in a concurrent refactor; accept
-// either spelling so this suite reports console regressions rather than that one.
-const HEADER_SEL = '.console-header, section[aria-label="Console"] > div:first-of-type'
+// `console-header` is a styling-free contract class on RunBar's root.
+const HEADER_SEL = '.console-header'
 
 async function setEditor(text) {
   await page.locator('.cm-content').click()
@@ -70,10 +82,9 @@ async function ensureConsoleOpen(page) {
 await ensureConsoleOpen(page)
 
 // ------------------------------------------------------- A. idle / empty state
-const idleStatus = await statusLine().innerText().catch(() => '')
-const idleState = await statusLine().getAttribute('data-state').catch(() => null)
-if (idleState === 'idle' && /Ready/i.test(idleStatus)) pass('status line: idle', JSON.stringify(idleStatus))
-else fail('status line: idle', `${idleState} / ${idleStatus}`)
+const idle = await runState().catch(() => ({ state: null, text: '' }))
+if (idle.state === 'idle' && /Ready/i.test(idle.text)) pass(`run state: idle (${idle.where})`, JSON.stringify(idle.text))
+else fail('run state: idle', `${idle.state} / ${idle.text}`)
 const emptyText = await out()
 if (/Output will appear here/.test(emptyText))
   pass('empty console is a designed hint, not a void', JSON.stringify(emptyText.replace(/\s+/g, ' ').trim()))
@@ -106,13 +117,12 @@ if (sawProgress) {
 } else info('engine was already warm — no progress block (cache hit path)')
 
 await hasOut('Your name:')
-const waitState = await statusLine().getAttribute('data-state')
-const waitText = await statusLine().innerText()
+const waitRs = await runState()
 const waitPh = await input().getAttribute('placeholder')
 const rowWaiting = await page.locator('.stdin-row').getAttribute('data-waiting')
 const focused = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
-if (waitState === 'waiting' && /waiting|Waiting/.test(waitText)) pass('status line: waiting for input', JSON.stringify(waitText))
-else fail('status line: waiting for input', `${waitState} / ${waitText}`)
+if (waitRs.state === 'waiting' && /waiting|Waiting/.test(waitRs.text)) pass(`run state: waiting for input (${waitRs.where})`, JSON.stringify(waitRs.text))
+else fail('run state: waiting for input', `${waitRs.state} / ${waitRs.text}`)
 if (rowWaiting === 'true') pass('stdin row marked waiting (highlight)')
 else fail('stdin row marked waiting', String(rowWaiting))
 if (focused === 'Program input') pass('stdin input focused when the program asks')
@@ -146,6 +156,7 @@ const inline = await page.evaluate(() => {
     border: cs.borderTopWidth + ' ' + cs.borderTopStyle,
     background: cs.backgroundColor,
     rowRule: getComputedStyle(row).borderLeftColor,
+    rowRuleW: getComputedStyle(row).borderLeftWidth,
   }
 })
 info(`inline input: ${JSON.stringify(inline)}`)
@@ -157,12 +168,20 @@ else fail('prompt and input share a line', JSON.stringify(inline))
 if (inline && /^0px/.test(inline.border) && /rgba\(0, 0, 0, 0\)|transparent/.test(inline.background))
   pass('the input has no box of its own — the caret is the affordance', `${inline.border}, ${inline.background}`)
 else fail('input is chromeless', JSON.stringify({ border: inline?.border, bg: inline?.background }))
-if (inline?.rowRule === 'rgb(127, 196, 245)') pass('the live line carries an --info leading rule (greyscale-safe)', inline.rowRule)
-else fail('live line --info leading rule', String(inline?.rowRule))
-if (inline && inline.height >= 43.5) pass('the live input is a ≥44px touch target', `${inline.height}px`)
-else fail('live input ≥44px', JSON.stringify(inline))
-if (inline && parseFloat(inline.fontSize) >= 16) pass('stdin font-size ≥16px (no iOS zoom on focus)', inline.fontSize)
-else fail('stdin font-size ≥16px', String(inline?.fontSize))
+// One shell: console rows are VS Code-flat at EVERY width now — no leading
+// rules, no row bands. The --info caret and the status bar name the waiting
+// state; `[data-seg]` hues carry the rest.
+const inlineDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
+if (inline?.rowRuleW === '0px')
+  pass('the live line is flat — the caret and status bar name the waiting state', `${inline?.rowRule} ${inline?.rowRuleW}`)
+else fail('live line flat-row treatment', JSON.stringify({ rule: inline?.rowRule, w: inline?.rowRuleW }))
+// DENSITY: the 44px/16px pair is a touch obligation; a fine-pointer ≥900px
+// window (this harness) runs the live line at 28px/14px. console-kb.mjs
+// asserts the touch numbers where they bind.
+if (inline && inline.height >= (inlineDesk ? 24 : 43.5)) pass(`the live input is a ≥${inlineDesk ? 24 : 44}px target at this density`, `${inline.height}px`)
+else fail('live input height floor', JSON.stringify(inline))
+if (inline && parseFloat(inline.fontSize) >= (inlineDesk ? 14 : 16)) pass(`stdin font-size ≥${inlineDesk ? 14 : 16}px at this density`, inline.fontSize)
+else fail('stdin font-size floor', String(inline?.fontSize))
 await shot('c-waiting')
 
 await input().fill('Saad')
@@ -171,28 +190,35 @@ await hasOut('exit code 3')
 const after = await out()
 if (/Your name:\s*Saad/.test(after)) pass('typed answer echoed onto the prompt line')
 else fail('typed answer echoed onto the prompt line', after.slice(-120))
-const failState = await statusLine().getAttribute('data-state')
-const failText = await statusLine().innerText()
-if (failState === 'failed' && /exit code 3|red lines/.test(failText)) pass('status line: non-zero exit', JSON.stringify(failText))
-else fail('status line: non-zero exit', `${failState} / ${failText}`)
-// Below 900px with the console open the pill stands down: the status line right
-// above the input row carries the same state, and five controls do not fit 390px.
-// Collapse the console and it must be back, exit code and all.
-if (W >= 900) {
-  const pill = await page.locator('.pill').innerText()
-  if (/exit 3|Stopped early/.test(pill)) pass('header pill reports the failure + exit code', JSON.stringify(pill))
-  else fail('header pill reports the failure', JSON.stringify(pill))
-} else {
-  if (!(await page.locator('.pill').count())) pass('phone + console open: the pill stands down for the status line')
-  else fail('phone + console open: pill should stand down', await page.locator('.pill').innerText())
-  await page.getByRole('button', { name: 'Hide output' }).click()
-  await page.waitForTimeout(300)
-  const collapsed = await page.locator('.pill').innerText().catch(() => '')
-  if (/Stopped early/.test(collapsed)) pass('collapsed console: the pill carries the state in the header', JSON.stringify(collapsed))
-  else fail('collapsed console: pill in the header', JSON.stringify(collapsed))
-  await page.getByRole('button', { name: 'Show output' }).click()
-  await page.waitForTimeout(300)
-}
+const failRs = await runState()
+if (failRs.state === 'failed' && /exit code 3|exit 3|red lines/.test(failRs.text)) pass(`run state: non-zero exit (${failRs.where})`, JSON.stringify(failRs.text))
+else fail('run state: non-zero exit', `${failRs.state} / ${failRs.text}`)
+// One shell: the status bar carries the run state at EVERY width, so the
+// header pill is never on screen while a hardware keyboard is in play (it
+// exists only for the kb-open window, asserted in console-kb.mjs). A second
+// copy of the state 30px from the bar would read as a duplicate.
+// The pill is in the DOM at every moment now — visibility is CSS-owned
+// (`hidden kb-open:flex` on its wrapper off html[data-kb], the kb-hide
+// mechanism) — so the assertion is on being RENDERED, not on presence: a
+// pill inside a display:none wrapper is a pill standing down. Rendered
+// means a client rect (the wrapper's display:none is an ANCESTOR style, so
+// reading the pill's own computed display would always say inline-flex).
+const pillShown = await page.locator('.console-header .pill')
+  .evaluate((el) => el.getClientRects().length > 0)
+  .catch(() => false)
+if (!pillShown) pass('the header pill stands down for the status bar')
+else fail('header pill should stand down', await page.locator('.console-header .pill').innerText())
+const barState = await page.locator('footer[aria-label="Status bar"]').innerText()
+if (/exit 3|Stopped early/.test(barState)) pass('status bar reports the failure + exit code', JSON.stringify(barState.slice(0, 60)))
+else fail('status bar reports the failure', JSON.stringify(barState))
+// Collapsing the console must not lose the state — the bar keeps carrying it.
+await page.getByRole('button', { name: 'Hide output' }).click()
+await page.waitForTimeout(300)
+const collapsed = await page.locator('footer[aria-label="Status bar"] .status-remote').innerText().catch(() => '')
+if (/Stopped early/.test(collapsed)) pass('collapsed console: the status bar still carries the state', JSON.stringify(collapsed))
+else fail('collapsed console: state stays in the status bar', JSON.stringify(collapsed))
+await page.getByRole('button', { name: 'Show output' }).click()
+await page.waitForTimeout(300)
 // Row treatment must differ per kind, and survive greyscale (rule + tint).
 const kinds = await page.evaluate(() => {
   const rows = [...document.querySelectorAll('.console-row')]
@@ -201,24 +227,29 @@ const kinds = await page.evaluate(() => {
     if (!r) return null
     const cs = getComputedStyle(r)
     const txt = getComputedStyle(r.querySelector('.console-row__text'))
-    return { rule: cs.borderLeftColor, bg: cs.backgroundColor, color: txt.color, size: txt.fontSize, style: txt.fontStyle }
+    return { rule: cs.borderLeftColor, ruleW: cs.borderLeftWidth, bg: cs.backgroundColor, color: txt.color, size: txt.fontSize, style: txt.fontStyle }
   }
-  const seg = document.querySelector('[data-seg="echo"]')
-  const segOut = document.querySelector('[data-seg="out"]')
-  const segCs = (e) => e ? (({ color, fontStyle }) => ({ color, fontStyle }))(getComputedStyle(e)) : null
-  return { out: pick('out'), err: pick('err'), meta: pick('meta'), echoSeg: segCs(seg), outSeg: segCs(segOut) }
+  const segCs = (sel) => {
+    const e = document.querySelector(sel)
+    return e ? (({ color, fontStyle }) => ({ color, fontStyle }))(getComputedStyle(e)) : null
+  }
+  return { out: pick('out'), err: pick('err'), meta: pick('meta'),
+    echoSeg: segCs('[data-seg="echo"]'), outSeg: segCs('[data-seg="out"]'), errSeg: segCs('[data-seg="err"]') }
 })
 info(`row styles: ${JSON.stringify(kinds)}`)
-const rowKinds = [kinds.out, kinds.err, kinds.meta].filter(Boolean)
-const distinct = new Set(rowKinds.map((k) => `${k.rule}|${k.bg}|${k.color}|${k.size}`))
-if (distinct.size === rowKinds.length) pass('stdout / stderr / meta rows are visually distinct', `${distinct.size} distinct row treatments`)
-else fail('row kinds are visually distinct', JSON.stringify([...distinct]))
+// One shell: rows are VS Code-flat at every width, and the kinds separate by
+// their INK — stderr's --danger red, meta's dim italic 13px.
+const inks = [kinds.outSeg, kinds.errSeg, kinds.meta && { color: kinds.meta.color, fontStyle: kinds.meta.style }]
+  .filter(Boolean)
+  .map((k) => `${k.color}|${k.fontStyle}`)
+if (new Set(inks).size === inks.length) pass('stdout / stderr / meta separate by ink', JSON.stringify(inks))
+else fail('kinds separate by ink', JSON.stringify(inks))
 if (kinds.echoSeg && kinds.outSeg && kinds.echoSeg.color !== kinds.outSeg.color && kinds.echoSeg.fontStyle !== kinds.outSeg.fontStyle)
   pass('stdin echo differs from stdout in hue AND style on a shared line', JSON.stringify(kinds.echoSeg))
 else fail('stdin echo differs from stdout on a shared line', JSON.stringify({ echo: kinds.echoSeg, out: kinds.outSeg }))
-if (kinds.err && kinds.err.rule !== kinds.out.rule && kinds.err.bg !== kinds.out.bg)
-  pass('stderr carries a rule AND a tint (survives greyscale)')
-else fail('stderr carries a rule AND a tint')
+if (kinds.err && kinds.err.ruleW === '0px' && kinds.err.bg === kinds.out.bg && kinds.errSeg?.color === 'rgb(248, 81, 73)')
+  pass('stderr rows are flat with --danger ink (no rule, no tint, any width)')
+else fail('stderr flat-row treatment', JSON.stringify({ err: kinds.err, errSeg: kinds.errSeg }))
 await shot('d-exit-error')
 
 // ------------------------------------------- C. copy output (ACCEPTANCE 10.10)
@@ -400,10 +431,9 @@ await page.waitForTimeout(1500)
 const n2 = await page.evaluate(() => (document.querySelector('[aria-label="Program output"]').innerText.match(/spin/g) || []).length)
 if (n1 === n2) pass('output ceased after Stop')
 else fail('output ceased after Stop', `${n1} -> ${n2}`)
-const stopState = await statusLine().getAttribute('data-state')
-const stopText = await statusLine().innerText()
-if (stopState === 'stopped') pass('status line: stopped by you (neutral)', JSON.stringify(stopText))
-else fail('status line: stopped', `${stopState} / ${stopText}`)
+const stopRs = await runState()
+if (stopRs.state === 'stopped') pass(`run state: stopped by you (neutral, ${stopRs.where})`, JSON.stringify(stopRs.text))
+else fail('run state: stopped', `${stopRs.state} / ${stopRs.text}`)
 await shot('g-stopped')
 
 // ------------------------------------------------- E. clean exit + shortcut run
@@ -411,22 +441,23 @@ await page.waitForTimeout(700)
 await setEditor('print("all good")\n')
 await page.locator('.cm-content').press('Control+Enter')
 await hasOut('all good')
-const okState = await statusLine().getAttribute('data-state')
-const okText = await statusLine().innerText()
-if (okState === 'ok' && /exit code 0/.test(okText)) pass('Ctrl+Enter runs, status line: exit 0', JSON.stringify(okText))
-else fail('Ctrl+Enter runs / exit-0 status', `${okState} / ${okText}`)
+// The status bar's remote block says "Finished" without an exit suffix — the
+// transcript's meta row states the code in full.
+const okRs = await runState()
+if (okRs.state === 'ok' && /Finished|exit code 0/.test(okRs.text)) pass(`Ctrl+Enter runs, run state: ok (${okRs.where})`, JSON.stringify(okRs.text))
+else fail('Ctrl+Enter runs / exit-0 status', `${okRs.state} / ${okRs.text}`)
 await shot('h-exit-ok')
 
 // --------------------------------------------------- F. geometry + overlap check
-// Founder ruling (P1): Run/Stop and the icon-only controls in this header
-// (Copy, Clear, the collapse toggle) dropped from 44px to 40px visually. All
-// four keep `ui/Button.tsx`'s `after:` hit-area pseudo, so what is asserted
+// Founder ruling (P1): the icon-only controls in this header (Copy, Clear,
+// maximize, the collapse toggle — Run moved to the tab strip) are 40px visual
+// boxes on touch. All keep `ui/Button.tsx`'s `after:` hit-area pseudo, so what is asserted
 // now is the EFFECTIVE box (raw rect expanded by the pseudo's own computed
 // inset) rather than the raw one — read straight from the pseudo, not assumed.
 const geo = await page.evaluate((sel) => {
   const r = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null }
   const header = r(sel)
-  const runB = [...document.querySelectorAll(`${sel.split(', ')[0]} button, ${sel.split(', ')[1]} button`)].map((b) => {
+  const runB = [...document.querySelectorAll(`${sel} button`)].map((b) => {
     const rect = b.getBoundingClientRect().toJSON()
     const after = getComputedStyle(b, '::after')
     const expand = after.content === '""' ? Math.abs(parseFloat(after.top) || 0) + Math.abs(parseFloat(after.bottom) || 0) : 0
@@ -441,17 +472,23 @@ const geo = await page.evaluate((sel) => {
 }, HEADER_SEL)
 info(`header: ${JSON.stringify(geo.header)}`)
 for (const b of geo.runB) info(`  btn ${b.name}: ${Math.round(b.width)}x${Math.round(b.height)} (effective ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}) @ y=${Math.round(b.y)}`)
-const tooSmall = geo.runB.filter((b) => b.effectiveHeight < 43.5 || b.effectiveWidth < 43.5)
-if (!tooSmall.length) pass('every console-header button is ≥44px effective (40px visual + hit-area pseudo)')
-else fail('console-header buttons ≥44px effective', JSON.stringify(tooSmall.map((b) => `${b.name} ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}`)))
+// DENSITY: 44px effective is the touch obligation; the fine-pointer desktop
+// runs these controls at 28px visual (WCAG 2.2 AA pointer floor is 24).
+const geoDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
+const hitFloor = geoDesk ? 24 : 43.5
+const tooSmall = geo.runB.filter((b) => b.effectiveHeight < hitFloor || b.effectiveWidth < hitFloor)
+if (!tooSmall.length) pass(`every console-header button is ≥${Math.ceil(hitFloor)}px effective at this density`)
+else fail(`console-header buttons ≥${Math.ceil(hitFloor)}px effective`, JSON.stringify(tooSmall.map((b) => `${b.name} ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}`)))
 const spill = geo.runB.filter((b) => b.y < geo.header.y - 0.5 || b.y + b.height > geo.header.y + geo.header.height + 0.5)
 if (!spill.length) pass('no header button overflows the header bar')
 else fail('header buttons overflow the header', JSON.stringify(spill.map((b) => b.name)))
+// One shell: the resize handle renders at every width (its touch handle
+// carries the coarse-pointer grab area).
 if (geo.divider) {
   const overlaps = geo.divider.y + geo.divider.height > geo.header.y + 0.5
   if (!overlaps) pass('resize handle does not overlap the header', `handle bottom ${Math.round(geo.divider.y + geo.divider.height)} ≤ header top ${Math.round(geo.header.y)}`)
   else fail('resize handle overlaps the header')
-} else info('no resize handle at this width (phone layout, by design)')
+} else fail('resize handle missing — it renders at every width now')
 // The input's own geometry (44px, 16px) is asserted back in section B, while it
 // exists — nothing is reading stdin here, so there is nothing to measure.
 

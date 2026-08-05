@@ -275,19 +275,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
     setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, previewDoc: null })
 
-    // Escalation: dead air is what makes a student conclude the app is broken.
+    // No timed reassurance rows: loading speaks only through the ProgressBlock
+    // (one progress voice — founder ruling 2026-08-05), which carries its own
+    // slow-first-download note. Nothing lands in the transcript while the
+    // engine boots; the stall watchdog below is the only timer a run arms.
     clearTimers()
-    timers.current.push(
-      window.setTimeout(() => {
-        if (token.current === mine) buffer.line(COPY.runtimeSlow, 'meta')
-      }, 8000),
-      window.setTimeout(() => {
-        if (token.current === mine) buffer.line(COPY.runtimeKeepEditing, 'meta')
-      }, 25000),
-      window.setTimeout(() => {
-        if (token.current === mine) buffer.line(COPY.runtimeVerySlow, 'meta')
-      }, 60000),
-    )
 
     try {
       // A blackholed connection — a school firewall that drops packets instead
@@ -320,7 +312,9 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       if (token.current !== mine) return
       clearTimers()
 
-      buffer.line(COPY.running(entry), 'meta')
+      // No "Running <entry>…" row: the status line and pill say the program is
+      // running, and system text in the transcript is what students mistook
+      // for their program's own output (founder ruling 2026-08-05).
       setState((s) => ({ ...s, status: 'running', progress: null }))
 
       const s = await runtime.run(files, entry, {

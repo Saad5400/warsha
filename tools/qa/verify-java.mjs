@@ -46,8 +46,8 @@ const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle),
   s, { timeout: 240000 })
-const runBtn = () => page.getByRole('button', { name: 'Run', exact: true })
-const stopBtn = () => page.getByRole('button', { name: 'Stop', exact: true })
+const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 
 /** Replace the active editor's content. Single-line Java avoids CodeMirror
  *  auto-indent surprises; auto-closed brackets are overtyped by our own. */

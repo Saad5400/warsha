@@ -173,8 +173,21 @@ export class MemoryStore implements ProjectStore {
  */
 let opfsDisabled = false
 
+/** The one in-flight (or settled) probe — see probeOpfs. */
+let probing: Promise<boolean> | null = null
+
 /** True once OPFS has been proven usable (or proven not to be). */
-export async function probeOpfs(): Promise<boolean> {
+export function probeOpfs(): Promise<boolean> {
+  // Single-flight, because two probes at once race each other on the SAME
+  // probe dir: one's removeEntry lands while the other's writable is still
+  // open, the loser sees NoModificationAllowedError, and a perfectly working
+  // OPFS gets condemned to the memory fallback for the whole session
+  // (StrictMode's dev double-mount reproduces this on every reload). One
+  // probe, one verdict, shared by every caller.
+  return (probing ??= probeOnce())
+}
+
+async function probeOnce(): Promise<boolean> {
   if (opfsDisabled) return false
   if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
     opfsDisabled = true
