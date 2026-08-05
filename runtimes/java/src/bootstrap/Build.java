@@ -83,18 +83,113 @@ public class Build {
         return new File(runDir(runId), "classes.tsv");
     }
 
-    public static void main(String[] args) {
-        String runId = args[0];
-        String entryPath = args[1];
+    /** What a build produced: an exit code, and the run directory to launch from. */
+    static final class Result {
+        /** 0 compiled (or reused), 1 compile errors, 70 internal failure. */
+        final int code;
+        /** The run whose out/, main.txt and classes.tsv the launcher must use. */
+        final String runId;
+
+        Result(int code, String runId) {
+            this.code = code;
+            this.runId = runId;
+        }
+    }
+
+    /** Key + directory of the last successful compile in this JVM. */
+    private static String lastGoodKey = null;
+    private static String lastGoodRunId = null;
+
+    /**
+     * Compiles the staged project -- unless it is byte-for-byte the project the
+     * last successful compile in this session already compiled, in which case
+     * that run's output directory is reused and ECJ is not invoked at all.
+     *
+     * The reuse test is exact: same entry path, same set of relative paths,
+     * same content hash per file. Any edit, added file or deleted file misses
+     * the cache and takes the full-compile path, which builds into a fresh
+     * per-run directory exactly as before -- so a stale .class can no more
+     * resurrect here than it could when every run compiled. The cache also
+     * dies with this JVM (a kill() or System.exit replaces the worker), and is
+     * bypassed when the reused directory has vanished from /files/.
+     *
+     * `allowReuse` is false for the boot-time warm-up compile, which must
+     * neither seed the cache (its synthetic source is not the student's
+     * project) nor short-circuit.
+     */
+    static Result buildOrReuse(String runId, String entryPath, boolean allowReuse) {
         try {
-            Bridge.phaseDone("compile", String.valueOf(build(runId, entryPath)));
+            String key = null;
+            try {
+                key = projectKey(runId, entryPath);
+            } catch (Throwable ignored) {
+                // A hashing failure must never block a build; it only costs the reuse.
+            }
+
+            if (allowReuse && key != null && key.equals(lastGoodKey)
+                    && lastGoodRunId != null && outDir(lastGoodRunId).isDirectory()) {
+                Bridge.writeInternal("warsha-reuse: sources unchanged, skipping the compile");
+                return new Result(0, lastGoodRunId);
+            }
+            if (allowReuse) {
+                // The directory this pointed at is about to be gc'd by build().
+                lastGoodKey = null;
+                lastGoodRunId = null;
+            }
+
+            long started = System.currentTimeMillis();
+            int code = build(runId, entryPath);
+            Bridge.writeInternal(
+                    "warsha-timing: build " + (System.currentTimeMillis() - started) + "ms code=" + code);
+            if (allowReuse && code == 0 && key != null) {
+                lastGoodKey = key;
+                lastGoodRunId = runId;
+            }
+            return new Result(code, runId);
         } catch (Throwable t) {
             // A failure here is ours, not the student's; label it as such.
             StringWriter sw = new StringWriter();
             t.printStackTrace(new PrintWriter(sw));
             Bridge.writeDiag("warsha: internal build failure\n" + sw);
-            Bridge.phaseDone("compile", "70");
+            return new Result(70, runId);
         }
+    }
+
+    /**
+     * Digest of everything that could change what a compile produces: the
+     * entry path, and every staged file's project path and content. Manifest
+     * order is normalized away so the worker enumerating files differently can
+     * never fake a hit or force a miss.
+     */
+    private static String projectKey(String runId, String entryPath) throws IOException {
+        java.security.MessageDigest digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("MD5");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException("MD5 unavailable", e);
+        }
+        digest.update(entryPath.getBytes("UTF-8"));
+        digest.update((byte) 0);
+
+        List<String[]> manifest = readManifest(runId);
+        java.util.Collections.sort(manifest, new java.util.Comparator<String[]>() {
+            @Override
+            public int compare(String[] a, String[] b) {
+                return a[1].compareTo(b[1]);
+            }
+        });
+        for (String[] entry : manifest) {
+            digest.update(entry[1].getBytes("UTF-8"));
+            digest.update((byte) 0);
+            digest.update(readAll(new File("/str/" + entry[0])).getBytes("UTF-8"));
+            digest.update((byte) 0);
+        }
+
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest.digest()) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     /** Returns 0 on success, 1 if the student's code did not compile. */
@@ -355,15 +450,16 @@ public class Build {
      * per-run directory, not from the cleanup.
      *
      * Whether delete() even works on CheerpJ's IndexedDB mount is not something
-     * the spike established, so the outcome is printed. During Build,
-     * System.out is still CheerpJ's own console (only Launcher redirects the
-     * streams), which the worker forwards on its internal channel -- so this
-     * line never reaches a student, and the harness can assert on it.
+     * the spike established, so the outcome is reported -- through
+     * Bridge.writeInternal, because the resident Server installs the Bridge
+     * streams before any build runs, so System.out here would land in the
+     * STUDENT's console. The internal channel is where the harness asserts on
+     * this line.
      */
     private static void gcOldRuns(String runId) {
         File[] children = new File("/files").listFiles();
         if (children == null) {
-            System.out.println("warsha-gc: cannot list /files");
+            Bridge.writeInternal("warsha-gc: cannot list /files");
             return;
         }
         String keep = runDir(runId).getName();
@@ -376,7 +472,7 @@ public class Build {
             if (child.exists()) failed++;
             else deleted++;
         }
-        System.out.println("warsha-gc: deleted=" + deleted + " failed=" + failed);
+        Bridge.writeInternal("warsha-gc: deleted=" + deleted + " failed=" + failed);
     }
 
     private static void deleteTree(File file) {

@@ -159,6 +159,9 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       }
       activeRuntime.current = null
       if (note) buffer.line(note, failure ? 'err' : 'meta')
+      // An abandoned run must read true immediately — no paced reveal owing
+      // lines under an error the student is already looking at.
+      buffer.catchUp()
       setState({ status, exitCode: null, progress: null, busy: false, failure, previewDoc: null })
     },
     [buffer],
@@ -201,6 +204,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     clearTimers()
     awaiting.current = false
     typedAhead.current = []
+    // The student intervened; the transcript stops performing and tells the
+    // truth now. Everything the program printed before the kill is revealed —
+    // the alternative is Stop followed by seconds of output still "arriving",
+    // which reads as Stop not working (§7.3).
+    buffer.catchUp()
     if (session.current) {
       const mine = token.current
       session.current.kill()
@@ -331,6 +339,10 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
         },
         onStdinRequest: () => {
           if (token.current !== mine) return
+          // The input row appears at the cursor and joins the prompt line, so
+          // the prompt — and everything printed before it — must be on screen
+          // first, not still queued behind a paced reveal.
+          buffer.catchUp()
           const queued = typedAhead.current.shift()
           if (queued !== undefined) {
             // Hand it over only after the engine returns from onStdinRequest();

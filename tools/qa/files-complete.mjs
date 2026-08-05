@@ -66,9 +66,10 @@ const rowH = (await options().first().boundingBox()).height
 const rowDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 check(rowH >= (rowDesk ? 22 : 44), `completion rows are ≥${rowDesk ? 22 : 44}px at this density`, `${rowH}px`)
 const matched = await page.locator('.cm-completionMatchedText').first().evaluate((el) => getComputedStyle(el).color)
-// THEME-V4: matched characters take --list-highlight #2AAAFF (VS Code's list
-// filter-match blue), decoupled from --accent.
-check(matched === 'rgb(42, 170, 255)', 'the matched prefix is highlighted in --list-highlight', matched)
+// THEME-V5: matched characters take --list-highlight #E5B95C (the monochrome
+// theme's warm search-match precedent — a white highlight would vanish into
+// the near-white labels), decoupled from --accent.
+check(matched === 'rgb(229, 185, 92)', 'the matched prefix is highlighted in --list-highlight', matched)
 await page.screenshot({ path: join(SHOTS, 'files-complete-sout-1280.png') })
 
 await page.keyboard.press('Tab')

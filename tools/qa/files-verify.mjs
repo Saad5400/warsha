@@ -92,15 +92,16 @@ const railed = await openRow.first().evaluate((el) => {
 })
 if (desk) {
   // VS Code's list model (W1-C): selection is a full-row FILL — the reserved
-  // 2px border stays transparent — grey #37373D while the tree is unfocused,
-  // and weight stays 400 (VS Code weights nothing in the tree).
+  // 2px border stays transparent — grey #2B2B31 (v5 --list-inactive-sel-bg)
+  // while the tree is unfocused, and weight stays 400 (VS Code weights
+  // nothing in the tree).
   check(
-    railed.border === 'rgba(0, 0, 0, 0)' && railed.bg === 'rgb(55, 55, 61)' && railed.weight === '400',
+    railed.border === 'rgba(0, 0, 0, 0)' && railed.bg === 'rgb(43, 43, 49)' && railed.weight === '400',
     'open row carries the inactive selection fill (no rail, weight 400)',
     JSON.stringify(railed),
   )
   // Focus the row: [data-tree-root]:focus-within promotes the fill to the
-  // active-selection blue with a white label. `.tree-row` transitions
+  // active-selection grey (#3A3A42) with a white label. `.tree-row` transitions
   // background-color over --dur-fast, so let the fill settle before reading —
   // sampling in the same tick catches the grey end of the tween, not the bug
   // it would look like.
@@ -111,7 +112,7 @@ if (desk) {
     labelColor: getComputedStyle(el.querySelector('.tree-row__label')).color,
   }))
   check(
-    focusedFill.bg === 'rgb(4, 57, 94)' && focusedFill.labelColor === 'rgb(255, 255, 255)',
+    focusedFill.bg === 'rgb(58, 58, 66)' && focusedFill.labelColor === 'rgb(255, 255, 255)',
     'focused tree promotes the selection to the active fill + white label',
     JSON.stringify(focusedFill),
   )
@@ -300,12 +301,13 @@ const inactive = await page.locator('[role="tab"][data-state="inactive"]').first
   return { weight: l.fontWeight, color: l.color }
 })
 if (desk) {
-  // VS Code's grammar (W2-A): a 1px --accent rule on the TOP edge, the
-  // editor-canvas fill (#1F1F1F) running into the code below, a white label —
-  // and weight 400 on BOTH states, so activating a tab cannot reflow the strip.
+  // VS Code's grammar (W2-A): a 1px --accent rule on the TOP edge (white in
+  // v5), the editor-canvas fill (#0E0E11) running into the code below, a white
+  // label — and weight 400 on BOTH states, so activating a tab cannot reflow
+  // the strip.
   check(
-    /rgb\(0, 120, 212\) 0px 1px 0px 0px inset/.test(sig.shadow) &&
-      sig.bg === 'rgb(31, 31, 31)' &&
+    /rgb\(250, 250, 250\) 0px 1px 0px 0px inset/.test(sig.shadow) &&
+      sig.bg === 'rgb(14, 14, 17)' &&
       sig.color === 'rgb(255, 255, 255)' &&
       sig.weight === '400' &&
       sig.weight === inactive.weight &&
@@ -476,9 +478,10 @@ if (desk) {
   check(chrome.activeLine === rgb(chrome.token), 'active line uses --code-active-line, not oneDark', `${chrome.activeLine} vs ${chrome.token}`)
 }
 check(parseFloat(chrome.caretW) === 2, 'caret is 2px wide', chrome.caretW)
-// --code-caret is VS Code's #AEAFAD — deliberately DECOUPLED from --accent, or
-// the sweep to blue would have turned the caret blue with it.
-check(chrome.caretC === rgb(chrome.caretToken), 'caret is --code-caret (#AEAFAD), not the accent', `${chrome.caretC} vs ${chrome.caretToken}`)
+// --code-caret is a LITERAL (#FAFAFA in v5 — white, equal to the accent by
+// value but deliberately DECOUPLED, so retuning the accent never silently
+// moves the caret).
+check(chrome.caretC === rgb(chrome.caretToken), 'caret is --code-caret, decoupled from the accent', `${chrome.caretC} vs ${chrome.caretToken}`)
 const canvas = await page.evaluate(() => ({
   editor: getComputedStyle(document.querySelector('.cm-editor')).backgroundColor,
   gutter: getComputedStyle(document.querySelector('.cm-gutters')).backgroundColor,

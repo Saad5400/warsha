@@ -24,6 +24,7 @@ npm run preview   # serve dist/ on 8083
 | `src/copy.ts` | Every student-facing string, from DESIGN-SPEC §8. Items marked PLACEHOLDER await Design's final wording. |
 | `src/console/buffer.ts` | The transcript. Chunk-based (not line-based), batched notification, 5000-line head-dropping cap. Plain TS, no React. |
 | `src/editor/setup.ts` | All CodeMirror wiring: per-file state cache, lazy grammars, compartments. Plain TS. |
+| `src/editor/hoverDocs.ts` | Docs on hover: one VS Code-style card fed by the built-in dictionary (shared with completions.ts, so hover and autocomplete-info agree) plus the student's own Javadoc/docstrings scanned across the project (accessor registered from App). Mouse hover, long-press on touch, Ctrl/Cmd+K Ctrl/Cmd+I. |
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |

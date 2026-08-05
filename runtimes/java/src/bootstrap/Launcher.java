@@ -5,13 +5,22 @@ import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
 
 /**
  * Runs the student's main method and reports what happened.
  *
+ * Called by the resident Server rather than run as a main of its own: a
+ * cheerpjRunMain per run would reload every class each time (see Server). The
+ * student's classes load through a FRESH URLClassLoader over this run's out/
+ * directory instead, which is what a fresh classpath used to provide: two runs
+ * can never see each other's classes, and an edited class can never be shadowed
+ * by a stale one.
+ *
  * Never calls System.exit: one CheerpJ JVM serves every run in a session, so
- * exiting would strand all later runs. The exit status goes out through
- * Bridge.phaseDone instead.
+ * exiting would strand all later runs. The exit status is returned to Server,
+ * which reports it through Bridge.phaseDone.
  *
  * Uncaught throwables are rendered by Traces, in Java, where frames are still
  * structured objects. Doing it here rather than by pattern-matching text in JS
@@ -32,29 +41,24 @@ public class Launcher {
      */
     private static final String MAIN_THREAD = "main";
 
-    public static void main(String[] args) {
-        String runId = args[0];
-        String[] programArgs = new String[Math.max(0, args.length - 1)];
-        if (args.length > 1) System.arraycopy(args, 1, programArgs, 0, programArgs.length);
-
-        int status = 0;
-        try {
-            Bridge.installStdout();
-            Bridge.installStdin();
-        } catch (Throwable t) {
-            Bridge.writeDiag("warsha: could not install the console streams: " + t);
-            Bridge.phaseDone("run", "70");
-            return;
-        }
-
+    /**
+     * Runs the entry class of `runId` and returns its status: 0 for a clean
+     * return, 1 for an uncaught throwable or a missing/invalid entry point.
+     * The Bridge streams are already installed by Server, once per session.
+     */
+    static int launch(String runId) {
         final Traces traces = Traces.forRun(runId);
         installThreadHandler(traces);
 
+        int status = 0;
         try {
             String mainClass = readMainClass(runId);
-            Method main = Class.forName(mainClass).getMethod("main", String[].class);
+            URLClassLoader loader = new URLClassLoader(
+                    new URL[] { Build.outDir(runId).toURI().toURL() },
+                    Launcher.class.getClassLoader());
+            Method main = Class.forName(mainClass, true, loader).getMethod("main", String[].class);
             try {
-                main.invoke(null, (Object) programArgs);
+                main.invoke(null, (Object) new String[0]);
             } catch (InvocationTargetException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 System.err.print(traces.format(cause, MAIN_THREAD));
@@ -74,7 +78,7 @@ public class Launcher {
 
         System.out.flush();
         System.err.flush();
-        Bridge.phaseDone("run", String.valueOf(status));
+        return status;
     }
 
     /**

@@ -18,9 +18,11 @@ import { installViewport } from './ui/viewport'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
+import { setProjectDocsSource } from './editor/hoverDocs'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { shareFileAsImage } from './actions/shareImage'
-import { ActivityBar } from './components/ActivityBar'
+import { ActivityBar, type SideView } from './components/ActivityBar'
+import { SearchView } from './components/SearchView'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
 import { StorageBanner } from './components/StorageBanner'
@@ -176,6 +178,11 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [hand, setHand] = useState<'right' | 'left'>(initial.hand)
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // Which view the ONE sidebar hosts (VS Code's model): the Explorer tree or
+  // the cross-file Search view. The activity bar switches it; visibility stays
+  // the explorerDocked/drawerOpen pair above, so every existing toggle
+  // (Mod+B, the title bar, View menu) hides/shows whichever view is up.
+  const [sideView, setSideView] = useState<SideView>('explorer')
   const [importOpen, setImportOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   // Which QuickInput face is up, or none: 'commands' is the palette
@@ -209,6 +216,15 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
     return [...words]
   }, [project, revision])
+
+  // Docs on hover (editor/hoverDocs.ts) read user doc comments across every
+  // file. The editor is a singleton mount, so a module-level source beats
+  // threading a new prop chain; `revision` keys its lazy re-scan cache, and
+  // the accessor itself is only called when a hover actually needs the docs.
+  useEffect(() => {
+    setProjectDocsSource(() => project.sourceFiles(), revision)
+  }, [project, revision])
+
   const runner = useRunner(project, buffer, entryPath)
 
   // ---- restore the workspace once the project has loaded ----
@@ -272,21 +288,78 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (activePath && candidates.includes(activePath)) setEntryPath(activePath)
   }, [activePath, candidates])
 
-  // The drawer is never the thing being typed into (spec §4.3 rule 2).
+  // The drawer gets out of the way of typing (spec §4.3 rule 2) — UNLESS the
+  // typing is into the drawer itself: the Search view's query field lives
+  // there and is auto-focused, and closing over it would slam the drawer shut
+  // on the first letter of every phone search.
   useEffect(() => {
-    if (keyboardOpen && narrow) setDrawerOpen(false)
+    if (!(keyboardOpen && narrow)) return
+    const aside = document.querySelector('aside[aria-label="Files"]')
+    if (aside && aside.contains(document.activeElement)) return
+    setDrawerOpen(false)
   }, [keyboardOpen, narrow])
 
   // ---- file operations ----
+  /** A selection waiting for its file to become the open one — the Search
+   *  view's openAt, same deferred pattern as focusOnOpen below. Cleared by any
+   *  ordinary open so a stale range can never fire on the wrong document. */
+  const selectOnOpen = useRef<{ path: string; from: number; to: number } | null>(null)
+
   const openFile = useCallback(
     (path: string) => {
       if (project.read(path) === undefined) return
+      selectOnOpen.current = null
       setTabs((cur) => (cur.includes(path) ? cur : [...cur, path]))
       setActivePath(path)
       if (narrow) setDrawerOpen(false)
     },
     [project, narrow],
   )
+
+  /** Dispatch a selection into the live editor. Reached through the DOM like
+   *  editorCommand below (setup.ts belongs to another package this wave);
+   *  clamped so a range measured before an edit can never dispatch past the
+   *  document's end. rAF because the caller may have just mounted/opened the
+   *  file this frame. No focus() on a narrow screen: tapping a search result
+   *  should show the match, not summon the software keyboard over it. */
+  const applySelection = useCallback(
+    (from: number, to: number) => {
+      requestAnimationFrame(() => {
+        const dom = document.querySelector('.cm-editor')
+        const view = dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null
+        if (!view) return
+        const len = view.state.doc.length
+        view.dispatch({
+          selection: { anchor: Math.min(from, len), head: Math.min(to, len) },
+          scrollIntoView: true,
+        })
+        if (!narrow) view.focus()
+      })
+    },
+    [narrow],
+  )
+
+  /** Open `path` and select [from, to) — the Search view's row tap. The open
+   *  goes through the one openFile flow (tabs, drawer close); the selection
+   *  lands now if the file is already up, or once it is (the effect below). */
+  const openAt = useCallback(
+    (path: string, from: number, to: number) => {
+      if (project.read(path) === undefined) return
+      openFile(path)
+      if (activePath === path) applySelection(from, to)
+      else selectOnOpen.current = { path, from, to }
+    },
+    [project, openFile, activePath, applySelection],
+  )
+
+  // Same deferral (and the same deps) as focusOnOpen: the editor for a file
+  // opened from Search may not exist until a render later.
+  useEffect(() => {
+    const wanted = selectOnOpen.current
+    if (!wanted || activePath !== wanted.path) return
+    selectOnOpen.current = null
+    applySelection(wanted.from, wanted.to)
+  }, [activePath, revision, applySelection])
 
   const closeTab = useCallback(
     (path: string) => {
@@ -878,10 +951,28 @@ function Ide({ report }: { report: CapabilityReport }) {
   })()
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
-  /** ONE sidebar toggle behind every entry point (activity bar, title-bar
-   *  toggle, View menu, Mod+B): the docked pane at ≥900px, the overlay drawer
-   *  below — same control, different docking. */
+  /** ONE sidebar toggle behind every entry point (title-bar toggle, View menu,
+   *  Mod+B): the docked pane at ≥900px, the overlay drawer below — same
+   *  control, different docking. It hides/shows whichever view is up. */
   const toggleExplorer = () => (narrow ? setDrawerOpen((v) => !v) : setExplorerDocked((v) => !v))
+  /** The activity bar's contract (VS Code's rail): selecting a view shows it;
+   *  selecting the view already up toggles the sidebar closed. */
+  const showSideView = (view: SideView) => {
+    if (explorerVisible && sideView === view) {
+      toggleExplorer()
+      return
+    }
+    setSideView(view)
+    if (narrow) setDrawerOpen(true)
+    else setExplorerDocked(true)
+  }
+  /** Always-open form, for the menu row and the Mod+Shift+F binding — a menu
+   *  item named "Find in Files" must never close the search it names. */
+  const openSearchView = () => {
+    setSideView('search')
+    if (narrow) setDrawerOpen(true)
+    else setExplorerDocked(true)
+  }
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
 
   // One state object for Run/Stop. Its one rendered home at every size is the
@@ -995,6 +1086,14 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: () => editorCommand(openSearchPanel),
     },
     {
+      id: 'search.findInFiles',
+      // VS Code's own binding. The sidebar's Search view, not the editor's
+      // find panel — the same distinction VS Code draws for the same chord.
+      title: 'Search: Find in Files',
+      keys: ['Mod+Shift+F'],
+      run: openSearchView,
+    },
+    {
       id: 'view.toggleSidebar',
       title: 'View: Toggle Primary Side Bar',
       keys: ['Mod+B'],
@@ -1016,6 +1115,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       title: 'View: Focus Explorer',
       keys: ['Mod+Shift+E'],
       run: () => {
+        setSideView('explorer')
         if (narrow) setDrawerOpen(true)
         else setExplorerDocked(true)
         // Focus lands after the open state has painted; the active file's row
@@ -1193,6 +1293,8 @@ function Ide({ report }: { report: CapabilityReport }) {
           disabled: !activePath,
           onSelect: () => editorCommand(openSearchPanel),
         },
+        // The sidebar's cross-file search — VS Code's Edit > Find in Files.
+        { label: 'Find in Files…', hint: formatKeys('Mod+Shift+F'), onSelect: openSearchView },
       ],
     },
     {
@@ -1318,12 +1420,13 @@ function Ide({ report }: { report: CapabilityReport }) {
           Explorer item toggles the overlay drawer — same control, same place,
           different docking. */}
       <ActivityBar
-        explorerOpen={explorerVisible}
-        onToggleExplorer={toggleExplorer}
-        // The rail's Search opens find in the open file — the same action as
-        // Edit > Find, disabled under the same condition.
-        searchEnabled={activePath !== null}
-        onSearch={() => editorCommand(openSearchPanel)}
+        // VS Code's rail selection: the item for the view the sidebar shows
+        // carries the active rule; none while the sidebar is hidden.
+        activeView={explorerVisible ? sideView : null}
+        onShowExplorer={() => showSideView('explorer')}
+        // Search is a VIEW now (SearchView in the sidebar) — the editor's own
+        // find panel stays on Mod+F / Edit > Find.
+        onShowSearch={() => showSideView('search')}
         manageItems={manageItems}
       />
 
@@ -1342,11 +1445,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       />
 
       <div className={BODY}>
-        {/* Explorer: docked at ≥900px, an overlay drawer below that. */}
+        {/* The ONE sidebar — docked at ≥900px, an overlay drawer below that —
+            hosting whichever view the rail selected (Explorer or Search).
+            aria-label stays "Files" at all times: it is the QA suites' handle
+            for this aside, and the files are what both views operate on. */}
         <aside
           aria-label="Files"
           aria-hidden={!explorerVisible}
           data-state={explorerVisible ? 'open' : 'closed'}
+          data-view={sideView}
           className={
             'z-20 shrink-0 border-r border-border-subtle ' +
             (narrow
@@ -1359,6 +1466,9 @@ function Ide({ report }: { report: CapabilityReport }) {
                 : 'hidden')
           }
         >
+          {sideView === 'search' ? (
+            <SearchView project={project} revision={revision} onOpenMatch={openAt} />
+          ) : (
           <Explorer
             project={project}
             tree={tree}
@@ -1379,6 +1489,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             // they are already on screen and the button would be a no-op.
             onShowStarters={narrow ? () => setDrawerOpen(false) : undefined}
           />
+          )}
         </aside>
 
         {narrow && drawerOpen ? (

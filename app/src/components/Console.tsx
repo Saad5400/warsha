@@ -73,6 +73,12 @@ const LIVE_GRACE_MS = 900
  * human-paced batches — a prompt, an answer, a few lines of output — and a burst
  * animates nothing at all. Softens §9 for interactive output only (founder
  * ruling 2026-08-04); the burst path is untouched, which is the part §9 protects.
+ *
+ * The buffer's paced reveal (REVEAL_PER_FLUSH, founder ruling 2026-08-05) leans
+ * on this gate deliberately: it feeds bounded bursts through in batches smaller
+ * than this, so a fast program's output scrolls in with the fade, while a
+ * backlog past MAX_REVEAL_BACKLOG snaps in one large batch and lands here, in
+ * the animate-nothing path.
  */
 const FRESH_MAX_BATCH = 8
 

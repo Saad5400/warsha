@@ -46,10 +46,15 @@ const IDENTITY = 'top-bar__identity flex items-center justify-center gap-2 min-w
  * beside both clusters — guaranteed by the flex cell, no measurement).
  * pointer-events-none because it is a label, not a control. kb-hide: while
  * the software keyboard compacts the bar (phones), the label is the one
- * passenger the 40px bar can spare. */
+ * passenger the 40px bar can spare.
+ * leading-normal, NEVER leading-none here: the ellipsis needs overflow-hidden,
+ * and with a 13px line box the font's own descenders overflow it — "My project"
+ * rendered with the p/j tails sliced off (founder phone screenshot,
+ * 2026-08-05). A normal line box holds the full ascent+descent, so the only
+ * clipping left is the horizontal ellipsis; the flex cell centres it. */
 const WINDOW_TITLE =
   'top-bar__title kb-hide min-w-0 overflow-hidden text-ellipsis ' +
-  'whitespace-nowrap text-[13px] leading-none text-(--titlebar-fg) pointer-events-none select-none'
+  'whitespace-nowrap text-[13px] leading-normal text-(--titlebar-fg) pointer-events-none select-none'
 
 /* The trailing toggles: icon-btn squares with 16px glyphs in the title bar's
  * own foreground. The bang: IconButton's base sets text-text-2 and utility

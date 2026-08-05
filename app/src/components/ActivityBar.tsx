@@ -50,36 +50,48 @@ const SLOT =
   // was 2px/2px) so it sits flush against the inside with zero overflow.
   'focus-visible:outline-offset-[-1px]'
 
+export type SideView = 'explorer' | 'search'
+
 export interface ActivityBarProps {
-  explorerOpen: boolean
-  onToggleExplorer(): void
-  /** Opens the editor's find panel. Disabled with no file open — a search
-   *  with nothing to search in is not a state, it is a dead click. */
-  searchEnabled: boolean
-  onSearch(): void
+  /** Which sidebar view is showing, or null while the sidebar is hidden —
+   *  exactly one rail item carries the active rule at a time, VS Code's own
+   *  selection model. */
+  activeView: SideView | null
+  /** Show the Explorer view (or hide the sidebar if it is already up). */
+  onShowExplorer(): void
+  /** Show the cross-file Search view (same toggle contract). */
+  onShowSearch(): void
   /** The gear's dropdown — built by App, which owns every action in it. */
   manageItems: MenuItem[]
 }
 
 /**
- * VSCode's far-left icon column (LAYOUT-VSCODE §1), ≥900px only — below that the
- * drawer pattern already covers it and 48px of permanent chrome is a fifth of a
- * 390px screen.
+ * VSCode's far-left icon column (LAYOUT-VSCODE §1), at EVERY width — one shell
+ * (founder ruling 2026-08-05). Below 900px it drives the overlay drawer. (A
+ * fold-away strip and a sub-480 40px narrowing shipped briefly on 2026-08-05
+ * and were reverted the same day — the founder confirmed the 48px column is
+ * fine on a real device, and the extra chevron was chrome without a job.)
  *
  * Every slot on this rail does something real (the founder's no-dead-UI
  * mandate). The W1-D silhouette slots — Source Control, Run and Debug,
  * Extensions, Accounts — were permanently disabled stand-ins for views that do
  * not exist, and are gone until the views do; familiarity is not worth a
- * column of buttons that answer nothing. What remains: Explorer toggles the
- * sidebar, Search opens find in the open file, and the Manage gear opens a
+ * column of buttons that answer nothing. What remains: Explorer and Search
+ * switch the sidebar between its two views (each toggles the sidebar closed
+ * when its view is already up — VS Code's rail), and the Manage gear opens a
  * menu of the app-scoped actions VS Code keeps behind its own gear.
  * aria-labels are the bare VS Code view names, so `[aria-label^=...]` prefix
  * selectors in QA keep matching when shortcut suffixes arrive.
  *
- * The column is 48px per the plan, and every hit area is the full 48×48 — past
- * the 44px floor rather than under it (spec §5.2).
+ * The column is 48px per the plan, and every hit area is the full column
+ * square — past the 44px floor at full width.
  */
-export function ActivityBar({ explorerOpen, onToggleExplorer, searchEnabled, onSearch, manageItems }: ActivityBarProps) {
+export function ActivityBar({
+  activeView,
+  onShowExplorer,
+  onShowSearch,
+  manageItems,
+}: ActivityBarProps) {
   const [manageOpen, setManageOpen] = useState(false)
 
   return (
@@ -89,24 +101,24 @@ export function ActivityBar({ explorerOpen, onToggleExplorer, searchEnabled, onS
         className={SLOT}
         aria-label="Explorer"
         title="Explorer"
-        aria-pressed={explorerOpen}
-        data-state={explorerOpen ? 'active' : 'inactive'}
-        onClick={onToggleExplorer}
+        aria-pressed={activeView === 'explorer'}
+        data-state={activeView === 'explorer' ? 'active' : 'inactive'}
+        onClick={onShowExplorer}
       >
         <IconFilesStack size={24} />
       </button>
 
-      {/* An action, not a view: Warsha's search is the editor's find panel, so
-          the slot opens it rather than toggling a sidebar that does not exist.
-          data-state stays "inactive" — nothing here is a place you can be. */}
+      {/* A VIEW now, like VS Code's: the slot switches the sidebar to the
+          cross-file Search view (SearchView.tsx). The editor's own find panel
+          stays on Mod+F / Edit > Find. */}
       <button
         type="button"
         className={SLOT}
         aria-label="Search"
         title="Search"
-        disabled={!searchEnabled}
-        data-state="inactive"
-        onClick={onSearch}
+        aria-pressed={activeView === 'search'}
+        data-state={activeView === 'search' ? 'active' : 'inactive'}
+        onClick={onShowSearch}
       >
         <IconSearch size={24} />
       </button>
@@ -127,6 +139,7 @@ export function ActivityBar({ explorerOpen, onToggleExplorer, searchEnabled, onS
           </button>
         }
       />
+
     </nav>
   )
 }

@@ -578,6 +578,8 @@ Animate only `transform` and `opacity` (plus the progress bar's `width`). No lay
 
 The running indicator is the one continuous animation in the app (a 1.4s opacity pulse on a 6px dot). Under reduced motion it goes static and the pill relies on its label. Never animate the console's own content.
 
+Two founder rulings soften that last sentence without repealing it. Interactive, human-paced output — a prompt, an answer, a few lines — fades in (2026-08-04, `FRESH_MAX_BATCH` in Console.tsx). And a fast program's output is *paced*, not animated: the buffer reveals held-back lines at terminal-scroll speed (~240 lines/s) so a finished 1,000-line loop scrolls past instead of appearing as one silent block (2026-08-05, `REVEAL_PER_FLUSH` in console/buffer.ts). The pacing owes the student at most ~5 s of playback — past that backlog it snaps to caught-up — and it always snaps on Stop, on a stdin request, in a hidden tab, and under reduced motion. Genuine bursts therefore still land as one unanimated flush, which is the case this rule was written for.
+
 ---
 
 ## 10. Accessibility floor

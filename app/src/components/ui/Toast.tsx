@@ -1,6 +1,6 @@
 import { cva, cx } from 'class-variance-authority'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useKeyboardOpen } from '../../hooks/useMedia'
+import { useKeyboardOpen, useMedia } from '../../hooks/useMedia'
 import { IconButton } from './Button'
 import { IconClose } from './Icons'
 
@@ -28,10 +28,18 @@ const ToastContext = createContext<(message: string, kind?: ToastKind) => void>(
 export const useToast = () => useContext(ToastContext)
 
 /**
- * Toasts live at the TOP of the screen, under the top bar — never at the bottom.
- * The bottom belongs to the console transcript, the sticky stdin row and the
- * software keyboard (spec §4.3 rule 1), and a toast that covers the question a
- * program just asked is worse than no toast at all.
+ * Where the stack pins (founder pass, 2026-08-05 — toasts must never cover
+ * chrome):
+ *
+ *   - ≥900px: top-trailing, under the title bar — the corner that overlaps
+ *     nothing but editor margin at desktop widths.
+ *   - <900px: bottom-centre, above the status bar — VS Code's notification
+ *     edge. Pinned to the top it sat exactly on the 44px tab strip (the strip
+ *     read as collapsed; only the active tab's blue top accent peeked out).
+ *   - software keyboard up (any width): back to the top, under the compacted
+ *     bar. The bottom then belongs to the console transcript, the sticky stdin
+ *     row and the keyboard itself (spec §4.3 rule 1), and a toast that covers
+ *     the question a program just asked is worse than no toast at all.
  *
  * A sonner-style stack: each toast slides in from the edge it is pinned to and
  * slides back out when it goes. The whole stack pauses its clocks while a
@@ -44,6 +52,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // The top bar compacts to --bar-top-kb with the keyboard up (spec §4.3 rule 3);
   // the stack rides down with it rather than leaving a 4px gap.
   const keyboardOpen = useKeyboardOpen()
+  // Same 900px line as the overlay-sidebar breakpoint: the width below which
+  // the tab strip sits flush under the title bar and a top-pinned toast lands
+  // on it.
+  const wide = useMedia('(min-width: 900px)')
 
   // Two steps: mark it leaving so the exit can play, then drop it. Anything
   // already leaving is left alone, so a second dismiss cannot restart the clock.
@@ -75,16 +87,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        // One corner, always: the trailing end of the top bar. Centred, a toast
-        // covers the active tab — the one thing that says which file you are in.
-        className="pointer-events-none fixed inset-x-0 z-(--z-toast) flex flex-col items-end gap-2 px-4"
+        // Top-trailing at ≥900px (nothing under that corner but editor); at
+        // phone widths bottom-centre above the status bar, VS Code's
+        // notification edge — top-pinned it covered the tab strip (see the
+        // provider comment). Keyboard up trumps width: the bottom is spoken for.
+        className={
+          'pointer-events-none fixed inset-x-0 z-(--z-toast) flex flex-col gap-2 px-4 ' +
+          (keyboardOpen || wide ? 'items-end' : 'items-center')
+        }
         // The one computed value here, and the exception ARCHITECTURE §4.2
-        // already names: the offset tracks the top bar, which compacts to
-        // --bar-top-kb when the software keyboard is up.
-        // --bar-title, not --bar-top: the title bar is 52px at ≥900px so its
-        // filled Run control clears the divider, and a toast pinned to 44 there
-        // would sit ON the bar instead of 8px under it.
-        style={{ top: `calc(var(${keyboardOpen ? '--bar-top-kb' : '--bar-title'}) + var(--sp-2))` }}
+        // already names: the offset tracks a bar. Top mode tracks the top bar,
+        // which compacts to --bar-top-kb when the software keyboard is up
+        // (--bar-title, not --bar-top: the title bar is its own token so a
+        // toast never sits ON the bar instead of 8px under it). Bottom mode
+        // tracks the status bar, plus the home-indicator safe area beneath it.
+        style={
+          keyboardOpen
+            ? { top: 'calc(var(--bar-top-kb) + var(--sp-2))' }
+            : wide
+              ? { top: 'calc(var(--bar-title) + var(--sp-2))' }
+              : { bottom: 'calc(var(--bar-status) + var(--sp-2) + env(safe-area-inset-bottom, 0px))' }
+        }
         role="status"
         aria-live="polite"
         onPointerEnter={() => setPaused(true)}

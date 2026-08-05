@@ -41,6 +41,16 @@ const TOOLBAR_HOVER = 'desk:hover:not-disabled:bg-toolbar-hover!'
  * the 320px edge. px tightens with the header's ≤460px step. */
 const CAPS_TAB =
   'relative flex h-full min-w-10 shrink cursor-pointer touch-manipulation items-center px-2 max-[460px]:px-1 font-ui text-[11px] leading-none font-normal uppercase tracking-normal '
+
+/* A tap must not leave focus parked on a caps tab. Engines that treat a
+ * tap-focused control as :focus-visible draw the global 1px --focus-ring box
+ * around it, and on the active tab that ring compounds with the blue
+ * --panel-tab-active underline into a "blue line under AND beside the label"
+ * (founder phone screenshot, 2026-08-05). Cancelling pointerdown's default
+ * prevents only the focus grab — click still fires per the Pointer Events
+ * spec, and keyboard focus (Tab) still lands and shows the ring. VS Code's
+ * own panel-title tabs behave the same way: click acts, focus stays put. */
+const noTapFocus = (e: { preventDefault(): void }) => e.preventDefault()
 /* The elidable caps label inside a CAPS_TAB. */
 const CAPS_TAB_LABEL = 'min-w-0 truncate'
 const CAPS_TAB_ACTIVE = 'text-text-2 shadow-[inset_0_-1px_0_0_var(--panel-tab-active)]'
@@ -50,9 +60,17 @@ const CAPS_TAB_IDLE = 'text-text-3 hover:text-text-2'
  * is min-w-touch × min-h-run-h (44×40 touch, 28×28 desk); the after: pseudo
  * restores a ≥44px hit area into the row's gap on touch. min-h-run-h!: founder
  * ruling — `min-h-touch` in Button's base always wins a plain min-h utility
- * regardless of class order, so the override has to be important. */
+ * regardless of class order, so the override has to be important.
+ * max-[359px]:kb-open:hidden — the row sums under 320px at rest, but while the
+ * software keyboard is up the run-state pill joins it and the rigid cluster
+ * pushed the collapse chevron 9px off a 320px screen (probe 2026-08-05).
+ * Copy/Clear are the pair whose job least survives that moment — they act on a
+ * transcript the keyboard is covering — so they step out below 360px until the
+ * keyboard closes. QA note: Copy/Clear are absent under 360px ONLY while
+ * html[data-kb='open']. */
 const TOOLBAR_BTN =
   "min-w-touch shrink-0 min-h-run-h! relative after:absolute after:-inset-1 after:content-[''] " +
+  'max-[359px]:kb-open:hidden ' +
   TOOLBAR_HOVER
 
 export interface RunBarProps {
@@ -163,6 +181,7 @@ export function RunBar(props: RunBarProps) {
             role="tab"
             aria-selected="true"
             onClick={consoleOpen ? undefined : props.onToggleConsole}
+            onPointerDown={noTapFocus}
             className={CAPS_TAB + CAPS_TAB_ACTIVE}
           >
             <span className={CAPS_TAB_LABEL}>{COPY.viewConsole}</span>
@@ -203,10 +222,11 @@ export function RunBar(props: RunBarProps) {
             every size, like the rest of the header. The one keyboard-time
             caveat: while the OSK owns the panel's height the toggle only
             takes effect once the keyboard closes.
-            max-[359px]:hidden (founder overflow pass): below 360px the row
-            cannot seat every control and this is the one whose job survives
-            it — the divider drag still resizes the panel and collapse stays.
-            QA note: the "Maximize output" control is absent under 360px. */}
+            max-[379px]:hidden (founder overflow pass): below 380px the row
+            cannot seat every control (a full toolbar measured 7px over at
+            360) and this is the one whose job survives it — the divider drag
+            still resizes the panel and collapse stays.
+            QA note: the "Maximize output" control is absent under 380px. */}
         {consoleOpen && props.onToggleMaximize ? (
           <IconButton
             // "Maximize output"/"Restore output" verbatim — the ARCHITECTURE §4
@@ -215,7 +235,7 @@ export function RunBar(props: RunBarProps) {
             // answer to either of those.
             label={props.maximized ? 'Restore output' : 'Maximize output'}
             onClick={props.onToggleMaximize}
-            className={TOOLBAR_HOVER + ' max-[359px]:hidden'}
+            className={TOOLBAR_HOVER + ' max-[379px]:hidden'}
           >
             {props.maximized ? <IconChevronDown /> : <IconChevronUp />}
           </IconButton>
@@ -251,6 +271,7 @@ function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputVie
         role="tab"
         aria-selected={selected}
         onClick={() => onView?.(v)}
+        onPointerDown={noTapFocus}
         className={CAPS_TAB + (selected ? CAPS_TAB_ACTIVE : CAPS_TAB_IDLE)}
       >
         <span className={CAPS_TAB_LABEL}>{label}</span>

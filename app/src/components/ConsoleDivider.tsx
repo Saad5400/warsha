@@ -51,6 +51,15 @@ export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(
         'group relative h-3 shrink-0 cursor-row-resize touch-none bg-surface-1 desk:h-0 desk:bg-transparent'
       }
       onPointerDown={(e) => {
+        // A drag (or a stray tap) must not leave focus parked on the sash: the
+        // root holds it indefinitely afterwards, and an engine that treats
+        // tap-focus as :focus-visible then draws the global 1px --focus-ring
+        // box around the touch band — a blue frame hugging the console
+        // header's top edge (founder phone screenshot, 2026-08-05). Cancelling
+        // the default prevents only the focus grab; pointer capture, click and
+        // dblclick are unaffected, and keyboard focus (Tab) still lands and
+        // still lights the sash face / grabber via group-focus-visible.
+        e.preventDefault()
         drag.current = { y: e.clientY, h: height }
         setDragging(true)
         e.currentTarget.setPointerCapture(e.pointerId)

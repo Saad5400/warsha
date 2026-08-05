@@ -32,12 +32,29 @@ public class Bridge {
     public static native void writeDiag(String s);
 
     /**
-     * Terminal status of a bootstrap phase. `phase` is "compile" or "run",
-     * `code` is "0" for success or a non-zero exit code. Reported through a
-     * native rather than a process exit code, because a real exit would kill
-     * the shared JVM.
+     * Terminal status of a bootstrap phase. `phase` is "server", "compile",
+     * "run" or "warm", `code` is "0" for success or a non-zero exit code.
+     * Reported through a native rather than a process exit code, because a real
+     * exit would kill the shared JVM.
      */
     public static native void phaseDone(String phase, String code);
+
+    /**
+     * Blocks until the worker submits the next command for the resident
+     * Server loop. Commands are tab-separated: "run\t&lt;runId&gt;\t&lt;entryPath&gt;" or
+     * "warm\t&lt;runId&gt;\t&lt;entryPath&gt;". Parked here is where the Server spends its
+     * idle life; the worker's event loop keeps running because CheerpJ awaits
+     * async natives.
+     */
+    public static native String nextCommand();
+
+    /**
+     * Diagnostics for the worker's internal channel (harness/debugging), never
+     * for the student. Needed because the Server installs the Bridge streams
+     * once at startup, so System.out inside Build would otherwise land in the
+     * student's console.
+     */
+    public static native void writeInternal(String s);
 
     public static void installStdin() {
         System.setIn(new InputStream() {

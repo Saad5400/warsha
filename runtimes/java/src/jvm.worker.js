@@ -17,11 +17,30 @@
  * interrupt or exit call. A Java `while (true) {}` performs no I/O and so never
  * yields, which hard-freezes whichever event loop the JVM runs on -- verified,
  * the tab becomes unrecoverable. worker.terminate() is the only real kill.
+ *
+ * ======================= THE RESIDENT SERVER DESIGN ======================
+ * Each cheerpjRunMain call gets a FRESH classloader (measured: a static set in
+ * one call reads false in the next), so the old one-main-per-phase design
+ * reloaded ECJ on every compile and re-paid its multi-second warm-up on every
+ * single Run. Instead, ONE long-lived main -- warsha.Server -- is started after
+ * boot and stays parked on the async Bridge.nextCommand native; every run is a
+ * command into that loop, so ECJ loads once per session and stays JIT-warm.
+ *
+ * Starting Server doubles as the bootstrap-cache probe: /files/ is IndexedDB-
+ * backed and persists across page loads, so the compiled warsha.* classes are
+ * usually still there from an earlier session. Server checks the stamp hash
+ * compiled into them (see bootstrap/Stamp.java); only a mismatch -- or classes
+ * missing entirely -- pays the in-browser bootstrap compile. That compile used
+ * to be the whole loading experience on EVERY page load; now it is a
+ * per-deploy, per-device cost.
  * =========================================================================
  */
 
 const CDN_BASE = 'https://cjrtnc.leaningtech.com/4.3/'
 const COMPILER_MAIN = 'org.eclipse.jdt.internal.compiler.batch.Main'
+
+/* Bump to invalidate every cached bootstrap: it feeds the stamp hash. */
+const STAMP_SCHEMA = 'warsha-bootstrap-v1'
 
 /* Engine assets worth measuring, for a determinate progress bar.
  *
@@ -62,9 +81,10 @@ const post = (msg) => self.postMessage(msg)
 
 /* A warm start must be SILENT: the shell treats a visible progress block on
  * run #2 as evidence that caching is broken (app/ARCHITECTURE.md §2). Cached
- * assets resolve in tens of milliseconds and cheerpjInit itself came back in
- * 34-93ms warm, so announcing a phase the instant it starts would flash a
- * download bar on screen for work that was already done.
+ * assets resolve in tens of milliseconds, cheerpjInit itself came back in
+ * 34-93ms warm, and a stamped bootstrap makes the Server probe the only other
+ * boot work -- so announcing a phase the instant it starts would flash a bar
+ * on screen for work that was already done.
  *
  * Every phase announcement is therefore delayed and cancelled if the phase
  * finishes first. Byte-level updates are also gated on the announcement having
@@ -108,8 +128,32 @@ let stdinWaiter = null
 /** Lines submitted before Java asked for them. `null` entries mean EOF. */
 const stdinQueue = []
 
-/** Set by Bridge.phaseDone; null means the phase never reported. */
-let phaseStatus = null
+/** Resolves the Server loop's pending Bridge.nextCommand(). */
+let commandWaiter = null
+/** Commands submitted before the Server asked for one. */
+const commandQueue = []
+
+/** phase name -> FIFO of resolvers waiting on Bridge.phaseDone for it. */
+const phaseWaiters = Object.create(null)
+
+/** Settles (with the JVM's exit code) when the Server main returns or dies. */
+let serverExited = null
+/** True from the Server reporting phase "server" 0 until its main settles. */
+let serverLive = false
+
+/**
+ * Serializes everything sent into the Server's single-threaded loop: the
+ * boot-time warm-up compile and every run. A Run pressed while the warm-up is
+ * still compiling simply queues behind it -- never two commands in flight.
+ */
+let commandChain = Promise.resolve()
+
+function enqueueCommandWork(work) {
+  const next = commandChain.then(work, work)
+  // Keep the chain alive whatever `work` did; each job reports its own errors.
+  commandChain = next.catch(() => {})
+  return next
+}
 
 // --- natives ---------------------------------------------------------------
 // Naming is Java_<fully.qualified.Class with underscores>_<method>. The first
@@ -138,7 +182,39 @@ async function Java_warsha_Bridge_writeDiag(lib, text) {
 }
 
 async function Java_warsha_Bridge_phaseDone(lib, phase, code) {
-  phaseStatus = { phase: String(phase), code: Number(code) }
+  const waiters = phaseWaiters[String(phase)]
+  if (waiters && waiters.length) waiters.shift()(Number(code))
+  // No waiter means nobody asked (e.g. a report after the run was abandoned);
+  // dropping it is correct -- each phase is awaited before the next command.
+}
+
+async function Java_warsha_Bridge_nextCommand() {
+  if (commandQueue.length) return commandQueue.shift()
+  return await new Promise((resolve) => {
+    commandWaiter = resolve
+  })
+}
+
+async function Java_warsha_Bridge_writeInternal(lib, text) {
+  post({ type: 'internal', level: 'log', text: String(text), noise: false })
+}
+
+/** One-shot promise for the next phaseDone report of `phase`. */
+function waitPhase(phase) {
+  return new Promise((resolve) => {
+    if (!phaseWaiters[phase]) phaseWaiters[phase] = []
+    phaseWaiters[phase].push(resolve)
+  })
+}
+
+function sendCommand(command) {
+  if (commandWaiter) {
+    const waiter = commandWaiter
+    commandWaiter = null
+    waiter(command)
+  } else {
+    commandQueue.push(command)
+  }
 }
 
 // --- messages from the main thread ------------------------------------------
@@ -157,9 +233,11 @@ self.onmessage = (event) => {
       return
 
     case 'run':
-      compileAndRun(message).catch((error) => {
-        post({ type: 'fatal', text: describe(error) })
-      })
+      enqueueCommandWork(() =>
+        compileAndRun(message).catch((error) => {
+          post({ type: 'fatal', text: describe(error) })
+        }),
+      )
       return
 
     case 'stdin': {
@@ -183,11 +261,11 @@ async function boot(cdnBase) {
 
   await prefetchEngine(cdnBase)
 
-  // Gated like the download: cheerpjInit came back in 34-93ms on a warm cache,
-  // and a bar that appears and vanishes inside 100ms reads as a glitch.
+  // Gated like the download: cheerpjInit came back in 34-93ms on a warm cache
+  // and the Server probe of a stamped bootstrap is similarly quick, so a bar
+  // that appears and vanishes inside 100ms would read as a glitch.
   // (importScripts blocks this thread, so the timer can only fire once the
-  // loader is in and we are inside cheerpjInit -- which is where the seconds go
-  // on a cold start anyway.)
+  // loader is in and we are inside cheerpjInit.)
   const bootGate = announceAfter({
     type: 'progress',
     phase: 'boot',
@@ -205,16 +283,81 @@ async function boot(cdnBase) {
       Java_warsha_Bridge_writeErr,
       Java_warsha_Bridge_writeDiag,
       Java_warsha_Bridge_phaseDone,
+      Java_warsha_Bridge_nextCommand,
+      Java_warsha_Bridge_writeInternal,
     },
   })
-  bootGate.cancel()
   const initMs = performance.now() - started
 
+  const stamp = stampOf(cdnBase)
+  bootstrapSources = withStamp(bootstrapSources, stamp)
+
+  // Probe the persisted bootstrap by starting the Server against it.
   const warmStarted = performance.now()
-  await compileBootstrap()
-  const warmMs = performance.now() - warmStarted
+  let outcome = await startServer(stamp)
+  bootGate.cancel()
+
+  let warmMs = 0
+  if (outcome !== 0) {
+    // Cache miss: classes absent (first visit, or a cleared IndexedDB), from
+    // other sources (a new deploy), or unlinkable (an interrupted compile).
+    // Every one of those answers the same way: compile the bootstrap, then
+    // the Server MUST start.
+    await compileBootstrap()
+    warmMs = performance.now() - warmStarted
+    outcome = await startServer(stamp)
+    if (outcome !== 0) {
+      throw new Error(
+        `the Warsha Java bootstrap failed to start after a fresh compile (code ${outcome}). ` +
+          'This is a Warsha bug, not a problem with your program.',
+      )
+    }
+  }
 
   post({ type: 'ready', initMs, warmMs })
+
+  // ECJ's first compile of a session pays its warm-up (loading its own classes
+  // over the virtual filesystem) whatever it compiles. Pay it now, in the
+  // background, on a throwaway source -- not on the student's first Run. The
+  // command chain serializes this behind-the-scenes compile with real runs, so
+  // a Run pressed immediately just waits for it, which still beats the old
+  // design where the SAME wait happened before load() ever resolved.
+  enqueueCommandWork(() => warmCompiler())
+}
+
+/**
+ * Starts warsha.Server against whatever /files/ holds and reports how that
+ * went: 0 running, 2 stamp mismatch, 3 exited without reporting (classes
+ * missing or broken -- CheerpJ surfaces ClassNotFoundException as a settled
+ * main, not a rejection), any other number a reported startup failure.
+ */
+function startServer(stamp) {
+  serverLive = false
+
+  // Boot-time only, so no commands are in flight: drop any waiter left over
+  // from a previous attempt, or it would steal this attempt's report.
+  for (const phase of Object.keys(phaseWaiters)) delete phaseWaiters[phase]
+
+  const settled = cheerpjRunMain('warsha.Server', '/files/:' + compilerJarPath, stamp).then(
+    (code) => (typeof code === 'number' ? code : 1),
+    () => 1,
+  )
+  serverExited = settled.then((code) => {
+    serverLive = false
+    return code
+  })
+
+  // phaseDone("server", ...) is called by Java strictly before its main can
+  // return, and CheerpJ awaits the native -- so when both happen, the phase
+  // report wins this race. The exit branch fires only when the report never
+  // came: no Server class, or a bootstrap too broken to reach it.
+  return Promise.race([
+    waitPhase('server'),
+    serverExited.then((code) => (code === 0 ? 3 : code)),
+  ]).then((code) => {
+    if (code === 0) serverLive = true
+    return code
+  })
 }
 
 /**
@@ -273,27 +416,70 @@ async function prefetchEngine(cdnBase) {
   }
 }
 
+// --- the bootstrap cache stamp ----------------------------------------------
+
 /**
- * Compiles the Warsha bootstrap classes (Bridge, Build, Launcher) into
- * /files/warsha/.
- *
- * This doubles as the compiler warm-up. The first ECJ compile of a session
- * costs several seconds because ECJ loads its own classes over the virtual
- * filesystem, and that cost is paid once whatever gets compiled -- so compiling
- * something we actually need beats compiling a throwaway file. It also means
- * there is no prebuilt jar to keep in sync with these sources, and no cached
- * .class files in IndexedDB to version-stamp and invalidate. See INTEGRATION.md.
+ * Hash of everything that determines what the compiled bootstrap IS: the
+ * schema version, the compiler jar path, the engine base, and every bootstrap
+ * source byte (with Stamp.java still holding its committed placeholder, so the
+ * value is deterministic). FNV-1a twice with different seeds; this fingerprints
+ * deploys against each other, it defends against nothing adversarial.
+ */
+function stampOf(cdnBase) {
+  const parts = [STAMP_SCHEMA, compilerJarPath, cdnBase]
+  for (const name of Object.keys(bootstrapSources).sort()) {
+    parts.push(name, bootstrapSources[name])
+  }
+  const text = parts.join(' ')
+  let h1 = 0x811c9dc5
+  let h2 = 0x811c9dc5 ^ 0x5bd1e995
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0
+    h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0
+  }
+  return hex32(h1) + hex32(h2)
+}
+
+function hex32(n) {
+  return ('0000000' + n.toString(16)).slice(-8)
+}
+
+/** A copy of the bootstrap sources with the real stamp compiled into Stamp.java. */
+function withStamp(sources, stamp) {
+  const copy = {}
+  let replaced = false
+  for (const name of Object.keys(sources)) {
+    let content = sources[name]
+    if (content.indexOf('"dev-placeholder"') >= 0) {
+      content = content.replace('"dev-placeholder"', JSON.stringify(stamp))
+      replaced = true
+    }
+    copy[name] = content
+  }
+  if (!replaced) {
+    // Without the stamp the Server would refuse to start after every compile.
+    throw new Error('bootstrap sources are missing the Stamp placeholder')
+  }
+  return copy
+}
+
+// --- the bootstrap compile (cache-miss path only) ----------------------------
+
+/**
+ * Compiles the Warsha bootstrap classes (Bridge, Build, Launcher, Server,
+ * Stamp, Traces) into /files/warsha/, where they PERSIST: /files/ is
+ * IndexedDB-backed, so the next page load starts the Server straight from
+ * these classes and skips this compile entirely. Only a new deploy (the stamp
+ * changes) or an evicted IndexedDB pays it again.
  *
  * ECJ is driven through its main() here, unlike student compiles: the
  * programmatic entry point lives in Build, which does not exist yet.
  */
 async function compileBootstrap() {
-  // NOT gated, unlike the download and boot phases. This compile costs seconds
-  // on EVERY start, warm cache included, because the bootstrap classes are
-  // compiled in the browser rather than shipped prebuilt -- so there is no cache
-  // hit to stay quiet about, and staying quiet would mean several seconds of
-  // dead air. It is also the one reason a Java warm start is not silent; see the
-  // note in INTEGRATION.md.
+  // NOT gated, unlike the download and boot phases: when this runs it always
+  // costs seconds, so there is no cache hit to stay quiet about, and staying
+  // quiet would mean seconds of dead air.
   post({ type: 'progress', phase: 'compile', message: 'Preparing the Java compiler…' })
 
   const paths = []
@@ -306,7 +492,7 @@ async function compileBootstrap() {
   // -d /files/ (the root) because the compiler will not create its own output
   // directory and JS cannot mkdir under /files/. Bootstrap classes therefore
   // land in /files/warsha/, which is also why per-run directories are named
-  // r<runId> -- Build's cleanup must never walk into /files/warsha.
+  // warsha-run-<runId> -- Build's cleanup must never walk into /files/warsha.
   const code = await cheerpjRunMain(
     COMPILER_MAIN,
     compilerJarPath,
@@ -329,9 +515,39 @@ async function compileBootstrap() {
   }
 }
 
+/**
+ * The background ECJ warm-up: one throwaway compile through the same resident
+ * Build path a real run takes. Failures are logged and swallowed -- the worst
+ * case is that the student's first compile is as slow as it always was.
+ */
+async function warmCompiler() {
+  if (!serverLive) return
+  const runId = 'warm0'
+  addStringFile(`/str/w${runId}_0.java`, 'public class WarshaWarm { public static void main(String[] args) {} }\n')
+  addStringFile(`/str/warsha-manifest-${runId}.tsv`, `w${runId}_0.java\tWarshaWarm.java`)
+  const started = performance.now()
+  const warmed = waitPhase('warm')
+  sendCommand(`warm\t${runId}\tWarshaWarm.java`)
+  const code = await Promise.race([warmed, serverExited.then(() => 'dead')])
+  post({
+    type: 'internal',
+    level: 'log',
+    text: `warsha-warmup: ${Math.round(performance.now() - started)}ms code=${code}`,
+    noise: false,
+  })
+}
+
 // --- run -------------------------------------------------------------------
 
 async function compileAndRun({ runId, files, entryPath }) {
+  // The Server main died earlier in the session (a student System.exit whose
+  // run already reported, or a fatal). The runtime replaces this worker when
+  // told; make sure it is told rather than hanging a run forever.
+  if (!serverLive) {
+    post({ type: 'done', exit: 1, compileMs: 0, runMs: 0, tainted: true })
+    return
+  }
+
   // 0. Drop anything stdin-related left over from the previous run.
   //
   // stdinQueue holds lines the student typed ahead of the program asking for
@@ -361,48 +577,43 @@ async function compileAndRun({ runId, files, entryPath }) {
   }
   addStringFile(`/str/warsha-manifest-${runId}.tsv`, manifest.join('\n'))
 
-  // 2. Stage + compile. Build reports its result through Bridge.phaseDone
-  //    rather than a process exit code: System.exit would tear down a JVM that
-  //    is reused by every later run in this session.
-  phaseStatus = null
+  // 2. Compile (or reuse: Build skips ECJ when the staged project is identical
+  //    to the last successfully compiled one). The Server reports through
+  //    Bridge.phaseDone; its main settling instead means the JVM died under us.
+  const compileWait = waitPhase('compile')
   const compileStarted = performance.now()
-  const compileExit = await cheerpjRunMain(
-    'warsha.Build',
-    `/files/:${compilerJarPath}`,
-    runId,
-    entryPath,
-  )
+  sendCommand(`run\t${runId}\t${entryPath}`)
+  const compileStatus = await Promise.race([compileWait, serverExited.then(() => 'dead')])
   const compileMs = performance.now() - compileStarted
 
-  const compileStatus = phaseStatus && phaseStatus.phase === 'compile' ? phaseStatus.code : compileExit
+  if (compileStatus === 'dead') {
+    post({ type: 'done', exit: 1, compileMs, runMs: 0, tainted: true })
+    return
+  }
   if (compileStatus !== 0) {
     post({ type: 'compile-failed', code: compileStatus, compileMs })
     return
   }
 
-  // 3. Run. The output directory is created by Build in step 2, so it exists by
-  //    the time this classpath is resolved.
-  phaseStatus = null
+  // 3. Run. The Server launches immediately after reporting the compile, so
+  //    the clock starts here. A settled Server main during this wait means the
+  //    student's own code called System.exit() and took the shared JVM down
+  //    with it -- CheerpJ hands us the exit code as the main's result. This
+  //    worker cannot be trusted for another run, so say so and let the main
+  //    thread respawn it.
+  const runWait = waitPhase('run')
   const runStarted = performance.now()
-  const runExit = await cheerpjRunMain(
-    'warsha.Launcher',
-    `/files/:/files/warsha-run-${runId}/out/`,
-    runId,
-  )
+  const runStatus = await Promise.race([
+    runWait,
+    serverExited.then((code) => ({ died: true, code })),
+  ])
   const runMs = performance.now() - runStarted
 
-  // Launcher always reports through phaseDone. If it did not, the student's own
-  // code called System.exit() and took the shared JVM down with it -- this
-  // worker cannot be trusted for another run, so say so and let the main thread
-  // respawn it.
-  const reported = phaseStatus && phaseStatus.phase === 'run'
-  post({
-    type: 'done',
-    exit: reported ? phaseStatus.code : runExit,
-    compileMs,
-    runMs,
-    tainted: !reported,
-  })
+  if (typeof runStatus === 'object') {
+    post({ type: 'done', exit: runStatus.code, compileMs, runMs, tainted: true })
+    return
+  }
+  post({ type: 'done', exit: runStatus, compileMs, runMs, tainted: false })
 }
 
 // --- helpers ---------------------------------------------------------------

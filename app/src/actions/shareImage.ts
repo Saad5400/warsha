@@ -10,33 +10,20 @@
  * far outside the viewport with no width constraint of its own, so a 140-
  * column line renders 140 columns wide instead of wrapping at 390px.
  *
- * Syntax colours are CodeMirror's own: `javaLanguage`/`pythonLanguage` (the
- * same Lezer grammars the editor uses) are parsed headlessly, and the actual
- * generated stylesheet is lifted from `oneDarkHighlightStyle.module` rather
- * than re-guessed — see `highlightStyleCss()`. No EditorView is ever created;
- * this module does not depend on one already being mounted.
+ * Syntax colours are CodeMirror's own: the same Lezer grammars the editor
+ * uses are parsed headlessly (see actions/highlight.ts, which owns the lazy
+ * grammar loading and its rationale), and the actual generated stylesheet is
+ * lifted from `oneDarkHighlightStyle.module` rather than re-guessed — see
+ * `highlightCss()`. No EditorView is ever created; this module does not
+ * depend on one already being mounted.
  *
- * Every import below the two static ones is dynamic and on purpose.
- * `editor/setup.ts` already loads the Java/Python Lezer grammars lazily
- * (`loadLanguage`, per file, on first open) precisely so a student who never
- * opens a Java file never downloads its grammar — a static import here of
- * `@codemirror/lang-java`/`-python` would pull *both* grammars into the main
- * bundle regardless of language, permanently, for every student, and it did
- * exactly that until this was caught by the "INEFFECTIVE_DYNAMIC_IMPORT"
- * warning `vite build` prints when the same module is both dynamically and
- * statically imported. `html-to-image` is lazy for the ordinary reason:
- * nobody pays for it until they click Share. `@lezer/highlight` stays a
- * static import even though it is only used here — `@codemirror/language`,
- * `@codemirror/theme-one-dark` and the grammars themselves all import it
- * eagerly already, so it is in the main bundle regardless and a dynamic
- * import of it would just be a needless await (and its own
- * INEFFECTIVE_DYNAMIC_IMPORT warning).
+ * `html-to-image` is a dynamic import for the ordinary reason: nobody pays
+ * for it until they click Share.
  */
-import { highlightTree } from '@lezer/highlight'
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark'
-import { langForPath, type LangId } from '../runtime'
 import { splitPath } from '../fs/project'
-import type { LRLanguage } from '@codemirror/language'
+import { highlightCss, highlightLines } from './highlight'
+import { deliverFile } from './deliver'
 
 /** Past this many lines the card stops and says how many more there were —
  *  a screenshot is a snippet, not a scroll of the whole file. */

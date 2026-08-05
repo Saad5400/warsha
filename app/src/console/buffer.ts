@@ -15,6 +15,11 @@
  *     blocked in runPython cannot flush on a timer), so `while True: print(i)`
  *     would otherwise cause DOM jank.
  *  4. A head-dropping cap, and it says so when it drops.
+ *  5. A paced reveal. A fast program prints its whole life in two milliseconds,
+ *     which lands as one flush and *looks* like nothing ran. The buffer holds
+ *     lines back and reveals them at terminal-scroll speed instead — see
+ *     REVEAL_PER_FLUSH — while `toText()` and the caps keep working on the real
+ *     transcript, so Copy is never a lie and memory is never the show's hostage.
  */
 
 export type LineKind = 'out' | 'err' | 'echo' | 'meta'
@@ -66,6 +71,41 @@ const MAX_LINE_CHARS = 16 * 1024
 const FALLBACK_FLUSH_MS = 100
 
 /**
+ * How many lines one flush may reveal (founder ruling 2026-08-05: bursts should
+ * *scroll*, not appear).
+ *
+ * 4 per frame at 60fps reads as a fast terminal (~240 lines/s) — visibly
+ * scrolling, too quick to feel throttled. Kept at or below the Console's
+ * FRESH_MAX_BATCH (8) on purpose: every paced batch qualifies as "small and
+ * human-paced" there, so each revealed line gets the existing fade-in for free
+ * and no new animation path exists for §9 to worry about.
+ */
+const REVEAL_PER_FLUSH = 4
+
+/**
+ * The backlog beyond which pacing gives up and snaps to caught-up.
+ *
+ * The reveal must never owe the student more than a few seconds of playback:
+ * 1200 lines at REVEAL_PER_FLUSH·60fps is a 5-second worst case. A 100k-line
+ * dump or a hot `while (true) print` blows through this bound within one frame
+ * and gets today's behaviour — everything at once, effectively live, and the
+ * batch is far past FRESH_MAX_BATCH so nothing animates (§9's burst
+ * protection, untouched). A 1000-line homework loop stays under it and plays
+ * out as a scroll.
+ */
+const MAX_REVEAL_BACKLOG = 1200
+
+/**
+ * The paced reveal IS motion — a scripted scroll lasting up to five seconds —
+ * so `prefers-reduced-motion` turns it off entirely (§10), not just the
+ * per-line fade the CSS media query already handles. The MediaQueryList is
+ * grabbed once; `.matches` is read live at each flush, so a mid-session flip
+ * of the OS setting takes effect on the next frame with no listener needed.
+ */
+const reducedMotion =
+  typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null
+
+/**
  * The buffer the console header's "Copy output" reads.
  *
  * The app builds exactly one transcript (App.tsx holds it in a ref) and hands it
@@ -82,6 +122,12 @@ export class ConsoleBuffer {
   private nextId = 1
   /** Running total of characters held, so `trim()` costs O(1) per write. */
   private chars = 0
+  /**
+   * How many of `lines` the snapshot may show; everything past it is backlog
+   * still being paced out. Only the *view* lags — writes, caps, `toText()` and
+   * `hasOpenLine` all work on the full transcript.
+   */
+  private revealed = 0
   private snapshot: ConsoleSnapshot = { lines: [], truncated: false }
   private listeners = new Set<() => void>()
   private frame = 0
@@ -160,6 +206,22 @@ export class ConsoleBuffer {
     this.lines = []
     this.truncated = false
     this.chars = 0
+    this.revealed = 0
+    this.flush()
+  }
+
+  /**
+   * Abandon the paced reveal and show everything now.
+   *
+   * The reveal is a show, and there are moments the show must not delay the
+   * truth: Stop (the student intervened — the transcript has to be honest
+   * immediately), a stdin request (the input row appears at the cursor, so the
+   * prompt it joins must be on screen first), and a run being abandoned. The
+   * runner calls this at each of those; the buffer cannot know them itself.
+   */
+  catchUp() {
+    if (this.revealed >= this.lines.length) return
+    this.revealed = this.lines.length
     this.flush()
   }
 
@@ -167,7 +229,8 @@ export class ConsoleBuffer {
    * The whole transcript as plain text, newlines preserved — what "Copy output"
    * puts on the clipboard so a student can paste an error to a friend
    * (ACCEPTANCE §10.10). Reads the live lines, not the flushed snapshot, so a
-   * copy during a burst is not one frame stale.
+   * copy during a burst is not one frame stale — and a copy mid-reveal gets
+   * the whole transcript, not just the part the show has reached.
    */
   toText(): string {
     const body = this.lines.map((l) => l.segments.map((s) => s.text).join('')).join('\n')
@@ -177,6 +240,7 @@ export class ConsoleBuffer {
   private trim() {
     if (this.lines.length > MAX_LINES) {
       for (const dropped of this.lines.splice(0, DROP_CHUNK)) this.chars -= lineLength(dropped) + 1
+      this.revealed = Math.max(0, this.revealed - DROP_CHUNK)
       this.truncated = true
     }
     // Character budget. Dropped in chunks for the same reason as lines: a
@@ -184,6 +248,7 @@ export class ConsoleBuffer {
     // jank the batching exists to avoid.
     while (this.chars > MAX_CHARS && this.lines.length > DROP_CHUNK) {
       for (const dropped of this.lines.splice(0, DROP_CHUNK)) this.chars -= lineLength(dropped) + 1
+      this.revealed = Math.max(0, this.revealed - DROP_CHUNK)
       this.truncated = true
     }
     if (this.chars < 0) this.chars = 0
@@ -214,8 +279,21 @@ export class ConsoleBuffer {
       clearTimeout(this.timer)
       this.timer = 0
     }
-    this.snapshot = { lines: this.lines.slice(), truncated: this.truncated }
+    const total = this.lines.length
+    if (this.revealed < total) {
+      // A hidden tab shows the show to nobody and its rAF is suspended anyway,
+      // so pacing there would replay minutes of backlog on return — snap instead.
+      const snap =
+        this.revealed + MAX_REVEAL_BACKLOG < total ||
+        document.visibilityState === 'hidden' ||
+        reducedMotion?.matches === true
+      this.revealed = snap ? total : Math.min(total, this.revealed + REVEAL_PER_FLUSH)
+    }
+    this.snapshot = { lines: this.lines.slice(0, this.revealed), truncated: this.truncated }
     for (const fn of this.listeners) fn()
+    // Still owing lines: keep the frame chain alive until the view has caught
+    // up. Writes only schedule on arrival, so the reveal must drive itself.
+    if (this.revealed < this.lines.length) this.schedule()
   }
 }
 

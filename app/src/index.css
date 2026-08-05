@@ -235,7 +235,12 @@
                            targets yet, so it sits under the 44px rule; the
                            moment segments become pickers this must grow      */
   --bar-side: var(--bar-top);   /* sidebar header (EXPLORER row) height        */
+
 }
+
+/* The rail stays 48px at every width — a fold-away strip and a sub-480 40px
+   narrowing shipped briefly on 2026-08-05 and were reverted the same day (the
+   founder confirmed 48px is fine on a real device). */
 /* There is deliberately no ≥900px --bar-console override any more. The old
    one (PIXEL-FINDINGS F-12) existed only to clear the 40px Run flush in the
    then-44px header; with Run gone to the tab strip's trailing group for good,

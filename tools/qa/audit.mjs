@@ -80,12 +80,11 @@ else fail(`§3.2 button label is ${wantBtnFs}/600`, JSON.stringify(primary))
 
 const CARD_SEL = '.template-card, [aria-label="Start a project"] button'
 const card = await css(CARD_SEL, ['border-color', 'border-width', 'border-radius', 'min-height'])
-// THEME-V4: --border-control is VS Code's #3C3C3C (rgb(60,60,60)). It does NOT
-// clear the old 3:1 outline rule — a deliberate drop, stated in THEME-V4 §4:
-// VS Code ships this value, and where a boundary is load-bearing it is paired
-// with a fill or weight (the card pairs it with the surface-3 fill).
-if (card['border-width'] === '1px' && card['border-color'] === 'rgb(60, 60, 60)')
-  pass('5. welcome card has the --border-control edge', 'VS Code #3C3C3C — sub-3:1 by design, paired with a fill')
+// THEME-V5: --border-control is back to v3's #8D8D9A (rgb(141,141,154)) —
+// the value that clears 3:1 on all four surfaces. v4's sub-3:1 #3C3C3C
+// exception is retired with the Dark Modern skin (THEME-V5 §4).
+if (card['border-width'] === '1px' && card['border-color'] === 'rgb(141, 141, 154)')
+  pass('5. welcome card has the --border-control edge', 'v3/v5 #8D8D9A — clears 3:1 on every surface')
 else fail('5. welcome card border', JSON.stringify(card))
 if (parseFloat(card['min-height']) >= 88) pass('§7.7 card is a single ≥88px target', card['min-height'])
 else fail('§7.7 card min-height', card['min-height'])
@@ -100,13 +99,13 @@ const ring = await page.evaluate(() => {
   return { tag: el.tagName, cls: el.className, outline: c.outlineColor, w: c.outlineWidth, off: c.outlineOffset }
 })
 info(`focus ring: ${JSON.stringify(ring)}`)
-// THEME-V4: --focus-ring is still var(--accent), and --accent is now VS Code's
-// #0078D4 blue (rgb(0,120,212)) — one edit moved the ring with it.
+// THEME-V5: --focus-ring is still var(--accent), and --accent is white again
+// (#FAFAFA, rgb(250,250,250)) — one edit moved the ring with it.
 // Founder ruling, 2026-08-02: ring geometry is 1px/no-offset app-wide (was
 // 2px/2px) — this is the welcome panel, which uses the global default rather
 // than one of the -1px inset variants (ActivityBar/StatusBar/stdin-input).
-if (ring && ring.w === '1px' && ring.outline === 'rgb(0, 120, 212)' && ring.off === '0px')
-  pass('20. hardware keyboard gets a 1px blue accent focus ring at no offset')
+if (ring && ring.w === '1px' && ring.outline === 'rgb(250, 250, 250)' && ring.off === '0px')
+  pass('20. hardware keyboard gets a 1px white accent focus ring at no offset')
 else fail('20. focus ring', JSON.stringify(ring))
 await shot('welcome-1280')
 
@@ -145,29 +144,29 @@ const tabLabel = await css('[role="tab"][data-state="active"] .tab__label', ['fo
 info(`active tab: ${JSON.stringify(tab)} label ${JSON.stringify(tabLabel)}`)
 // Chrome's serialised order is "color offset-x offset-y blur spread inset",
 // the reverse of the source order in the Tailwind arbitrary value.
-// V4/VS Code grammar at this desk harness: the accent rule is 1px on the TOP
-// edge (--tab-accent-top = --accent #0078D4), the tab's fill is the editor
-// canvas (--tab-active-bg = --surface-1 #1F1F1F) running seamlessly into the
-// code below, the label is #FFFFFF — and the weight stays 400, because VS Code
-// never bolds a tab (the white fg + top rule carry the state).
+// V5 keeps V4's tab grammar with V5 values: the accent rule is 1px on the TOP
+// edge (--tab-accent-top = --accent, now white #FAFAFA), the tab's fill is the
+// editor canvas (--tab-active-bg = --surface-1 #0E0E11) running seamlessly into
+// the code below, the label is #FFFFFF — and the weight stays 400, because VS
+// Code never bolds a tab (the white fg + top rule carry the state).
 if (
-  /rgb\(0, 120, 212\) 0px 1px 0px 0px inset/.test(tab['box-shadow']) &&
-  tab['background-color'] === 'rgb(31, 31, 31)' &&
+  /rgb\(250, 250, 250\) 0px 1px 0px 0px inset/.test(tab['box-shadow']) &&
+  tab['background-color'] === 'rgb(14, 14, 17)' &&
   tabLabel['font-weight'] === '400' &&
   tabLabel.color === 'rgb(255, 255, 255)'
 )
   pass('1a. active tab = 1px accent top rule + editor fill + white label at weight 400', `${tabLabel.color} @ ${tabLabel['font-size']}`)
 else fail('1a. active tab signals', JSON.stringify({ tab, tabLabel }))
 
-// V4 list model at desk: selection is a full-row FILL, not a leading rail —
-// --list-active-sel-bg #04395E with --list-active-sel-fg #FFFFFF while the
-// tree holds focus (the click above left it there), --list-inactive-sel-bg
-// #37373D once focus moves on. Weight stays 400: VS Code weights nothing in
-// the tree.
+// V5 keeps V4's list model at desk: selection is a full-row FILL, not a
+// leading rail — --list-active-sel-bg #3A3A42 (the monochrome grey/white
+// selection language) with --list-active-sel-fg #FFFFFF while the tree holds
+// focus (the click above left it there), --list-inactive-sel-bg #2B2B31 once
+// focus moves on. Weight stays 400: VS Code weights nothing in the tree.
 const row = await css('[role="treeitem"][data-state="open"]', ['background-color', 'border-left-color'])
 const rowLabel = await css('[role="treeitem"][data-state="open"] .tree-row__label', ['font-weight', 'color'])
 const rowFill =
-  row && (row['background-color'] === 'rgb(4, 57, 94)' || row['background-color'] === 'rgb(55, 55, 61)')
+  row && (row['background-color'] === 'rgb(58, 58, 66)' || row['background-color'] === 'rgb(43, 43, 49)')
 if (rowFill && row['border-left-color'] === 'rgba(0, 0, 0, 0)' && rowLabel['font-weight'] === '400')
   pass('1b. open explorer row = full-row selection fill, no rail, weight 400', JSON.stringify({ row, rowLabel }))
 else fail('1b. open explorer row', JSON.stringify({ row, rowLabel }))
@@ -189,13 +188,13 @@ const btnStates = await page.evaluate(() =>
     return { label: (el.textContent || '').trim().slice(0, 14), disabled: el.disabled, bg: c.backgroundColor, fg: c.color }
   }))
 info(`primary buttons: ${JSON.stringify(btnStates)}`)
-// THEME-V4: the invariant is unchanged — "an --accent fill's text is always
+// THEME-V5: the invariant is unchanged — "an --accent fill's text is always
 // --accent-ink, never a literal colour" — only the values moved with the
-// sweep. --accent #0078D4 -> rgb(0,120,212); --accent-ink #FFFFFF (4.53:1 on
-// the accent, AA for the 13px UI type).
+// sweep. --accent #FAFAFA -> rgb(250,250,250); --accent-ink #09090B
+// (19.06:1 on the accent).
 const live = btnStates.filter((b) => !b.disabled)
-if (live.length && live.every((b) => b.bg === 'rgb(0, 120, 212)' && b.fg === 'rgb(255, 255, 255)'))
-  pass('4a. enabled primary is --accent-ink on --accent, never a literal colour', '4.53:1')
+if (live.length && live.every((b) => b.bg === 'rgb(250, 250, 250)' && b.fg === 'rgb(9, 9, 11)'))
+  pass('4a. enabled primary is --accent-ink on --accent, never a literal colour', '19.06:1')
 else if (live.length === 0) {
   // The chrome deliberately has no filled primary at rest at ANY width (Run is
   // a quiet toolbar glyph in the tab strip) — the invariant is carried by the
@@ -209,13 +208,13 @@ else if (live.length === 0) {
     probe.remove()
     return out
   })
-  if (pair.bg === 'rgb(0, 120, 212)' && pair.fg === 'rgb(255, 255, 255)')
+  if (pair.bg === 'rgb(250, 250, 250)' && pair.fg === 'rgb(9, 9, 11)')
     pass('4a. no filled primary in the desk chrome (by design); the --accent/--accent-ink pair holds', JSON.stringify(pair))
   else fail('4a. --accent/--accent-ink pair', JSON.stringify(pair))
 } else fail('4a. accent fill uses --accent-ink text', JSON.stringify(live))
 const off = btnStates.filter((b) => b.disabled)
-// --surface-4 #313131 -> rgb(49,49,49); --text-disabled #6E7681 -> rgb(110,118,129).
-if (off.every((b) => b.bg === 'rgb(49, 49, 49)' && b.fg === 'rgb(110, 118, 129)'))
+// --surface-4 #323239 -> rgb(50,50,57); --text-disabled #6A6A7C -> rgb(106,106,124).
+if (off.every((b) => b.bg === 'rgb(50, 50, 57)' && b.fg === 'rgb(106, 106, 124)'))
   pass('4b. disabled is a COLOUR change, not an opacity fade', off.length ? 'surface-4 / text-disabled' : 'none on screen')
 else fail('4b. disabled treatment', JSON.stringify(off))
 
@@ -271,6 +270,17 @@ const targets = await page.evaluate(() => {
     for (const el of document.querySelectorAll(s)) {
       const r = el.getBoundingClientRect()
       if (r.width === 0 && r.height === 0) continue
+      // Named desk exemptions beyond floors(): status-bar items fill VS
+      // Code's own 22px bar (--bar-status), and the pane header's action trio
+      // fills its 22px row (--pane-action riding --row-tree; DENSITY.md §QA).
+      // Same rides-the-full-bar reasoning as the 22px tree row; anything
+      // SHORTER than its bar in either place is still a defect.
+      if (
+        desk &&
+        r.height >= 22 &&
+        (el.closest('footer[aria-label="Status bar"]') || el.closest('.sidebar-project-row'))
+      )
+        continue
       seen[s] = Math.min(seen[s] ?? 999, Math.round(r.height))
       const label = `${s} h=${Math.round(r.height)} "${(el.textContent || '').trim().slice(0, 18)}"`
       if (r.height < RAW_FLOOR) { bad.push(`${label} — under the ${RAW_FLOOR}px visual floor`); continue }
@@ -428,8 +438,8 @@ const scrimBg = await page.evaluate(() => {
   const d = document.createElement('div'); d.className = 'scrim'; document.body.appendChild(d)
   const bg = getComputedStyle(d).backgroundColor; d.remove(); return bg
 })
-// THEME-V4: --scrim is VS Code's rgba(0,0,0,0.5).
-if (scrimBg === 'rgba(0, 0, 0, 0.5)') pass('§6 drawer scrim resolves to a real colour', scrimBg)
+// THEME-V5: --scrim is v3's rgba(4,4,5,0.7).
+if (scrimBg === 'rgba(4, 4, 5, 0.7)') pass('§6 drawer scrim resolves to a real colour', scrimBg)
 else fail('§6 drawer scrim', scrimBg)
 
 // ---- 18/12. no horizontal page scroll at any width
@@ -491,14 +501,14 @@ else fail('17. progress ticks every 2s', `blank ${absent}ms, static ${staticGap}
 
 // stdin state
 // One shell: the live line is flat at EVERY width — no leading rule — and the
-// --info caret + the status bar carry the waiting state. --info is #4DAAFC
-// (rgb 77,170,252) post-sweep.
+// --info caret + the status bar carry the waiting state. --info is v3's
+// #7FC4F5 (rgb 127,196,245) again post-v5.
 const stdinBorder = await css('.stdin-row[data-waiting="true"]', ['border-left-color', 'border-left-width'])
 if (stdinBorder && stdinBorder['border-left-width'] === '0px')
   pass('§4.3/§7.3 the live line is flat — the caret and status bar carry "waiting"', JSON.stringify(stdinBorder))
 else fail('waiting stdin boundary', JSON.stringify(stdinBorder))
 const stdinCaret = await css('.stdin-row[data-waiting="true"] .stdin-input', ['caret-color', 'color'])
-if (stdinCaret && stdinCaret['caret-color'] === 'rgb(77, 170, 252)')
+if (stdinCaret && stdinCaret['caret-color'] === 'rgb(127, 196, 245)')
   pass('the caret itself is --info, so the cursor names the state where it sits', JSON.stringify(stdinCaret))
 else fail('--info caret on the live line', JSON.stringify(stdinCaret))
 // Check 14 above cannot see the live line — it runs while the console is idle and
@@ -519,12 +529,14 @@ else fail('live input floor', JSON.stringify(liveBox))
 // One shell: the console's accent running-rail is gone at EVERY width — VS
 // Code's panel has no rail. The status bar's remote block (StatusPill
 // variant="bar", the `.status-remote` class) carries the run state on the
-// accent fill instead.
+// --statusbar-remote-bg fill instead — in v5 a success-green #1F6640 (white
+// text 6.9:1), no longer the accent (the accent is white and the block's
+// text is white).
 const consoleRule = await css('.console-panel', ['border-left-color', 'border-left-width'])
 {
   const remote = await css('footer[aria-label="Status bar"] .status-remote[data-state="waiting"]', ['background-color'])
-  if (consoleRule['border-left-width'] === '0px' && remote && remote['background-color'] === 'rgb(0, 120, 212)')
-    pass('§1.3 no console rail — the status bar remote block runs on the accent fill', JSON.stringify(remote))
+  if (consoleRule['border-left-width'] === '0px' && remote && remote['background-color'] === 'rgb(31, 102, 64)')
+    pass('§1.3 no console rail — the status bar remote block runs on the green remote fill', JSON.stringify(remote))
   else fail('§1.3 running state in the status bar', JSON.stringify({ consoleRule, remote }))
 }
 
@@ -542,7 +554,7 @@ const echoColor = await page.evaluate(() => {
   const s = document.querySelector('[data-seg="echo"]')
   return s ? getComputedStyle(s).color : null
 })
-if (echoColor === 'rgb(77, 170, 252)') pass('§7.3 stdin echo renders in --info', echoColor)
+if (echoColor === 'rgb(127, 196, 245)') pass('§7.3 stdin echo renders in --info', echoColor)
 else info(`stdin echo colour: ${echoColor}`)
 
 // ============================================ 2. stderr, in colour and greyscale
@@ -572,12 +584,12 @@ const errRow = rowKinds.find((r) => r.kind === 'err')
 const outRow = rowKinds.find((r) => r.kind === 'out')
 // One shell: rows are VS Code-flat at EVERY width — no rules, no tints —
 // and stderr separates by its red INK alone (the [data-seg] hue, --danger
-// #F85149).
+// #FF8A8F — v3's light stderr red, back in v5).
 const errInk = await page.evaluate(() => {
   const s = document.querySelector('[data-seg="err"]')
   return s ? getComputedStyle(s).color : null
 })
-if (errRow && outRow && errRow.w === '0px' && errRow.bg === outRow.bg && errInk === 'rgb(248, 81, 73)')
+if (errRow && outRow && errRow.w === '0px' && errRow.bg === outRow.bg && errInk === 'rgb(255, 138, 143)')
   pass('2. rows are flat, stderr separates by --danger ink', errInk)
 else fail('2. stderr flat-row treatment', JSON.stringify({ errRow, outRow, errInk }))
 await shot('ide-1280-stderr')

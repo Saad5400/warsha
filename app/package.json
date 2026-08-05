@@ -36,6 +36,7 @@
     "esbuild-wasm": "^0.25.12",
     "fflate": "^0.8.2",
     "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "prettier": "^3.9.6",
     "prettier-plugin-java": "^2.10.3",
     "react": "^19.2.8",

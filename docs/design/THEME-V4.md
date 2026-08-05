@@ -1,5 +1,14 @@
 # Warsha — Theme v4 addendum (VS Code "Dark Modern" parity)
 
+> **SUPERSEDED, 2026-08-05 (same day):** the founder rejected the Dark Modern
+> *palette* — "I do not like vscode blue theme, I want my original black and
+> white theme back." Current values and rationale live in
+> [`THEME-V5.md`](./THEME-V5.md), canonical hex in [`tokens.css`](./tokens.css).
+> What survives of v4 is everything **structural**: the expanded token
+> vocabulary (§3), the border-mandatory seam rule (§5), the component grammar
+> and the density/geometry rulings. The v4 *colour values* below no longer
+> govern, and the §4 sub-3:1 border exception is retired.
+
 **Founder directive, 2026-08-05:** retheme Warsha to visual parity with VS
 Code's default **Dark Modern** theme, as part of the app-wide VS Code-parity
 overhaul. This document is an **addendum** to

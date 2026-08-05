@@ -119,6 +119,22 @@ export const COPY = {
   /** PLACEHOLDER */
   cannotRun: (entry: string) => `Warsha does not know how to run ${entry} yet.`,
 
+  // ---- cross-file search (SearchView — the activity bar's Search view) ----
+  // The placeholder is VS Code's own one-word "Search"; everything else keeps
+  // the house voice: what happened, then what to do.
+  searchPlaceholder: 'Search',
+  searchHint: 'Type to search every file in this project.',
+  /** Accessible names for the two filter toggles (VS Code's Aa / ab). */
+  searchMatchCase: 'Match case',
+  searchWholeWord: 'Whole word',
+  searchNoResults: 'No results',
+  searchNoResultsHint: 'Try different words, or turn off the Aa and ab filters.',
+  /** "12 results in 3 files" — the line above the results (VS Code's own
+   *  phrasing, and "result" pluralises where "match" defeats count()). */
+  searchSummary: (matches: number, files: number) => `${count(matches, 'result')} in ${count(files, 'file')}`,
+  /** The stop-at-500 note. The cap keeps a one-letter query from freezing the tab. */
+  searchCapped: (n: number) => `Showing the first ${n} results — narrow the search to see the rest.`,
+
   // ---- storage (§8) ----
   /** The persistent banner. Never a toast: this condition does not go away. */
   storageQuotaTitle: 'This device is nearly out of space, so Warsha may stop saving.',

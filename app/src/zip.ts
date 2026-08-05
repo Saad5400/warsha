@@ -86,7 +86,7 @@ export function exportZip(snap: FsSnapshot, name = 'warsha-project.zip') {
  * Refuse rather than sanitise: a renamed file is a silent surprise, and there is
  * no legitimate .zip that needs this.
  */
-function safePath(raw: string): string | null {
+export function safePath(raw: string): string | null {
   const path = raw.replace(/^\.?\//, '')
   if (!path) return null
   if (path.length > ZIP_LIMITS.MAX_PATH_LENGTH) return null
