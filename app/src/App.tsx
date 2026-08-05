@@ -23,7 +23,7 @@ import { setProjectDocsSource } from './editor/hoverDocs'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { shareFileAsImage } from './actions/shareImage'
 import { shareProjectAsPdf } from './actions/sharePdf'
-import { isCancelled } from './actions/deliver'
+import { isCancelled, prefersShareSheet } from './actions/deliver'
 import { ActivityBar, type SideView } from './components/ActivityBar'
 import { SearchView } from './components/SearchView'
 import { Breadcrumbs } from './components/Breadcrumbs'
@@ -715,29 +715,34 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [activePath, project, notify])
 
   /** "Share as image…" (⋯ menu) — renders the active file to a PNG and hands
-   *  it to the OS share sheet, or downloads it. See actions/shareImage.ts. */
+   *  it over: share sheet on handhelds, the clipboard (or a download) on
+   *  desktop. See actions/shareImage.ts and deliver.ts for the fork. */
   const shareActiveFile = useCallback(async () => {
     const path = activePath
     if (!path) return
     const source = project.read(path) ?? ''
     try {
       const result = await shareFileAsImage(path, source)
-      if (result === 'downloaded') notify('Image downloaded.')
+      if (result === 'copied') notify('Image copied — paste it anywhere.', 'success')
+      else if (result === 'downloaded') notify('Image downloaded.')
     } catch {
       notify('Could not create an image of this file.', 'error')
     }
   }, [activePath, project, notify])
 
   /** "Share as link…" (⋯ menu) — the whole project folded into a URL that
-   *  recreates it on whatever device opens it (sharelink.ts). Share sheet
-   *  where the OS has one, clipboard everywhere else. */
+   *  recreates it on whatever device opens it (sharelink.ts). Share sheet on
+   *  handhelds, straight to the clipboard on desktop — Windows Chrome/Edge
+   *  advertises a share dialog whose own Copy button strands the link (same
+   *  finding as deliver.ts), and on a desktop "copy the link" is the whole
+   *  ask anyway. */
   const shareLink = useCallback(async () => {
     const url = buildShareUrl(currentProject?.name ?? 'Shared project', entryPath, project.snapshot())
     if (!url) {
       notify('This project is too big to fit in a link — Export as .zip instead.', 'error')
       return
     }
-    if (navigator.canShare?.({ url })) {
+    if (prefersShareSheet() && navigator.canShare?.({ url })) {
       try {
         await navigator.share({ url, title: currentProject?.name })
         return

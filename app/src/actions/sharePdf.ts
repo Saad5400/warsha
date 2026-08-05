@@ -23,7 +23,7 @@
  */
 import type { FsSnapshot } from '../fs/types'
 import { highlightCss, highlightLines, printHighlightStyle, type Segment } from './highlight'
-import { deliverFile } from './deliver'
+import { deliverFile, type Delivered } from './deliver'
 
 // A4 at CSS 96dpi. Rasterised at 2× (≈150dpi on paper), sharp on any screen.
 const PAGE_W = 794
@@ -290,7 +290,7 @@ export async function shareProjectAsPdf(
   projectName: string,
   snapshot: FsSnapshot,
   fileName: string,
-): Promise<'shared' | 'downloaded'> {
+): Promise<Delivered> {
   const files = [...snapshot.files].sort((a, b) => a.path.localeCompare(b.path))
   if (files.length === 0) throw new Error('nothing to export')
 

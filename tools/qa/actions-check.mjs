@@ -38,6 +38,9 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'w
   viewport: { width: 1280, height: 900 },
   acceptDownloads: true,
 })
+// The desktop share path copies the PNG to the clipboard (deliver.ts); the
+// suite reads it back to verify the pixels.
+await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: URL_.replace(/\/$/, '') })
 const page = ctx.pages()[0] ?? (await ctx.newPage())
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
@@ -273,19 +276,41 @@ await setContent(`${LONG_LINE}\nprint(${JSON.stringify('done')})\n`)
 await page.setViewportSize({ width: 390, height: 844 })
 await page.waitForTimeout(200)
 
-// navigator.share/canShare are unavailable in headless Linux Chrome (no OS
-// share-sheet integration), so shareFileAsImage() takes its documented
-// fallback path — a real browser download — which is also the only path a
-// script can observe without a live share-sheet to click through.
-const [download] = await Promise.all([
-  page.waitForEvent('download', { timeout: 20000 }),
-  page.locator('button[aria-label="More"]').click().then(() => page.getByRole('menuitem', { name: 'Share as image…' }).click()),
-])
-const pngPath = await download.path()
-check('Share as image triggered a real download (fallback path)', !!pngPath, download.suggestedFilename())
+// This context reports hover+fine (no touch emulation), so deliver.ts takes
+// its DESKTOP path: never the OS share dialog (whose Windows "Copy" button
+// strands the file), the clipboard first, a download as the fallback. Either
+// outcome yields the PNG bytes for the pixel checks below.
+const downloadP = page.waitForEvent('download', { timeout: 20000 }).then((d) => ({ kind: 'downloaded', d })).catch(() => null)
+const copiedP = page
+  .waitForFunction(
+    () => [...document.querySelectorAll('[role="status"]')].some((el) => el.innerText.includes('Image copied')),
+    null,
+    { timeout: 20000 },
+  )
+  .then(() => ({ kind: 'copied' }))
+  .catch(() => null)
+await page.locator('button[aria-label="More"]').click()
+await page.getByRole('menuitem', { name: 'Share as image…' }).click()
+const delivered = await Promise.race([downloadP, copiedP])
+check('Share as image delivered (clipboard copy or download)', !!delivered, delivered?.kind ?? 'neither within 20s')
 
-const pngBytes = pngPath ? readFileSync(pngPath) : Buffer.alloc(0)
-const pngBase64 = pngBytes.toString('base64')
+let pngBase64 = ''
+if (delivered?.kind === 'downloaded') {
+  const pngPath = await delivered.d.path()
+  pngBase64 = pngPath ? readFileSync(pngPath).toString('base64') : ''
+} else if (delivered?.kind === 'copied') {
+  pngBase64 = await page.evaluate(async () => {
+    for (const item of await navigator.clipboard.read()) {
+      if (!item.types.includes('image/png')) continue
+      const bytes = new Uint8Array(await (await item.getType('image/png')).arrayBuffer())
+      let bin = ''
+      for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode(...bytes.subarray(i, i + 32768))
+      return btoa(bin)
+    }
+    return ''
+  })
+  check('copied image is really on the clipboard as image/png', pngBase64.length > 0, `${pngBase64.length} b64 chars`)
+}
 const image = await page.evaluate(async (base64) => {
   const img = new Image()
   img.src = `data:image/png;base64,${base64}`

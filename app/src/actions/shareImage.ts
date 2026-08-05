@@ -23,7 +23,7 @@
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark'
 import { splitPath } from '../fs/project'
 import { highlightCss, highlightLines } from './highlight'
-import { deliverFile } from './deliver'
+import { deliverFile, type Delivered } from './deliver'
 
 /** Past this many lines the card stops and says how many more there were —
  *  a screenshot is a snippet, not a scroll of the whole file. */
@@ -176,7 +176,7 @@ function freezeComputedStyles(root: HTMLElement): void {
  * download, whichever this device has (see actions/deliver.ts, including why
  * a cancelled share sheet resolves rather than throws).
  */
-export async function shareFileAsImage(path: string, source: string): Promise<'shared' | 'downloaded'> {
+export async function shareFileAsImage(path: string, source: string): Promise<Delivered> {
   // Built and attached to the DOM first, on its own — `buildCard` and the
   // `html-to-image` import are then wrapped in the same try/finally that
   // removes it, so a failed dynamic import can never leave `wrap` orphaned.
