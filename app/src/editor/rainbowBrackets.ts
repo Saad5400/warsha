@@ -109,14 +109,20 @@ const plugin = ViewPlugin.fromClass(
 )
 
 /**
- * `&.cm-editor` for specificity: the syntax-highlight class that puts the flat
- * punctuation grey on the same span is a single generated class, and these
- * marks must win over it (see the registration order note in setup.ts too).
+ * Each rule targets the mark's span AND any span nested inside it. The nested
+ * selector is the load-bearing half: syntax highlighting renders the bracket
+ * glyph in its own punctuation-grey span *inside* this mark
+ * (`<span class="cm-bracket-0"><span class="ͼx">{</span></span>`), so a rule
+ * on the mark alone colours an element whose text is painted by a greyer
+ * child — the rainbow exists in the cascade but never on screen. The mark is
+ * one character wide, so the only span it can contain is the glyph's own.
+ * `&.cm-editor` keeps the specificity above the single generated highlight
+ * class either way.
  */
 const theme = EditorView.theme({
-  '&.cm-editor .cm-bracket-0': { color: 'var(--code-bracket-1)' },
-  '&.cm-editor .cm-bracket-1': { color: 'var(--code-bracket-2)' },
-  '&.cm-editor .cm-bracket-2': { color: 'var(--code-bracket-3)' },
+  '&.cm-editor .cm-bracket-0, &.cm-editor .cm-bracket-0 span': { color: 'var(--code-bracket-1)' },
+  '&.cm-editor .cm-bracket-1, &.cm-editor .cm-bracket-1 span': { color: 'var(--code-bracket-2)' },
+  '&.cm-editor .cm-bracket-2, &.cm-editor .cm-bracket-2 span': { color: 'var(--code-bracket-3)' },
 })
 
 export function rainbowBrackets() {
