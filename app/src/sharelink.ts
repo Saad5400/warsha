@@ -133,16 +133,29 @@ function decodePayload(data: string): SharedProject | null {
 }
 
 /**
- * Reads a `#share=` payload off the current URL and clears it, so a reload of
- * the now-open project does not re-run the import. Distinguishes "no share in
- * the URL" (null) from "a share that would not decode" ('broken') — the second
- * one deserves a sentence, the first is every normal visit.
+ * Reads a `#share=` payload off the current URL without touching it.
+ * Distinguishes "no share in the URL" (null) from "a share that would not
+ * decode" ('broken') — the second one deserves a sentence, the first is every
+ * normal visit.
+ *
+ * Clearing is a separate, explicit step (`clearShareHash`) that callers run
+ * AFTER the import has landed, not at parse time: the very first visit to
+ * this origin registers the COOP/COEP service worker and force-reloads the
+ * page mid-boot, and a hash cleared eagerly does not survive that reload —
+ * which is exactly the "someone opened my link on a fresh device" case. With
+ * the hash left in place the reload simply re-runs the import, and the
+ * untouched-copy dedup makes the second pass open what the first created.
  */
-export function takeSharedFromUrl(): SharedProject | 'broken' | null {
+export function peekSharedFromUrl(): SharedProject | 'broken' | null {
   const hash = location.hash
   if (!hash.startsWith(PARAM)) return null
-  history.replaceState(null, '', location.pathname + location.search)
   return decodePayload(hash.slice(PARAM.length)) ?? 'broken'
+}
+
+/** Drops the `#share=` payload from the URL, so a reload of the now-open
+ *  project is a normal visit. */
+export function clearShareHash(): void {
+  if (location.hash.startsWith(PARAM)) history.replaceState(null, '', location.pathname + location.search)
 }
 
 /**

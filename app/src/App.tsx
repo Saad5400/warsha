@@ -11,7 +11,7 @@ import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
 import { type Template } from './templates'
 import { exportZip } from './zip'
-import { buildShareUrl, takeSharedFromUrl, type SharedProject } from './sharelink'
+import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
@@ -239,9 +239,10 @@ function Ide({ report }: { report: CapabilityReport }) {
   // same link" case. Both funnel through `applyShared`. The boot one is
   // parsed before the first effects run and gates workspace restore below:
   // the import switches projects, and restoring the previous session's tabs
-  // into the project being left would race the switch.
+  // into the project being left would race the switch. The hash itself is
+  // cleared only once the import lands — peekSharedFromUrl explains why.
   const pendingShareRef = useRef<SharedProject | 'broken' | null | undefined>(undefined)
-  if (pendingShareRef.current === undefined) pendingShareRef.current = takeSharedFromUrl()
+  if (pendingShareRef.current === undefined) pendingShareRef.current = peekSharedFromUrl()
   const [shareHandled, setShareHandled] = useState(pendingShareRef.current === null)
   const shareAdopted = useRef(false)
 
@@ -299,9 +300,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       try {
         if (shared === 'broken') {
           shareBrokenNotice()
+          clearShareHash()
           return
         }
         shareAdopted.current = await applyShared(shared)
+        // Only a landed import retires the hash. A failed one keeps it, so a
+        // reload retries instead of quietly losing what the link carried —
+        // and the COOP/COEP service worker's own first-visit reload re-runs
+        // the import off the still-present hash (see peekSharedFromUrl).
+        if (shareAdopted.current) clearShareHash()
       } finally {
         setShareHandled(true)
       }
@@ -312,13 +319,16 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   useEffect(() => {
     const onHashChange = () => {
-      const shared = takeSharedFromUrl()
+      const shared = peekSharedFromUrl()
       if (!shared) return
       if (shared === 'broken') {
         shareBrokenNotice()
+        clearShareHash()
         return
       }
-      void applyShared(shared)
+      void applyShared(shared).then((ok) => {
+        if (ok) clearShareHash()
+      })
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
