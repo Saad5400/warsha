@@ -33,64 +33,6 @@ const MAX_LINES = 60
  *  a longer line still renders at its own full width, never clipped. */
 const MIN_BODY_WIDTH = 640
 
-let highlightCss: string | null = null
-/** The literal CSS rules CodeMirror generated for its own one-dark highlight
- *  classes (`.ͼp { color: ... }`, etc) — computed once, then reused as a
- *  plain `<style>` block inside the off-screen card. */
-function highlightStyleCss(): string {
-  if (highlightCss === null) highlightCss = oneDarkHighlightStyle.module?.getRules() ?? ''
-  return highlightCss
-}
-
-interface Segment {
-  text: string
-  cls: string | null
-}
-
-/** Mirrors `editor/setup.ts`'s own `langCache` — a second, independent cache
- *  rather than a shared import, because sharing one would mean either this
- *  module reaching into the editor's internals or the editor exposing a
- *  loader it has no other reason to. Loaded grammars are tiny to hold twice. */
-const langCache = new Map<LangId, LRLanguage>()
-async function loadLanguage(lang: LangId): Promise<LRLanguage> {
-  const cached = langCache.get(lang)
-  if (cached) return cached
-  const language =
-    lang === 'java' ? (await import('@codemirror/lang-java')).javaLanguage : (await import('@codemirror/lang-python')).pythonLanguage
-  langCache.set(lang, language)
-  return language
-}
-
-/** One file's source, tokenised into per-line segments. A token that spans a
- *  newline (a block comment, a triple-quoted string) is split at each `\n`
- *  into same-class segments on the lines it actually covers — building one
- *  HTML string and cutting it on `\n` instead would leave an unbalanced,
- *  still-open span dangling across line boundaries. */
-async function highlightLines(code: string, lang: LangId | null): Promise<Segment[][]> {
-  const lines: Segment[][] = [[]]
-  const push = (text: string, cls: string | null) => {
-    const parts = text.split('\n')
-    parts.forEach((part, i) => {
-      if (i > 0) lines.push([])
-      if (part) lines[lines.length - 1]!.push({ text: part, cls })
-    })
-  }
-  if (!lang) {
-    push(code, null)
-    return lines
-  }
-  const language = await loadLanguage(lang)
-  const tree = language.parser.parse(code)
-  let pos = 0
-  highlightTree(tree, oneDarkHighlightStyle, (from, to, cls) => {
-    if (from > pos) push(code.slice(pos, from), null)
-    push(code.slice(from, to), cls)
-    pos = to
-  })
-  if (pos < code.length) push(code.slice(pos), null)
-  return lines
-}
-
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag)
   node.className = className
@@ -107,7 +49,7 @@ const DOT_COLORS = ['#FF5F56', '#FFBD2E', '#27C93F']
  *  passing it to `toPng` produced a technically-successful, silently blank
  *  PNG, with no error to say why. */
 async function buildCard(path: string, source: string): Promise<{ wrap: HTMLDivElement; card: HTMLDivElement }> {
-  const lines = await highlightLines(source, langForPath(path))
+  const lines = await highlightLines(source, path, oneDarkHighlightStyle)
   const shown = lines.slice(0, MAX_LINES)
   const hidden = lines.length - shown.length
 
@@ -119,7 +61,7 @@ async function buildCard(path: string, source: string): Promise<{ wrap: HTMLDivE
   // opacity is exactly what must NOT be what gets rasterised.
   const wrap = el('div', 'fixed left-0 top-0 opacity-0 pointer-events-none')
   const style = document.createElement('style')
-  style.textContent = highlightStyleCss()
+  style.textContent = highlightCss(oneDarkHighlightStyle)
   wrap.appendChild(style)
 
   const card = el(
@@ -230,11 +172,9 @@ function freezeComputedStyles(root: HTMLElement): void {
 }
 
 /**
- * Render `path`'s `source` to a PNG and hand it to the OS share sheet
- * (`navigator.share` with a file, the iPad path) or, failing that, trigger a
- * download. Resolves either way; a cancelled share sheet is not a failure and
- * does not throw (`AbortError` is swallowed), so callers should not toast on
- * every rejection blindly — see `isCancelled`.
+ * Render `path`'s `source` to a PNG and hand it over — share sheet or
+ * download, whichever this device has (see actions/deliver.ts, including why
+ * a cancelled share sheet resolves rather than throws).
  */
 export async function shareFileAsImage(path: string, source: string): Promise<'shared' | 'downloaded'> {
   // Built and attached to the DOM first, on its own — `buildCard` and the
@@ -251,34 +191,8 @@ export async function shareFileAsImage(path: string, source: string): Promise<'s
     const dataUrl = await toPng(card, { pixelRatio: 2, backgroundColor: undefined })
     const blob = await (await fetch(dataUrl)).blob()
     const fileName = `${splitPath(path).name}.png`
-    const file = new File([blob], fileName, { type: 'image/png' })
-
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: fileName })
-        return 'shared'
-      } catch (e) {
-        if (isCancelled(e)) return 'shared'
-        // Fall through to the download path — some browsers advertise
-        // canShare() for files and then reject the actual share() call.
-      }
-    }
-
-    const url = URL.createObjectURL(blob)
-    try {
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      a.click()
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-    return 'downloaded'
+    return await deliverFile(new File([blob], fileName, { type: 'image/png' }))
   } finally {
     wrap.remove()
   }
-}
-
-function isCancelled(e: unknown): boolean {
-  return e instanceof DOMException && e.name === 'AbortError'
 }

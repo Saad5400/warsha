@@ -248,3 +248,12 @@ export const IconShare = (p: IconProps) => (
     <path d="M4.5 11v3.75a1.25 1.25 0 0 0 1.25 1.25h8.5a1.25 1.25 0 0 0 1.25-1.25V11" />
   </Icon>
 )
+
+/** "Share as link" — two chain links at 45°, the universal URL glyph. */
+export const IconLink = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8.25 11.75l3.5-3.5" />
+    <path d="M9.5 6.25l1.5-1.5a2.83 2.83 0 0 1 4 4l-1.5 1.5" />
+    <path d="M10.5 13.75l-1.5 1.5a2.83 2.83 0 0 1-4-4l1.5-1.5" />
+  </Icon>
+)

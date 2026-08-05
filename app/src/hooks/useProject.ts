@@ -9,6 +9,7 @@ import {
   type ProjectsStore,
 } from '../fs/projects'
 import type { FsSnapshot } from '../fs/types'
+import { sameFiles } from '../sharelink'
 import { QUOTA_WARN_RATIO, readQuota, requestPersistence, type StorageProblem } from '../fs/health'
 import { watchPrimaryTab } from '../fs/tabs'
 
@@ -65,6 +66,13 @@ export interface ProjectView {
   storagePersisted: boolean
   /** Creates a project and opens it. Returns its meta. */
   createProject(name?: string, snapshot?: FsSnapshot): Promise<ProjectMeta | null>
+  /**
+   * A `#share=` link landing (see sharelink.ts). Opens the existing project
+   * whose files are an untouched copy of `snapshot` — re-opening a link you
+   * already took must not mint a duplicate — or creates one named `name`
+   * ("name 2" when that is taken). `created` says which happened.
+   */
+  adoptShared(name: string, snapshot: FsSnapshot): Promise<{ meta: ProjectMeta; created: boolean } | null>
   openProject(id: string): Promise<void>
   renameProject(id: string, name: string): Promise<void>
   /** Deletes a project; if it was open, the next most recent one opens. */
@@ -221,6 +229,37 @@ export function useProject(): ProjectView {
     [project, open, guard],
   )
 
+  const adoptShared = useCallback(
+    async (name: string, snapshot: FsSnapshot) => {
+      const store = storeRef.current
+      if (!store) return null
+      // Flush pending debounced writes first, so the currently open project
+      // compares against the link as what it really holds, not what it held
+      // 350ms ago.
+      await project.saveAll()
+      const list = await guard(() => store.list(), [])
+      // Most recently opened first, so when several projects somehow hold the
+      // same files the one the student actually uses is the one that opens.
+      for (const meta of list) {
+        const existing = await store
+          .storeFor(meta.id)
+          .snapshot()
+          .catch(() => null)
+        if (existing && sameFiles(existing, snapshot)) {
+          await open(meta)
+          return { meta, created: false }
+        }
+      }
+      let unique = name
+      for (let n = 2; list.some((p) => p.name.trim() === unique.trim()); n++) unique = `${name} ${n}`
+      const meta = await guard(() => store.create(unique, snapshot), null)
+      if (!meta) return null
+      await open(meta)
+      return { meta, created: true }
+    },
+    [project, open, guard],
+  )
+
   const openProject = useCallback(
     async (id: string) => {
       const store = storeRef.current
@@ -285,6 +324,7 @@ export function useProject(): ProjectView {
     isPrimaryTab,
     storagePersisted,
     createProject,
+    adoptShared,
     openProject,
     renameProject,
     deleteProject,

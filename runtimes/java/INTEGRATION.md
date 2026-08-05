@@ -6,13 +6,89 @@ implementing the app's `Runtime` contract. No server, no build step of its own �
 the app's bundler consumes the TypeScript source directly. One asset has to be
 fetched at build time (`ecj.jar`, never committed).
 
+## 2026-08-06: the resident Server + persistent bootstrap cache
+
+The engine was reworked for speed; **timings quoted in later sections predate
+this and are kept as history** — the current numbers are in this section. Three
+findings drove it, all measured on 2026-08-05/06 (Chrome 150 headless/Linux,
+`dist/` on localhost):
+
+1. **Every `cheerpjRunMain` call gets a fresh classloader** (a static set in
+   one call reads `false` in the next). The old one-main-per-phase design
+   therefore reloaded ECJ and re-paid its warm-up on *every* compile — the
+   "warm" 2.0–3.5 s student compile was ~1.7 s of reloading ECJ. This also
+   falsifies the old §9.2 rationale that the bootstrap compile "doubles as the
+   warm-up": it warmed a classloader that no later compile ever saw.
+2. `/files/` (IndexedDB) persists across page loads, so the in-browser
+   bootstrap compile — 5–10 s on *every* load — only ever needed to happen
+   once per device per deploy.
+3. The run phase itself was ~0.4 s of reloading `warsha.*` + student classes
+   through yet another fresh main.
+
+What changed (`jvm.worker.js`, `bootstrap/Server.java`, `Build.java`,
+`Launcher.java`, `Stamp.java`):
+
+- **One resident main, `warsha.Server`**, started once per worker, parks on the
+  async `Bridge.nextCommand` native and handles every run as a command:
+  `Build.buildOrReuse` → `Launcher.launch` (a fresh `URLClassLoader` over the
+  run's `out/`, so runs still can never see each other's classes). ECJ loads
+  once per session and stays JIT-warm.
+- **Starting Server IS the bootstrap-cache probe.** The compiled `warsha.*`
+  classes persist in `/files/warsha/` with a stamp hash **compiled into them**
+  (`Stamp.java`; the worker splices the hash of the exact bootstrap sources +
+  jar path + engine base over a committed placeholder before compiling). Server
+  force-loads the whole bootstrap and compares `Stamp.VALUE` to the hash the
+  worker passed; classes missing, unlinkable or from other sources → recompile.
+  A stamp *file* was rejected: it could survive an interrupted compile and
+  vouch for classes it does not describe; a constant can only exist compiled,
+  next to the classes it was compiled with.
+- **Unchanged sources skip ECJ entirely**: `Build.buildOrReuse` hashes the
+  staged project (entry + every path + content, order-normalized) and relaunches
+  the previous run's output when it matches the last successful compile of this
+  JVM. Any edit/add/delete misses and takes the full fresh-directory path, so
+  the stale-class guarantees are unchanged.
+- **The ECJ warm-up runs in the background** after `ready` (a throwaway
+  compile through the same resident path), serialized on the command queue, so
+  a Run pressed immediately queues behind it — never worse than the old design,
+  and free whenever the student spends a few seconds reading first.
+- **The app pre-warms silently** (`App.tsx`): when the entry file is Java,
+  `load()` is called ~1.5 s after hydration with a no-op progress listener.
+
+Current numbers (same rig; the user-visible steps are Run click → first
+`Scanner` prompt in the real app):
+
+| Step | Before | Now |
+|---|---|---|
+| `load()`, first visit ever (nothing cached) | 7.8 s | ~8.4 s (unchanged: bootstrap compile + stamp probe) |
+| `load()` on a revisit (bootstrap cached) | 4.8 s | **0.9 s** |
+| Student compile, warm | 2.0–2.3 s | **0.2–0.5 s** |
+| Run phase of a non-interactive program | ~0.4 s | **~10 ms** |
+| In-app: re-run, same session | 2.6 s | **0.0–0.1 s** (unchanged sources: no compile at all) |
+| In-app: reload → Run immediately | 7.4–7.6 s | **~4.1 s** (queued behind the background warm-up) |
+| In-app: reload → a few seconds of reading → Run | 7.4–7.6 s | **0.6 s** |
+| In-app: kill() → Run at once → finished run | 4.2–5.1 s | **0.8 s** |
+| First visit ever: Run → prompt | 18.9 s | ~12 s (one-time per device per deploy) |
+
+Progress-phase consequences: a revisit emits **no progress events at all**
+(boot and the Server probe finish under the 250 ms announce gate), and the
+`compile` phase now fires only on a cache miss — see the phase table below,
+which has been updated. The harness self-test is 51/51 as of this rework; check
+5j (JIT-noise filter proof) is session-scoped now that ECJ's refused parser
+method loads once per session instead of once per compile.
+
+Cache correctness: the stamp changes with any bootstrap source byte, the jar
+path or the CDN base (`STAMP_SCHEMA` bumps it by hand if ever needed), so a
+deploy invalidates cleanly; an interrupted cache write fails Server's
+force-load-and-check and recompiles; `validate.sh` still compiles the same
+sources offline with `javac --release 8 -Werror`.
+
 ```
 runtimes/java/
   src/index.ts              <- the only import the shell needs
   src/javaRuntime.ts        JavaRuntime (implements Runtime)
   src/types.ts              mirror of app/src/runtime/types.ts
   src/jvm.worker.js         the CheerpJ worker (plain JS, and CLASSIC -- see §2)
-  src/bootstrap/*.java      Bridge / Build / Launcher / Traces, run inside the JVM
+  src/bootstrap/*.java      Bridge / Build / Launcher / Server / Stamp / Traces, run inside the JVM
   src/bootstrap.generated.ts  GENERATED from the above, committed
   fetch-compiler.sh         downloads + sha256-verifies ecj.jar
   validate.sh               offline gate: compiles the bootstrap, 42 self-tests
@@ -268,16 +344,17 @@ it is not what an earlier draft of this document claimed:
 
 | Situation | Progress events |
 |---|---|
-| Cold origin, nothing cached | all three: `download` (with bytes), `boot`, `compile` |
-| Reload with the engine in the HTTP cache | **exactly one**: `compile` |
+| First visit ever (nothing cached anywhere) | all three: `download` (with bytes), `boot`, `compile` |
+| Revisit (engine in HTTP cache, bootstrap classes in IndexedDB) | **none** — boot and the Server probe finish under the gate |
+| Revisit with IndexedDB cleared but the HTTP cache alive | **exactly one**: `compile` |
 | `load()` called when the runtime is already booted | none; resolves immediately |
 
 `download` and `boot` are announced only if they last longer than 250 ms, so a
 cache hit stays silent instead of flashing a bar. The `compile` phase is
-deliberately **never** gated, because it costs seconds on every fresh worker (the
-bootstrap is compiled in the browser, see "Deviations"). So a warm reload does
-show one progress line for ~7–10 s: budget a spinner or elapsed timer for it, and
-do not treat "no progress events" as anything but an already-booted runtime.
+deliberately **never** gated, because when it fires at all (bootstrap-cache miss:
+first visit, new deploy, evicted IndexedDB) it always costs seconds. Budget a
+spinner or elapsed timer for it, and do not treat "no progress events" as
+anything but a cached engine.
 
 **The elapsed timer turned out to be mandatory, and the app now has one.** Measured
 in-app before it existed: the progress block was continuously on screen (blank for
@@ -302,7 +379,8 @@ Python runtime's 11.6 MiB, so the loading screen does not need to be designed
 around a huge download — it needs to be designed around **compile time**, which is
 the real cost here.
 
-**Measured timings** (Chrome 151/Windows, LAN-served, busy machine — a floor):
+**Measured timings** (Chrome 151/Windows, LAN-served, busy machine — a floor).
+**HISTORICAL: pre-rework numbers**; see "2026-08-06" at the top for current ones:
 
 | Phase | Measured |
 |---|---|
@@ -322,7 +400,8 @@ the real cost here.
 
 **Measured again in the real app**, `dist/` served over `localhost` (Chrome
 150/Linux, no LAN hop, quiet machine) — the same shape, roughly half the wall clock,
-which is what dropping the LAN latency on CheerpJ's many Range requests buys:
+which is what dropping the LAN latency on CheerpJ's many Range requests buys.
+**Also HISTORICAL — pre-rework:**
 
 | In-app step | Measured |
 |---|---|
@@ -334,32 +413,31 @@ which is what dropping the LAN latency on CheerpJ's many Range requests buys:
 | Python cold in the same session, after Java | **2.1–2.6 s** |
 | Java again after Python ran | **2.5–2.7 s** |
 
-The dominant cost is ECJ, not the download and not the student's code. Two
-readings of that table are worth internalising:
+The dominant cost was ECJ, not the download and not the student's code. Two
+readings of that (historical) table changed with the 2026-08-06 rework:
 
-- **The bootstrap compile is the whole loading experience.** ~7–10 s warm, and
-  **19.8 s on a genuinely cold cache**, where ECJ is also reading its own classes
-  out of `ecj.jar` over the network for the first time. The spike measured ~11 s
-  cold on loopback/Linux and this document's earlier draft claimed 7.3 s; the
-  honest range across every boot observed here is 7.0 s (warm, quiet) to 19.8 s
-  (cold, LAN, busy). Design the loading screen for the top of that range.
-- **Student compiles are stable at ~3.5 s** once warm, whatever the project — a
-  3-file project and a 1-file project cost the same, because the cost is ECJ, not
-  the code.
+- **The bootstrap compile used to be the whole loading experience** (~7–10 s
+  warm, 19.8 s cold). It is now a cache-miss event: first visit, new deploy, or
+  evicted IndexedDB. When it fires it still costs the same seconds, so the
+  loading screen must still be designed for it — it just no longer fires on
+  every load.
+- **Student compiles were stable at ~3.5 s** whatever the project, because the
+  cost was reloading ECJ per compile, not the code. Resident-server compiles
+  are 0.2–0.5 s, and an unchanged project skips the compile entirely.
 
 **Call `load()` early — while the student is reading the lesson.** It is
 idempotent, concurrent calls share one boot, and calling it when already warm
-resolves immediately. `run()` calls it internally if needed, so the only reason
-to call it yourself is to show progress. Not pre-warming means the student's
-first Run costs 27 s cold / 11 s warm instead of ~4.5 s.
+resolves immediately. `run()` calls it internally if needed. The app now does
+this itself (`App.tsx` pre-warms silently ~1.5 s after hydration when the entry
+is Java), which is what turns a reload-then-Run from ~4 s into ~0.6 s: the boot
+and the background ECJ warm-up overlap the student's reading time.
 
-**`kill()` costs a full re-warm.** It is `worker.terminate()` (0–1 ms; it stops a
-`while (true) {}` that no cooperative mechanism could touch), the session ends
-with `onExit(null)`, and a replacement worker starts booting immediately. The
-next `run()` waits for whatever is left of that boot *and* a fresh compiler
-warm-up — **12.5–12.7 s to a finished run** if Run is pressed at once, versus
-4.4 s if the student spends ~14 s thinking first, because the respawn overlaps
-their thinking. Two consequences:
+**`kill()` costs a re-warm — now a cheap one.** It is `worker.terminate()`
+(0–1 ms; it stops a `while (true) {}` that no cooperative mechanism could
+touch), the session ends with `onExit(null)`, and a replacement worker starts
+booting immediately. The replacement hits the bootstrap cache, so a Run pressed
+at once finished in **0.8 s** measured in-app (it was 12.5 s when the respawn
+recompiled the bootstrap). Two consequences:
 
 - Keep Run disabled until your `run()` promise resolves; a second call in that
   window is rejected with `A Java program is already running; kill() it before
@@ -528,19 +606,19 @@ constraint than Python has.
 ## Deviations from the spike (§9 of [`docs/engineering/java-runtime-spike.md`](../../docs/engineering/java-runtime-spike.md)), and why
 
 **§9.2 said ship a prebuilt `warsha-bootstrap.jar`. This module compiles the
-bootstrap in-browser on every `load()` instead.** Reasons: (a) `*.jar` is
-gitignored repo-wide, so a prebuilt jar would need either an exception or a JDK
-in the build pipeline, and a static-site CI has no JDK; (b) the first ECJ compile
-of a session costs seconds *whatever* it compiles, because the cost is ECJ loading
-its own classes over the virtual filesystem — so compiling something we actually
-need is strictly better than the dummy compile §9.3 recommends for warm-up;
-(c) caching the `.class` files in IndexedDB with a version stamp was considered
-and rejected as a correctness hazard (a stale-stamp bug would be very hard to
-diagnose) that buys nothing, since the warm-up has to happen anyway. Net effect:
-one `load()`, one compile, no jar, no cache invalidation. The price is paid in the
-loading screen: this is why a warm start is not silent, and why the cold figure is
-19.8 s rather than a fast cache hit. `validate.sh` compiles the same sources
-offline with `javac --release 8 -Werror` so mistakes are caught before the browser.
+bootstrap in-browser — since 2026-08-06, once per device per deploy, cached in
+`/files/warsha/` thereafter.** The original reasons to compile in-browser on
+*every* `load()` were: (a) `*.jar` is gitignored repo-wide, so a prebuilt jar
+would need either an exception or a JDK in the build pipeline, and a static-site
+CI has no JDK (still true, still why there is no jar); (b) the bootstrap compile
+"doubles as the compiler warm-up" — **falsified**: each `cheerpjRunMain` gets a
+fresh classloader, so the warmed ECJ was thrown away before any student compile
+ever ran; (c) an IndexedDB class cache with a version stamp is a stale-stamp
+hazard — answered by compiling the stamp INTO the classes (`Stamp.java`) and
+having Server force-load-and-verify at start, so the stamp cannot outlive or
+misdescribe the classes it vouches for. See "2026-08-06" at the top.
+`validate.sh` still compiles the same sources offline with `javac --release 8
+-Werror` so mistakes are caught before the browser.
 
 **§9.2 said stage sources into package-shaped directories. This module preserves
 the student's own directory layout instead.** The problem being solved is the
@@ -566,12 +644,17 @@ diagnostic.
 so an exit in our bootstrap would strand all later runs. `Bridge.phaseDone`
 reports status through a native instead.
 
-**§9.3's "compile only changed files" is NOT implemented.** Every run compiles
-the whole project. With warm compiles at ~3.5 s for a small project the saving is
-small, and incremental compilation against a persistent output directory
-reintroduces exactly the stale-class hazard the per-run directory exists to
-eliminate. Worth revisiting only if real projects get big enough for it to
-matter; it should come with a test that a deleted file cannot resurrect.
+**§9.3's "compile only changed files" is still NOT implemented — but
+"compile nothing when NOTHING changed" is (2026-08-06).** Per-file incremental
+compilation against a persistent output directory reintroduces exactly the
+stale-class hazard the per-run directory exists to eliminate (a dependent class
+compiled against a signature that no longer exists), and with resident-server
+compiles at 0.2–0.5 s the saving would be noise. The all-or-nothing reuse in
+`Build.buildOrReuse` has no such hazard: it only ever relaunches the *complete*
+output of the last successful compile, keyed on an exact hash of the entry plus
+every path and content, and any difference — including a deleted file — misses
+the cache and rebuilds into a fresh directory, so a deleted file cannot
+resurrect.
 
 **Stack-trace filtering happens in Java, not by regex on text** (§8.2 described
 the rule, not the location). `StackTraceElement.getClassName()` is exact, where a
@@ -591,19 +674,17 @@ node serve.mjs 8085 --coi   # same, plus COOP/COEP -- see §4
 `node build.mjs` needs esbuild; it finds the copy in `runtimes/python/node_modules`
 if `runtimes/java` has no `node_modules` of its own.
 
-"Run self-test (all scenarios)" runs **43 assertions** covering: the committed
+"Run self-test (all scenarios)" runs **51 assertions** covering: the committed
 `content/templates/java-oop` verbatim including its `Scanner` read; prompt-then-read
 three times including `nextInt()` and a line built from three `print` calls; the
 same class name in two packages; a compile error in a nested file (path, line,
 caret, nothing runs); an uncaught exception two student frames deep (filtered
-trace, no JIT noise, and proof the noise occurred); infinite loop → kill → run
-again; `System.exit(3)` → recovery; and per-run directory cleanup.
-The harness self-test last showed 43/43 (screenshot evidence is no longer
-committed; run the harness to reproduce it); the same
-43/43 was reproduced twice on Chrome 151/Windows during the verification
-described above — once before and once after the two fixes noted in §5 and in
-"Behaviour notes" — along with hand-typed runs of the template and the prompt
-scenario.
+trace, no JIT noise, and proof the noise occurred — session-scoped since the
+resident Server loads ECJ's JIT-refused parser once per session, not once per
+compile); infinite loop → kill → run again; `System.exit(3)` → recovery; and
+per-run directory cleanup.
+The harness self-test last showed 51/51, on Chrome 150 headless/Linux during the
+2026-08-06 resident-server rework (run the harness to reproduce).
 `window.harness` exposes the same API for scripted checks.
 
 Other checks worth keeping:

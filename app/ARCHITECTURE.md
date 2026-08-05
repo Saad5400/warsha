@@ -565,9 +565,10 @@ that compile and run with piped stdin but have not been through that review. Eac
   inlined; other network refs (a non-Tailwind CDN) are left untouched, the seam those kits build on. The
   output pane reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
   editor-adjacent preview is a follow-up.
-- Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours) and its
-  bootstrap compile costs 7–20 s on a fresh worker. Both are flagged for Product in
-  `runtimes/java/INTEGRATION.md`.
+- Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours). Its
+  bootstrap compile (5–20 s) is a once-per-device-per-deploy cost since 2026-08-06 — the compiled
+  bootstrap persists in IndexedDB and a resident Server keeps ECJ warm, so a revisit boots in ~1 s
+  and a re-run takes well under a second. Details in `runtimes/java/INTEGRATION.md`.
 - Visual implementation of DESIGN-SPEC is deliberately **not** done — this hand-off is
   plain-but-token-correct, and the design engineer owns the styling pass.
 - Progress escalation covers 8s / 25s / 60s as console notes; the spec's separate `Cancel` /

@@ -1,6 +1,8 @@
-import { StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
+  closeHoverTooltips,
   EditorView,
+  hasHoverTooltips,
   hoverTooltip,
   keymap,
   showTooltip,
@@ -237,19 +239,25 @@ function showDocsAt(view: EditorView, pos: number, lang: CompletionLang | null):
   const hit = docsAt(view, pos, lang)
   if (!hit) return false
   view.dispatch({
-    effects: setDocsTooltip.of({
-      pos: hit.from,
-      end: hit.to,
-      above: true,
-      create: () => cardView(hit),
-    }),
+    effects: [
+      setDocsTooltip.of({
+        pos: hit.from,
+        end: hit.to,
+        above: true,
+        create: () => cardView(hit),
+      }),
+      // Never two cards: the manual one replaces any mouse-hover card.
+      closeHoverTooltips,
+    ],
   })
   return true
 }
 
+/** Dismiss BOTH faces of the card — the manual one and the mouse-hover one. */
 function hideDocs(view: EditorView): boolean {
-  if (!view.state.field(docsTooltipField, false)) return false
-  view.dispatch({ effects: setDocsTooltip.of(null) })
+  const manual = view.state.field(docsTooltipField, false)
+  if (!manual && !hasHoverTooltips(view.state)) return false
+  view.dispatch({ effects: [setDocsTooltip.of(null), closeHoverTooltips] })
   return true
 }
 
@@ -258,6 +266,15 @@ function hideDocs(view: EditorView): boolean {
 /** Movement past this many px is a scroll or a drag, not a press. */
 const PRESS_SLOP = 8
 const PRESS_MS = 500
+
+/**
+ * After a touch, browsers synthesize compat mouse events at the touch point —
+ * enough to make `hoverTooltip` "hover" on a plain tap. Touch input stamps
+ * this; the hover source stays quiet while the stamp is fresh, so on a phone
+ * the card comes only from the long-press path.
+ */
+let lastTouchAt = 0
+const TOUCH_QUIET_MS = 1500
 
 /**
  * Long-press → the card, without stealing the gesture: nothing here ever
@@ -280,6 +297,7 @@ function touchDocs(lang: CompletionLang | null): Extension {
       // card itself land outside contentDOM and never reach this handler).
       if (view.state.field(docsTooltipField, false)) hideDocs(view)
       if (e.pointerType !== 'touch') return
+      lastTouchAt = Date.now()
       startX = e.clientX
       startY = e.clientY
       cancel()
@@ -325,24 +343,32 @@ function touchDocs(lang: CompletionLang | null): Extension {
 
 const CHORD_MS = 3000
 
-/** See the header comment: an observer, not a binding — it never preventDefaults. */
+/**
+ * See the header comment: a two-key watcher, not a CM multi-stroke binding
+ * (whose prefix handling would preventDefault Ctrl+K and break the shell's
+ * own Ctrl+K chords). `Prec.highest` because the *completing* Ctrl/Cmd+I must
+ * beat defaultKeymap's own Mod-i (selectParentSyntax) — claiming it there has
+ * the same shell-level effect selectParentSyntax already has today. The
+ * arming Ctrl/Cmd+K is never claimed, so Ctrl+K Ctrl+O still reaches the
+ * shell untouched.
+ */
 function showHoverChord(lang: CompletionLang | null): Extension {
   let armedAt = 0
-  return EditorView.domEventHandlers({
-    keydown(e, view) {
-      if (e.key === 'Control' || e.key === 'Meta' || e.key === 'Shift' || e.key === 'Alt') return false
-      const mod = e.metaKey || e.ctrlKey
-      const key = e.key.toLowerCase()
-      if (armedAt && Date.now() - armedAt < CHORD_MS && mod && key === 'i') {
-        armedAt = 0
-        showDocsAt(view, view.state.selection.main.head, lang)
-        // Return false: the shell's pending Mod+K chord swallows this stroke.
+  return Prec.highest(
+    EditorView.domEventHandlers({
+      keydown(e, view) {
+        if (e.key === 'Control' || e.key === 'Meta' || e.key === 'Shift' || e.key === 'Alt') return false
+        const mod = e.metaKey || e.ctrlKey
+        const key = e.key.toLowerCase()
+        if (armedAt && Date.now() - armedAt < CHORD_MS && mod && key === 'i') {
+          armedAt = 0
+          return showDocsAt(view, view.state.selection.main.head, lang)
+        }
+        armedAt = mod && !e.altKey && !e.shiftKey && key === 'k' ? Date.now() : 0
         return false
-      }
-      armedAt = mod && !e.altKey && !e.shiftKey && key === 'k' ? Date.now() : 0
-      return false
-    },
-  })
+      },
+    }),
+  )
 }
 
 /* ---------------------------------------------------------------- exports */
@@ -359,6 +385,10 @@ export function hoverDocs(lang: CompletionLang | null): Extension {
     docsTooltipField,
     hoverTooltip(
       (view, pos) => {
+        // Not while a touch is fresh (synthesized mouse events — see
+        // lastTouchAt) and not on top of a manual card already showing.
+        if (Date.now() - lastTouchAt < TOUCH_QUIET_MS) return null
+        if (view.state.field(docsTooltipField, false)) return null
         const hit = docsAt(view, pos, lang)
         if (!hit) return null
         return { pos: hit.from, end: hit.to, above: true, create: () => cardView(hit) }

@@ -424,7 +424,6 @@ async function selfTest() {
     // CheerpJ effectively leaves us with) prints precisely this -- verified
     // against a real JDK -- so anything less than equality is a regression.
     freshConsole()
-    const noiseBefore = state.noiseSeen
     await run('crash')
     code = await waitFor('exit', COMPILE_MS, 'crash exit')
     check('5a the program ran up to the throw', state.io.includes('about to divide by zero'))
@@ -459,10 +458,15 @@ async function selfTest() {
       firstMatch(/[^\s]*reflect\.[^\n]*/),
     )
     check('5i no JIT-failure noise in the student\'s output', !/JIT failure|please report a bug/.test(state.io))
+    // Session-scoped, not per-scenario: with the resident Server, ECJ's
+    // JIT-refused parser method is loaded ONCE (at the warm-up compile), so
+    // the noise fires once per session rather than once per compile. It must
+    // still have occurred by now -- several compiles have run -- or the filter
+    // has stopped being exercised at all.
     check(
-      '5j ...and that noise really did occur (so the filter is doing work)',
-      state.noiseSeen > noiseBefore,
-      `${state.noiseSeen - noiseBefore} noise lines this scenario, ${state.noiseSeen} total`,
+      '5j ...and that noise really did occur this session (so the filter is doing work)',
+      state.noiseSeen > 0,
+      `${state.noiseSeen} noise lines this session`,
     )
     check('5k exit code non-zero and non-null', code !== null && code !== 0, `got ${code}`)
 

@@ -8,9 +8,10 @@ import { splitPath } from './fs/project'
 import { prefs, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { disposeRuntimes, entryCandidates, isPreviewEntry } from './runtime'
+import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
 import { type Template } from './templates'
 import { exportZip } from './zip'
+import { buildShareUrl, takeSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
@@ -21,6 +22,8 @@ import { wordsInSource } from './editor/completions'
 import { setProjectDocsSource } from './editor/hoverDocs'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { shareFileAsImage } from './actions/shareImage'
+import { shareProjectAsPdf } from './actions/sharePdf'
+import { isCancelled } from './actions/deliver'
 import { ActivityBar, type SideView } from './components/ActivityBar'
 import { SearchView } from './components/SearchView'
 import { Breadcrumbs } from './components/Breadcrumbs'
@@ -45,7 +48,7 @@ import { TemplatePicker } from './components/TemplatePicker'
 import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import type { MenuItem } from './components/ui/Menu'
-import { IconFiles, IconFolderOpen, IconShare, IconWand } from './components/ui/Icons'
+import { IconFileLines, IconFiles, IconFolderOpen, IconLink, IconShare, IconWand } from './components/ui/Icons'
 import { COPY, count } from './copy'
 import pkg from '../package.json'
 
@@ -136,6 +139,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     quotaTight,
     isPrimaryTab,
     createProject,
+    adoptShared,
     openProject,
     renameProject,
     deleteProject,
@@ -227,11 +231,110 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const runner = useRunner(project, buffer, entryPath)
 
+  // ---- a #share= link in the URL (sharelink.ts) ----
+  // Two ways a share payload arrives: in the URL a fresh load starts with
+  // (clicking the link anywhere), and as a bare hashchange when the link is
+  // pasted into a tab Warsha is already open in — same document, no reload,
+  // so a boot-only parser would silently ignore exactly the "re-open the
+  // same link" case. Both funnel through `applyShared`. The boot one is
+  // parsed before the first effects run and gates workspace restore below:
+  // the import switches projects, and restoring the previous session's tabs
+  // into the project being left would race the switch.
+  const pendingShareRef = useRef<SharedProject | 'broken' | null | undefined>(undefined)
+  if (pendingShareRef.current === undefined) pendingShareRef.current = takeSharedFromUrl()
+  const [shareHandled, setShareHandled] = useState(pendingShareRef.current === null)
+  const shareAdopted = useRef(false)
+
+  const shareBrokenNotice = useCallback(
+    () => notify('That share link arrived damaged or cut short — ask for a fresh one.', 'error'),
+    [notify],
+  )
+
+  /** Lands `shared` on this device: the untouched-copy project if one exists,
+   *  a new one otherwise (adoptShared), then points the workspace at it. */
+  const applyShared = useCallback(
+    async (shared: SharedProject): Promise<boolean> => {
+      await whenReady()
+      if (runner.busy) runner.stop()
+      const before = currentProject?.id
+      const leaving = tabs
+      const result = await adoptShared(shared.name, shared.snapshot)
+      if (!result) {
+        notify('Warsha could not save the shared project to this device.', 'error')
+        return false
+      }
+      // Re-point the workspace only when the link landed somewhere else. When
+      // it resolved to the project already on screen, the tabs the student has
+      // open ARE the right workspace — and closing the active file only to
+      // re-open the same path with the same content would leave the editor's
+      // controller detached from it (Editor re-opens on [path, content]
+      // change, and in the dedup case neither changes), silently swallowing
+      // every keystroke after. The boot case (no tabs yet) still adopts.
+      if (result.meta.id !== before || tabs.length === 0) {
+        // Same per-path editor-state eviction as every project switch — two
+        // projects can both hold a "main.py" (see adoptProject).
+        for (const path of leaving) editorRef.current?.closeFile(path)
+        const entry = shared.entry ?? entryCandidates(shared.snapshot.files)[0] ?? shared.snapshot.files[0]?.path ?? null
+        setTabs(entry ? [entry] : [])
+        setActivePath(entry)
+        setEntryPath(entry)
+        buffer.clear()
+      }
+      notify(
+        result.created
+          ? `“${result.meta.name}” ready — ${count(shared.snapshot.files.length, 'file')}.`
+          : `You already have this project, unchanged — opened “${result.meta.name}”.`,
+        'success',
+      )
+      return true
+    },
+    [whenReady, runner, currentProject, tabs, adoptShared, notify, buffer],
+  )
+
+  useEffect(() => {
+    const shared = pendingShareRef.current
+    if (!shared) return
+    pendingShareRef.current = null
+    void (async () => {
+      try {
+        if (shared === 'broken') {
+          shareBrokenNotice()
+          return
+        }
+        shareAdopted.current = await applyShared(shared)
+      } finally {
+        setShareHandled(true)
+      }
+    })()
+    // Mount-only: the boot payload exists exactly once; the first-render
+    // applyShared (tabs = []) is the right one — no tabs are open yet.
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const shared = takeSharedFromUrl()
+      if (!shared) return
+      if (shared === 'broken') {
+        shareBrokenNotice()
+        return
+      }
+      void applyShared(shared)
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [applyShared, shareBrokenNotice])
+
   // ---- restore the workspace once the project has loaded ----
   // An empty project is not a special mode and does not open anything: the
   // editor area carries WelcomePanel until a file exists (see below).
   useEffect(() => {
-    if (!ready || hydrated) return
+    if (!ready || hydrated || !shareHandled) return
+    if (shareAdopted.current) {
+      // A share link just chose the workspace (its entry file is the one open
+      // tab); restoring the previous session's tabs would undo the import.
+      setHydrated(true)
+      return
+    }
     const open = initial.openTabs.filter((p) => project.has(p))
     const active = initial.activePath && open.includes(initial.activePath) ? initial.activePath : (open[0] ?? null)
     setTabs(open)
@@ -240,7 +343,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     // panel gets the room. It auto-opens on Run, as it always has.
     if (project.isEmpty()) setConsoleOpen(false)
     setHydrated(true)
-  }, [ready, hydrated, project, initial])
+  }, [ready, hydrated, shareHandled, project, initial])
 
   // ---- persist UI state (only after restore, or we'd overwrite it with blanks)
   useEffect(() => {
@@ -279,6 +382,29 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (candidates.length === 0) return
     if (!entryPath || !candidates.includes(entryPath)) setEntryPath(candidates[0])
   }, [candidates, entryPath])
+
+  // Pre-warm the Java engine while the student is still reading their code.
+  // Boot is cheap now that the compiled bootstrap persists in IndexedDB
+  // (~1s on a revisit, measured 2026-08-06), and the ECJ warm-up runs in the
+  // background behind it — so a Run pressed a few seconds after page open
+  // starts in well under a second instead of paying the whole boot inside the
+  // click. Silent on purpose: progress UI belongs to a run the student asked
+  // for (one progress voice — founder ruling 2026-08-05), and load() is
+  // idempotent so the run's own load() call simply joins this one.
+  // Java only: its engine is ~1MB + the 3MB compiler jar, where Python and
+  // C# would pull tens of MB the student never asked for.
+  useEffect(() => {
+    if (!hydrated || !entryPath || langForPath(entryPath) !== 'java') return
+    const timer = window.setTimeout(() => {
+      runtimeFor(entryPath)
+        ?.load(() => {})
+        .catch(() => {
+          // A dead network fails the pre-warm; the student's own Run will
+          // retry and is where the failure should be reported.
+        })
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [hydrated, entryPath])
 
   // Language is per file, never per app: the file you are looking at is the file
   // Run starts, as long as it is runnable. Otherwise the last choice stands.
@@ -591,6 +717,49 @@ function Ide({ report }: { report: CapabilityReport }) {
       notify('Could not create an image of this file.', 'error')
     }
   }, [activePath, project, notify])
+
+  /** "Share as link…" (⋯ menu) — the whole project folded into a URL that
+   *  recreates it on whatever device opens it (sharelink.ts). Share sheet
+   *  where the OS has one, clipboard everywhere else. */
+  const shareLink = useCallback(async () => {
+    const url = buildShareUrl(currentProject?.name ?? 'Shared project', entryPath, project.snapshot())
+    if (!url) {
+      notify('This project is too big to fit in a link — Export as .zip instead.', 'error')
+      return
+    }
+    if (navigator.canShare?.({ url })) {
+      try {
+        await navigator.share({ url, title: currentProject?.name })
+        return
+      } catch (e) {
+        if (isCancelled(e)) return
+        // Some browsers advertise canShare and then refuse — the clipboard
+        // path below answers either way.
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      notify('Link copied — opening it recreates this project.', 'success')
+    } catch {
+      notify('Warsha could not copy the link.', 'error')
+    }
+  }, [currentProject, entryPath, project, notify])
+
+  /** "Share as PDF…" (⋯ menu) — every file in the project, print-styled, for
+   *  handing work in. See actions/sharePdf.ts. */
+  const sharePdf = useCallback(async () => {
+    if (project.isEmpty()) return
+    const name = currentProject?.name ?? 'Warsha project'
+    // Rasterising a few pages takes seconds, and a click that answers with
+    // seconds of nothing reads as a dead row.
+    notify('Making the PDF…')
+    try {
+      const result = await shareProjectAsPdf(name, project.snapshot(), `${slug(name) || 'warsha-project'}.pdf`)
+      if (result === 'downloaded') notify('PDF downloaded.')
+    } catch {
+      notify('Could not create the PDF.', 'error')
+    }
+  }, [project, currentProject, notify])
 
   // ---- starters + zip ----
   // A starter populates the project you are already in. It is an action, not a
@@ -1217,6 +1386,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: () => void renameCurrentProject(),
     },
     { id: 'projects.export', title: 'Projects: Export as .zip', enabled: () => !empty, run: exportProject },
+    { id: 'projects.shareLink', title: 'Projects: Share as Link', enabled: () => !empty, run: () => void shareLink() },
+    { id: 'projects.sharePdf', title: 'Projects: Share as PDF', enabled: () => !empty, run: () => void sharePdf() },
     // Danger last, the same rule every menu in the app follows.
     { id: 'projects.empty', title: 'Projects: Empty Project…', enabled: () => !empty, run: () => void startEmpty() },
     {
@@ -1263,6 +1434,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: 'Open Recent', items: projectRows },
         { label: 'Import .zip…', startsGroup: true, onSelect: () => setImportOpen(true) },
         { label: 'Export as .zip', disabled: empty, onSelect: exportProject },
+        { label: 'Share as link…', disabled: empty, onSelect: () => void shareLink() },
+        { label: 'Share as PDF…', disabled: empty, onSelect: () => void sharePdf() },
         { label: 'Save All', hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
         {
           label: 'Rename Project…',
@@ -1387,8 +1560,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     { label: 'About Warsha', startsGroup: true, onSelect: showAbout },
   ]
 
-  // The tab-strip "⋯" (every size, with the trailing group) carries only what
-  // is scoped to the FILE — the app-scoped rows live in the menu bar above.
+  // The tab-strip "⋯" (every size, with the trailing group) carries what is
+  // scoped to the work on screen: the file rows first, then the share family
+  // together — image (this file), link and PDF (the whole project) — because
+  // "share" is one job to a student even though the scopes differ. The rest of
+  // the app-scoped rows live in the menu bar above.
   // "Share as image…" is a QA-clicked string.
   const deskMoreItems: MenuItem[] = [
     {
@@ -1403,6 +1579,18 @@ function Ide({ report }: { report: CapabilityReport }) {
       icon: <IconShare size={18} />,
       disabled: !activePath,
       onSelect: () => void shareActiveFile(),
+    },
+    {
+      label: 'Share project as link…',
+      icon: <IconLink size={18} />,
+      disabled: empty,
+      onSelect: () => void shareLink(),
+    },
+    {
+      label: 'Share project as PDF…',
+      icon: <IconFileLines size={18} />,
+      disabled: empty,
+      onSelect: () => void sharePdf(),
     },
   ]
 
