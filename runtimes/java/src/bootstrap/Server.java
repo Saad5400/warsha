@@ -13,19 +13,15 @@ import java.io.StringWriter;
  * main keeps ECJ's classes loaded and JIT-warmed, and gives Build a place to
  * keep state between runs (the compiled-output reuse cache).
  *
- * Server.main is also the bootstrap-cache gate. /files/ is IndexedDB-backed
- * and persists across page loads, so the compiled warsha.* classes from an
- * earlier session are usually already there. Starting this class IS the cache
- * probe:
- *
- *  - classes missing or unlinkable -> main never gets going, the worker's
- *    cheerpjRunMain settles, and the worker recompiles the bootstrap;
- *  - classes present but compiled from other sources -> Stamp.VALUE (compiled
- *    into the cache, see Stamp) disagrees with the hash the worker passed in,
- *    main reports phase "server" code 2 and returns, and the worker
- *    recompiles;
- *  - classes present and stamped -> the 5-10s in-browser bootstrap compile is
- *    skipped entirely.
+ * These classes ship prebuilt in warsha-boot.jar, built by build-bootstrap.sh
+ * and served from the site root. They used to be compiled in the browser on
+ * first visit and cached in IndexedDB behind a source hash; that whole
+ * mechanism is gone, because on Java 17 it could not work -- the in-browser
+ * compile needs Platform.prepare() to have run first, and each cheerpjRunMain
+ * gets a fresh classloader, so there was no run in which our own code could
+ * have prepared anything. Shipping the classes is also 5-15s faster on a first
+ * visit, and means a broken deploy fails here rather than half-way through a
+ * student's first Run.
  *
  * Commands arrive through Bridge.nextCommand, tab-separated. The loop is
  * single-threaded on purpose: the worker serializes commands, so one compile
@@ -36,26 +32,18 @@ import java.io.StringWriter;
 public class Server {
 
     public static void main(String[] args) {
-        String expectedStamp = args.length > 0 ? args[0] : "";
-
-        // Force-load the whole bootstrap now. A half-written cache (a compile
-        // interrupted mid-write) must fail HERE, where the worker's answer is
-        // "recompile", not later inside a student's run where the answer would
-        // be a broken session with a valid-looking cache.
+        // Force-load the whole bootstrap now. An incomplete or mismatched
+        // warsha-boot.jar must fail HERE, where the worker reports a broken
+        // engine, and not later inside a student's run.
         try {
             Class.forName("warsha.Bridge");
             Class.forName("warsha.Build");
             Class.forName("warsha.Launcher");
+            Class.forName("warsha.Platform");
             Class.forName("warsha.Traces");
-            Class.forName("warsha.Stamp");
         } catch (Throwable t) {
             // Bridge itself may be the broken class, so report nothing: the
             // settling of main is the signal the worker acts on.
-            return;
-        }
-
-        if (!Stamp.VALUE.equals(expectedStamp)) {
-            Bridge.phaseDone("server", "2");
             return;
         }
 

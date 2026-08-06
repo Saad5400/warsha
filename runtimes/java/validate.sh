@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Offline gate for the Java bootstrap sources. No browser, no CheerpJ.
 #
-#   1. Compiles src/bootstrap with --release 8 and -Werror. CheerpJ's runtime is
-#      a Java 8 JRE, so anything newer than Java 8 in these sources is a runtime
-#      failure in the browser that no amount of local testing on a modern JDK
-#      would catch.
+#   1. Compiles src/bootstrap with --release 17 and -Werror -- the same
+#      invocation build-bootstrap.sh ships, so a source that fails here is a
+#      source that would fail the build.
 #   2. Runs test/BootstrapSelfTest, which exercises the logic that does not need
 #      Bridge's natives: entry-point naming, stack-trace filtering, and the ECJ
 #      behaviour Build relies on.
@@ -24,11 +23,11 @@ if [ ! -f ecj.jar ]; then
   exit 1
 fi
 
-echo "==> javac --release 8 -Werror  (src/bootstrap)"
-javac --release 8 -Xlint:all -Werror -cp ecj.jar -d "$OUT/classes" src/bootstrap/*.java
+echo "==> javac --release 17 -Werror  (src/bootstrap)"
+javac --release 17 -Xlint:all -Werror -cp ecj.jar -d "$OUT/classes" src/bootstrap/*.java
 
 echo "==> javac (test/BootstrapSelfTest)"
-javac --release 8 -Xlint:all -cp "ecj.jar:$OUT/classes" -d "$OUT/classes" test/BootstrapSelfTest.java
+javac --release 17 -Xlint:all -cp "ecj.jar:$OUT/classes" -d "$OUT/classes" test/BootstrapSelfTest.java
 
 echo "==> run BootstrapSelfTest"
 java -cp "ecj.jar:$OUT/classes" warsha.BootstrapSelfTest

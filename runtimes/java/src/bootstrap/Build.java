@@ -238,10 +238,16 @@ public class Build {
      * writer we own, and CheerpJ's own console chatter stays where it is.
      */
     private static boolean compile(List<String> sourcePaths, File out) {
+        // Must precede the first compile of the session: without it ECJ cannot
+        // see the Java 17 platform classes at all. See Platform's header.
+        String systemHome = Platform.prepare();
+
         List<String> argv = new ArrayList<String>(sourcePaths);
         argv.add("-d");
         argv.add(out.getPath());
-        argv.add("-1.8");           // CheerpJ's runtime is Java 8; see INTEGRATION.md
+        argv.add("--system");       // where ECJ looks for the platform classes
+        argv.add(systemHome);
+        argv.add("-17");            // CheerpJ's runtime is Java 17; see INTEGRATION.md
         argv.add("-g");             // buys no line numbers under CheerpJ, but is correct
         argv.add("-encoding");
         argv.add("UTF-8");

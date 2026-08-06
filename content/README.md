@@ -25,9 +25,10 @@ Both were compiled and run before being committed. The Java files compile clean 
 
 These are requirements, not preferences. Each one is load-bearing for the code as written.
 
-- **Java 8 language level is enough.** The templates use no `var`, no records, no text blocks, and no
-  `List.of`, so they work on a browser JVM that stops at Java 8. Keep future content inside that
-  limit until we know what the engine really supports.
+- **The templates stay on plain, classical Java.** The engine is Java 17 and `var`, records and
+  text blocks all compile, but the starter content deliberately avoids them: a first-week student
+  reading a template should meet ordinary classes and methods, not language features their course
+  has not reached. Use the modern constructs in later content, not in the starters.
 - **A partial line must reach the console before a read blocks.** The templates print
   `System.out.print("Your name: ")` and then read. If stdout is only flushed on a newline, the
   student sees the cursor waiting with no question on screen, types blindly, and the prompt appears

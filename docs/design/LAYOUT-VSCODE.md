@@ -40,7 +40,7 @@ VSCode's floor plan.
 3. **Status bar** (bottom, full width, 24-28px, surface-0, always visible on
    ≥900px; on phones it collapses into the console status line which already
    exists): left → engine/run state + exit code (mirrors console status pill);
-   right → active file language ("Java 8" / "Python 3.14"), entry file name,
+   right → active file language ("Java 17" / "Python 3.14"), entry file name,
    cursor Ln:Col, font-size stepper. Colors stay OUR tokens — no VSCode blue.
 4. **Run button**: top-right of the title bar (VSCode's play-button position),
    in ADDITION to remaining reachable near the console on touch layouts —

@@ -370,7 +370,7 @@ public final class BootstrapSelfTest {
         PrintWriter errW = new PrintWriter(err);
         boolean ok = BatchCompiler.compile(
             new String[] { src.getPath(), "-d", new File(dir, "out").getPath(),
-                           "-1.8", "-g", "-proc:none", "-nowarn", "-encoding", "UTF-8" },
+                           "-17", "-g", "-proc:none", "-nowarn", "-encoding", "UTF-8" },
             outW, errW, null);
         outW.flush();
         errW.flush();
@@ -423,7 +423,7 @@ public final class BootstrapSelfTest {
                 new File(app, "Main.java").getPath(),
                 new File(models, "Person.java").getPath(),
                 new File(models, "Student.java").getPath(),
-                "-d", out.getPath(), "-1.8", "-g", "-proc:none", "-nowarn", "-encoding", "UTF-8" },
+                "-d", out.getPath(), "-17", "-g", "-proc:none", "-nowarn", "-encoding", "UTF-8" },
             oW, eW, null);
         oW.flush();
         eW.flush();

@@ -88,7 +88,8 @@ Superclass method getName() -> Sara Al-Otaibi
   release as of 2026-07-30; it loads `cj3.js` + `cj3.wasm` from the same path).
 - Java runtime: **Java 8** — `System.getProperty("java.version")` reports
   `1.8.0_492-internal`. This is `loader.js`'s default (`cj3InitOptions = {version:8}`).
-  `cheerpjInit({version: 11})` / `17` are documented but **untested here**.
+  `cheerpjInit({version: 11})` / `17` work, but **no compiler can run on them**;
+  measured and explained in §11.
 - Compiler: **ECJ 3.26.0**, `org.eclipse.jdt.internal.compiler.batch.Main`, from
   `/app/ecj.jar` (EPL-2.0, §8.3). A JDK `tools.jar` + `com.sun.tools.javac.Main`
   also works — that is what Leaning Technologies' own JavaFiddle does — but the
@@ -636,3 +637,98 @@ swap, not carried over from the javac run.
 | Uncaught exception | exit 1, 5 frames, 1 student frame, no line numbers |
 | Kill an infinite loop | `terminate()` 0.5–0.8 ms, respawn ready 48 ms, UI responsive throughout |
 | Output throughput | 2000 `println` in 203 ms |
+
+---
+
+## 11. Java 17 (investigated and shipped, 2026-08-06)
+
+This section originally concluded "stay on Java 8". That conclusion was wrong in
+its recommendation but right in its findings, and the findings are what made the
+fix possible, so they are kept below. **Warsha now runs Java 17.** The shipping
+detail lives in [`runtimes/java/INTEGRATION.md`](../../runtimes/java/INTEGRATION.md);
+this is the investigation record.
+
+### 11.1 The blocker: no compiler could see the platform classes
+
+| Attempt (on `version: 17`) | Result |
+|---|---|
+| `com.sun.tools.javac.Main` | `ClassNotFoundException` — `jdk.compiler` is not in the image |
+| `javax.tools.ToolProvider.getSystemJavaCompiler()` | returns `null` |
+| ECJ 3.46.0, `-17` | exit -1, `invalid location for system libraries: /lt/17` |
+| ECJ 3.46.0, `-17 -bootclasspath …` | `option -bootclasspath not supported at compliance level 9 and above` |
+| ECJ 3.46.0, `--release 17` | exit -1, same `invalid location` |
+| ECJ 3.26.0, `-1.8` | `NPE` in `JRTUtil.walkModuleImage`, after `IOException: /lt/17/lib/jrt-fs.jar not exist` |
+
+Two files are missing from CheerpJ's runtime image, and each breaks a different
+layer. `java.home` is `/lt/17/`, containing `[bin, conf, jre, lib]` with
+`lib = [modules, security, tzdb.dat]`:
+
+1. **`<java.home>/release`** — ECJ 3.36+ identifies a JDK by reading
+   `JAVA_VERSION` from it (`Jdk.readJdkReleaseFile`). Absent ⇒ `configure.invalidSystem`.
+2. **`<java.home>/lib/jrt-fs.jar`** — the JDK's *own* `JrtFileSystemProvider`
+   demands it whenever `newFileSystem("jrt:/", {java.home: …})` is handed a home
+   other than the running JVM's, which is exactly what ECJ does.
+
+`/lt/` is read-only, so neither can be supplied where it is wanted.
+
+### 11.2 The way through
+
+The running JVM's **own** image opens with no `jrt-fs.jar` at all:
+
+```
+FileSystems.getFileSystem(URI.create("jrt:/"))   -> ok
+/modules                                          -> 50 modules
+/modules/java.base/java/lang/Object.class         -> 1493 bytes, magic cafebabe
+full walk                                         -> 20 521 class files in 650 ms
+```
+
+So `warsha.Platform` gives ECJ a `java.home` under `/files/` holding only a
+`release` file (check 1 satisfied by a file we control) and pre-seeds
+`JRTUtil.JRT_FILE_SYSTEMS` for that path with the running image, so the provider
+call that wants `jrt-fs.jar` is never made (check 2 never runs). Stock ECJ then
+compiles at `-17`. The knock-on was that the bootstrap could no longer be
+compiled in the browser — `Platform.prepare()` has to run in the same JVM
+invocation, and each `cheerpjRunMain` gets a fresh classloader — so it ships
+prebuilt in `warsha-boot.jar`.
+
+### 11.3 Performance: better at running, worse at the first compile
+
+Same class file (compiled once at `-1.8`, so identical bytecode everywhere), run
+under each runtime. Headless Chrome, Linux desktop:
+
+| | Java 8 | Java 11 | Java 17 |
+|---|---|---|---|
+| `cheerpjInit`, warm cache | 43 ms | 164 ms | 161 ms |
+| JVM start→exit, empty `main`, first | 880 ms | 2117 ms | 2261 ms |
+| JVM start→exit, empty `main`, settled | 382–394 ms | 653–738 ms | 633–675 ms |
+| 40 M-iteration integer loop | 652 ms | 679 ms | 689 ms |
+| 400 k `StringBuilder.append` | 17 ms | 7 ms | 7 ms |
+| 200 k `HashMap` get/put | 120 ms | 67 ms | 72 ms |
+| 300 k `ArrayList` + `Collections.sort` | 161 ms | 147 ms | 146 ms |
+| engine bytes fetched (decoded) | 18.7 MB | 13.8 MB | 13.6 MB |
+
+Throughput on 17 is equal or better, and the engine downloads *less*. The real
+cost is the **first compile of a session**: on a modular runtime every platform
+type is read out of the packed image on first touch — ~15 s against Java 8's
+~2 s. It is paid once per JVM, so repeat runs are unchanged (0.1 s in-app, same
+as Java 8), and it is pushed into the background warm-up.
+
+End-to-end, `tools/qa/verify-java.mjs` on the same rig:
+
+| | Java 8 | Java 17 |
+|---|---|---|
+| Cold first visit: Run → prompt | 16.1 s | 24.0 s |
+| Warm reload → Run | 7.5 s | 21.8 s |
+| Run after Stop/kill | 3.8 s | 17.8 s |
+| **Second run, same session** | **0.1 s** | **0.1 s** |
+
+### 11.4 Loose ends
+
+- **`ct.sym` is the next lever** if the first-compile cost needs to come down:
+  ECJ takes a zip-based path (`ClasspathJep247Jdk12`) when the requested release
+  is older than the JDK's own, which would avoid the module image entirely.
+  Untested; adds a ~7 MB asset.
+- **Java 21/25** need CheerpJ to offer them; 4.3 tops out at 17, and Leaning
+  Technologies' roadmap puts Java 21 and LTS parity in 2026.
+- **Two small files would remove `Platform.java` entirely** — a `release` file
+  and a `lib/jrt-fs.jar` in CheerpJ's 11/17 images. Worth raising upstream.

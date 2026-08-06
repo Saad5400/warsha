@@ -196,6 +196,58 @@ await page.locator('[aria-label="Program input"]').fill('again')
 await page.locator('[aria-label="Program input"]').press('Enter')
 await hasOut('Finished')
 
+// ============================================== B2. the language level is Java 17
+//
+// The engine moved from Java 8 to Java 17 on 2026-08-06, and that move rests on
+// warsha.Platform showing ECJ a module image CheerpJ does not advertise (see
+// runtimes/java/INTEGRATION.md). If that ever stops working the symptom is not a
+// crash — it is every modern construct below turning back into a compile error.
+// Each one of these is a Java 8 error, so this program passing IS the version.
+await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
+await page.waitForTimeout(300)
+await setEditor(`package app;
+
+import java.util.List;
+
+public class Main {
+    record Point(int x, int y) {}
+
+    sealed interface Shape permits Circle, Square {}
+    record Circle(double r) implements Shape {}
+    record Square(double side) implements Shape {}
+
+    enum Day { SAT, MON }
+
+    static String describe(Shape s) {
+        if (s instanceof Circle c) return "circle " + c.r();
+        if (s instanceof Square q) return "square " + q.side();
+        return "?";
+    }
+
+    static String kind(Day d) {
+        return switch (d) { case SAT -> "weekend"; case MON -> "weekday"; };
+    }
+
+    public static void main(String[] args) {
+        var p = new Point(3, 4);
+        var names = List.of("Sara", "Omar");
+        String block = """
+                text block""";
+        System.out.println("J17 " + p + " " + describe(new Circle(2.5)) + " "
+                + kind(Day.SAT) + " " + String.join("+", names) + " " + block
+                + " " + System.getProperty("java.version"));
+    }
+}`)
+await page.waitForTimeout(600)
+await runBtn().click()
+await hasOut('J17 ')
+const modernOut = await out()
+if (/J17 Point\[x=3, y=4\] circle 2\.5 weekend Sara\+Omar text block 17\./.test(modernOut))
+  pass('Java 17 language level: records, sealed types, pattern matching, switch expressions, var, text blocks, List.of',
+    modernOut.match(/J17 [^\n]*/)?.[0] ?? '')
+else fail('Java 17 language level', modernOut.match(/J17 [^\n]*/)?.[0] ?? modernOut.slice(-200))
+await hasOut('Finished')
+
 // ================================================= C. compile error in a nested file
 await page.locator('[role="treeitem"]', { hasText: 'Person.java' }).first().click()
 await page.waitForTimeout(400)
@@ -300,7 +352,13 @@ info(`screenshot -> ${SHOTS}/warsha-java-exception.png`)
 // ============================================ D. infinite loop -> Stop -> Run again
 await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
 await page.waitForTimeout(300)
-await setEditor('package app; public class Main { public static void main(String[] a) { while (true) { System.out.println("spin"); } } }')
+// The counter is not decoration. Console.tsx renders a 1200-row WINDOW over the
+// buffer, and this loop saturates it, so counting rendered "spin" lines measures
+// the window and not the program: on a fast engine the count can even go DOWN
+// after Stop, as the "Stopped." line pushes one spin row out of view. The
+// highest index printed is immune to that -- if the JVM were still alive it
+// would keep climbing, whatever the console is showing.
+await setEditor('package app; public class Main { public static void main(String[] a) { int i = 0; while (true) { System.out.println("spin " + i); i++; } } }')
 await runBtn().click()
 await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 20,
@@ -309,11 +367,17 @@ pass('infinite loop is running', 'many "spin" lines streaming')
 await stopBtn().click()
 await hasOut('Stopped.')
 pass('Stop killed the infinite loop', 'Stopped. Your files are all saved.')
-const n1 = await page.evaluate(() => (document.querySelector('[aria-label="Program output"]').innerText.match(/spin/g) || []).length)
+const highestSpin = () =>
+  page.evaluate(() => {
+    const text = document.querySelector('[aria-label="Program output"]').innerText
+    const seen = [...text.matchAll(/spin (\d+)/g)].map((m) => Number(m[1]))
+    return seen.length ? Math.max(...seen) : -1
+  })
+const n1 = await highestSpin()
 await page.waitForTimeout(2000)
-const n2 = await page.evaluate(() => (document.querySelector('[aria-label="Program output"]').innerText.match(/spin/g) || []).length)
-if (n1 === n2) pass('output really ceased after Stop', `${n1} lines, unchanged after 2s`)
-else fail('output really ceased after Stop', `${n1} -> ${n2}`)
+const n2 = await highestSpin()
+if (n1 === n2) pass('output really ceased after Stop', `stopped at spin ${n1}, unchanged after 2s`)
+else fail('output really ceased after Stop', `spin ${n1} -> ${n2}: the JVM is still running`)
 
 await setEditor('package app; public class Main { public static void main(String[] a) { System.out.println("run again works"); } }')
 await startSampler()

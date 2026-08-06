@@ -144,12 +144,13 @@ if (typeof window === 'undefined') {
             : r;
 
         // Range requests bypass the cache ENTIRELY — straight to the network,
-        // never read from cache, never stored. CheerpJ reads /app/ecj.jar (a
-        // same-origin GET, so otherwise `cacheable`) in many HTTP Range requests
+        // never read from cache, never stored. CheerpJ reads /app/ecj.jar and
+        // /app/warsha-boot.jar (same-origin GETs, so otherwise `cacheable`) in
+        // many HTTP Range requests
         // and REQUIRES a `206 Partial Content` + `Content-Range` on every one;
         // the moment it sees a `200` with the whole body it decides the host has
         // no Range support and refuses to run — which surfaces to the student as
-        // "Warsha could not start Java" (the bootstrap compile fails). The Cache
+        // "Warsha could not start Java" (the engine fails to start). The Cache
         // API cannot satisfy a range: `caches.match()` ignores the Range header
         // and replays the full stored `200`, so a SINGLE full-body ecj.jar in the
         // cache (one non-range probe, or a server that answers `bytes=0-` with

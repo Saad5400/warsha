@@ -18,12 +18,16 @@
 # python-is-python3) is required by Emscripten's emcc, which `dotnet publish -c
 # Release` invokes to relink the Mono wasm runtime for the C# engine bundle;
 # libatomic1 provides libatomic.so.1, which Emscripten's bundled Node links
-# against during that relink.
+# against during that relink; default-jdk-headless (JDK 17 on bookworm) is what
+# runtimes/java/build-bootstrap.sh compiles warsha-boot.jar with — the Warsha
+# Java bootstrap has to ship prebuilt, because on CheerpJ's modular runtime it
+# can no longer be compiled in the browser (see bootstrap/Platform.java).
 FROM node:22-bookworm-slim AS build
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       curl ca-certificates libicu72 python3 python-is-python3 libatomic1 \
+      default-jdk-headless \
  && rm -rf /var/lib/apt/lists/*
 
 # .NET 9 SDK + wasm-tools workload — required by runtimes/csharp/build.sh to
