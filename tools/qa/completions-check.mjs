@@ -37,9 +37,7 @@ const newFile = async (name) => {
   await f.press('Enter')
   await page.waitForTimeout(900)
 }
-/** Replace the whole document, then force the popup open — activateOnTyping's
- * own heuristics are not what this suite is testing, so every scenario asks
- * explicitly via the same Ctrl+Space a student would reach for. */
+/** Forces the popup via Ctrl+Space (not activateOnTyping's heuristics) so every scenario is explicit. */
 const type = async (code) => {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
@@ -51,9 +49,8 @@ const type = async (code) => {
 }
 const popupLabels = () => page.locator('.cm-tooltip-autocomplete .cm-completionLabel').allTextContents()
 const docLines = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent))
-/** Exact match on the label, not a fuzzy `hasText` — `Scanner` (the class) and
- * `scanner` (the snippet) both contain the same letters, and only the exact
- * label tells them apart. */
+/** Exact match, not fuzzy — `Scanner` (class) and `scanner` (snippet) share
+ *  letters; only the exact label distinguishes them. */
 const accept = async (label) => {
   const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   await page

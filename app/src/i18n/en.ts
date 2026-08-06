@@ -27,17 +27,15 @@ export function count(n: number, noun: string): string {
 
 export const EN = {
   // ---- runtime bootstrap (§7.6, §8) ----
-  // One progress voice (founder ruling 2026-08-05): the console's ProgressBlock
-  // is the only place system loading speaks — a phase headline, the bar, and a
-  // line of numbers. This is its one auxiliary sentence, shown only while a
-  // first-run download has gone on long enough to worry about (a cached engine
-  // never lingers there). Nothing about loading is ever a transcript row.
+  // One progress voice (founder ruling 2026-08-05): ProgressBlock is the only
+  // place loading speaks. This is its one auxiliary sentence, shown only once
+  // a first-run download runs long; nothing about loading is ever a transcript row.
   runtimeFirstRunNote: 'First-time download — next run starts instantly, even offline.',
 
   // ---- engine failures the student can act on (see useRunner's RunFailure) ----
-  // Each is a headline plus one hint. The engine's own text is kept out of both:
-  // "TypeError: Failed to fetch" told a student nothing and looked like their
-  // fault. It is still shown, once, behind "Details".
+  // Headline plus one hint; the engine's raw error ("TypeError: Failed to
+  // fetch") told a student nothing and looked like their fault — still shown
+  // once, behind "Details".
   engineOffline: (lang: string) => `Warsha could not download ${lang}. It needs the internet the first time.`,
   engineOfflineHint:
     'Check your Wi-Fi and try again. On a school network this download is sometimes blocked — ask your teacher.',
@@ -46,9 +44,8 @@ export const EN = {
     'Reload the page once. If it still will not work, use Chrome on Android or on a computer.',
   engineBroken: (lang: string) => `Warsha could not start ${lang}.`,
   engineBrokenHint: 'Try again. If it keeps happening, reload the page.',
-  /** The engine stopped answering — a worker the browser took away, usually
-   * memory. A single red line in the transcript, no failure card: it is not the
-   * student's fault and the one next step is to press Run. */
+  /** Worker the browser killed, usually for memory. A single red transcript
+   * line, no failure card — not the student's fault, and Run is the only next step. */
   engineLost: 'The language engine stopped responding, so Warsha shut it down.',
   engineRetry: 'Try again',
   engineDetails: 'Details',
@@ -57,21 +54,15 @@ export const EN = {
     'Warsha could not save to this device, so it ran what is on screen. Export a .zip to keep a copy.',
 
   // ---- run lifecycle (§8) ----
-  // No "Running <entry>…" transcript row (founder ruling 2026-08-05): the status
-  // line and pill already say the program is running, and system text in the
-  // transcript is what students mistook for their program's own output.
+  // No "Running <entry>…" row (founder ruling 2026-08-05) — the status
+  // line/pill already say so, and students mistook system text here for their
+  // program's own output.
   runOk: 'Finished. (exit code 0)',
   runFailed: (code: number) =>
     `Your program stopped early — exit code ${code}. The red lines above say why.`,
   runStopped: 'Stopped. Your files are all saved.',
 
   // ---- console (§8) ----
-  // "type below" was true when the console had an input bar under the transcript.
-  // The cursor is now in the transcript, at the end of the output, so the sentence
-  // points at the answer rather than at a place on the screen.
-  stdinHint: 'Your program is waiting for something — type your answer and press Enter.',
-  /** The same message, short enough for one line on a 390px phone. */
-  stdinHintShort: 'Waiting for you — type your answer, then Enter.',
   consoleEmpty: 'Output will appear here when you run your code.',
   consoleCleared: 'Cleared.',
 
@@ -90,24 +81,10 @@ export const EN = {
   stdinQueued: 'Saved — your program has not asked for input yet.',
   /** PLACEHOLDER — for typing with nothing running. */
   stdinIdle: 'Nothing is running yet. Tap Run first.',
-  // The live line's placeholder, and the ONLY one left: there is no idle input to
-  // put an idle placeholder in, and no type-ahead bar to invite typing early.
-  // Asserted verbatim by verify.mjs, verify-java.mjs and console-check.mjs —
-  // which run with no ?lang= override, so they get exactly this string.
+  // The only placeholder left — no idle input exists to hold one. Asserted
+  // verbatim by verify.mjs, verify-java.mjs and console-check.mjs (no ?lang=
+  // override, so they read exactly this).
   stdinWaitingPlaceholder: 'Type your answer, then press Enter',
-
-  // ---- console status line: the current state, in words (§7.3 states) ----
-  // No 'preparing' sentence, on purpose: while the engine loads, the transcript's
-  // ProgressBlock is the one progress voice (founder ruling 2026-08-05) and the
-  // status line keeps only its pulsing glyph.
-  statusIdle: 'Ready when you are — press Run.',
-  statusIdleShortcut: (shortcut: string) => `Ready when you are — press Run, or ${shortcut}.`,
-  statusRunning: 'Your program is running.',
-  statusOk: 'Finished — exit code 0.',
-  statusFailed: (code: number) => `Stopped early — exit code ${code}. The red lines say why.`,
-  statusFailedShort: (code: number) => `Stopped early — exit code ${code}.`,
-  statusFailedNoCode: 'Stopped early — the red lines say why.',
-  statusStopped: 'You stopped it. Your files are saved.',
 
   // ---- transcript controls ----
   copyOutput: 'Copy output',
@@ -119,9 +96,8 @@ export const EN = {
   showEarlier: (n: number) => `Show ${n.toLocaleString('en')} earlier lines`,
 
   // ---- status bar (LAYOUT-VSCODE §3) ----
-  // The version is part of the label because it is the answer to the question a
-  // student actually has ("which Java is this?") and because both engines are
-  // pinned: CheerpJ runs Java 17, Pyodide is CPython 3.14 (ARCHITECTURE §6).
+  // Version is part of the label — answers "which Java is this?" — because
+  // both engines are pinned: CheerpJ on Java 17, Pyodide on CPython 3.14 (ARCHITECTURE §6).
   langJava: 'Java 17',
   langPython: 'Python 3.14',
   langPlain: 'Plain text',
@@ -173,12 +149,9 @@ export const EN = {
   multiTabHint: 'Edit in one tab at a time, or the other tab will overwrite what you type here.',
 
   // ---- the start panel (§7.7, adapted: there is no welcome page) ----
-  // Warsha opens straight into the workspace. When the project is empty, the
-  // editor area carries this instead of a blank canvas — so a starter is an
-  // action inside the IDE, never a gate in front of it, and the app never asks
-  // "which language?" (the file extension answers that). The starter is the
-  // primary way in (founder ruling 2026-08-05): "New file" and "Import a .zip"
-  // are quiet secondary actions wherever the empty project offers them.
+  // Empty project shows this instead of a blank canvas — starter is the
+  // primary way in (founder ruling 2026-08-05); New file / Import .zip stay
+  // secondary, and the app never asks "which language?" (the extension answers that).
   welcomeNewFile: 'New file',
   welcomeNewProject: 'New from a starter',
   welcomeNewProjectBlurb: 'Pick a language, then a starter for your level.',
@@ -189,9 +162,8 @@ export const EN = {
   welcomeLanguagesReady: (n: number) => `${n} languages ready · more soon`,
 
   // ---- the New-project template picker (languages.ts + TemplatePicker) ----
-  // One entry point for every starter, so the project menu holds a single "New
-  // project…" however many languages Warsha grows to. Step one is the language;
-  // step two is that language's starters, grouped beginner → advanced.
+  // One entry point for every starter — step one picks the language, step two
+  // its starters, grouped beginner → advanced.
   pickerTitle: 'New project',
   pickerLangIntro: 'Pick a language to see its starters. You can rename the project after.',
   pickerReadyHeading: 'Ready to run',
@@ -214,15 +186,13 @@ export const EN = {
   templateManifest: (files: number, entry: string) => `${count(files, 'file')} · ${entry}`,
 
   // ---- install to the home screen (ui/install.ts) ----
-  // The control is icon-only, so this string is its accessible name and its
-  // tooltip both. "Install Warsha", not "Install app": the student is looking at
-  // a title bar with two other unlabelled glyphs in it, and the product name is
-  // what tells them which app is being offered.
+  // Icon-only control — this string is both its accessible name and tooltip.
+  // "Install Warsha" not "Install app": among unlabelled title-bar glyphs,
+  // the product name is what identifies it.
   installAction: 'Install Warsha',
   /**
-   * iOS and iPadOS only, where no button can ever work — Safari's WebKit fires
-   * no install event, so the Share sheet is the whole mechanism and naming it is
-   * all we can do. Says what it gets them, not just what to tap.
+   * iOS/iPadOS only — WebKit fires no install event, so the Share sheet is the
+   * whole mechanism; this just names it. Says what it gets them, not only what to tap.
    */
   installIos:
     'On iPhone and iPad: tap Share, then Add to Home Screen. Warsha then opens like any other app.',
@@ -245,13 +215,10 @@ export const EN = {
   importAction: 'Import',
   /** Follows the picked file's name: "starter.zip — 4 files ready to import." */
   importPicked: (n: number) => `${count(n, 'file')} ready to import.`,
-  /** The picked zip's manifest, beside its name in the dialog. */
-  importFileCount: (n: number) => count(n, 'file'),
 
   // ---- accessible names for the chrome (LAYOUT-VSCODE) ----
-  // Icon-only controls and landmarks. Every one of these is read aloud and none
-  // of them is ever seen, which is exactly why they are easy to leave behind in
-  // English — they are listed here so they cannot be.
+  // Icon-only controls and landmarks — read aloud, never seen, and easy to
+  // leave in English by accident. Listed here so they can't be.
   a11yActivityBar: 'Activity bar',
   a11yExplorer: 'Explorer',
   a11ySearch: 'Search',
@@ -492,9 +459,8 @@ export const EN = {
   menuZoomIn: 'Zoom In',
   menuZoomOut: 'Zoom Out',
   menuResetZoom: 'Reset Zoom',
-  /** The handedness toggle names the edge it would MOVE Run to (DESIGN-SPEC
-   *  §5.3). In RTL the words stay literal: "left" is the left of the screen,
-   *  which is where the button goes, whichever way the text runs. */
+  /** Names the edge Run would MOVE to (DESIGN-SPEC §5.3) — "left" stays
+   *  literal in RTL too: the screen's left, whichever way the text runs. */
   menuRunOnLeft: 'Run Button on Left',
   menuRunOnRight: 'Run Button on Right',
   menuRun: 'Run',
@@ -557,13 +523,10 @@ export const EN = {
   /**
    * Starter names and blurbs, by Template id (templates.ts).
    *
-   * EMPTY IN ENGLISH ON PURPOSE, and this is the one place the bundle is not
-   * the source of truth: the English name and blurb already live next to the
-   * starter's files in templates.ts, where whoever writes a starter writes
-   * them. Duplicating them here would give the pair two homes and one of them
-   * would go stale. `ar.ts` fills this in, and TemplatePicker falls back to the
-   * template's own fields for any id a locale has not covered — so a starter
-   * added without a translation shows in English rather than not at all.
+   * EMPTY ON PURPOSE — the English name/blurb already live next to each
+   * starter in templates.ts; duplicating them here would give them two homes
+   * to go stale. `ar.ts` fills this in; TemplatePicker falls back to
+   * templates.ts for any id a locale hasn't covered.
    */
   templates: {} as Record<string, { name: string; blurb: string }>,
 }

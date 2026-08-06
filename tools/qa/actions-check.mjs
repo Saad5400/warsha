@@ -38,8 +38,7 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'w
   viewport: { width: 1280, height: 900 },
   acceptDownloads: true,
 })
-// The desktop share path copies the PNG to the clipboard (deliver.ts); the
-// suite reads it back to verify the pixels.
+// Desktop share path copies the PNG to the clipboard (deliver.ts); read back here to verify pixels.
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: URL_.replace(/\/$/, '') })
 const page = ctx.pages()[0] ?? (await ctx.newPage())
 const errors = []
@@ -58,38 +57,25 @@ const newFile = async (name) => {
   await page.waitForTimeout(500)
 }
 
-/** Replaces the whole document with EXACTLY `code`. `insertText` (one bulk,
- *  paste-like insertion) rather than `keyboard.type` (one keydown per
- *  character) deliberately: this file's content is brace-heavy and
- *  pre-indented, and typing it key-by-key runs straight into
- *  `closeBrackets()`'s auto-inserted `}` and `indentOnInput()`'s
- *  auto-indent-on-newline, both of which assume a human is composing the
- *  code live and compound with the literal braces/indentation already in the
- *  string — the doc this suite needs has to be exact, not "what a human
- *  typing this same text would have produced". */
+/** Replaces the whole doc with EXACTLY `code`, via `insertText` (bulk paste)
+ *  not `keyboard.type` — typing key-by-key would trigger closeBrackets/
+ *  auto-indent and corrupt this brace-heavy, pre-indented content. */
 const setContent = async (code) => {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
   await page.keyboard.press('Delete')
   await page.keyboard.insertText(code)
-  // Past CodeMirror's `history()` `newGroupDelay` (500ms default): an action
-  // that follows within that window merges into the SAME undo group as this
-  // insert, and a later "one undo step" check then undoes both together —
-  // which looks exactly like an extra-large undo bug and is actually this
-  // helper being called too fast. Real students do not format a file 300ms
-  // after their last keystroke.
+  // Past CodeMirror's 500ms newGroupDelay — otherwise a later action merges
+  // into this insert's undo group and "one undo step" checks fail.
   await page.waitForTimeout(700)
 }
 
 const docText = () =>
   page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n'))
 
-/** Polls for exact document content, the same way `docText()` reads it — by
- *  joining `.cm-line` textContent, NOT `.cm-content.innerText`. Chrome's
- *  `innerText` inserts an extra blank line around an empty `<div class=
- *  "cm-line"><br></div>` that `.textContent` does not, so a predicate built
- *  on `innerText` never matches a formatted file with a blank line in it and
- *  looks exactly like a slow/hung format — cost real debugging time to find. */
+/** Polls via `.cm-line` textContent, matching `docText()` — NOT innerText,
+ *  which inserts an extra blank line around an empty cm-line and never
+ *  matches a formatted file that has one. */
 const waitForDoc = (expected, timeout) =>
   page.waitForFunction(
     (want) => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n').trim() === want,
@@ -104,26 +90,16 @@ const info = (m) => console.log('      ' + m)
 
 // ---------------------------------------------------------------- 0. boot
 await page.goto(URL_, { waitUntil: 'load' })
-// coi-serviceworker registers then reloads the page once to obtain the
-// isolation headers (documented in verify.mjs and ARCHITECTURE §2.5) — wait
-// for that reload to land before doing anything else. Skipping this is not
-// cosmetic: a dynamic import() started while the reload is in flight (Format
-// loading prettier, Share loading html-to-image) is torn down mid-fetch and
-// fails with "Failed to fetch dynamically imported module", which looked at
-// first like a real bug in Format/Share instead of a test harness race.
+// coi-serviceworker reloads once for isolation headers — a dynamic import()
+// started mid-reload gets torn down and fails to fetch, which looks like a
+// real Format/Share bug but is a harness race.
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 })
-// A brand-new profile lands on the welcome screen (region "Start a project").
-// Its "New file" start card opens the same prompt dialog as the Explorer's —
-// `dialog input` + the "Create" button — to get the very first file down and
-// a real project underway; every file after this one goes through the
-// Explorer's own "New file" (see `newFile()` above).
+// Welcome screen's own "New file" card opens the same dialog as the
+// Explorer's, to get the first file down; every file after uses newFile().
 const welcome = page.locator('[role="region"][aria-label="Start a project"]')
 await welcome.waitFor({ timeout: 20000 })
-// Scoped to the welcome region, not page-wide: the Explorer sidebar's own
-// "New file" icon button (aria-label="New file", no visible text) sits
-// earlier in the DOM and also matches an unscoped `getByRole(name: /New
-// file/)`, silently clicking the wrong control (it does nothing useful
-// against an as-yet-empty project).
+// Scoped to the welcome region — an unscoped query would also match the
+// Explorer's own "New file" button earlier in the DOM.
 await welcome.getByRole('button', { name: /New file/ }).click()
 await page.locator('dialog input').fill('Boot.java')
 await page.getByRole('button', { name: 'Create' }).click()
@@ -145,9 +121,8 @@ await page.waitForTimeout(200)
 // ---------------------------------------------------- 2. Java: format exactly
 const JAVA_MESSY =
   'public class Fmt{\npublic static void main(String[] args){\nint x=1;\nif(x==1){\nSystem.out.println("hi");\n}else{\nSystem.out.println("bye");\n}\n}\n}\n'
-// Computed once, offline, by running the exact same prettier + prettier-plugin-java
-// call this app makes (see actions/format.ts) against JAVA_MESSY in plain Node —
-// not hand-guessed, so this is a real regression check, not a tautology.
+// Computed offline via the same prettier + prettier-plugin-java call as
+// actions/format.ts — not hand-guessed.
 const JAVA_EXPECTED =
   'public class Fmt {\n\n' +
   '    public static void main(String[] args) {\n' +
@@ -178,8 +153,7 @@ check(
   undoneJava.trim() === beforeJava.trim(),
   undoneJava === beforeJava.trim() ? '' : `got: ${JSON.stringify(undoneJava.slice(0, 60))}`,
 )
-// Redo, so the rest of the suite (and the screenshot above) reflects the
-// formatted file, not the undo probe.
+// Redo so the rest of the suite reflects the formatted file, not the undo probe.
 await page.keyboard.press('Control+y')
 await page.waitForTimeout(300)
 
@@ -208,9 +182,8 @@ check(
 check('…and the file is untouched while Python is not loaded', (await docText()).trim() === beforePy.trim())
 
 // ------------------------------------------------ 4. Python: run once, then format
-// A separate, trivial file to run — PY_MESSY defines `add()` but never calls
-// it, deliberately (it is the format target, not a program), so warming the
-// runtime is done against its own throwaway file instead.
+// Separate throwaway file to warm the runtime — PY_MESSY is the format
+// target, not something meant to run.
 await newFile('warmup.py')
 await setContent('print("ready for black")\n')
 await page.getByRole('button', { name: /^Run\b/ }).click()
@@ -241,15 +214,10 @@ check(
 )
 
 // ------------------------------------ 4b. formatting must not corrupt tracebacks
-// Regression (caught by eng-editor, fixed in worker.js, commit 6940bdd): the
-// Python-side formatter function was originally named `_warsha_format`, the
-// SAME name as the pre-existing traceback renderer in the same
-// `pyodide.globals` namespace — the first Format click silently replaced the
-// renderer, and every uncaught exception afterward crashed with a TypeError
-// about argument counts ("_warsha_format() takes 1 positional argument but 2
-// were given") instead of a normal traceback, until the worker respawned.
-// Format has already run twice by this point in the suite (Java and Python);
-// this proves an uncaught exception still renders correctly afterward.
+// Regression (commit 6940bdd): the formatter and traceback renderer shared
+// the name `_warsha_format` in pyodide.globals, so formatting silently
+// clobbered the renderer. Confirms exceptions still render correctly after
+// two formats.
 await newFile('throws.py')
 await setContent('raise ValueError("boom")\n')
 await page.getByRole('button', { name: /^Run\b/ }).click()
@@ -267,19 +235,16 @@ check(
 )
 
 // ---------------------------- 5. Share as image: desktop scale from a phone
-// A deliberately long line: if the card ever wrapped to the viewport instead
-// of rendering at full desktop scale, the resulting PNG would top out near
-// the 390px (×2 = 780 device px) viewport width instead of far past it.
+// Deliberately long line — a viewport-wrapped render would top out near 780
+// device px instead of far past it.
 const LONG_LINE = 'x' + '_very_long_identifier_name_that_forces_a_wide_line'.repeat(4) + ' = 1  # ' + 'a'.repeat(40)
 await newFile('wide_check.py')
 await setContent(`${LONG_LINE}\nprint(${JSON.stringify('done')})\n`)
 await page.setViewportSize({ width: 390, height: 844 })
 await page.waitForTimeout(200)
 
-// This context reports hover+fine (no touch emulation), so deliver.ts takes
-// its DESKTOP path: never the OS share dialog (whose Windows "Copy" button
-// strands the file), the clipboard first, a download as the fallback. Either
-// outcome yields the PNG bytes for the pixel checks below.
+// hover+fine context takes deliver.ts's desktop path (clipboard first,
+// download fallback) — either yields PNG bytes for the checks below.
 const downloadP = page.waitForEvent('download', { timeout: 20000 }).then((d) => ({ kind: 'downloaded', d })).catch(() => null)
 const copiedP = page
   .waitForFunction(
@@ -330,11 +295,8 @@ const image = await page.evaluate(async (base64) => {
 }, pngBase64)
 
 info(`share-as-image PNG: ${JSON.stringify(image)}`)
-// The founder rule: full desktop scale, never phone-shrunk, regardless of the
-// viewport it was made on. Captured at a 390px (×2 = 780 device px) viewport;
-// a wrapped/shrunk render would top out near there. The long line above is
-// ~260 characters, so an unwrapped render at editor-scale monospace is
-// comfortably north of 1500 device px.
+// Founder rule: always full desktop scale, never phone-shrunk. A wrapped
+// render would top out near 780 device px; unwrapped comfortably exceeds 1500.
 check('PNG rendered at full desktop scale, not the 390px phone viewport', image.width > 1200, `width=${image.width}px`)
 check('PNG is a real card, not a blank canvas', image.differingPixels > 1000, `${image.differingPixels} differing pixels`)
 await page.setViewportSize({ width: 1280, height: 900 })

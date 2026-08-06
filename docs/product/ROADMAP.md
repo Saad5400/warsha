@@ -2,6 +2,8 @@
 
 Principle for every release: **a student with only a phone must be able to finish and hand in real coursework.** Anything that does not serve that waits.
 
+**Status note:** this page was drafted around a Java+Python-only v0.1/v0.2 scope. The shipped app has grown past that framing — `app/src/languages.ts` lists Python, Java, Web (HTML/CSS/JS/TS/React/Vue/Svelte), C# and C as `status: 'ready'` today — and the v1.0 "Localisation" item below has also already shipped (`app/src/i18n/{ar,en,locale}.ts`, the `/ar/` route). Treat `languages.ts` as the source of truth for what's actually ready; the version sections below preserve the original sequencing logic for the items still pending, but don't read them as the full current scope.
+
 ---
 
 ## v0.1 — today (MVP: "I can do my Java homework on my phone")
@@ -45,7 +47,7 @@ Each item below is a real feature area, not a template. Ordered by leverage.
   - Explicitly **not** in v1.0: accounts, a class dashboard, server-side collection, autograding, plagiarism checks. All require a backend, which contradicts the product.
 - **DS&A — full landing:** a structured, in-app lesson track (ordered exercises, each with starter code + self-check tests + a visualiser for arrays/lists/trees), built on the v1.0 instructions-pane and self-check machinery. Content lives in the repo as data, so teachers can fork and translate it.
 - **Editor quality of life** earned by then: find/replace in project, multiple open files, adjustable font size, a second theme.
-- **Localisation** — Arabic UI and RTL layout, given the initial classrooms.
+- **Localisation** — Arabic UI and RTL layout, given the initial classrooms. *(Already shipped — see the status note at the top of this page.)*
 
 ---
 

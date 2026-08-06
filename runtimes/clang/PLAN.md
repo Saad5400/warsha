@@ -1,6 +1,11 @@
 # Add C / C++ support (clang-wasm engine)
 
-Status: **M0 (spike)**. This is the design record; findings land in `M0-FINDINGS.md`.
+**Superseded — this is the original design record, kept for the toolchain-choice
+rationale below.** C has since shipped (M0–M2 complete: `languages.ts` lists `c`
+as `status: 'ready'`, `runtime/index.ts` registers a live `ClangRuntime`). For the
+current state, see `M0-FINDINGS.md` (the spike results that shaped the design)
+and `INTEGRATION.md` (how the shipped engine actually works; C++ remains
+deferred pending a precompiled-header path).
 
 ## Context
 
@@ -105,11 +110,11 @@ so the stdin path is exercised. Then regenerate `app/src/templates.ts` (add
 
 ## Milestones
 
-- **M0 — spike (prove the toolchain).** Standalone harness: load `@wasmer/sdk`,
-  compile+run a C `printf` hello AND a **C++ `<iostream>`** hello, under
-  `crossOriginIsolated`. Confirms: C++ actually works (libc++ present), COI/CORP
-  behaviour, real download size, cold/warm compile+run timings, and that
-  interactive stdin is drivable. **← current step.**
+- **M0 — spike (prove the toolchain). Done — see `M0-FINDINGS.md`.** Standalone
+  harness: load `@wasmer/sdk`, compile+run a C `printf` hello AND a **C++
+  `<iostream>`** hello, under `crossOriginIsolated`. Confirms: C++ actually works
+  (libc++ present), COI/CORP behaviour, real download size, cold/warm compile+run
+  timings, and that interactive stdin is drivable.
 - **M1 — full engine.** `ClangRuntime` + `types.ts` + `clang.worker.js` +
   `index.ts`: SAB blocking stdin, compile diagnostics → stderr, kill/dispose/
   respawn, exit codes, C vs C++ driver selection. Drive via the harness.

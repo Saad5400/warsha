@@ -10,13 +10,8 @@ import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -49,15 +44,12 @@ const hasOut = (s) => page.waitForFunction(
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 
-/** Replace the active editor's content. Single-line Java avoids CodeMirror
- *  auto-indent surprises; auto-closed brackets are overtyped by our own. */
+/** Single-line Java avoids CodeMirror auto-indent surprises; auto-closed brackets get overtyped. */
 async function setEditor(text) {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
-  // insertText, not type(): typing a MULTI-LINE program key by key runs it
-  // through CodeMirror's auto-close-brackets and auto-indent, which balances
-  // braces the source already balanced and mangles a `"""` text block outright.
-  // insertText dispatches one input event, which is also what a paste does.
+  // insertText, not type() — key-by-key typing triggers auto-close-brackets/indent
+  // and mangles `"""` blocks; insertText is a single input event, like a paste.
   await page.keyboard.insertText(text)
   await page.waitForTimeout(700) // 350ms persistence debounce + slack
 }
@@ -71,11 +63,8 @@ const PERSON_OK =
   'public String describe() { return name + ", age " + age; } ' +
   'public static int divide(int a, int b) { return a / b; } }'
 
-/**
- * The uncaught-exception report on its own: the "Exception in thread" line and
- * the frame / "Caused by:" / "... N more" lines under it, stopping at the first
- * line that is none of those (the console's own "stopped early" note).
- */
+/** Extracts the exception report: "Exception in thread" plus its frame/"Caused
+ *  by"/"... N more" lines, up to the console's own note. */
 function traceBlock(text) {
   const at = text.indexOf('Exception in thread')
   if (at < 0) return ''
@@ -105,8 +94,7 @@ async function startSampler() {
 }
 const stopSampler = () => page.evaluate(() => { clearInterval(window.__timer); return window.__s })
 
-/** Longest stretch (ms) with no progress block on screen, and with static text,
- *  considered only while the run is still preparing (before output starts). */
+/** Longest gap with no progress block, and longest with static text, while still preparing. */
 function analyse(samples) {
   const prep = samples.filter((s) => s.state === 'preparing')
   let absent = 0, run = 0
@@ -182,10 +170,7 @@ await page.screenshot({ path: `${SHOTS}/warsha-java-working.png` })
 info(`screenshot -> ${SHOTS}/warsha-java-working.png`)
 
 // ==================================================== B. second run, same session
-// The Run/Stop control deliberately ignores taps for SWAP_GUARD_MS (250ms) after
-// it swaps role, so wait past that or the click is silently dropped. And wait for
-// the console to CLEAR before looking for the prompt, otherwise the previous
-// run's identical text matches instantly and the timing is meaningless.
+// Wait past SWAP_GUARD_MS (250ms ignore window) and for the console to clear, or the previous run's text matches instantly.
 await page.waitForTimeout(600)
 await startSampler()
 t = Date.now()
@@ -201,12 +186,9 @@ await page.locator('[aria-label="Program input"]').press('Enter')
 await hasOut('Finished')
 
 // ============================================== B2. the language level is Java 17
-//
-// The engine moved from Java 8 to Java 17 on 2026-08-06, and that move rests on
-// warsha.Platform showing ECJ a module image CheerpJ does not advertise (see
-// runtimes/java/INTEGRATION.md). If that ever stops working the symptom is not a
-// crash — it is every modern construct below turning back into a compile error.
-// Each one of these is a Java 8 error, so this program passing IS the version.
+// Java 17 support relies on warsha.Platform faking a module image for ECJ
+// (INTEGRATION.md) — if that breaks, these constructs silently regress to Java 8
+// errors; passing IS the version check.
 await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
 await page.waitForTimeout(300)
 await setEditor(`package app;
@@ -255,8 +237,7 @@ await hasOut('Finished')
 // ================================================= C. compile error in a nested file
 await page.locator('[role="treeitem"]', { hasText: 'Person.java' }).first().click()
 await page.waitForTimeout(400)
-// API preserved so Main/Student still compile; the ONLY fault is a missing
-// semicolon after `return age`, in models/Person.java.
+// API preserved so Main/Student still compile; only fault is a missing semicolon after `return age`.
 await setEditor(
   'package models; public class Person { private String name; private int age; ' +
     'public Person(String n, int a) { name = n; age = a; } ' +
@@ -285,24 +266,14 @@ else fail('nothing ran after a compile error')
 if (/exit code [1-9]|stopped early/i.test(errOut)) pass('compile failure surfaced as a non-zero exit')
 else fail('compile failure surfaced as a non-zero exit', errOut.slice(-120))
 
-// Restore Person.java, plus the divide() that section C2's crashes go through:
-// a throw two student frames deep, in a different file from the entry, is the
-// only way to check that each frame is named against its OWN source file.
+// Restores Person.java with divide(), so C2's crash trace spans two files —
+// proving each frame names its own source file.
 await setEditor(PERSON_OK)
 
 // =============================== C2. uncaught exception: byte-for-byte real java
-//
-// THE CONTRACT for what a crash looks like, compared as ONE EXACT STRING.
-// `java` prints exactly this for classes carrying a SourceFile attribute and no
-// line table (javac -g:source) -- verified against a real JDK, and that is the
-// most a CheerpJ frame can support: its stack walker returns getFileName()
-// == null and getLineNumber() == 0 whatever the compiler is told, and implicit
-// exceptions arrive with getMessage() == null. Both the file name and the
-// "/ by zero" are therefore reconstructed by warsha.Traces in the bootstrap.
-//
-// Substring assertions are what let the old "(line unknown)" rendering survive:
-// every individual includes() passed while the block as a whole looked like
-// nothing any JVM has ever printed. Hence full-string equality.
+// Exact string match, not substring: CheerpJ's stack walker returns null
+// filename/line/message, so warsha.Traces reconstructs them; substring checks
+// previously let a wrong "(line unknown)" render slip through.
 for (const [label, main, expected] of [
   [
     'implicit divide by zero, two student frames',
@@ -356,12 +327,8 @@ info(`screenshot -> ${SHOTS}/warsha-java-exception.png`)
 // ============================================ D. infinite loop -> Stop -> Run again
 await page.locator('[role="tab"]', { hasText: 'Main.java' }).first().click()
 await page.waitForTimeout(300)
-// The counter is not decoration. Console.tsx renders a 1200-row WINDOW over the
-// buffer, and this loop saturates it, so counting rendered "spin" lines measures
-// the window and not the program: on a fast engine the count can even go DOWN
-// after Stop, as the "Stopped." line pushes one spin row out of view. The
-// highest index printed is immune to that -- if the JVM were still alive it
-// would keep climbing, whatever the console is showing.
+// Console.tsx windows to 1200 rows, so counting rendered "spin" lines can even go
+// DOWN after Stop; track the highest index instead — it only climbs while the JVM is alive.
 await setEditor('package app; public class Main { public static void main(String[] a) { int i = 0; while (true) { System.out.println("spin " + i); i++; } } }')
 await runBtn().click()
 await page.waitForFunction(
@@ -416,8 +383,7 @@ if (warm.staticGap <= 2000) pass('progress UI never STATIC >2s on a warm reload'
 else fail('progress UI never STATIC >2s on a warm reload', `text frozen for ${warm.staticGap}ms`)
 
 // ========================================== F. Python regression in the SAME build
-// The explorer creates a file through an inline draft row, not a dialog: the
-// "New file" button inserts a row with a name input that commits on Enter.
+// "New file" inserts an inline draft row with a name input that commits on Enter (not a dialog).
 await page.getByRole('button', { name: 'New file', exact: true }).first().click()
 const draftName = page.locator('[aria-label="New file name"]')
 await draftName.waitFor({ timeout: 10000 })

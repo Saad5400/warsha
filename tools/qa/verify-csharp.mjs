@@ -21,13 +21,8 @@ import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -53,16 +48,14 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message))
 
 const out = () => page.locator('[aria-label="Program output"]').innerText()
-// C# cold boot fetches ~37 MB of runtime + Roslyn, so give the first prompt a
-// generous ceiling — the same 240s the Java suite uses for CheerpJ.
+// C# cold boot fetches ~37MB; same generous 240s ceiling the Java suite uses for CheerpJ.
 const hasOut = (s) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle),
   s, { timeout: 240000 })
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 
-/** Replace the active editor's content. Single-line C# avoids CodeMirror
- *  auto-indent surprises; auto-closed brackets are overtyped by our own. */
+/** Single-line C# avoids CodeMirror auto-indent surprises; auto-closed brackets get overtyped. */
 async function setEditor(text) {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
@@ -100,8 +93,7 @@ async function startSampler() {
 }
 const stopSampler = () => page.evaluate(() => { clearInterval(window.__timer); return window.__s })
 
-/** Longest stretch (ms) with no progress block on screen, and with static text,
- *  considered only while the run is still preparing (before output starts). */
+/** Longest gap with no progress block, and longest with static text, while still preparing. */
 function analyse(samples) {
   const prep = samples.filter((s) => s.state === 'preparing')
   let absent = 0, run = 0
@@ -180,9 +172,7 @@ await page.screenshot({ path: `${SHOTS}/warsha-csharp-working.png` })
 info(`screenshot -> ${SHOTS}/warsha-csharp-working.png`)
 
 // ==================================================== B. second run, same session
-// The Run/Stop control ignores taps for SWAP_GUARD_MS (250ms) after it swaps
-// role; wait past that. And wait for the console to CLEAR before looking for the
-// prompt, or the previous run's identical text matches instantly.
+// Wait past SWAP_GUARD_MS (250ms ignore window) and for the console to clear, or stale text matches instantly.
 await page.waitForTimeout(600)
 await startSampler()
 t = Date.now()
@@ -200,8 +190,8 @@ await page.locator('[aria-label="Program input"]').press('Enter')
 await hasOut('Finished')
 
 // ================================================= C. compile error names the file
-// The only fault is a missing right-hand side after `int x =`, in Program.cs.
-// Roslyn's diagnostic (d.ToString()) is "Program.cs(line,col): error CSxxxx: ...".
+// Only fault: missing right-hand side after `int x =`. Roslyn's diagnostic reads
+// "Program.cs(line,col): error CSxxxx: ...".
 await page.locator('[role="tab"]', { hasText: 'Program.cs' }).first().click()
 await page.waitForTimeout(300)
 await setEditor('using System; class Program { static void Main() { int x = ; Console.WriteLine(x); } }')
@@ -233,12 +223,8 @@ await page.screenshot({ path: `${SHOTS}/warsha-csharp-compile-error.png` })
 // ============================================ D. infinite loop -> Stop -> Run again
 await page.locator('[role="tab"]', { hasText: 'Program.cs' }).first().click()
 await page.waitForTimeout(300)
-// A genuine infinite loop, CPU-bound in the worker, but with its print rate
-// throttled by a counter. .NET's Console.WriteLine is ~1000× faster than
-// CheerpJ's System.out; an unthrottled while(true) print floods the main thread
-// with postMessages fast enough that Playwright's Stop click can never land
-// (the button resolves stable, then the click dispatch starves). Java's suite
-// prints every iteration only because CheerpJ is slow enough to get away with it.
+// Throttled: .NET's WriteLine is fast enough that unthrottled prints flood
+// postMessage and starve Playwright's Stop click (Java's slower CheerpJ doesn't need this).
 await setEditor('using System; class Program { static void Main() { long i = 0; while (true) { if (i++ % 200000 == 0) Console.WriteLine("spin"); } } }')
 await selectEntry('Program.cs')
 await runBtn().click()
@@ -246,11 +232,8 @@ await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 20,
   null, { timeout: 240000 })
 pass('infinite loop is running', 'throttled "spin" lines streaming, loop never exits')
-// The warm worker reaches 20 "spin" lines in well under SWAP_GUARD_MS (250ms),
-// and stop() silently returns for a tap that lands inside that guard (the guard
-// exists so the fast Run->Stop role-swap does not eat a double-click). Wait it
-// out, or the click is dropped and "Stopped." never comes. Java's per-run boot
-// pushes its first output past the guard, so its suite never had to.
+// Warm worker hits 20 lines inside SWAP_GUARD_MS (250ms), when Stop clicks are
+// silently dropped — wait past it first (Java's slower boot never needs this).
 await page.waitForTimeout(400)
 await stopBtn().click()
 await hasOut('Stopped.')
@@ -294,8 +277,7 @@ if (warm.absent <= 2000) pass('progress UI never blank >2s on a warm reload', `m
 else fail('progress UI never blank >2s on a warm reload', `blank ${warm.absent}ms`)
 
 // ========================================== F. Python regression in the SAME build
-// Both engines are registered on one page; prove the .NET worker did not disturb
-// Python's. The explorer creates a file through an inline draft row, not a dialog.
+// Proves the .NET worker didn't disturb Python's; explorer creates a file via inline draft row, not a dialog.
 await page.getByRole('button', { name: 'New file', exact: true }).first().click()
 const draftName = page.locator('[aria-label="New file name"]')
 await draftName.waitFor({ timeout: 10000 })

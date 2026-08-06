@@ -9,6 +9,8 @@
 
 Section references are to `DESIGN-SPEC.md`.
 
+**Note:** written 2026-07-30, before LAYOUT-VSCODE.md's addenda (2026-08-01, 2026-08-05) and DENSITY.md's 2026-08-05 scale-down moved Run/Stop out of the console header and changed touch hit-area metrics. Checks 12, 14 and 15 below have been updated to match; treat LAYOUT-VSCODE.md and DENSITY.md as authoritative over this checklist wherever they conflict.
+
 ---
 
 ### Colour, and what survives without it
@@ -30,7 +32,7 @@ Section references are to `DESIGN-SPEC.md`.
 - [ ] **9. On iPad with the keyboard up, the console input row is fully visible and the prompt is readable.** In D: the row is not clipped and not behind the keyboard, and three to four lines of output are still on screen. This is the exact failure `100dvh` produces on iOS, and it makes every program that calls `input()` unusable. (§4.1-4.3)
 - [ ] **10. Focusing an input does not zoom the page.** Try the console input, the rename field, and a dialog input on iPad. Any zoom means a font-size under 16px. (§3.2)
 - [ ] **11. Dismissing the keyboard restores the layout exactly (I).** Five open/close cycles, including one dismissed by tapping *away* rather than Done. No leftover gap at the bottom, no chrome pushed off the top — this is where the iOS `visualViewport.offsetTop` reset bug appears. (§4.2)
-- [ ] **12. Run/Stop is never covered by the keyboard**, it rides up with the console, and the page itself never scrolls horizontally in any capture. (§4.3, §5.3)
+- [ ] **12. Run/Stop is never covered by the keyboard.** *(Superseded placement: Run/Stop no longer lives in the console header — LAYOUT-VSCODE.md's One-shell addendum (2026-08-05) gave it one home, the tab strip's trailing corner, at every size and pointer, repealing DESIGN-SPEC §5.3.)* Confirm the tab strip and its trailing Run/Stop control stay visible and unobstructed with the keyboard open, and that the page itself never scrolls horizontally in any capture. (LAYOUT-VSCODE.md One-shell addendum; §4.3)
 
 ### iPad text integrity — silent corruption
 
@@ -38,8 +40,8 @@ Section references are to `DESIGN-SPEC.md`.
 
 ### Touch and reach
 
-- [ ] **14. Measure the targets.** Explorer rows, tabs, close buttons, console header buttons and menu items ≥44px; Run/Stop ≥48px; ≥8px between adjacent targets; Delete sits last in the long-press menu (G), separated and red. (§5.2)
-- [ ] **15. Run is reachable by one thumb with no grip shift** — tablet two-handed in landscape, phone one-handed in portrait — and flipping "Run button on left" mirrors it to the leading edge without rearranging anything else. (§5.3)
+- [ ] **14. Measure the targets.** Explorer rows, tabs, close buttons, panel-toolbar buttons and menu items ≥44px; Run/Stop's *hit area* ≥44px *(DENSITY.md's 2026-08-05 scale-down shrank the visual `--run-h` box to 36px, with the 44px floor delivered only through an `after:` hit-area pseudo-element — never a 48px visual box, superseding DESIGN-SPEC §5.2's 48px call)*; ≥8px between adjacent targets; Delete sits last in the long-press menu (G), separated and red. (DENSITY.md; §5.2)
+- [ ] **15. Run is reachable by one thumb with no grip shift** — tablet two-handed in landscape, phone one-handed in portrait. *(Run/Stop's home moved to the tab strip's trailing corner at every size — LAYOUT-VSCODE.md's One-shell addendum — superseding DESIGN-SPEC §5.3's console-header placement.)* Confirm the View menu's "Run Button on Left/Right" (DENSITY.md) mirrors it to the leading edge without rearranging the rest of the tab strip. (LAYOUT-VSCODE.md One-shell addendum; DENSITY.md)
 - [ ] **16. Taps feel alive.** Every button and row has a visible press state. A removed tap highlight with no `:active` replacement makes a working app feel dead. (§5.2)
 
 ### Running, waiting, failing

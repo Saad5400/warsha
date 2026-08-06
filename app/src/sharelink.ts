@@ -28,11 +28,8 @@ export interface SharedProject {
 }
 
 export const LINK_LIMITS = {
-  /**
-   * Cap on the encoded payload, not the source: past this the link has stopped
-   * being sharable (chat apps truncate) and the honest answer is a .zip.
-   * Also the pre-allocation guard on decode — see MAX_INFLATED_BYTES.
-   */
+  /** Cap on the encoded payload, not source — past this a .zip is the honest answer;
+   *  also the pre-allocation guard on decode (see MAX_INFLATED_BYTES). */
   MAX_ENCODED_CHARS: 120_000,
   /** A 120K-char payload can legally inflate to ~90 MB of JSON; anything past
    *  this ceiling is rejected after inflation, having allocated only itself. */
@@ -133,18 +130,11 @@ function decodePayload(data: string): SharedProject | null {
 }
 
 /**
- * Reads a `#share=` payload off the current URL without touching it.
- * Distinguishes "no share in the URL" (null) from "a share that would not
- * decode" ('broken') — the second one deserves a sentence, the first is every
- * normal visit.
+ * Reads `#share=` off the URL without touching it. null = no share; 'broken' = one that won't decode.
  *
- * Clearing is a separate, explicit step (`clearShareHash`) that callers run
- * AFTER the import has landed, not at parse time: the very first visit to
- * this origin registers the COOP/COEP service worker and force-reloads the
- * page mid-boot, and a hash cleared eagerly does not survive that reload —
- * which is exactly the "someone opened my link on a fresh device" case. With
- * the hash left in place the reload simply re-runs the import, and the
- * untouched-copy dedup makes the second pass open what the first created.
+ * `clearShareHash` runs only after import lands: the first visit force-reloads mid-boot to register
+ * the COOP/COEP worker, and a hash cleared before that wouldn't survive the reload — left in place,
+ * the reload just re-imports and dedup opens what the first pass created.
  */
 export function peekSharedFromUrl(): SharedProject | 'broken' | null {
   const hash = location.hash

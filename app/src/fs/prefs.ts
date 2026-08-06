@@ -5,16 +5,9 @@ const KEY = 'warsha.prefs.v1'
 
 export interface Prefs {
   fontSize: number
-  /**
-   * UI language. `null` — the default — means "follow the browser", so an
-   * Arabic phone gets Arabic without anyone finding a setting. A stored value
-   * is an explicit choice from the language switch and always wins, including
-   * when it agrees with the browser: the student said it, not the browser.
-   */
+  /** `null` follows the browser locale; a stored value is an explicit choice and always wins, even if it matches. */
   locale: Locale | null
-  /** Whole-UI zoom (View > Zoom In/Out, the Manage gear's View-scale slider).
-   *  0.7–1.3 in 0.05 steps, 1 = untouched. Rendered as CSS `zoom` on #root.
-   *  Deliberately separate from `fontSize`, which sizes the editor type only. */
+  /** Whole-UI zoom, 0.7–1.3 step 0.05, 1 = untouched; CSS `zoom` on #root — separate from `fontSize` (editor type only). */
   uiScale: number
   consoleHeight: number
   consoleCollapsed: boolean
@@ -23,21 +16,11 @@ export interface Prefs {
   entryPath: string | null
   /** Which edge Run/Stop sits on — see DESIGN-SPEC §5.3 handedness. */
   hand: 'right' | 'left'
-  /**
-   * Which project to reopen on the next visit. The tab/entry prefs above stay
-   * global on purpose: they are filtered against the project that actually
-   * loads, so paths belonging to another project simply drop out.
-   */
+  /** Project to reopen next visit. Tab/entry prefs stay global by design — filtered against whichever project loads. */
   currentProjectId: string | null
 }
 
-/**
- * The default type size is 14px — VS Code's own default — at BOTH densities
- * (founder scale-down 2026-08-05; touch was 15). Only for *unstored* prefs —
- * a size the student has chosen (stored) always wins. The density split is
- * gone but the helper stays: the value is read per-launch, not at module
- * load, and the split can come back by re-adding the matchMedia branch.
- */
+/** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
 const defaultFontSize = () => 14
 
 const defaults: Omit<Prefs, 'fontSize'> = {

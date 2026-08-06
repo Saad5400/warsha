@@ -14,18 +14,11 @@ import { IconArrowRight, IconChevronRight } from './ui/Icons'
 import { LangIcon, type IconLang } from './ui/LangIcons'
 
 /**
- * The single entry point for starting any project. Step one is a grid of
- * languages — the two that run today above the ones still on the way; step two
- * is the chosen language's starters, grouped beginner → advanced.
- *
- * It exists because the old flow put one menu row per template, which does not
- * survive twenty languages (languages.ts). Everything the picker shows is a
- * projection of `languages` and `templates`, so it grows by editing those, not
- * this file.
- *
- * The picker never creates anything itself: it resolves to a starter
- * (`onPick`) or to a blank project (`onBlank`) and lets App decide what that
- * means for the project you are in — fill this empty one, or make a new one.
+ * The single entry point for starting a project: a language grid, then that language's
+ * starters grouped beginner → advanced. Exists because one menu row per template doesn't
+ * survive twenty languages — everything here projects `languages`/`templates`, so it grows
+ * by editing those, not this file. Never creates anything itself: resolves to `onPick` or
+ * `onBlank` and lets App decide what that means for the current project.
  */
 export interface TemplatePickerProps {
   onPick(t: Template): void
@@ -35,15 +28,9 @@ export interface TemplatePickerProps {
 
 const LEVEL_ORDER: TemplateLevel[] = ['beginner', 'intermediate', 'advanced']
 /**
- * A FUNCTION, not a constant — and the difference is a bug we shipped.
- *
- * As a module-scope object this read `COPY` at IMPORT time. ES modules all
- * evaluate before the importing module's body runs, so this ran before
- * main.tsx called `initLocale()` — while the active locale was still the `'en'`
- * the store is initialised to. The result was three headings frozen in English
- * inside an otherwise fully Arabic picker, on every load, including /ar/.
- *
- * Every `COPY` read has to happen during render. See the note in copy.ts.
+ * A function, not a constant — a module-scope object would read `COPY` at import time,
+ * before main.tsx's `initLocale()` runs, freezing these labels in English on every load
+ * (a bug we shipped). Every `COPY` read must happen during render; see copy.ts.
  */
 const levelLabel = (level: TemplateLevel): string =>
   ({
@@ -71,8 +58,7 @@ export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProp
       )}
 
       <div className="mt-4 flex items-center justify-between gap-2">
-        {/* Blank is only offered from the first step — once you are inside a
-            language, the useful "no thanks" is Back, not a blank project. */}
+        {/* Blank only offered on step one — inside a language, "no thanks" means Back, not blank. */}
         {language ? (
           <span />
         ) : (
@@ -99,9 +85,7 @@ function LanguageStep({ titleId, onChoose }: { titleId: string; onChoose(id: str
       <p className="mb-4 text-meta leading-normal text-text-3">{COPY.pickerLangIntro}</p>
 
       <Section heading={COPY.pickerReadyHeading}>
-        {/* Full-width on a phone so the two runnable languages read as the
-            headline and their version label has room; a compact row alongside
-            the "soon" grid once there is width for it. */}
+        {/* Full-width on a phone so the two runnable languages read as the headline with room for a version label. */}
         <div className="grid grid-cols-1 gap-2 min-[560px]:grid-cols-3">
           {readyLanguages.map((l) => (
             <ReadyTile key={l.id} language={l} onChoose={() => onChoose(l.id)} />
@@ -190,9 +174,7 @@ function SoonTile({ language }: { language: Language }) {
     <div className={SOON_TILE} aria-disabled="true" aria-label={COPY.pickerSoonLabel(language.label)}>
       <LangMark language={language} dimmed />
       <span className="min-w-0 flex-1 truncate text-btn leading-[1.2] font-semibold text-text-2">{language.label}</span>
-      {/* The "Coming soon" section header and the dimming already say these are
-          unbuilt; the per-tile pill is a wider-screen nicety that would only
-          crush the label on a two-up phone grid, so it is hidden there. */}
+      {/* Section header + dimming already say "unbuilt"; the pill is a wider-screen nicety, hidden on a two-up phone grid. */}
       <span
         aria-hidden="true"
         className="hidden min-[560px]:block flex-none rounded-sm bg-surface-4 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-[0.04em] text-text-3"

@@ -639,6 +639,16 @@ to `="../`. The hreflang cluster is authored once in `index.html` and inherited 
 identical on all three pages by design — hreflang is only honoured when reciprocal, and a page missing
 its own entry drops out of the set.
 
+**One social card per locale.** `/ar/` serves `og-image-ar.png`, `/` and `/en/` serve `og-image.png` —
+an Arabic result previewing an English screenshot is half a translation, and the card is the one asset a
+reader judges before reading a word. Both are rendered by `tools/brand/build-brand-assets.mjs`, which
+discovers them from the `docs/design/og-image*.html` glob, so a third locale is one more file and no
+edit to the script. They are authored documents rather than one mirrored template because an RTL card is
+not a mirrored LTR card: the window shells mirror, the code and console panes deliberately do not.
+`og:image:width`/`height` are *not* rewritten per locale — every card is 1200x630 — so the build asserts
+each PNG's real IHDR dimensions against what index.html declares, rather than trusting a comment to hold
+an invariant that now spans two files.
+
 **They are entry points, not landing pages.** `/ar/` boots the same app from the same hashed bundle one
 directory up (`base: './'` is what makes a path rewrite sufficient), and `src/i18n/locale.ts`'s
 `fromPath()` reads the prefix to open in that language. No script is injected into the generated copy;

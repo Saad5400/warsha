@@ -23,8 +23,8 @@ const require = createRequire(import.meta.url)
 const OUT = new URL('../public/warsha-react.json', import.meta.url)
 const NODE_ENV = { 'process.env.NODE_ENV': '"production"' }
 
-/** Live export names, so the shims track whatever react version is installed
- *  rather than a list that silently rots. `__`-prefixed internals are dropped. */
+/** Tracks whatever react version is installed rather than a hardcoded list that
+ *  rots. Drops `__`-prefixed internals. */
 const names = (spec) =>
   Object.keys(require(spec))
     .filter((k) => k !== '__esModule' && !k.startsWith('__'))
@@ -57,9 +57,8 @@ export * as reactDom from 'react-dom'`,
     })
   ).outputFiles[0].text
 
-  // Thin shims: turn a namespace back into the static named exports each bare
-  // specifier is expected to have, so `import { useState } from 'react'` and
-  // `import { createRoot } from 'react-dom/client'` bind normally.
+  // Thin shims turn each namespace back into normal named exports, so
+  // `import { useState } from 'react'` works as expected.
   const shim = (ns, exportNames, withDefault) =>
     `import { ${ns} as _ } from './core.js'\n` +
     (withDefault ? `export default _\n` : '') +

@@ -10,13 +10,8 @@ import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -71,10 +66,7 @@ else fail('exactly ONE automatic reload on first visit', `${navigations} navigat
 // ------------------------------------------------------- 2. create Python project
 // The advanced starter is two files, so the entry picker and a tab strip appear.
 await seedStarter(page, { name: 'Python (OOP starter)' })
-// Two tablists live in the shell now — the file tabs ("Open files") and the
-// panel header's face tabs ("Output view", whose lone CONSOLE tab mounts
-// before any file tab does). A bare [role="tab"] resolves against whichever
-// appears first, so every tab query here is scoped to the file strip.
+// Two tablists exist here; scope tab queries to the file strip so they don't match the console's tab too.
 const FILE_TABS = '[role="tablist"][aria-label="Open files"] [role="tab"]'
 await page.waitForSelector(FILE_TABS, { timeout: 10000 })
 const tabs = await page.locator(FILE_TABS).allInnerTexts()
@@ -96,8 +88,7 @@ await page.evaluate(() => {
 })
 
 // ------------------------------------------------------------------- 3. first Run
-// Run lives in the tab strip's editor-actions corner and names its file
-// ("Run main.py") — hence the prefix match.
+// Run's label includes the filename ("Run main.py") — hence the prefix match.
 await page.getByRole('button', { name: /^Run\b/ }).click()
 
 // The template's input() prompt must be painted BEFORE input is requested.
@@ -106,7 +97,6 @@ await page.waitForFunction(
   null,
   { timeout: 180000 },
 )
-const promptSeenAt = Date.now()
 pass('real Pyodide booted and program ran', 'prompt "Your name:" reached the console')
 
 const samples = await page.evaluate(() => { clearInterval(window.__progressTimer); return window.__progress })
@@ -220,8 +210,7 @@ else fail('open tabs restored (localStorage)', persistedTabs.join(', '))
 if (navigations <= 1) pass('no extra coi reload on a return visit', `${navigations} navigation(s)`)
 else fail('no extra coi reload on a return visit', `${navigations} navigations`)
 
-// Prove the runtime still works after a reload, and grab the final screenshot with
-// the template restored so the shot shows real, meaningful Python output.
+// Confirms the runtime survives a reload, with a screenshot showing real output.
 await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('import sys\nprint("Python", sys.version.split()[0], "in the browser")\nfor i in range(3): print("  line", i)\n')

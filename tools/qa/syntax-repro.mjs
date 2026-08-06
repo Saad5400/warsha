@@ -60,8 +60,7 @@ const typeCode = async (lines) => {
   for (const l of lines) {
     await page.keyboard.type(l)
     await page.keyboard.press('Enter')
-    // closeBrackets/auto-indent make multi-line typing lossy; one line is enough
-    // for a colour check, so keep each line self-contained.
+    // auto-indent makes multi-line typing lossy; keep each line self-contained.
     await page.keyboard.press('Home')
   }
   await page.waitForTimeout(600)
@@ -80,8 +79,7 @@ await page.screenshot({ path: join(SHOTS, 'syntax-1-first-py.png') })
 
 /* ---- 2. a second Python file in the same session ------------------------- */
 await newFile('other.py')
-// Long enough that a highlighted line really does show 3+ colours; the earlier
-// `class Shape: pass` was coloured but only had two, which read as a failure.
+// Must show 3+ colours — `class Shape: pass` only had two and looked like a failure.
 await typeCode(['def area(self, w): return w * 2  # comment'])
 console.log('\n--- 2. second .py in the same session (grammar already cached)')
 const b = await report('other.py')

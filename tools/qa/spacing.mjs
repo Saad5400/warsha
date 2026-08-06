@@ -26,10 +26,8 @@ import { join } from 'node:path'
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8093/'
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 const SCALE = [0, 4, 8, 12, 16, 24, 32]
-/* DENSITY (VS Code parity, W1-C/W2-A): at a fine pointer the chrome adopts
- * VS Code's OWN metrics, two of which are deliberately off the 4/8 grid — the
- * 6px icon-label gap (tree rows, tabs) and the 10px tab leading inset. They
- * are named additions, not a loosening: anything else off-grid still fails. */
+// DENSITY: at a fine pointer, VS Code metrics add two off-grid exceptions —
+// 6px icon-label gap and 10px tab inset. Everything else off-grid still fails.
 const DESK_SCALE = [...SCALE, 6, 10]
 
 const results = []
@@ -83,15 +81,12 @@ const offenders = await page.evaluate((scale) => {
       const r = el.getBoundingClientRect()
       if (r.width === 0 || r.height === 0) continue
       const cs = getComputedStyle(el)
-      // Runtime-computed geometry is not a spacing decision. ARCHITECTURE §4.2
-      // lists the inline styles exhaustively (drawer transform, console height,
-      // progress width, explorer indent, toast offset); the tree's 16px-per-level
-      // indent legitimately lands on 28px at depth 1.
+      // Runtime-computed geometry isn't a spacing decision (ARCHITECTURE §4.2
+      // lists the inline styles) — e.g. tree indent legitimately lands on 28px at depth 1.
       if (el.getAttribute('style')) continue
       for (const n of NAMES) {
-        // `margin: auto` is not a number someone chose. getComputedStyle resolves
-        // it to the USED value, so a plain `ml-auto` reports as 438.64px;
-        // computedStyleMap keeps it a keyword, which is how we tell the two apart.
+        // margin:auto resolves to a used-value px via getComputedStyle;
+        // computedStyleMap keeps it a keyword so it can be excluded.
         let typed = null
         try { typed = el.computedStyleMap?.().get(n.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) } catch { /* unsupported */ }
         if (typed && typed.constructor?.name === 'CSSKeywordValue') continue
@@ -174,18 +169,15 @@ else { fail('4. HUGGING — accidental sub-scale gaps', `${hugs.length}`); hugs.
 const rows = await page.locator('aside[aria-label="Files"] [role="treeitem"]').evaluateAll((els) =>
   els.map((e) => Math.round(e.getBoundingClientRect().height)))
 const rowSet = [...new Set(rows)]
-// DENSITY (2026-08-05, retuned W1-C): this desktop harness gets the
-// fine-pointer compact chrome, where rows are VS Code's 22px (--row-tree); the
-// 44px floor binds on coarse pointers only.
+// DENSITY: this desk harness gets the compact chrome (22px rows); the 44px
+// floor binds on coarse pointers only.
 if (rowSet.length === 1 && rowSet[0] >= 22) pass('5. RHYTHM — every sidebar row is the same height', `${rowSet[0]}px × ${rows.length}`)
 else fail('5. RHYTHM — sidebar row heights vary', JSON.stringify(rowSet))
 
 /* ---- 6. BARS: controls clear their bar, dividers are shadows ------------- */
 const bars = await page.evaluate(() => {
-  // `seamSel`: the element whose box-shadow carries the bar's hairline. It
-  // defaults to the bar, but the console header deliberately owns no divider —
-  // VS Code's panel draws its ONE seam on the panel's top edge, so that bar's
-  // seam lives on `.console-panel` (index.css).
+  // seamSel: element carrying the bar's hairline shadow. Console header has
+  // none of its own — VS Code draws one seam on `.console-panel`'s top edge.
   const check = (barSel, ctrlSel, name, seamSel = barSel) => {
     const bar = document.querySelector(barSel), ctrl = document.querySelector(ctrlSel)
     const seam = document.querySelector(seamSel)
@@ -201,30 +193,22 @@ const bars = await page.evaluate(() => {
     }
   }
   return [
-    // Run and ⋯ live in the tab strip's editor-actions corner (one shell,
-    // every size); the trailing group shares the strip's row, so the strip's
-    // own box is the bar to clear.
+    // Run/⋯ live in the tab strip's editor-actions corner; the strip's own
+    // box is the bar to clear.
     check('.tab-strip', 'button[aria-label^="Run "], button[aria-label^="Stop "]', 'tab strip / Run'),
     check('.tab-strip', 'button[aria-label="More"]', 'tab strip / ⋯'),
-    // Not the header's first button: that is a CAPS panel tab (CONSOLE /
-    // PREVIEW), which fills the bar by design — VS Code's panel-title tabs are
-    // h-full, so "clearance" is not a number they owe. The icon controls in
-    // the trailing group are the ones that must clear the bar.
+    // Skips the header's first button — that's a CAPS panel tab (h-full by
+    // VS Code design, owes no clearance). Only the trailing icon controls
+    // must clear the bar.
     check('.console-header', '.console-header button:not([role="tab"])', 'console header / controls', '.console-panel'),
     check('aside[aria-label="Files"] .panel-label', 'aside[aria-label="Files"] .panel-label', 'sidebar header'),
   ].filter(Boolean)
 })
 for (const b of bars) {
   if (b.name === 'sidebar header') continue
-  // Clearance stopped being SCALE-checked here after the founder's P1 control
-  // resize (icon-only buttons and Run: 44px -> 40px, bars unchanged): it used
-  // to be an authored padding value, chosen off the scale on purpose, but it
-  // is now a DERIVED number (bar height minus control height, halved) that
-  // the scale was never going to divide evenly — 52-40 clearance is 6 a side,
-  // and 44-40 (the phone-width console header) is 2. What still matters, and
-  // is still asserted: centred (top === bottom), never crowded (>= 2, the
-  // founder's own floor for the phone case), no border-bottom, a real
-  // inset-shadow divider.
+  // Founder's P1 resize (icon buttons 44px->40px) made clearance a DERIVED
+  // number, not scale-checked; still asserted: centred, >=2px, no
+  // border-bottom, real inset-shadow divider.
   const ok = b.top === b.bottom && b.top >= 2 && b.borderBottom === 0 && b.insetShadow
   const detail = `bar ${b.barH} control ${b.ctrlH} clearance ${b.top}/${b.bottom} border-bottom ${b.borderBottom} inset-shadow ${b.insetShadow}`
   if (ok) pass(`6. BARS — ${b.name} centred with real clearance`, detail)
@@ -232,18 +216,11 @@ for (const b of bars) {
 }
 
 /* ---- alignment grid: the corner the founder flagged ---------------------- */
-// One column, one grid line. The title bar carries no mark and no wordmark any
-// more (LAYOUT-VSCODE §1b), so what runs down the left of the app is the
-// sidebar's own stack: the Explorer label, the pane header, the tree.
-//
-// The pane header (W1-C — `.sidebar-project-row`, VS Code's section row)
-// deliberately LEADS with its 16px twistie left of the label grid line, so it
-// is asserted present rather than aligned; what still shares the line is the
-// Explorer label and the tree rows' content edge.
-//
-// Measured at the CONTENT edge, never the box edge: the tree row spends 2px on
-// the reserved (transparent at desk) accent border, which is not an inset
-// someone chose — it is what has to be subtracted for the ink to line up.
+// One grid line: sidebar's Explorer label, pane header, and tree.
+// Pane header leads with a 16px twistie, so it's asserted present, not
+// aligned — the label and tree content edge share the line.
+// Measured at the content edge — tree rows reserve 2px for a (transparent)
+// accent border that must be subtracted.
 const grid = await page.evaluate(() => {
   const x = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().left) : null }
   const r = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().right) : null }
@@ -258,13 +235,11 @@ const grid = await page.evaluate(() => {
     paneHeaders: document.querySelectorAll('.sidebar-project-row').length,
     treeRow: inner('.tree-row'),
     sidebarRight: r('aside[aria-label="Files"]'),
-    // The title bar's hairline sep is GONE by design (W1-B — the bar runs
-    // full-width over the rail, so there is no boundary for it to mark); the
-    // tab strip's own left edge now lands on the sidebar boundary instead.
+    // Title-bar hairline sep is gone by design (bar runs full-width); tab
+    // strip's left edge lands on the sidebar boundary instead.
     sep: x('.top-bar__sep'), tabStrip: x('.tab-strip'),
-    // Docked, project identity lives in the pane header and File > Open
-    // Recent; the bar carries no project control at all (§1b + W1-B). Two
-    // copies of the same name 50px apart read as a duplicate.
+    // Project identity lives in the pane header / File > Open Recent, not
+    // the bar — two copies would read as a duplicate.
     titleProjects: document.querySelectorAll('.top-bar [aria-label^="Project:"]').length,
   }
 })

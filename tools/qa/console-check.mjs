@@ -36,16 +36,12 @@ page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 120000) => page.waitForFunction(
   (n) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(n), s, { timeout: t })
-/* Run's one home is the tab strip's editor-actions corner, at every size and
- * pointer (one shell, founder ruling) — where it names the file it will start
- * ("Run main.py" / "Stop main.py"). Hence the prefix match. */
+// Prefix match: the accessible name includes the file, e.g. "Run main.py".
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 const input = () => page.locator('[aria-label="Program input"]')
-/* The run state lives in ONE place at every width: the status bar's remote
- * block — StatusPill variant="bar", class `.status-remote`. (The console foot
- * is gone; the header's `.pill` appears only while a software keyboard hides
- * the bar, which console-kb.mjs asserts.) */
+// Run state lives in one place: the status bar's `.status-remote` block
+// (header pill only shows under a software keyboard — see console-kb.mjs).
 const runState = async () => {
   const el = page.locator('footer[aria-label="Status bar"] .status-remote')
   return { state: await el.getAttribute('data-state'), text: (await el.innerText()).trim(), where: 'status bar' }
@@ -72,8 +68,8 @@ if (!(await page.locator('.cm-content').count())) {
 if (await page.locator('.cm-content').count()) pass('project seeded with main.py')
 else { fail('project seeded with main.py'); await shot('seed-fail'); process.exit(1) }
 
-// The console starts collapsed on an empty project (App collapses it so the start
-// panel gets the room), and that choice persists — open it before inspecting it.
+// Console starts collapsed on an empty project (room for the start panel) —
+// open it before inspecting.
 async function ensureConsoleOpen(page) {
   if (await page.locator('[aria-label="Program output"]').count()) return
   await page.getByRole('button', { name: 'Show output' }).click()
@@ -89,8 +85,8 @@ const emptyText = await out()
 if (/Output will appear here/.test(emptyText))
   pass('empty console is a designed hint, not a void', JSON.stringify(emptyText.replace(/\s+/g, ' ').trim()))
 else fail('empty console hint', JSON.stringify(emptyText))
-// THE input model: a terminal has one surface. Nothing is reading stdin, so there
-// is no input in the DOM at all — not a disabled one, not a greyed one.
+// One-surface model: nothing reads stdin, so no input exists in the DOM at
+// all (not disabled, not greyed).
 const idleInputs = await input().count()
 if (idleInputs === 0) pass('no input UI whatsoever while nothing is reading stdin')
 else fail('no input UI while idle', `${idleInputs} stdin input(s) on screen`)
@@ -135,8 +131,7 @@ const beforeAnswer = await out()
 if (beforeAnswer.trimEnd().endsWith('Your name:')) pass('prompt printed before the read blocked')
 else fail('prompt printed before the read blocked', beforeAnswer.slice(-40))
 
-// The point of the whole redesign: the input is IN the transcript, on the prompt's
-// own line, where a terminal cursor would be — not in a bar underneath it.
+// Input lives IN the transcript, on the prompt's own line — not in a bar underneath it.
 const inline = await page.evaluate(() => {
   const inp = document.querySelector('[aria-label="Program input"]')
   const scroller = document.querySelector('[aria-label="Program output"]')
@@ -168,16 +163,14 @@ else fail('prompt and input share a line', JSON.stringify(inline))
 if (inline && /^0px/.test(inline.border) && /rgba\(0, 0, 0, 0\)|transparent/.test(inline.background))
   pass('the input has no box of its own — the caret is the affordance', `${inline.border}, ${inline.background}`)
 else fail('input is chromeless', JSON.stringify({ border: inline?.border, bg: inline?.background }))
-// One shell: console rows are VS Code-flat at EVERY width now — no leading
-// rules, no row bands. The --info caret and the status bar name the waiting
-// state; `[data-seg]` hues carry the rest.
+// One shell: rows are flat at every width; the --info caret + status bar name
+// the waiting state, `[data-seg]` hues carry the rest.
 const inlineDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 if (inline?.rowRuleW === '0px')
   pass('the live line is flat — the caret and status bar name the waiting state', `${inline?.rowRule} ${inline?.rowRuleW}`)
 else fail('live line flat-row treatment', JSON.stringify({ rule: inline?.rowRule, w: inline?.rowRuleW }))
-// DENSITY: the 44px/16px pair is a touch obligation; a fine-pointer ≥900px
-// window (this harness) runs the live line at 28px/14px. console-kb.mjs
-// asserts the touch numbers where they bind.
+// DENSITY: 44px/16px is touch-only; this desk harness runs the live line at
+// 28px/14px (touch asserted in console-kb.mjs).
 if (inline && inline.height >= (inlineDesk ? 24 : 43.5)) pass(`the live input is a ≥${inlineDesk ? 24 : 44}px target at this density`, `${inline.height}px`)
 else fail('live input height floor', JSON.stringify(inline))
 if (inline && parseFloat(inline.fontSize) >= (inlineDesk ? 14 : 16)) pass(`stdin font-size ≥${inlineDesk ? 14 : 16}px at this density`, inline.fontSize)
@@ -193,16 +186,10 @@ else fail('typed answer echoed onto the prompt line', after.slice(-120))
 const failRs = await runState()
 if (failRs.state === 'failed' && /exit code 3|exit 3|red lines/.test(failRs.text)) pass(`run state: non-zero exit (${failRs.where})`, JSON.stringify(failRs.text))
 else fail('run state: non-zero exit', `${failRs.state} / ${failRs.text}`)
-// One shell: the status bar carries the run state at EVERY width, so the
-// header pill is never on screen while a hardware keyboard is in play (it
-// exists only for the kb-open window, asserted in console-kb.mjs). A second
-// copy of the state 30px from the bar would read as a duplicate.
-// The pill is in the DOM at every moment now — visibility is CSS-owned
-// (`hidden kb-open:flex` on its wrapper off html[data-kb], the kb-hide
-// mechanism) — so the assertion is on being RENDERED, not on presence: a
-// pill inside a display:none wrapper is a pill standing down. Rendered
-// means a client rect (the wrapper's display:none is an ANCESTOR style, so
-// reading the pill's own computed display would always say inline-flex).
+// One shell: status bar carries run state everywhere; header pill only
+// exists in the kb-open window (console-kb.mjs) to avoid a duplicate.
+// Pill is always in the DOM; visibility is CSS-owned via an ancestor's
+// display:none, so check client rects, not the pill's own computed display.
 const pillShown = await page.locator('.console-header .pill')
   .evaluate((el) => el.getClientRects().length > 0)
   .catch(() => false)
@@ -237,8 +224,7 @@ const kinds = await page.evaluate(() => {
     echoSeg: segCs('[data-seg="echo"]'), outSeg: segCs('[data-seg="out"]'), errSeg: segCs('[data-seg="err"]') }
 })
 info(`row styles: ${JSON.stringify(kinds)}`)
-// One shell: rows are VS Code-flat at every width, and the kinds separate by
-// their INK — stderr's --danger red, meta's dim italic 13px.
+// One shell: rows are flat at every width; kinds separate by ink (stderr red, meta dim italic).
 const inks = [kinds.outSeg, kinds.errSeg, kinds.meta && { color: kinds.meta.color, fontStyle: kinds.meta.style }]
   .filter(Boolean)
   .map((k) => `${k.color}|${k.fontStyle}`)
@@ -267,9 +253,7 @@ if (await copyBtn.count()) {
   else fail('copy button confirms on itself', String(label))
 } else fail('copy-all-output button exists in the console header')
 
-// Right-click copies the SELECTION outright, the way a terminal emulator does —
-// the Copy-all button is for the whole transcript, this is for the one line a
-// student wants to paste to a friend.
+// Right-click copies just the selection (terminal-style) — Copy-all is for the whole transcript.
 const selRow = page.locator('.console-row__text', { hasText: 'Warsha console check' }).first()
 await page.evaluate(() => {
   const el = [...document.querySelectorAll('.console-row__text')].find((e) => /Warsha console check/.test(e.textContent))
@@ -286,32 +270,18 @@ const selClip = await page.evaluate(() => navigator.clipboard.readText())
 if (/Warsha console check/.test(selClip) && !/ValueError/.test(selClip))
   pass('right-click copies just the selection', JSON.stringify(selClip.trim()))
 else fail('right-click copies the selection', JSON.stringify(selClip.slice(0, 80)))
-// Selection has to be visible, not the browser's default on a dark surface.
-//
-// The source writes this with native CSS nesting
-// (`.console-transcript { &::selection, & ::selection { ... } } }`), but the two
-// ways this suite has served the app disagree about what survives to the CSSOM:
-//   - `vite --port` (dev): the nesting reaches the browser as-is, and Chrome
-//     reports the nested rule's `selectorText` VERBATIM, `&` and all — never
-//     re-qualified to `.console-transcript::selection`. A regex requiring the
-//     literal text "console-transcript" on the matched rule can never match, so
-//     ancestry has to be tracked instead: once inside a rule whose OWN selector
-//     IS `.console-transcript`, a descendant mentioning `::selection` is it.
-//   - `vite build` + `preview` (production, what actually ships): Tailwind's
-//     own pipeline flattens the nesting before the browser ever sees it, into
-//     plain top-level rules like `.console-transcript::selection{...}` — which
-//     DOES carry the literal text, but is no longer a descendant of anything,
-//     so ancestry-tracking alone finds nothing here.
-// Checking both — literal substring OR ancestry — is what makes this correct
-// regardless of which of the two this suite happens to be pointed at.
+// Selection must be visibly styled (not the browser default). Dev (`vite
+// --port`) serves the source's nested CSS as-is, so Chrome's selectorText
+// keeps the literal `&` — needs ancestry tracking. Prod (`vite build`)
+// flattens it into a plain literal rule via Tailwind. Check both forms so
+// this works either way.
 const selStyle = await page.evaluate(() => {
   const walk = (rules, insideTranscript) => {
     for (const r of rules) {
       const here = insideTranscript || r.selectorText === '.console-transcript'
       const looksRight = r.selectorText && /::selection/.test(r.selectorText) && (here || /console-transcript/.test(r.selectorText))
-      // cssText, not style.backgroundColor: the rule is written as the `background`
-      // shorthand with a var() inside, and the CSSOM cannot decompose that into a
-      // longhand — it hands back an empty string and the check reads as missing.
+      // cssText, not style.backgroundColor — the shorthand var() can't decompose
+      // into a longhand and would read as empty.
       if (looksRight && r.style.cssText) return r.style.cssText
       if (r.cssRules) {
         const hit = walk(r.cssRules, here)
@@ -331,8 +301,8 @@ else fail('transcript ::selection styling is missing')
 // --------------------------------- D. 6000-line burst: autoscroll pill + Stop
 await setEditor('for i in range(6000): print("line", i, "of six thousand")\n')
 await runBtn().click()
-// Mid-flight: the program is producing output and reading nothing, so the console
-// must be pure transcript. (Sampled while it streams, before the run finishes.)
+// Mid-flight: program only writes, reads nothing, so the console must be pure
+// transcript (sampled before the run finishes).
 const duringRun = await input().count()
 await hasOut('line 5999')
 if (duringRun === 0) pass('no input UI while the program is only printing')
@@ -363,16 +333,11 @@ const pillBtn = page.getByRole('button', { name: /new line|Jump to latest/ })
 if (await pillBtn.count()) pass('scroll-up raises the resume pill', await pillBtn.innerText())
 else fail('scroll-up raises the resume pill')
 
-// The pill must COUNT what arrived while the reader was away. Driven by a
-// pending prompt rather than a flood, because the Python engine stops emitting
-// after its own 2 MiB per-run output cap and a capped flood adds nothing new.
-// Note the sleep: the reader has to get back to the top of the transcript BEFORE
-// the 500 lines land. Scrolling up first and then typing no longer works, because
-// the input is at the cursor — at the bottom of the transcript — so focusing it to
-// type necessarily scrolls it into view. That is correct terminal behaviour (you
-// cannot type at a cursor you cannot see); the invariant being proved here is the
-// one that still matters: output arriving while the reader is away must not yank
-// them to the bottom.
+// Uses a pending prompt, not a flood — the engine's 2 MiB output cap makes a
+// capped flood pointless. Scroll up happens AFTER typing: focusing the input
+// scrolls it into view (correct terminal behavior), so scrolling up first
+// would be undone. Invariant under test: arriving output must not yank the
+// reader back to the bottom.
 await page.waitForTimeout(700)
 await setEditor(
   'import time\n' +
@@ -441,19 +406,16 @@ await page.waitForTimeout(700)
 await setEditor('print("all good")\n')
 await page.locator('.cm-content').press('Control+Enter')
 await hasOut('all good')
-// The status bar's remote block says "Finished" without an exit suffix — the
-// transcript's meta row states the code in full.
+// Status bar just says "Finished" — the transcript's meta row states the exit code in full.
 const okRs = await runState()
 if (okRs.state === 'ok' && /Finished|exit code 0/.test(okRs.text)) pass(`Ctrl+Enter runs, run state: ok (${okRs.where})`, JSON.stringify(okRs.text))
 else fail('Ctrl+Enter runs / exit-0 status', `${okRs.state} / ${okRs.text}`)
 await shot('h-exit-ok')
 
 // --------------------------------------------------- F. geometry + overlap check
-// Founder ruling (P1): the icon-only controls in this header (Copy, Clear,
-// maximize, the collapse toggle — Run moved to the tab strip) are 40px visual
-// boxes on touch. All keep `ui/Button.tsx`'s `after:` hit-area pseudo, so what is asserted
-// now is the EFFECTIVE box (raw rect expanded by the pseudo's own computed
-// inset) rather than the raw one — read straight from the pseudo, not assumed.
+// Founder ruling (P1): header icon-only controls are 40px visual boxes on
+// touch; the 44px hit area comes from Button.tsx's `after:` pseudo, read off
+// its own computed inset.
 const geo = await page.evaluate((sel) => {
   const r = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null }
   const header = r(sel)
@@ -472,8 +434,7 @@ const geo = await page.evaluate((sel) => {
 }, HEADER_SEL)
 info(`header: ${JSON.stringify(geo.header)}`)
 for (const b of geo.runB) info(`  btn ${b.name}: ${Math.round(b.width)}x${Math.round(b.height)} (effective ${Math.round(b.effectiveWidth)}x${Math.round(b.effectiveHeight)}) @ y=${Math.round(b.y)}`)
-// DENSITY: 44px effective is the touch obligation; the fine-pointer desktop
-// runs these controls at 28px visual (WCAG 2.2 AA pointer floor is 24).
+// DENSITY: 44px effective is touch-only; desk runs these at 28px visual (WCAG 2.2 AA floor is 24).
 const geoDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 const hitFloor = geoDesk ? 24 : 43.5
 const tooSmall = geo.runB.filter((b) => b.effectiveHeight < hitFloor || b.effectiveWidth < hitFloor)
@@ -482,15 +443,13 @@ else fail(`console-header buttons ≥${Math.ceil(hitFloor)}px effective`, JSON.s
 const spill = geo.runB.filter((b) => b.y < geo.header.y - 0.5 || b.y + b.height > geo.header.y + geo.header.height + 0.5)
 if (!spill.length) pass('no header button overflows the header bar')
 else fail('header buttons overflow the header', JSON.stringify(spill.map((b) => b.name)))
-// One shell: the resize handle renders at every width (its touch handle
-// carries the coarse-pointer grab area).
+// One shell: resize handle renders at every width (touch handle carries the coarse-pointer grab area).
 if (geo.divider) {
   const overlaps = geo.divider.y + geo.divider.height > geo.header.y + 0.5
   if (!overlaps) pass('resize handle does not overlap the header', `handle bottom ${Math.round(geo.divider.y + geo.divider.height)} ≤ header top ${Math.round(geo.header.y)}`)
   else fail('resize handle overlaps the header')
 } else fail('resize handle missing — it renders at every width now')
-// The input's own geometry (44px, 16px) is asserted back in section B, while it
-// exists — nothing is reading stdin here, so there is nothing to measure.
+// Input geometry (44px/16px) is asserted in section B while it exists — nothing to measure here.
 
 // Ctrl+L clears, the way it does in a shell.
 await page.locator('[aria-label="Program output"]').click()

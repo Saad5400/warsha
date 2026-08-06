@@ -3,13 +3,8 @@ import { chromium } from 'playwright-core'
 import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -18,7 +13,6 @@ mkdirSync(SHOTS, { recursive: true })
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(),'jmeas-')), {
   executablePath: CHROME, headless: true, viewport: { width: 1280, height: 900 } })
 const page = ctx.pages()[0]
-const out = () => page.locator('[aria-label="Program output"]').innerText()
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 
 async function sampler() {
@@ -63,8 +57,7 @@ await page.locator('[aria-label="Program input"]').fill('x')
 await page.locator('[aria-label="Program input"]').press('Enter')
 await page.waitForFunction(() => document.querySelector('[aria-label="Program output"]')?.innerText.includes('Finished'), null, { timeout: 60000 })
 
-// --- SECOND RUN in the same session. The Run/Stop control ignores taps for
-// SWAP_GUARD_MS (250ms) after it swaps role, so wait past that first.
+// Second run: Run/Stop ignores taps for SWAP_GUARD_MS (250ms) after swapping role, so wait first.
 await page.waitForTimeout(600)
 await sampler()
 t = Date.now()

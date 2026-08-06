@@ -76,9 +76,8 @@ function addPage(set: PageSet): void {
     background: '#FFFFFF',
     color: INK,
     fontFamily: SANS,
-    // Restated per page, not only on the staging wrapper: each page is
-    // rasterised on its own, and html-to-image clones the node it is given —
-    // so the page has to carry the direction itself. See `wrap` below.
+    // Restated per page: each page rasterises on its own and html-to-image
+    // clones just that node, so direction must live on it too (see `wrap` below).
     direction: 'ltr',
     textAlign: 'left',
   })
@@ -100,18 +99,16 @@ function overflows(content: HTMLElement): boolean {
 }
 
 /**
- * Appends `block` to the current page; when it does not fit, opens the next
- * page and moves it there (together with `keepWith`, a header that must not
- * be stranded as the last thing on a page). Returns false once the page cap
- * is hit, which callers treat as "stop adding".
+ * Appends `block`; if it doesn't fit, opens a new page and carries it over
+ * with `keepWith` (a header that must not be stranded alone). Returns false
+ * once the page cap is hit.
  */
 function place(set: PageSet, block: HTMLElement, keepWith?: HTMLElement | null): boolean {
   if (set.full) return false
   set.content.appendChild(block)
   if (!overflows(set.content)) return true
-  // Move to a fresh page. A block taller than a whole page (one very long
-  // wrapped line) stays where it is, clipped — pathological, and clipping one
-  // line beats an infinite page loop.
+  // A block taller than a whole page stays put and gets clipped —
+  // pathological, but better than an infinite page loop.
   const carry = keepWith && keepWith.parentElement === set.content && keepWith.nextElementSibling === block
   addPage(set)
   if (set.full) {
@@ -286,10 +283,9 @@ function addFooters(pages: HTMLElement[], projectName: string): void {
 }
 
 /**
- * Render every file in `snapshot` into a paginated PDF named `fileName` and
- * hand it over — share sheet or download, whichever this device has (see
- * actions/deliver.ts). Files come out sorted by path, so folders group and
- * two exports of the same project always read the same way.
+ * Renders every file into a paginated PDF and delivers it (share sheet or
+ * download, see deliver.ts). Files sort by path, so folders group and repeat
+ * exports read identically.
  */
 export async function shareProjectAsPdf(
   projectName: string,
@@ -299,9 +295,8 @@ export async function shareProjectAsPdf(
   const files = [...snapshot.files].sort((a, b) => a.path.localeCompare(b.path))
   if (files.length === 0) throw new Error('nothing to export')
 
-  // Highlight first, before any DOM exists — each file's grammar load and
-  // parse happen once, and a parse failure in one file falls back to plain
-  // text rather than sinking the document.
+  // Highlighted before any DOM exists; a parse failure in one file falls back
+  // to plain text instead of sinking the whole document.
   const highlighted = await Promise.all(
     files.map(async (f): Promise<Segment[][]> => {
       if (f.content.length > MAX_HIGHLIGHT_BYTES) return plainLines(f.content)
@@ -321,13 +316,9 @@ export async function shareProjectAsPdf(
     top: '0',
     opacity: '0',
     pointerEvents: 'none',
-    // THE DOCUMENT IS ENGLISH LTR IN EVERY LANGUAGE. These pages are built
-    // inside the live document, so in an Arabic session they would otherwise
-    // inherit `<html dir="rtl">` and every flex row here would reverse: line
-    // numbers to the right of their code, the Warsha mark and the date swapped
-    // in the header, the page number swapped in the footer. A submission is a
-    // listing of code, and the code is left-to-right whatever language the
-    // student reads the app in — same rule as the editor (editor/setup.ts).
+    // Forced LTR: built inside the live document, so an Arabic session's
+    // `dir="rtl"` would otherwise reverse every row here. Code stays LTR
+    // regardless of app language — same rule as the editor (editor/setup.ts).
     direction: 'ltr',
     textAlign: 'left',
   })
@@ -341,11 +332,9 @@ export async function shareProjectAsPdf(
     const set: PageSet = { wrap, pages: [], content: document.createElement('div'), full: false }
     addPage(set)
 
-    // Pinned to English, like every other word this document prints ("3 files ·
-    // 120 lines of code", "Page 1 of 4"). The browser's own locale would set an
-    // Arabic student's cover date in Arabic month names and Arabic-Indic digits
-    // — one Arabic line in an otherwise English submission, which reads as a
-    // bug rather than a translation.
+    // Pinned to English like the rest of this document — the browser's locale
+    // would render the date in Arabic month names and digits, one stray
+    // translated line in an English submission.
     const date = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
     place(set, buildHeader(projectName, files, date))
 

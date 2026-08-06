@@ -98,11 +98,10 @@ interface Edit {
 }
 
 /**
- * Where `import java.util.Scanner;` belongs in `state`, or `null` if it (or a
- * wildcard covering it) is already there. Text-based on purpose — inserted
- * alphabetically among existing imports, after any existing imports; after
- * the package declaration if there is one and no imports yet; else at the top
- * of the file. Never called for `java.lang`.
+ * Where `import java.util.Scanner;` belongs, or `null` if it (or a covering
+ * wildcard) is already there. Text-based on purpose: inserted alphabetically
+ * among existing imports, else after the package line, else at the top of the
+ * file. Never called for `java.lang`.
  */
 export function importInsertion(state: EditorState, fqcn: string): Edit | null {
   if (fqcn.startsWith('java.lang.')) return null
@@ -151,32 +150,23 @@ export function pyImportInsertion(state: EditorState, module: string): Edit | nu
 }
 
 /**
- * Shared apply: insert the completion's label where it was typed, plus (if
- * `getEdit` finds one) the import it depends on — one transaction, so Undo
- * reverts both together. `getEdit` runs against `view.state`, i.e. *before*
- * the completion's own insertion, which is what every caller wants: the
- * import decision only depends on what already exists in the file.
+ * Shared apply: inserts the completion's label plus, if `getEdit` finds one,
+ * the import it depends on — one transaction, so Undo reverts both together.
+ * `getEdit` runs against the state *before* the completion's own insertion.
  */
 export function applyWithImport(getEdit: (state: EditorState) => Edit | null) {
   return (view: EditorView, completion: Completion, from: number, to: number) => {
     const label = completion.label
     const edit = getEdit(view.state)
     const own = { from, to, insert: label }
-    // `state.changes()` wants the specs in ascending document order — the
-    // import always lands at or near the top of the file, so it almost
-    // always sorts before the completion's own edit; asserting that instead
-    // of sorting for it silently corrupted the changeset once (§ completions
-    // QA), the one time the import edit was not a zero-width insertion.
+    // `state.changes()` needs specs in ascending order. The import edit almost
+    // always sorts before `own`; assuming that instead of sorting silently
+    // corrupted a changeset once (§ completions QA).
     const specs = edit ? (edit.from <= own.from ? [edit, own] : [own, edit]) : [own]
     const changes = view.state.changes(specs)
-    // The cursor belongs right after the label, in the *new* document. `from`
-    // is an old-document position and `label.length` a new-document length —
-    // adding them and feeding the sum back into `mapPos` mixes the two
-    // coordinate spaces and can ask for a position past the end of the old
-    // document (this cost a real "position out of range" failure once,
-    // caught by the completions QA suite). Map `from` through the import
-    // edit *alone* — the shift `own` itself causes at its own boundary is
-    // ambiguous to map through — then add the label length in new-space.
+    // Map `from` through the import edit alone, then add the label length in
+    // new-space — mixing old-doc `from` with new-doc `label.length` directly
+    // once asked for a position past the old document's end (§ completions QA).
     const shifted = edit ? view.state.changes([edit]).mapPos(from) : from
     view.dispatch({ changes, selection: { anchor: shifted + label.length } })
   }

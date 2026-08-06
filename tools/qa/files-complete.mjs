@@ -61,14 +61,11 @@ const iconGlyph = await page.locator('.cm-tooltip-autocomplete li .cm-completion
 }))
 check(iconGlyph.glyph === '"{}"', 'snippets carry an ASCII {} icon, not an SMP glyph', JSON.stringify(iconGlyph))
 const rowH = (await options().first().boundingBox()).height
-// DENSITY: completion rows are 44px where fingers tap them; at a fine pointer
-// the popup wears VS Code's own 22px rows (W2-D's desk completion styling).
+// DENSITY: rows are 44px for touch, 22px at a fine pointer (VS Code's own desk sizing).
 const rowDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 check(rowH >= (rowDesk ? 22 : 44), `completion rows are ≥${rowDesk ? 22 : 44}px at this density`, `${rowH}px`)
 const matched = await page.locator('.cm-completionMatchedText').first().evaluate((el) => getComputedStyle(el).color)
-// THEME-V5: matched characters take --list-highlight #E5B95C (the monochrome
-// theme's warm search-match precedent — a white highlight would vanish into
-// the near-white labels), decoupled from --accent.
+// Matched text uses --list-highlight #E5B95C, not --accent — white would vanish into the near-white labels.
 check(matched === 'rgb(229, 185, 92)', 'the matched prefix is highlighted in --list-highlight', matched)
 await page.screenshot({ path: join(SHOTS, 'files-complete-sout-1280.png') })
 
@@ -76,9 +73,7 @@ await page.keyboard.press('Tab')
 await page.waitForTimeout(300)
 let text = await doc()
 check(text.trim() === 'System.out.println();', 'Tab expands `sout` to System.out.println();', JSON.stringify(text.trim()))
-// The caret must land inside the parens, not after the statement. Checked
-// behaviourally — CodeMirror splits a line into several text nodes, so the DOM
-// selection offset says nothing on its own.
+// Checked behaviorally — CodeMirror splits lines into text nodes, so DOM selection offset alone proves nothing.
 await page.keyboard.type('"hi"')
 await page.waitForTimeout(200)
 text = await doc()
@@ -157,8 +152,7 @@ await page.waitForTimeout(500)
 check(!(await popup().isVisible()), 'no popup inside a comment')
 
 /* ------------------------------------------------------- Python snippets */
-// exact: the tab strip's ⋯ is "More"; the Explorer view header's is "More
-// actions" — distinct names, but getByRole matches by substring without it.
+// exact: needed since getByRole matches by substring, and "More" vs "More actions" would collide.
 await page.getByRole('button', { name: 'More', exact: true }).click()
 await page.waitForSelector('[role="menu"]')
 const menu = await page.locator('[role="menuitem"]').allInnerTexts()
@@ -214,8 +208,7 @@ const fit = await popup().evaluate((el) => {
   return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), vw: innerWidth }
 })
 check(fit.left >= 0 && fit.right <= fit.vw, 'the popup stays inside the viewport at 390px', JSON.stringify(fit))
-// The detail gloss stays at 390px — measured to fit beside the label — but it
-// must not push the row past the popup's own box.
+// Detail gloss fits beside the label at 390px but must not push past the row's own box.
 const detailFits = await page.evaluate(() => {
   const li = [...document.querySelectorAll('.cm-tooltip-autocomplete li')].find((x) => x.querySelector('.cm-completionDetail'))
   if (!li) return null

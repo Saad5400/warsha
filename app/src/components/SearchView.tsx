@@ -7,22 +7,11 @@ import { IconChevronRight } from './ui/Icons'
 import { COPY } from '../copy'
 
 /**
- * The sidebar's Search view (VS Code's search sidebar): one query across every
- * text file in the project, results grouped by file, a tap opens the match in
- * the editor selected. The activity bar's Search item switches the sidebar to
- * this view exactly as it switches VS Code's; the shell owns which view is up
- * (App.tsx `sideView`) and hands this component the file store and one
- * callback.
- *
- * Deliberately NOT a CodeMirror find panel: that is the in-file Mod+F, which
- * stays where it was (Edit > Find). Regex search is DEFERRED — the toggles
- * shipped are match-case and whole-word, both real; a third toggle that
- * silently did nothing would be dead UI.
- *
- * The search itself is a plain indexOf scan per file, debounced 150 ms and
- * capped at 500 matches: on a student-sized project (tens of files) it is
- * instant, and the cap is what keeps a one-letter query on a big import from
- * freezing the tab. It re-runs on `revision`, so results follow edits.
+ * The sidebar's Search view: one query across every text file, grouped by file,
+ * opening a match in the editor. Deliberately not the CodeMirror find panel (still
+ * Mod+F for in-file search); regex is deferred since a dead third toggle would be UI clutter.
+ * A plain indexOf scan, debounced 150ms and capped at 500 matches, keeps a one-letter
+ * query on a big project from freezing the tab.
  */
 
 /** Stop here, and say so — a one-letter query matches almost everything. */
@@ -107,33 +96,25 @@ function runSearch(files: SourceFile[], query: string, matchCase: boolean, whole
   return { hits, total, capped }
 }
 
-/* The view header — the Explorer's HEADER anatomy (same divider-as-shadow, same
- * ps-3 grid line), so the two views read as faces of one sidebar. `panel-label`
- * is the QA hook spacing.mjs measures on whichever view is up. */
+// Explorer's HEADER anatomy reused so the two sidebar views read as one system.
+// `panel-label` is the QA hook spacing.mjs measures.
 const HEADER = 'flex h-bar-side shrink-0 items-center gap-2 ps-3 pe-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 const PANEL_LABEL = 'panel-label text-[12px] leading-none font-semibold text-text-1'
 
-/* A file group row — the tree-row treatment in utility form (this is not the
- * explorer's tree, so it does not borrow `.tree-row` and its reserved accent
- * border). Full-width, --row-tree tall (36px touch / 22px desk — the tree's own
- * documented target compromise), list-hover fill. */
+// Tree-row treatment in utility form (not `.tree-row` itself — this isn't the explorer's tree).
 const FILE_ROW =
   'flex w-full min-h-row-tree cursor-pointer select-none items-center gap-2 desk:gap-1.5 ps-2 pe-2 text-start ' +
   'touch-manipulation transition-colors duration-(--dur-fast) ease-standard ' +
   'hover:bg-list-hover active:bg-surface-4 focus-visible:outline-offset-[-1px]'
 
-/* A match row. Indented under the file name; the active one keeps VS Code's
- * inactive-selection fill (focus is in the editor by then) plus brighter ink —
- * compound, never fill alone. */
+// Active match keeps VS Code's inactive-selection fill (focus has moved to the editor) plus brighter ink.
 const MATCH_ROW =
   'flex w-full min-h-row-tree cursor-pointer select-none items-center pe-2 ps-[calc(var(--sp-2)+24px)] text-start ' +
   'touch-manipulation transition-colors duration-(--dur-fast) ease-standard ' +
   'text-row text-text-2 hover:bg-list-hover active:bg-surface-4 focus-visible:outline-offset-[-1px] ' +
   'data-[state=active]:bg-list-inactive-sel data-[state=active]:text-text-1'
 
-/* The Aa / ab toggles. Pressed is a compound state (accent-soft fill + accent
- * ink + 1px inset ring), per SURFACES. 36px boxes on touch inside the 44px
- * field row (the pane-action compromise, recorded in DENSITY.md); 20px at desk. */
+// Aa/ab toggles: pressed is a compound state per SURFACES; sizing is the pane-action compromise (DENSITY.md).
 const TOGGLE =
   'grid size-icon-btn desk:size-5 flex-none cursor-pointer place-items-center rounded-sm ' +
   'text-[12px] desk:text-[11px] font-semibold leading-none text-text-2 touch-manipulation ' +
@@ -189,9 +170,7 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
         <span className={PANEL_LABEL}>{COPY.a11ySearch}</span>
       </div>
 
-      {/* The query field: a --input-bg box carrying the input and the two
-          filter toggles, VS Code's search-box anatomy. The input keeps the
-          global focus ring (never outline-none), pulled inside its own box. */}
+      {/* VS Code's search-box anatomy: input + two filter toggles inside one box, global focus ring kept. */}
       <div className="flex flex-none items-center p-2">
         <div className="flex min-h-touch min-w-0 flex-1 items-center gap-1 rounded-sm border border-(--input-border) bg-input pe-1">
           <input
@@ -296,9 +275,7 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
                               onOpenMatch(hit.path, m.from, m.to)
                             }}
                           >
-                            {/* whitespace-pre keeps code spacing honest; the
-                                matched range is --list-highlight, the same blue
-                                QuickInput's filtered rows use. */}
+                            {/* whitespace-pre preserves code spacing; match highlight reuses QuickInput's blue. */}
                             <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre">
                               {m.cut ? <span className="text-text-3">…</span> : null}
                               {m.pre}

@@ -54,8 +54,7 @@ if (sw && sw.includes('coi-serviceworker')) pass('the caching service worker is 
 else fail('the caching service worker is controlling', String(sw))
 
 // ----------------------------------------------------- 2. poison the cache on purpose
-// A full-body GET of ecj.jar. On the OLD SW this lands a `200` in warsha-shell-*, which
-// is the exact poison a whole-jar refetch causes in production.
+// Full-body GET — old SW would cache this as `200`, same poison a real refetch causes in prod.
 const poisoned = await page.evaluate(async () => {
   const res = await fetch('/ecj.jar')
   const len = (await res.arrayBuffer()).byteLength
@@ -68,16 +67,13 @@ const poisoned = await page.evaluate(async () => {
   return { status: res.status, len, cached }
 })
 info(`full GET /ecj.jar -> ${poisoned.status}, ${poisoned.len} bytes; cache entry: ${JSON.stringify(poisoned.cached)}`)
-// We WANT the poison present — a full-body 200 sitting in a warsha cache. If it is not
-// even cacheable the test is not exercising the hazard, so treat that as a failure.
+// Poison must be present — if it's not cacheable, the test isn't exercising the hazard.
 if (poisoned.cached && poisoned.cached.status === 200 && !poisoned.cached.cr)
   pass('poison staged: a full-body ecj.jar is sitting in the cache', poisoned.cached.cache)
 else fail('poison staged: a full-body ecj.jar is sitting in the cache', JSON.stringify(poisoned.cached))
 
 // ----------------------------------------------- 3. THE invariant: range survives poison
-// A range request through the SW must still be answered by the range-supporting server
-// (206 + Content-Range), NOT from the poisoned full-body cache entry. This is the whole
-// fix in one assertion; on the unfixed SW it comes back 200 with no Content-Range.
+// The whole fix in one assertion: range must hit the server (206+Content-Range), not the poisoned cache entry.
 const rng = await page.evaluate(async () => {
   const res = await fetch('/ecj.jar', { headers: { Range: 'bytes=100-199' } })
   const body = await res.arrayBuffer()
@@ -91,8 +87,7 @@ else fail('range request bypasses the poisoned cache', `status ${rng.status}, cr
 // ------------------------------------------ 4. end-to-end: CheerpJ boots despite the poison
 await seedStarter(page, { lang: 'Java', name: 'Java basics' })
 await page.waitForSelector('.cm-content', { timeout: 20000 })
-// A no-input program so a clean exit ("Finished. (exit code 0)") is the success signal;
-// the shipped Java starters block on Scanner and would never finish unattended.
+// No-input program — shipped starters block on Scanner and would never finish unattended.
 await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('public class Main { public static void main(String[] a) { System.out.println("WARSHA_RANGE_OK"); } }')

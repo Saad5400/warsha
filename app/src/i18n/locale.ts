@@ -45,14 +45,12 @@ export const LOCALE_NAMES: Record<Locale, string> = {
 export const dirOf = (l: Locale): 'rtl' | 'ltr' => (l === 'ar' ? 'rtl' : 'ltr')
 
 /**
- * What the browser asks for, when the student has never chosen.
+ * What the browser asks for, before any choice is made.
  *
- * Any `ar-*` tag counts — ar-SA, ar-EG, ar and the rest are one UI here; the
- * differences between them are dialect, and this interface is written in Modern
- * Standard Arabic that all of them read. `languages` before `language` so a
- * student whose phone is English-first but who lists Arabic still gets... no:
- * order is preference order, so the first entry that we support wins, exactly
- * as the student ranked them.
+ * Any `ar-*` tag counts — dialect differences don't matter, since the UI is
+ * written in Modern Standard Arabic that reads for all of them. `languages`
+ * (plural) is checked in order, so the first supported entry wins, matching
+ * the student's own ranking.
  */
 export function detectLocale(): Locale {
   const asked = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language])
@@ -65,14 +63,10 @@ export function detectLocale(): Locale {
 }
 
 /**
- * `?lang=ar` / `?lang=en` — an override that beats both the stored choice and
- * the browser, and is deliberately NOT persisted.
- *
- * It exists for two readers. The QA suites in tools/qa assert on English
- * `aria-label`s and on `stdinWaitingPlaceholder` verbatim; they currently get
- * English because headless Chrome asks for en-US, which is luck rather than a
- * guarantee. And a teacher putting one URL on the board can pin the language
- * the class sees regardless of what each phone is set to.
+ * `?lang=ar` / `?lang=en` — overrides both the stored choice and the browser,
+ * deliberately not persisted. Two readers rely on it: QA in tools/qa
+ * (currently passing only by luck, since headless Chrome happens to ask for
+ * en-US) and a teacher pinning one URL for the whole class.
  */
 function fromUrl(): Locale | null {
   try {
@@ -84,25 +78,17 @@ function fromUrl(): Locale | null {
 }
 
 /**
- * `/ar/` and `/en/` — the prerendered per-locale entry points.
+ * `/ar/` and `/en/` — prerendered per-locale entry points, for search
+ * engines: a single `/` can only offer a crawler one `<html lang>`/title, so
+ * this serves each locale its own (build emits a copy of index.html per
+ * prefix — see app/ARCHITECTURE.md §7 and the `warsha:locale-entries` plugin).
  *
- * These exist for search engines, not for the app: one URL that is only ever
- * `/` has one `<html lang>`, one title and one description to a crawler, so
- * half the interface Warsha ships is unreachable from an Arabic query. The
- * build emits a copy of index.html under each prefix with its own lang/dir,
- * title, description, og:locale and hreflang cluster — see
- * app/ARCHITECTURE.md §7 and the `warsha:locale-entries` plugin.
+ * Real entry points, not landing pages — `/ar/` boots the same bundle.
+ * Reading the path (not a build-injected global) means the generated HTML
+ * carries no script of its own, and `vite dev` gets it for free too.
  *
- * They are real entry points, not landing pages: `/ar/` boots the same app,
- * from the same hashed bundle one directory up, and this function is what makes
- * it open in Arabic. Reading the path rather than a build-injected global is
- * deliberate — it means the generated HTML carries no script of its own, and
- * `vite dev` gets the same behaviour for free through its history fallback.
- *
- * Ranked with `?lang=` and NOT persisted, for the same reason: both are "this
- * link says which language", which is a fact about the visit, not a new
- * standing choice by the student. A student who has explicitly picked English
- * still has that choice waiting when they next open `/`.
+ * Not persisted, like `?lang=` — a URL naming a language is a fact about this
+ * visit, not a standing choice.
  */
 function fromPath(): Locale | null {
   try {
@@ -121,15 +107,11 @@ const listeners = new Set<() => void>()
 export const locale = (): Locale => current
 
 /**
- * Resolve and apply the locale, before React mounts.
- *
- * A stored `locale` is an explicit choice and wins over the browser; `null`
- * means "follow the browser", which is the default a first-time visitor gets.
- * Ahead of both sit the two URL signals — `?lang=` and the `/ar/` `/en/` path
- * prefix — because a link that names a language is a stronger statement about
- * this visit than a preference saved on some earlier one. Neither is persisted.
- * Doing all of this pre-render is what stops the shell painting LTR and
- * flipping a frame later.
+ * Resolves and applies the locale before React mounts — doing it pre-render
+ * stops the shell painting LTR and flipping a frame later. Priority: the URL
+ * signals (`?lang=`, `/ar//en/` prefix) first, since a link naming a language
+ * is a stronger statement than a saved preference; then the stored choice;
+ * then the browser default.
  */
 export function initLocale(): Locale {
   current = fromUrl() ?? fromPath() ?? prefs().locale ?? detectLocale()
@@ -145,11 +127,9 @@ export function setLocale(next: Locale) {
   for (const fn of listeners) fn()
 }
 
-/**
- * `lang` and `dir` on the root element, which is what actually does the work:
- * `dir` flips every logical property in one go, and `lang` picks the right
- * Arabic shaping and stops a screen reader reading Arabic with an English voice.
- */
+/** `dir` on the root flips every logical property at once; `lang` picks
+ *  correct Arabic shaping and stops a screen reader using an English voice on
+ *  Arabic text. */
 function applyToDocument(l: Locale) {
   const html = document.documentElement
   html.lang = l

@@ -79,13 +79,6 @@ export const IconChevronUp = (p: IconProps) => (
   </Icon>
 )
 
-/** Collapse every folder: two chevrons folding toward the middle. */
-export const IconCollapseAll = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M6 4.75 10 8.75l4-4M6 15.25 10 11.25l4 4" />
-  </Icon>
-)
-
 export const IconClose = (p: IconProps) => (
   <Icon {...p}>
     <path d="M5.75 5.75l8.5 8.5M14.25 5.75l-8.5 8.5" />
@@ -120,12 +113,10 @@ export const IconFiles = (p: IconProps) => (
 )
 
 /**
- * The activity bar's Explorer glyph: VS Code's "files" codicon, two overlapping
- * documents. Path data traced from microsoft/vscode-codicons (MIT), fill-based
- * on a 24px grid — the one deliberate exception to this file's 20px/1.6px-stroke
- * rule, because the rail renders VS Code's own shape at VS Code's own size and a
- * restroked approximation reads as a knock-off. Used by ActivityBar only;
- * everything else that means "files" keeps IconFiles's folder above.
+ * VS Code's "files" codicon (microsoft/vscode-codicons, MIT), traced at 24px —
+ * the one exception to this file's 20px/1.6px-stroke rule, so the rail matches
+ * VS Code's own shape instead of a restroked knock-off. ActivityBar only;
+ * everything else uses IconFiles above.
  */
 export const IconFilesStack = ({ size = 24, ...p }: IconProps) => (
   <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true" focusable="false" {...p}>
@@ -149,14 +140,6 @@ export const IconFileLines = (p: IconProps) => (
   </Icon>
 )
 
-/** Console, never run. */
-export const IconTerminal = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="2.75" y="4.25" width="14.5" height="11.5" rx="1.25" />
-    <path d="M6 9l2 1.75L6 12.5M10.25 12.5h3.5" />
-  </Icon>
-)
-
 /** Empty folder. */
 export const IconFolderOpen = (p: IconProps) => (
   <Icon {...p}>
@@ -166,29 +149,6 @@ export const IconFolderOpen = (p: IconProps) => (
 )
 
 /* ---- menu glyphs. Same grid, same stroke as everything above. ------------- */
-
-/** Import: into the tray. */
-export const IconImport = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M10 3.75v7.5M6.75 8.25 10 11.5l3.25-3.25" />
-    <path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13" />
-  </Icon>
-)
-
-/** Export: out of the tray. */
-export const IconExport = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M10 11.5V4M6.75 7.25 10 4l3.25 3.25" />
-    <path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13" />
-  </Icon>
-)
-
-export const IconSave = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4.75 4.25h7.75l3 3v8.5a.5.5 0 0 1-.5.5H5.25a.5.5 0 0 1-.5-.5V4.75a.5.5 0 0 1 .5-.5Z" />
-    <path d="M7.5 4.25v3.5h5M7.5 12.25h5" />
-  </Icon>
-)
 
 export const IconTextBigger = (p: IconProps) => (
   <Icon {...p}>
@@ -204,21 +164,6 @@ export const IconTextSmaller = (p: IconProps) => (
   </Icon>
 )
 
-/** Mirror Run/Stop to the other edge, for a left-handed student. */
-export const IconSwapSides = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M7.5 6.25 4 9.75l3.5 3.5M12.5 6.25 16 9.75l-3.5 3.5" />
-    <path d="M4.25 9.75h11.5" />
-  </Icon>
-)
-
-export const IconTrash = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4.5 6.5h11M8 6.5V5.25a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6.5" />
-    <path d="M6.25 6.5l.55 8.3a1 1 0 0 0 1 .95h4.4a1 1 0 0 0 1-.95l.55-8.3" />
-  </Icon>
-)
-
 /** "Format file" — a wand, for the one action that rewrites the file for you. */
 export const IconWand = (p: IconProps) => (
   <Icon {...p}>
@@ -228,11 +173,9 @@ export const IconWand = (p: IconProps) => (
 )
 
 /**
- * "Install Warsha" — an arrow landing INSIDE a device, not in a tray.
- *
- * Deliberately not the download glyph: IconImport is already an arrow into a
- * tray, and the two actions sit one row apart in the same chrome. What is being
- * installed is the app onto the phone, so the phone is the container.
+ * "Install Warsha" — arrow landing INSIDE a device, not a tray (that's
+ * IconImport, one row away in the same chrome) — installing puts the app
+ * on the phone, so the phone is the container.
  */
 export const IconInstall = (p: IconProps) => (
   <Icon {...p}>

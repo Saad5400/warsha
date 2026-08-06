@@ -109,15 +109,12 @@ const plugin = ViewPlugin.fromClass(
 )
 
 /**
- * Each rule targets the mark's span AND any span nested inside it. The nested
- * selector is the load-bearing half: syntax highlighting renders the bracket
- * glyph in its own punctuation-grey span *inside* this mark
- * (`<span class="cm-bracket-0"><span class="ͼx">{</span></span>`), so a rule
- * on the mark alone colours an element whose text is painted by a greyer
- * child — the rainbow exists in the cascade but never on screen. The mark is
- * one character wide, so the only span it can contain is the glyph's own.
- * `&.cm-editor` keeps the specificity above the single generated highlight
- * class either way.
+ * Targets the mark's span AND any nested span: syntax highlighting wraps the
+ * bracket glyph in its own grey span *inside* this mark
+ * (`<span class="cm-bracket-0"><span class="ͼx">{</span></span>`), which
+ * overrides a rule on the mark alone — the rainbow exists in the cascade but
+ * never on screen otherwise. `&.cm-editor` keeps specificity above the
+ * highlight class regardless.
  */
 const theme = EditorView.theme({
   '&.cm-editor .cm-bracket-0, &.cm-editor .cm-bracket-0 span': { color: 'var(--code-bracket-1)' },

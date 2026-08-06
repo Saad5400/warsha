@@ -25,10 +25,7 @@ export interface StorageProblem {
   detail: string
 }
 
-/**
- * DOMException names are the reliable signal here; message text is not, and
- * differs between Chrome, Safari and Firefox for the same condition.
- */
+/** DOMException `name` is the reliable signal; message text differs by browser. */
 export function classifyStorageError(error: unknown): StorageFault {
   const name = (error as { name?: string } | null)?.name ?? ''
   const message = String((error as { message?: string } | null)?.message ?? error ?? '')
@@ -54,10 +51,8 @@ export function toStorageProblem(error: unknown, path?: string): StorageProblem 
 }
 
 /**
- * Ask the browser to keep this origin's storage. Best-effort by definition:
- * Chrome grants it silently on an engaged origin, Safari only for an installed
- * PWA, and a `false` here is exactly the condition the eviction warning exists
- * for. Never throws — a browser without the API just reports `false`.
+ * Best-effort: Chrome grants silently, Safari only for installed PWAs; `false`
+ * is expected, not an error. Never throws.
  */
 export async function requestPersistence(): Promise<boolean> {
   try {

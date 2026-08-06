@@ -36,17 +36,8 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere — the three conventions the verify suites
- * share (tools/qa/README.md), plus three this script adds.
- *
- *   WARSHA_URL     base URL of a SERVED BUILD   (default http://127.0.0.1:8086/)
- *   WARSHA_CROPS   where crops land             (default tools/qa/crops/)
- *   CHROME         Chrome binary                (default /usr/bin/google-chrome)
- *   WARSHA_DSF     deviceScaleFactor            (default 3)
- *   WARSHA_PAD     px of context around a crop  (default 10)
- *   WARSHA_ONLY    regex; capture matching crop names only (default: all)
- *
- * 127.0.0.1 rather than localhost deliberately — see README.md. */
+// Overridable via env: WARSHA_URL, WARSHA_CROPS, CHROME, WARSHA_DSF, WARSHA_PAD,
+// WARSHA_ONLY (see README.md for defaults; 127.0.0.1 not localhost).
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const CROPS = process.env.WARSHA_CROPS ?? fileURLToPath(new URL('./crops', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -56,14 +47,13 @@ const ONLY = process.env.WARSHA_ONLY ? new RegExp(process.env.WARSHA_ONLY) : nul
 
 /* Semantic first, class as fallback. See rule 2 above. */
 const S = {
-  /* The bar holds no mark, no wordmark and (post W1-B) no sep hairline — it
-     runs full-width over the rail with the centred window title. `.top-bar`
-     is the standing contract class. */
+  /* The bar has no mark/wordmark/sep hairline; it runs full-width over the rail
+     with the centred window title. `.top-bar` is the contract class. */
   topbar: '.top-bar',
   identity: '.top-bar__identity',
   project: '[aria-label^="Project:"]',
-  /* Run/Stop's one home is the tab strip's trailing group at every size
-     (one shell): the long-form labels ("Run main.py") name the file. */
+  /* Run/Stop lives in the tab strip's trailing group at every size; labels
+     like "Run main.py" name the file. */
   topRun: '[aria-label^="Run "], [aria-label^="Stop "]',
   more: '[aria-label="More"]',
 
@@ -91,15 +81,15 @@ const S = {
   gutterActive: '.cm-activeLineGutter',
   content: '.cm-content',
 
-  /* Run left the console header (one home, the tab strip); `console-header`
-     is a styling-free contract class on RunBar's root. */
+  /* Run moved to the tab strip; `console-header` is a styling-free contract
+     class on RunBar's root. */
   consoleHeader: '.console-header',
   divider: '[aria-label="Resize output"]',
   transcript: '[aria-label="Program output"]',
   rowOut: '[data-kind="out"]',
   rowErr: '[data-kind="err"]',
-  /* kb-open only: the header pill that stands in while the software keyboard
-     hides the status bar. The console foot is gone. */
+  /* kb-open only: the header pill stands in for the status bar the software
+     keyboard hides. */
   consoleStatus: '.console-header .pill',
   stdinRow: '.stdin-row',
   stdinInput: '[aria-label="Program input"]',
@@ -116,10 +106,9 @@ const S = {
   menuitem: '[role="menuitem"]',
   dialog: '[role="dialog"]',
   toast: '.toast',
-  /* The welcome panel's brand block — the mark above the Latin wordmark. It is
-     the ONLY place in the app the wordmark appears (LAYOUT-VSCODE §1b). The
-     Arabic line that used to sit under it is gone: Warsha ships English-only,
-     so there is no `[lang="ar"]` in the DOM to anchor a crop to. */
+  /* The welcome panel's brand block — mark over wordmark, the only place it
+     appears. The Arabic line under it is gone (English-only now), so no
+     `[lang="ar"]` anchor exists. */
   lockup: '.lockup',
 }
 
@@ -143,8 +132,7 @@ const misses = []
 let captured = 0
 let skipped = 0
 
-/* Read an element's box and the computed properties that decide geometry. Runs
- * in the page so it sees the real cascade rather than our guess at it. */
+/* Reads geometry in the page itself, so it sees the real cascade rather than our guess at it. */
 const PROBE = `(el) => {
   const r = el.getBoundingClientRect()
   const cs = getComputedStyle(el)
@@ -155,8 +143,8 @@ const PROBE = `(el) => {
     cls: el.getAttribute('class') ?? '',
     rect: b(r),
     parent: { tag: el.parentElement?.tagName.toLowerCase() ?? null, cls: el.parentElement?.getAttribute('class') ?? '', rect: b(pr) },
-    /* Positive on a side = the child sticks out past its parent there. The
-       founder's Run-button defect is this number being > 0 on 'bottom'. */
+    /* Positive on a side means the child overflows the parent there — the
+       founder's Run-button bug was a positive 'bottom'. */
     overflow: pr && {
       top: +(pr.top - r.top).toFixed(2),
       bottom: +(r.bottom - pr.bottom).toFixed(2),
@@ -177,8 +165,7 @@ const PROBE = `(el) => {
   }
 }`
 
-/* A selector that matches nothing is a logged miss, never a 30s hang. A harness
- * that aborts two thirds of the way through has captured nothing useful. */
+/* A missing selector is a logged miss, not a 30s hang — an aborted harness captures nothing useful. */
 async function box(sel, nth = 0) {
   if (typeof sel === 'function') return await sel()
   const loc = page.locator(sel).nth(nth)
@@ -199,9 +186,8 @@ async function shot(name, opts = {}) {
   if (!target && rect) target = await rect()
   if (!target && sel) target = await box(sel, nth)
   if (!target) {
-    /* `optional` is for regions the layout deliberately does not render at this
-       width — the status bar and the resize handle are ≥900px only. Logging them
-       as misses would train the reader to ignore the miss list. */
+    /* `optional` marks regions the layout doesn't render at this width (status
+       bar, resize handle, ≥900px only) — logging them as misses would desensitize the miss list. */
     if (!optional) misses.push(name)
     log(`  ${optional ? 'n/a ' : 'MISS'} ${name} :: ${sel ?? 'computed rect'}`)
     return null
@@ -248,8 +234,7 @@ function junction(aSel, bSel, { aNth = 0, bNth = 0 } = {}) {
   }
 }
 
-/* One end of a wide element. A 1280px title bar shot whole shows nothing; its
- * left 380px shows the logo lockup at a size you can judge. */
+/* One end of a wide element: a whole title bar shows nothing, but a 380px slice shows the lockup at a judgeable size. */
 function slice(sel, side, extent, { nth = 0 } = {}) {
   return async () => {
     const b = await box(sel, nth)
@@ -261,14 +246,8 @@ function slice(sel, side, extent, { nth = 0 } = {}) {
   }
 }
 
-/* The box of an ANCESTOR of a matched element.
- *
- * The escape hatch for containers that have no selector of their own. The
- * console header and the progress track are plain layout <div>s whose classes
- * are moving to utilities, but each reliably CONTAINS something semantic — the
- * Run button, the fill.
- * Walking up from the thing that has a contract is stabler than guessing at the
- * wrapper's current class. */
+/* Ancestor box of a matched element — walking up from a stable, semantic
+ * descendant (console header, progress track) beats guessing an unstable wrapper class. */
 function parentRect(sel, up = 1, { nth = 0 } = {}) {
   return async () => {
     const loc = page.locator(sel).nth(nth)
@@ -300,18 +279,9 @@ const hasOut = (t, timeout = 180000) =>
     t, { timeout },
   )
 
-/* Replace the open file's source.
- *
- * keyboard.type() is wrong for anything with brackets in it: CodeMirror's
- * close-brackets extension answers each typed "(" with "()" and each quote with
- * a pair, and whether the following typed ")" is swallowed as an overtype or
- * inserted as a second one depends on timing. A run of this script died on
- * exactly that — the program raised a SyntaxError and every console crop after
- * it was of a failure state. insertText delivers the whole string as one input
- * event, which close-brackets treats as a paste and leaves alone.
- *
- * Verified rather than assumed: the console crops are only meaningful if the
- * source that produced them is the source we meant. */
+/* insertText, not type() — close-brackets' timing with typed "("/quotes once
+ * corrupted a script into a SyntaxError. insertText is one input event, like a
+ * paste, and is verified against what we asked for. */
 async function setSource(text) {
   await page.locator(S.content).click()
   await page.keyboard.press('Control+a')
@@ -328,9 +298,8 @@ async function setSource(text) {
   return true
 }
 
-/* Wait for a marker in the transcript; on timeout print what the console
- * actually says and carry on. A bare 180s TimeoutError kills the run and takes
- * the ninety crops that had nothing to do with the program with it. */
+/* Waits for a transcript marker; on timeout logs what's actually there and
+ * continues — a bare TimeoutError would kill the run and the ~90 unrelated crops after it. */
 async function waitOut(marker, timeout = 180000) {
   try {
     await hasOut(marker, timeout)
@@ -343,11 +312,8 @@ async function waitOut(marker, timeout = 180000) {
   }
 }
 
-/* ------------------------------------------------------------------ 0. state
- * Crops of an empty app are crops of a screen no student ever sits in front of.
- * Everything below is shot against a real project: three open files (one nested,
- * one named long enough to ellipsize), a completed run whose transcript holds
- * stdout, stderr, a prompt and an echoed answer, and finally a Stop. */
+/* 0. state — crops of an empty app show a screen no student sees. Everything
+ * below runs against a real project: three open files, a full run (stdout/stderr/prompt/answer), then a Stop. */
 step('boot + cross-origin isolation')
 await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 })
@@ -394,9 +360,8 @@ await setSource(
   'print("Hello,", name)\n',
 )
 
-/* The progress block exists only while an engine is downloading, so it has to be
- * caught mid-run rather than set up and shot afterwards — and caught FAST: on a
- * warm disk cache the whole download is over in well under a second. */
+/* The progress block only exists mid-download, so it must be caught live, not
+ * set up afterward — on a warm cache it's gone in well under a second. */
 await page.getByRole('button', { name: /^Run\b/ }).first().click()
 const sawProgress = await page.waitForSelector(S.progress, { timeout: 30000 }).then(() => true).catch(() => false)
 if (sawProgress) {
@@ -558,8 +523,7 @@ await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
 
 step('1280 — dialog (delete confirm, from the row context menu)')
-/* The per-row ⋯ is display:none at desk (W1-C) — the right-click context menu
- * is the desktop route to the same rows. */
+/* The per-row ⋯ is display:none at desk — right-click is the desktop route to the same rows. */
 const gotDialog = await page.locator('[data-path="geometry_calculations_helper.py"]').click({ button: 'right', timeout: 4000 }).then(async () => {
   await page.waitForTimeout(300)
   const del = page.getByRole('menuitem', { name: /Delete/ })
@@ -579,8 +543,7 @@ if (gotDialog && (await page.locator(S.dialog).count())) {
 }
 
 step('1280 — import-zip dialog (input + drop zone)')
-/* Import moved to the menu bar's File menu at desk (W1-B); the tab-strip ⋯
- * keeps only the file-scoped rows. */
+/* Import moved to the File menu at desk; the tab-strip ⋯ keeps only file-scoped rows. */
 await page.getByRole('menuitem', { name: 'File', exact: true }).click()
 await page.waitForTimeout(300)
 const imp = page.getByRole('menuitem', { name: /Import/ })
@@ -611,10 +574,8 @@ await page.waitForFunction(
 ).catch(() => {})
 await shot('1280-tabstrip-stop', { sel: S.topRun, pad: 14, note: 'tab-strip control in the Stop state — same box as Run?' })
 
-/* The scroll pill exists only while output is STREAMING and the student has
- * scrolled away from the bottom. Scrolling a finished transcript does not
- * produce it, which is why this crop lives inside the spin and not with the
- * other console crops. */
+/* The scroll pill only appears mid-stream, once scrolled away from the bottom
+ * — a finished transcript won't show it, hence this crop lives inside the spin. */
 await page.locator(S.transcript).evaluate((el) => { el.scrollTop = 0 }).catch(() => {})
 await page.waitForTimeout(700)
 await shot('1280-scroll-pill', { sel: S.scrollPill, pad: 16, note: 'jump-to-latest: icon/text baseline, corner radius, unseen count' })
@@ -664,8 +625,7 @@ step('390 — keyboard open (simulated the way ui/viewport.ts publishes it)')
 await setSource('name = input("Your name: ")\nprint("Hi", name)\n')
 await page.getByRole('button', { name: /^Run\b/ }).first().click()
 await waitOut('Your name:', 90000)
-/* Two passes: the console answers the shrink with a ResizeObserver scroll, which
- * cannot land inside the same evaluate() that forced it. See console-kb.mjs. */
+/* Two passes: the console's ResizeObserver scroll can't land inside the same evaluate() that forced the shrink. See console-kb.mjs. */
 const raiseKeyboard = () => {
   const KB = 340
   const root = document.documentElement

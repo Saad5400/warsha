@@ -13,12 +13,7 @@ import { COPY } from '../copy'
  */
 export type RunStatus = 'idle' | 'preparing' | 'running' | 'waiting' | 'ok' | 'failed' | 'stopped'
 
-/**
- * A failure the student can act on, rendered as a block in the console with its
- * own button. Distinct from the transcript: a red line scrolls away, and the one
- * thing a student needs after "the engine would not download" is a way to try
- * again that is not "find the Run button again".
- */
+/** A failure the student can act on — its own console block with a retry button, unlike a transcript line that just scrolls away. */
 export interface RunFailure {
   /** Student-facing, already plain English. */
   message: string
@@ -37,50 +32,20 @@ export interface RunnerState {
   busy: boolean
   /** Set when the last run could not start. Cleared by the next Run. */
   failure: RunFailure | null
-  /**
-   * The document a `kind: 'preview'` run is showing, for the shell to load into
-   * the preview iframe. Null for a console run (Java/Python) and between runs.
-   * A web page's `console.log` still arrives through the normal stdout channel,
-   * so the Console panel is unaffected by this.
-   */
+  /** The `kind: 'preview'` run's document, for the shell's iframe; null for console runs and between runs. `console.log` still goes through stdout, unaffected. */
   previewDoc: string | null
 }
 
 /** Ignore taps for a moment after the control swaps role (spec §5.3). */
 const SWAP_GUARD_MS = 250
 
-/**
- * How long Stop waits for the engine's `onExit(null)` before ending the session
- * on its own.
- *
- * Both engines answer a kill in under a millisecond, so this never fires in
- * normal use. It fires when the worker is already dead — killed by the browser
- * for memory on an iPad, or terminated by anything outside the engine's own kill
- * path — in which case no onExit is ever coming, and without this the run stays
- * `busy` forever and Run is disabled until the student reloads the page. There
- * is no platform event for "your worker died"; this is the backstop instead.
- */
+/** Backstop for Stop when `onExit` never comes — e.g. the worker was already killed (iPad memory pressure). Without it, `busy` stays true forever with no way to recover but reloading. */
 const FORCE_STOP_MS = 2000
 
-/**
- * How long the engine may go without a single new progress report before we
- * call the download dead.
- *
- * Deliberately generous, because the failure it must not produce is a false
- * one: Pyodide is ~11.6 MB and school wifi is slow. But bytes arriving means
- * progress reports arriving, so the timer resets on every one — 45 s of total
- * silence is a blackholed connection (a firewall that drops rather than
- * refuses), not a slow one.
- */
+/** Deliberately generous (Pyodide is ~11.6MB on slow wifi) — resets on every report, so only a truly dead (blackholed) connection trips it. */
 const LOAD_STALL_MS = 45_000
 
-/**
- * Turn whatever the engine threw into something a fourteen-year-old can act on.
- *
- * The engines report faithfully and technically — a `TypeError: Failed to fetch`
- * or a stack from inside the CheerpJ loader — and that string used to be pasted
- * straight into the console behind "Warsha could not start the language engine".
- */
+/** Turns a raw engine error (e.g. `TypeError: Failed to fetch`, a CheerpJ stack trace) into something a student can act on. */
 export function classifyRunFailure(error: unknown, lang: string): RunFailure {
   const detail = String((error as { message?: string } | null)?.message ?? error ?? '')
 
@@ -134,15 +99,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
 
   useEffect(() => clearTimers, [])
 
-  /**
-   * End the run from the shell's side, whatever the engine is doing.
-   *
-   * Every path out of `busy` that does not come from the engine's own
-   * `onExit` goes through here, so there is exactly one place that has to get
-   * "Run works again" right. The token bump makes any late `onExit` a no-op, and
-   * `dispose()` throws away an engine we can no longer vouch for so the next run
-   * builds a fresh worker instead of talking to a corpse.
-   */
+  /** Ends a run from the shell's side — the one place `busy` gets cleared outside `onExit`. Token bump voids late `onExit`s; `dispose()` discards an untrusted engine. */
   const abandonRun = useCallback(
     (failure: RunFailure | null, note: string, status: RunStatus) => {
       clearTimers()
@@ -159,8 +116,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       }
       activeRuntime.current = null
       if (note) buffer.line(note, failure ? 'err' : 'meta')
-      // An abandoned run must read true immediately — no paced reveal owing
-      // lines under an error the student is already looking at.
+      // Must read true immediately — no paced reveal owing lines under an error already on screen.
       buffer.catchUp()
       setState({ status, exitCode: null, progress: null, busy: false, failure, previewDoc: null })
     },
@@ -175,8 +131,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
   const deliverStdin = useCallback(
     (line: string) => {
       awaiting.current = false
-      // The buffer decides whether this joins an open prompt ("Your name: Saad")
-      // or starts its own `› ` line.
+      // Buffer decides whether this joins an open prompt or starts its own `› ` line.
       buffer.echo(line)
       writeToSession(line)
       setState((s) => (s.status === 'waiting' ? { ...s, status: 'running' } : s))
@@ -204,23 +159,18 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     clearTimers()
     awaiting.current = false
     typedAhead.current = []
-    // The student intervened; the transcript stops performing and tells the
-    // truth now. Everything the program printed before the kill is revealed —
-    // the alternative is Stop followed by seconds of output still "arriving",
-    // which reads as Stop not working (§7.3).
+    // Reveal everything printed before the kill immediately — output still
+    // "arriving" after Stop reads as Stop not working (§7.3).
     buffer.catchUp()
     if (session.current) {
       const mine = token.current
       session.current.kill()
-      // A live engine answers with onExit(null) in under a millisecond, which
-      // bumps nothing and leaves this timer to be cleared. A dead one answers
-      // never — so Stop, not a page reload, is what gets the student running
-      // again.
+      // A live engine clears this timer via onExit fast; a dead one never answers,
+      // so this is what makes Stop actually recover.
       forceStopTimer.current = window.setTimeout(() => {
         forceStopTimer.current = 0
         if (token.current !== mine) return
-        // A lost worker is not the student's fault and has one obvious next step
-        // (press Run), so it gets the single red line and no failure card.
+        // Not the student's fault, and the fix is obvious (press Run) — one red line, no failure card.
         buffer.line(COPY.engineLost, 'err')
         abandonRun(null, '', 'failed')
       }, FORCE_STOP_MS)
@@ -234,11 +184,9 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     if (state.busy) return
     if (Date.now() - swapAt.current < SWAP_GUARD_MS) return
 
-    // Saving is part of Run, and it can fail — a full disk, or an OPFS that has
-    // gone away under us. It used to sit outside the try below, so a rejection
-    // here was an unhandled one: Run did nothing at all, silently, and the
-    // student pressed it again. Now the run continues on what is in memory (the
-    // engine is handed `sourceFiles()`, not the store) and says so.
+    // Saving can fail (full disk, OPFS gone) — used to be an unhandled rejection
+    // that silently did nothing. Now the run continues on in-memory `sourceFiles()`
+    // and says so.
     let savedCleanly = true
     try {
       savedCleanly = await project.saveAll()
@@ -261,9 +209,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       return
     }
 
-    // A previous run that never reported an exit leaves the engine holding a
-    // session it thinks is live, and its next run() would be refused with
-    // "already running". Throw that engine away rather than inherit its state.
+    // A previous run with no reported exit leaves the engine thinking it's still
+    // live and would refuse the next run() — discard it instead.
     if (session.current) {
       try {
         activeRuntime.current?.dispose?.()
@@ -283,19 +230,15 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
     setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, previewDoc: null })
 
-    // No timed reassurance rows: loading speaks only through the ProgressBlock
-    // (one progress voice — founder ruling 2026-08-05), which carries its own
-    // slow-first-download note. Nothing lands in the transcript while the
-    // engine boots; the stall watchdog below is the only timer a run arms.
+    // Loading speaks only through ProgressBlock (single progress voice) — nothing
+    // else lands in the transcript while booting; the stall watchdog is the only
+    // timer armed.
     clearTimers()
 
     try {
-      // A blackholed connection — a school firewall that drops packets instead
-      // of refusing them — produces no error and no bytes, just a fetch that
-      // never settles. The engines cannot time that out for us (they are
-      // waiting on the same fetch), so the shell watches for the *absence* of
-      // progress and gives up on the student's behalf. Reset on every report,
-      // so a genuinely slow download is never cut off.
+      // A blackholed connection (dropped, not refused, packets) never errors or
+      // times out on its own — we watch for the *absence* of progress instead,
+      // resetting on every report.
       let stall = 0
       const armStall = () => {
         clearTimeout(stall)
@@ -320,16 +263,9 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       if (token.current !== mine) return
       clearTimers()
 
-      // No "Running <entry>…" row: the status line and pill say the program is
-      // running, and system text in the transcript is what students mistook
-      // for their program's own output (founder ruling 2026-08-05).
-      // status becomes 'running' here so Stop is available immediately -- a
-      // runaway program must always be stoppable. `progress` is NOT cleared
-      // with it: on an engine that compiles inside run() (Java), the longest
-      // wait of the whole session is still ahead of us at this point, and
-      // clearing here is what left the console showing "Output will appear
-      // here when you run your code." for ~20s. It is cleared by the first
-      // thing that supersedes it -- output, a prompt, or the exit.
+      // No "Running…" row (read as program output). Status flips immediately so
+      // Stop always works; `progress` isn't cleared yet — Java compiles inside
+      // run(), so clearing early blanked the console for ~20s.
       setState((s) => ({ ...s, status: 'running' }))
 
       const clearProgress = () => {
@@ -352,22 +288,19 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           clearProgress()
           buffer.write(t, 'err')
         },
-        // Only a preview runtime calls this; the shell loads the string into the
-        // preview iframe. An empty string blanks it (a stopped page).
+        // Only preview runtimes call this; shell loads it into the iframe, empty string blanks it (stopped page).
         onRender: (srcdoc) => {
           if (token.current === mine) setState((s) => ({ ...s, previewDoc: srcdoc === '' ? null : srcdoc }))
         },
         onStdinRequest: () => {
           if (token.current !== mine) return
           clearProgress()
-          // The input row appears at the cursor and joins the prompt line, so
-          // the prompt — and everything printed before it — must be on screen
-          // first, not still queued behind a paced reveal.
+          // The input row joins the prompt line, so the prompt (and everything
+          // before it) must already be on screen, not queued.
           buffer.catchUp()
           const queued = typedAhead.current.shift()
           if (queued !== undefined) {
-            // Hand it over only after the engine returns from onStdinRequest();
-            // some are not ready to accept a line before then.
+            // Deliver only after onStdinRequest() returns — some engines aren't ready to accept a line before then.
             setTimeout(() => {
               if (token.current === mine) deliverStdin(queued)
             }, 0)
@@ -375,8 +308,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           }
           awaiting.current = true
           setState((cur) => ({ ...cur, status: 'waiting' }))
-          // Focus first (the keyboard opens), then scroll once the resize
-          // settles — scrolling before it leaves the prompt behind the keyboard.
+          // Focus first, then scroll after resize settles — scrolling first would hide the prompt behind the keyboard.
           focusStdin.current?.()
           void afterViewportSettles()
         },
@@ -411,10 +343,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       pendingWrites.current = []
     } catch (e) {
       if (token.current !== mine) return
-      // Anything that stopped the run from starting: the CDN unreachable, the
-      // page not cross-origin isolated, the worker refusing to boot. The
-      // engine is thrown away so the next Run builds a clean one, and the
-      // student gets a headline they can act on plus a button that acts on it.
+      // Covers anything that blocked startup (CDN down, not isolated, worker won't
+      // boot) — discard the engine and surface an actionable message.
       const failure = classifyRunFailure(e, langName(entry))
       abandonRun(failure, failure.message, 'failed')
     }

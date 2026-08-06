@@ -20,12 +20,8 @@ export type TemplateLevel = 'beginner' | 'intermediate' | 'advanced'
 
 export interface Template {
   id: string
-  /**
-   * The language tile this starter lives under in the picker (languages.ts). For
-   * `web` the starter is multi-language by nature — its files are html/css/js —
-   * so this is the *category*, not a per-file language; each file's own badge and
-   * editor grammar still come from its extension.
-   */
+  /** The language tile in the picker (languages.ts). For `web`, this is the *category*
+   *  (files are html/css/js) — each file's own badge/grammar still comes from its extension. */
   name: string
   lang: 'java' | 'python' | 'web' | 'csharp' | 'c'
   level: TemplateLevel

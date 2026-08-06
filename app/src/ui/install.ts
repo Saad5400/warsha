@@ -48,16 +48,14 @@ const emit = () => {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeinstallprompt', (e) => {
-    // Suppresses whatever automatic UI the browser would have shown on its own.
-    // On current Chrome there is none, but Samsung Internet and some OEM builds
-    // still surface a banner, and two install invitations on one screen — ours
-    // and the browser's — is worse than either alone.
+    // Suppresses the browser's own install banner (Samsung Internet, some OEM
+    // builds) — two prompts on screen is worse than one.
     e.preventDefault()
     deferred = e
     emit()
   })
-  // Fires however the student installed: our control, the omnibox icon, or the
-  // browser menu. All three must take the control off the screen.
+  // Fires regardless of install path (our control, omnibox icon, browser
+  // menu) — all must clear the control.
   window.addEventListener('appinstalled', () => {
     deferred = null
     installed = true
@@ -74,13 +72,9 @@ function runningInstalled(): boolean {
   return ios || window.matchMedia?.('(display-mode: standalone)').matches === true
 }
 
-/**
- * iOS or iPadOS, in any browser — they are all WebKit underneath, and all of
- * them install through the Share sheet.
- *
- * iPadOS 13+ reports itself as "MacIntel" to be treated as a desktop, so the
- * touch-point count is what separates an iPad from a Mac (a Mac reports 0).
- */
+/** iOS/iPadOS in any browser install via the Share sheet (all WebKit
+ *  underneath). iPadOS 13+ reports UA as "MacIntel", so touch-point count
+ *  (0 on a real Mac) is what tells them apart. */
 function isIos(): boolean {
   if (typeof navigator === 'undefined') return false
   if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return true
@@ -99,15 +93,10 @@ export function installState(): InstallState {
 }
 
 /**
- * Opens the browser's install sheet. MUST be called from a user gesture —
- * Chrome rejects a `prompt()` that is not.
- *
- * The event is single-use: a second `prompt()` on the same one throws. It is
- * therefore dropped before the await, not after, so a double tap cannot reach a
- * spent event — and the control disappears at the same moment, which is also
- * what we want while the browser's own sheet is up. Chrome re-fires a fresh
- * event later if the student dismisses the sheet, and the control comes back
- * with it.
+ * Opens the browser's install sheet. MUST run from a user gesture (Chrome
+ * rejects otherwise). The event is single-use, so it's cleared before the
+ * await — a double tap can't reuse it, and the control also disappears while
+ * the sheet is up. Chrome re-fires a fresh event if the student dismisses it.
  */
 export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unavailable'> {
   const event = deferred

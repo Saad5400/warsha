@@ -33,18 +33,12 @@ export interface Language {
   mark: string
 }
 
-/* Ordered the way the picker shows them: ready first (the two a student can use
- * today), then the "soon" set roughly by how often a first course reaches for
- * it. This list is the one place that grows as engines land. */
+/* Ordered as shown in the picker: ready first, then "soon" roughly by how often a first course needs it. */
 export const languages: Language[] = [
   { id: 'python', label: 'Python', status: 'ready', version: 'Python 3.14', mark: 'Py' },
   { id: 'java', label: 'Java', status: 'ready', version: 'Java 17', mark: 'J' },
-  // One tile for the browser stack. HTML, CSS, JavaScript and TypeScript are a
-  // single "language" here on purpose (the request): a web project mixes them in
-  // one preview, and a standalone .js/.ts runs headless like Node — so splitting
-  // them into separate picker tiles would be a lie about how they are used.
-  // TypeScript joined here (not as its own tile) once the in-browser bundler
-  // landed. Each file still gets its own editor grammar and badge.
+  // One tile on purpose: a web project mixes HTML/CSS/JS/TS in one preview, and a
+  // standalone .js/.ts runs headless like Node. TS joined here once the bundler landed.
   { id: 'web', label: 'Web', status: 'ready', version: 'HTML · CSS · JS · TS · React · Vue · Svelte', mark: '</>' },
   { id: 'csharp', label: 'C#', status: 'ready', version: '.NET 9 · Roslyn', mark: 'C#' },
   { id: 'c', label: 'C', status: 'ready', version: 'C · clang 16', mark: 'C' },

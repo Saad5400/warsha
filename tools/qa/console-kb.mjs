@@ -36,8 +36,8 @@ await page.waitForTimeout(1500)
 await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForTimeout(1500)
 
-// The console starts collapsed on an empty project (App collapses it so the start
-// panel gets the room), and that choice persists — open it before inspecting it.
+// Console starts collapsed on an empty project (room for the start panel) —
+// open it before inspecting.
 async function ensureConsoleOpen(page) {
   if (await page.locator('[aria-label="Program output"]').count()) return
   await page.getByRole('button', { name: 'Show output' }).click()
@@ -45,8 +45,8 @@ async function ensureConsoleOpen(page) {
 }
 await ensureConsoleOpen(page)
 
-// The Python starter is two files, so the entry picker is on screen: it must fit
-// the header with everything else and still name the file that Run will start.
+// Two files means the entry picker is on screen; it must fit the header and
+// still name the file Run will start.
 const picker = page.locator('select[aria-label="File to run"]')
 if (await picker.count()) {
   const box = await picker.boundingBox()
@@ -64,31 +64,16 @@ if (overflow.scrollW <= overflow.clientW + 1) pass('console header fits 390px wi
 else fail('console header overflows at 390px', JSON.stringify(overflow))
 
 // ------------------------------------------------------------- run to the prompt
-// Run's one home is the tab strip's editor-actions corner, where it names the
-// file it will start ("Run main.py") — hence the prefix match.
+// Prefix match: the accessible name includes the file, e.g. "Run main.py".
 await page.getByRole('button', { name: /^Run\b/ }).click()
 await hasOut('name')
 await page.screenshot({ path: `${SHOTS}/con-390-waiting.png` })
 
 // ------------------------------------------- simulate the software keyboard
-// The keyboard is simulated at its SOURCE — `visualViewport.height` — and not by
-// writing --kb-inset / --app-h / data-kb by hand.
-//
-// Writing the CSS variables was self-cancelling and produced a false failure that
-// took an afternoon to explain: shrinking the shell changes the layout, that fires
-// a visualViewport event, ui/viewport.ts's sync() reads the REAL (un-shrunk)
-// viewport and writes everything back, and React's data-kb observer follows it —
-// so a suite that set the variables in one tick and measured in the next was
-// measuring a half-reverted layout with the phone-layout inline height still
-// applied. Shadowing the property makes the simulation self-consistent: every
-// re-sync, whenever it happens, computes the same 340px keyboard, which is exactly
-// what a real device does.
-//
-// It also has to be more than one tick now. The input is IN the transcript, so
-// shrinking the console for the keyboard moves the cursor relative to the scroll
-// window and the console's ResizeObserver scrolls it back — and a ResizeObserver
-// fires after layout but before paint, i.e. never inside the evaluate() that
-// forced the layout.
+// Simulated at the source (visualViewport.height), not by writing
+// --kb-inset/--app-h/data-kb directly — those race with viewport.ts's own
+// sync(), which recomputes from the real un-shrunk viewport on resize.
+// Shadowing the getter keeps every re-sync self-consistent instead.
 const KB_PX = 340
 const raiseKeyboard = () => page.evaluate((KB) => {
   const vv = window.visualViewport
@@ -96,13 +81,10 @@ const raiseKeyboard = () => page.evaluate((KB) => {
   Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
   vv.dispatchEvent(new Event('resize'))
 }, KB_PX)
-// Two passes, not one, despite the comment above already saying so: the
-// console's ResizeObserver-driven scroll-to-bottom fires after layout but
-// before paint, so it never lands inside the SAME evaluate() that forced the
-// resize. `pixel-crops.mjs`'s 390-kb section already double-calls this for
-// the exact same reason; this script measured `input.bottom` overlapping the
-// keyboard by ~10px, and `deadSpace` at -48 instead of 0, on every run until
-// the second call was added — one settle pass was consistently not enough.
+// Two passes, not one: the console's ResizeObserver-driven scroll fires after
+// layout but before paint, so it never lands in the same evaluate() that
+// forced the resize. Confirmed empirically — one pass left input.bottom
+// overlapping the keyboard and deadSpace at -48 instead of 0.
 await raiseKeyboard()
 await page.waitForTimeout(350)
 await raiseKeyboard()
@@ -119,8 +101,7 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
   const sc = document.querySelector('.console-transcript')
   return {
     keyboardTop,
-    // Diagnostics for the one failure mode this geometry has: the transcript
-    // shrank for the keyboard and the cursor did not come with it.
+    // Diagnostics for the one failure mode: transcript shrank but the cursor didn't follow.
     scroll: { top: Math.round(sc.scrollTop), max: sc.scrollHeight - sc.clientHeight },
     kbVars: {
       inset: getComputedStyle(document.documentElement).getPropertyValue('--kb-inset').trim(),
@@ -128,9 +109,8 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
       state: document.documentElement.dataset.kb,
     },
     input: r('[aria-label="Program input"]'),
-    // The status bar is suppressed while the keyboard is up; the header's
-    // kb-open-only StatusPill (`.console-header .pill`) carries the run state
-    // for exactly that window.
+    // Status bar is suppressed while the keyboard is up; the header's
+    // kb-open-only pill carries run state instead.
     status: r('.console-header .pill'),
     statusBarShown: !!document.querySelector('footer[aria-label="Status bar"]'),
     header: r(HEADER_SEL),
@@ -138,8 +118,7 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
     totalRows: rows.length,
     clearLabelShown: [...document.querySelectorAll('.kb-hide')].some((e) => getComputedStyle(e).display !== 'none'),
     consoleH: r('section[aria-label="Console"]')?.height,
-    // Dead space between the bottom of the console and the top of the keyboard:
-    // must be 0. Anything else means the keyboard inset is being applied twice.
+    // Must be 0 — nonzero means the keyboard inset is applied twice.
     deadSpace: keyboardTop - (r('section[aria-label="Console"]')?.b ?? keyboardTop),
     transcriptH: r('.console-transcript')?.h,
     transcript: r('.console-transcript'),
@@ -148,9 +127,8 @@ const kb = await page.evaluate(([KB, HEADER_SEL]) => {
 info(JSON.stringify(kb))
 if (kb.input && kb.input.bottom <= kb.keyboardTop + 1) pass('the live input stays above the keyboard', `input bottom ${Math.round(kb.input.bottom)} ≤ keyboard top ${kb.keyboardTop}`)
 else fail('the live input stays above the keyboard', JSON.stringify(kb.input))
-// Above the keyboard is not enough now that the input scrolls with the stream: it
-// also has to be inside the transcript's own scroll window, or it is clipped by a
-// panel that shrank for the keyboard and the student types at an invisible cursor.
+// Must also be inside the transcript's scroll window — a shrunk panel can
+// clip it to an invisible cursor.
 if (kb.input && kb.transcript && kb.input.bottom <= kb.transcript.bottom + 1 && kb.input.top >= kb.transcript.top - 1)
   pass('the live input is inside the transcript viewport, not scrolled out of it', `input ${Math.round(kb.input.top)}–${Math.round(kb.input.bottom)} within ${Math.round(kb.transcript.top)}–${Math.round(kb.transcript.bottom)}`)
 else fail('live input clipped by the transcript', JSON.stringify({ input: kb.input, transcript: kb.transcript }))
@@ -168,8 +146,7 @@ if (kb.deadSpace <= 1) pass('no dead space between the console and the keyboard'
 else fail('keyboard inset applied twice — dead space below the console', `${Math.round(kb.deadSpace)}px of empty shell, transcript squeezed to ${kb.transcriptH}px`)
 if (kb.transcriptH >= 84) pass('four output lines fit above the input row (§4.3 rule 4)', `${kb.transcriptH}px`)
 else fail('four output lines above the input row (§4.3 rule 4)', `transcript is ${kb.transcriptH}px, needs ~84px`)
-// The keyboard is still up (the shadowed getter holds it there), so this crop is
-// the real keyboard-open layout, not a re-poked approximation of it.
+// Keyboard is still up (shadowed getter holds it) — this is the real layout, not an approximation.
 await page.screenshot({ path: `${SHOTS}/con-390-keyboard.png`, clip: { x: 0, y: 0, width: 390, height: 440 } })
 
 // Put the keyboard away the same way it was raised: restore the real viewport.
@@ -180,8 +157,8 @@ await page.evaluate(() => {
 })
 await page.waitForTimeout(400)
 
-// Touch: the cursor is somewhere inside a scrolling transcript rather than in a
-// fixed bar, so "tap the console" has to mean "type here".
+// Touch: cursor is inside a scrolling transcript, not a fixed bar — tapping
+// the console must focus it.
 await page.evaluate(() => document.activeElement?.blur())
 await page.waitForTimeout(200)
 await page.locator('.console-transcript').tap({ position: { x: 80, y: 24 } })

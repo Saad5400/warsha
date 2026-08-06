@@ -15,10 +15,9 @@ export interface StorageBannerProps {
   onExportZip(): void
 }
 
-/* Same anatomy as `.note` — a 3px leading rule — because it is the same kind of
- * statement, but a full-width strip rather than an inset card: it must survive
- * being ignored, and an inset card above the tab strip reads as decoration. */
-/* `storage-banner` carries no styling — tools/qa reads it with [data-notice]. */
+// Same anatomy as `.note`, but a full-width strip, not an inset card: it must survive being
+// ignored, and a card above the tab strip reads as decoration. `storage-banner` carries no
+// styling — tools/qa reads it with [data-notice].
 const BANNER =
   'storage-banner flex shrink-0 items-start gap-2 px-panel py-2 border-b border-b-border-subtle ' +
   'border-s-[3px] border-s-warn bg-surface-2 ' +
@@ -41,18 +40,10 @@ interface Notice {
 }
 
 /**
- * The persistent storage warning strip.
- *
- * Everything here is a **standing condition**, which is exactly why none of it
- * is a toast. A student whose writes are failing needs the message to still be
- * on screen in ten minutes, when they decide to close the tab — a toast that
- * appeared once, while they were reading their code, is the same as no warning
- * at all, and the work is gone.
- *
- * Priority is by cost of ignoring it: writes failing right now, then a browser
- * that cannot save at all, then a quota about to be hit, then the two advisories
- * (a project that vanished, another tab). Only the worst one is shown — stacking
- * four strips above the editor on a 390px phone costs more than it explains.
+ * Persistent storage warning strip. Never a toast — a standing condition (failing writes)
+ * needs to still be on screen when the student decides to close the tab ten minutes later.
+ * Priority is by cost of ignoring it (failing writes > can't save at all > quota > advisories);
+ * only the worst shows, since stacking four strips on a phone costs more than it explains.
  */
 export function StorageBanner({
   problem,
@@ -72,9 +63,7 @@ export function StorageBanner({
       title: problem.fault === 'quota' ? COPY.storageQuotaTitle : COPY.storageFailedTitle,
       hint: problem.fault === 'quota' ? COPY.storageQuotaHint : COPY.storageFailedHint,
       offerExport: true,
-      // Not dismissible on purpose. It clears itself the moment a write
-      // succeeds, and until then it is the only thing standing between a
-      // student and losing an afternoon.
+      // Not dismissible: clears itself on the next successful write.
       dismissible: false,
     })
   }
@@ -85,8 +74,7 @@ export function StorageBanner({
       title: COPY.storageMemoryTitle,
       hint: COPY.storageMemoryHint,
       offerExport: true,
-      // Not dismissible either: the condition stands for the whole session,
-      // and so must the warning.
+      // Not dismissible: the condition stands for the whole session.
       dismissible: false,
     })
   }

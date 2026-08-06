@@ -6,14 +6,7 @@ const MB = 1024 * 1024
 /** Roughly what the real engines weigh, so the progress UI is exercised honestly. */
 const SIZE = { java: 38 * MB, python: 12 * MB }
 
-/**
- * A stand-in for a real execution engine. It fakes the download → unpack → boot
- * → run cycle so the whole IDE is demoable before the Java/Python engines land:
- * reports structured progress, streams stdout in chunks (including a prompt with
- * no trailing newline), asks for stdin once, echoes the answer, honours kill().
- *
- * Replace-me target: see src/runtime/index.ts for the registry.
- */
+/** Fakes the download→unpack→boot→run cycle so the IDE is demoable before real engines land — structured progress, chunked stdout, one stdin prompt, honours kill(). See runtime/index.ts. */
 export class FakeRuntime implements Runtime {
   readonly id: 'java' | 'python'
   private loaded = false
@@ -24,8 +17,7 @@ export class FakeRuntime implements Runtime {
   }
 
   load(onProgress: (p: ProgressReport) => void): Promise<void> {
-    // Idempotent, and a cache hit reports nothing at all: per spec the second
-    // run goes straight to Running with no progress block.
+    // Idempotent — a cache hit reports nothing, so the second run goes straight to Running with no progress block.
     if (this.loaded) return Promise.resolve()
     if (this.loading) return this.loading
 
@@ -73,8 +65,7 @@ export class FakeRuntime implements Runtime {
       },
     }
 
-    // Arm the resolver before announcing the request: the shell hands over a
-    // line typed ahead of the prompt the moment it hears about it.
+    // Arm the resolver first, so a typed-ahead line is handed over the moment the shell hears the request.
     const askStdin = () =>
       new Promise<string>((resolve) => {
         stdinResolve = resolve
@@ -98,8 +89,7 @@ export class FakeRuntime implements Runtime {
           out(line)
         }
         if (!(await alive(240))) return io.onExit(null)
-        // Deliberately no trailing newline: the console must render this chunk
-        // right away and put the input row after it on the same visual line.
+        // No trailing newline on purpose — the console renders this chunk immediately with the input row on the same line.
         io.onStdout('Your name: ')
         const name = await askStdin()
         if (killed) return io.onExit(null)

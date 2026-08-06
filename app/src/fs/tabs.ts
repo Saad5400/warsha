@@ -18,12 +18,8 @@
 const LOCK_NAME = 'warsha.primary-tab'
 
 /**
- * Calls back with `true` while this tab holds the primary lock and `false`
- * while another tab does. Returns an unsubscribe that releases the lock.
- *
- * On a browser with no Web Locks (Safari < 15.4) this reports `true` once and
- * does nothing else — the advisory is a nicety, and a browser that cannot
- * support it should not lose the banner-free default.
+ * Calls back true/false as this tab gains/loses the primary lock; returns an
+ * unsubscribe. Without Web Locks (Safari <15.4) it just reports true once.
  */
 export function watchPrimaryTab(onChange: (isPrimary: boolean) => void): () => void {
   const locks = navigator.locks
@@ -42,9 +38,8 @@ export function watchPrimaryTab(onChange: (isPrimary: boolean) => void): () => v
 
   void (async () => {
     try {
-      // First try without waiting, so a lone tab never pays a round trip.
-      // `ifAvailable` and `signal` are mutually exclusive in the spec, so this
-      // first attempt carries no signal; it settles immediately either way.
+      // Try without waiting first (lone tab skips a round trip); `ifAvailable`/
+      // `signal` are mutually exclusive, so no signal here.
       const got = await locks.request(LOCK_NAME, { ifAvailable: true }, async (lock) => {
         if (!lock) return false
         onChange(true)
@@ -53,8 +48,8 @@ export function watchPrimaryTab(onChange: (isPrimary: boolean) => void): () => v
       })
       if (got || released) return
 
-      // Someone else has it. Say so, then queue: when they close their tab we
-      // become primary and the banner goes away by itself.
+      // Someone else holds it — queue; we become primary and the banner clears
+      // itself when they close.
       onChange(false)
       await locks.request(LOCK_NAME, { signal: controller.signal }, async () => {
         if (released) return
@@ -62,9 +57,8 @@ export function watchPrimaryTab(onChange: (isPrimary: boolean) => void): () => v
         await hold()
       })
     } catch {
-      // AbortError on unmount, or a browser that dislikes the options bag.
-      // Either way, not being able to run the advisory is not an error a
-      // student should ever hear about.
+      // AbortError on unmount, or a browser that dislikes the options bag —
+      // never worth surfacing to the student.
     }
   })()
 

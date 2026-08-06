@@ -130,9 +130,13 @@
       property="og:description"
       content="Write and run Java or Python in your browser. No install, no account — it works on the phone you already have."
     />
-    <!-- Dimensions must match the file. Both are emitted by
+    <!-- Dimensions must match the file. Every card is emitted by
          tools/brand/build-brand-assets.mjs at exactly 1200x630; if you change
-         the canvas there, change these. -->
+         the canvas there, change these. There is now one card per locale
+         (og-image.png, og-image-ar.png — rendered from the matching
+         docs/design/og-image*.html) and /ar/ swaps the image but NOT these two
+         numbers, so the build asserts every card really is this size rather
+         than trusting the comment. -->
     <meta property="og:image" content="__WARSHA_ORIGIN__/og-image.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />

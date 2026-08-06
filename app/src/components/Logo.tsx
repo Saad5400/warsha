@@ -51,10 +51,8 @@ export function Logo({ size = 24, className = '' }: { size?: number; className?:
 }
 
 /**
- * Welcome-screen lockup: the mark above the Latin wordmark.
- *
- * Built in HTML rather than from logo-lockup.svg (spec §7.7) so the wordmark
- * stays real text and therefore crisp at any size, rather than a traced path.
+ * Welcome-screen lockup: the mark above the Latin wordmark. Built in HTML, not from
+ * logo-lockup.svg, so the wordmark stays real text — crisp at any size.
  */
 export function LogoLockup() {
   return (

@@ -3,20 +3,10 @@ import { Button } from './ui/Button'
 import { COPY } from '../copy'
 
 /**
- * The last line of defence.
- *
- * Without a boundary, one thrown render — a corrupt pref, a tree node the
- * explorer did not expect, a browser quirk in a component nobody has touched in
- * months — unmounts the whole React tree and leaves the student looking at the
- * dark first-paint canvas from `index.html`. Not an error, not a spinner:
- * nothing, forever, with their files still safely in OPFS behind it.
- *
- * So the boundary does the two things that matter and nothing else. It says the
- * app broke rather than the student's work, and it offers the escape hatch that
- * fixes the largest class of "it is broken every time I open it" — a bad
- * `localStorage` pref (a console height, an open tab, a project id) that
- * re-crashes the app on every load, which is the crash *loop* rather than the
- * crash. Clearing prefs cannot touch project files: those live in OPFS.
+ * Last line of defence: without it, one thrown render blanks the whole React tree
+ * to the dark first-paint canvas — no error, no spinner, forever. "Forget layout"
+ * clears the localStorage prefs that cause most repeat crashes, without touching
+ * project files (those live in OPFS).
  */
 interface State {
   error: Error | null
@@ -30,8 +20,7 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // The QA suites read this off the page's console, and a teacher debugging a
-    // classroom iPad has nothing else to go on.
+    // QA suites and a teacher on a bare iPad both rely on this console line.
     console.error('Warsha crashed:', error, info.componentStack)
   }
 
@@ -55,9 +44,7 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
             variant="ghost"
             large
             onClick={() => {
-              // Layout preferences only. Project files are in OPFS and are not
-              // touched here, which is the whole reason this button is safe to
-              // offer to a student.
+              // Layout prefs only — project files live in OPFS, untouched.
               try {
                 localStorage.removeItem('warsha.prefs.v1')
               } catch {

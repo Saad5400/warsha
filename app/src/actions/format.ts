@@ -19,7 +19,8 @@ import { langForPath, runtimeFor } from '../runtime'
  *  confusing 11 MB download behind a menu click. */
 export class PythonNotLoadedError extends Error {}
 
-/** True for the two extensions this action knows how to reformat. */
+/** True for any language `langForPath` recognises, not just Java/Python (the
+ *  two `formatFile` handles) — other extensions pass here then throw there. */
 export function canFormat(path: string | null): boolean {
   return path !== null && langForPath(path) !== null
 }
@@ -62,10 +63,9 @@ async function formatPython(path: string, source: string): Promise<string> {
 }
 
 /**
- * Reformat `source`, the contents of the file at `path`. Rejects with
- * `PythonNotLoadedError` for the one case the caller should word differently
- * (`langForPath` only recognises `.java`/`.py`, so any other extension is a
- * caller bug, not a user-facing case, and rejects like any other error).
+ * Reformats `source`. Rejects with `PythonNotLoadedError` for the one case
+ * the caller should word differently; any other extension is a caller bug,
+ * not user-facing, and rejects like any other error.
  */
 export async function formatFile(path: string, source: string): Promise<string> {
   const lang = langForPath(path)

@@ -24,8 +24,7 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'w
   executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
   ...devices['Pixel 7'],
-  // Keep Chrome's own UA: the app's coi-serviceworker and the engines don't care,
-  // and a spoofed mobile UA is not what we are testing.
+  // Real UA kept — engines don't care, and a spoofed UA isn't what's under test.
   userAgent: undefined,
 })
 const page = ctx.pages()[0] ?? (await ctx.newPage())
@@ -47,9 +46,7 @@ check(!media.hover && media.coarse, 'emulating a real touch device (no hover, co
 // Seed a project.
 await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
-// The Run corner names itself after the entry file ("Run app/Main.java"), and
-// picking that entry lands a beat after the tabs do — wait for it rather than
-// snapshotting the shell mid-mount. A miss falls through to a clean FAIL below.
+// Run's label lags the entry-file pick by a beat; wait for it instead of snapshotting mid-mount.
 await page
   .waitForSelector('button[aria-label^="Run "], button[aria-label^="Stop "]', { timeout: 10000 })
   .catch(() => {})
@@ -82,10 +79,7 @@ const more = page.locator('.tree-row__more').first()
 const moreOpacity = await more.evaluate((el) => getComputedStyle(el).opacity)
 check(moreOpacity === '1', 'the ⋯ row menu is visible with no hover available', moreOpacity)
 const moreBox = await more.boundingBox()
-// DENSITY (scale-down, 2026-08-05): the pane-header trio and the per-row ⋯
-// are 36 EFFECTIVE — their after:content-none stands because flush-stacked
-// rows leave the ≥44px hit-area pseudo no room to expand (documented at the
-// call site in Explorer.tsx; DENSITY.md records the 36 target).
+// 36px target is deliberate; flush-stacked rows can't fit the ≥44px hit-area expand (Explorer.tsx / DENSITY.md).
 check(moreBox.width >= 36 && moreBox.height >= 36, 'the ⋯ target is ≥36px (DENSITY pane/row action size)', `${moreBox.width}×${moreBox.height}`)
 
 // Long-press opens the same menu.
@@ -116,12 +110,10 @@ check(parseFloat(fs) >= 16, 'inline rename field is ≥16px on touch', fs)
 await page.screenshot({ path: join(SHOTS, 'files-touch-rename-390.png') })
 await field.press('Escape')
 
-// Tabs on a phone: with no hover to reveal it, every tab keeps its close ×
-// (desk keeps VS Code's hover-reveal etiquette; touch never hides it).
+// On touch every tab keeps its close × (no hover to reveal it; desk hides it until hover).
 await page.locator('[role="treeitem"]').filter({ hasText: 'Main.java' }).first().click()
 await page.waitForTimeout(400)
-// Scoped to the file strip: the console header's CONSOLE caps tab is a
-// role=tab too ("Output view" tablist) and owes no close ×.
+// Scoped to the file strip — the console header's CONSOLE tab is role=tab too but has no close ×.
 const closes = await page.evaluate(() =>
   [...document.querySelectorAll('[aria-label="Open files"] [role="tab"]')].map((t) => ({
     active: t.dataset.state,

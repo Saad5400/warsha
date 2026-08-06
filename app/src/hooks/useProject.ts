@@ -14,30 +14,16 @@ import { QUOTA_WARN_RATIO, readQuota, requestPersistence, type StorageProblem } 
 import { watchPrimaryTab } from '../fs/tabs'
 
 /**
- * Binds the plain-TS `Project` (the single source of truth for files) to React,
- * and owns which project is open.
- *
- * Project emits structure/dirty events; we bump a revision counter and let
- * components read straight off the instance. Cheaper and far less error-prone
- * than mirroring the whole file tree into component state.
- *
- * The `Project` instance itself never changes identity — switching projects
- * re-points its store (see `Project.switchStore`) rather than constructing a new
- * one, so the editor and the runner are not remounted by a switch.
+ * Binds `Project` to React via a revision counter, not mirrored state. Identity
+ * stays stable across project switches so editor/runner aren't remounted.
  */
 export interface ProjectView {
   project: Project
   ready: boolean
   /**
-   * Resolves once the real store is attached.
-   *
-   * `Project` starts on an empty in-memory store and is re-pointed at OPFS when
-   * startup finishes (see the constructor comment). Anything that writes files
-   * before that lands in the throwaway store and is then overwritten by
-   * `switchStore`'s load — which is how tapping a starter card during the first
-   * few hundred milliseconds produced an open tab for a file that did not
-   * exist, and a Run button disabled with "could not find a place to start".
-   * The window is short on a laptop and not short on a school iPad.
+   * Resolves once real storage is attached — writes before then land in a
+   * throwaway store and get silently overwritten by `switchStore`'s load (caused
+   * ghost tabs from early starter-card taps).
    */
   whenReady(): Promise<void>
   /** Increments whenever files or dirty flags change. */
@@ -54,24 +40,13 @@ export interface ProjectView {
   storageProblem: StorageProblem | null
   /** True when the browser is nearly out of room for this origin. */
   quotaTight: boolean
-  /**
-   * False when another tab holds the primary lock — the advisory, not a lock-out.
-   * Both tabs stay fully usable; the later one is told who wins a conflict.
-   */
+  /** False when another tab holds the primary lock (advisory only — both tabs stay usable; the later one is told who wins). */
   isPrimaryTab: boolean
-  /**
-   * Whether the browser promised not to evict this origin. `false` is the normal
-   * answer on iOS Safari and is exactly the documented eviction risk.
-   */
+  /** Whether the browser promised not to evict this origin; `false` is the normal (and expected) answer on iOS Safari. */
   storagePersisted: boolean
   /** Creates a project and opens it. Returns its meta. */
   createProject(name?: string, snapshot?: FsSnapshot): Promise<ProjectMeta | null>
-  /**
-   * A `#share=` link landing (see sharelink.ts). Opens the existing project
-   * whose files are an untouched copy of `snapshot` — re-opening a link you
-   * already took must not mint a duplicate — or creates one named `name`
-   * ("name 2" when that is taken). `created` says which happened.
-   */
+  /** `#share=` link landing (sharelink.ts). Reuses an existing project with matching files, else creates a deduped-name one; `created` says which happened. */
   adoptShared(name: string, snapshot: FsSnapshot): Promise<{ meta: ProjectMeta; created: boolean } | null>
   openProject(id: string): Promise<void>
   renameProject(id: string, name: string): Promise<void>
@@ -98,8 +73,7 @@ export function useProject(): ProjectView {
 
   const bump = useCallback(() => setRevision((r) => r + 1), [])
 
-  // A promise rather than a poll, and created eagerly so a caller that arrives
-  // before the effect runs still gets the same one.
+  // Eager promise, not a poll, so a caller arriving before the effect runs still gets the same one.
   const readyGate = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null)
   if (!readyGate.current) {
     let resolve!: () => void
@@ -128,10 +102,8 @@ export function useProject(): ProjectView {
         setCurrent(opened.current)
         setMigration(opened.migration)
       } catch (error) {
-        // openProjects already falls back to memory internally, so reaching
-        // here means something outside storage broke. The IDE still has a live
-        // in-memory Project, so mark it ready and say what happened — a student
-        // typing into an editor that never saves beats a shell that never loads.
+        // Reaching here means something outside storage broke (openProjects already
+        // handles that) — mark ready anyway; a non-saving editor beats a dead shell.
         if (cancelled) return
         setMigration({ kind: 'storage-unavailable', detail: String(error) })
       } finally {
@@ -150,9 +122,8 @@ export function useProject(): ProjectView {
     }
   }, [project, bump])
 
-  // Ask to be exempt from eviction, and find out how close to the wall we are.
-  // Both are advisory: a `false` from persist() is the normal iOS answer and the
-  // reason the export-a-zip nudge exists at all.
+  // Ask for eviction exemption and check quota — both advisory; a `false` from
+  // persist() is the normal iOS answer (why the export-zip nudge exists).
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -164,8 +135,7 @@ export function useProject(): ProjectView {
       if (!cancelled && reading) setQuotaTight(reading.ratio >= QUOTA_WARN_RATIO)
     }
     void check()
-    // Re-read occasionally rather than per write: `estimate()` is not free and a
-    // student fills storage over minutes, not milliseconds.
+    // Poll occasionally, not per write — `estimate()` isn't free and storage fills up over minutes, not milliseconds.
     const timer = window.setInterval(() => void check(), 60_000)
     return () => {
       cancelled = true
@@ -175,12 +145,7 @@ export function useProject(): ProjectView {
 
   useEffect(() => watchPrimaryTab(setIsPrimaryTab), [])
 
-  /**
-   * Project-level storage calls funnel through here. `Project` guards its own
-   * file writes, but the manifest layer above it does not, and every one of
-   * these is reached from a `void …()` in App — so a rejection was an unhandled
-   * one that left the UI mid-operation with nothing said.
-   */
+  /** Manifest-layer storage calls funnel through here — unlike `Project`'s file writes, they weren't guarded, so `void …()` callers in App swallowed rejections silently. */
   const guard = useCallback(async <T,>(op: () => Promise<T>, fallback: T): Promise<T> => {
     try {
       return await op()
@@ -233,13 +198,10 @@ export function useProject(): ProjectView {
     async (name: string, snapshot: FsSnapshot) => {
       const store = storeRef.current
       if (!store) return null
-      // Flush pending debounced writes first, so the currently open project
-      // compares against the link as what it really holds, not what it held
-      // 350ms ago.
+      // Flush pending writes first, so comparison uses current file contents, not what they held 350ms ago.
       await project.saveAll()
       const list = await guard(() => store.list(), [])
-      // Most recently opened first, so when several projects somehow hold the
-      // same files the one the student actually uses is the one that opens.
+      // Most-recent-first, so if several projects hold identical files, the one the student actually uses is the one that opens.
       for (const meta of list) {
         const existing = await store
           .storeFor(meta.id)
@@ -292,9 +254,7 @@ export function useProject(): ProjectView {
         setProjects(remaining)
         return
       }
-      // The open project just went away, so something has to be open next: the
-      // most recent survivor, or a fresh empty project if that was the last one.
-      // The app is never in a "no project" state.
+      // Deleted project was open — fall back to the next survivor, or a fresh one; the app is never project-less.
       if (remaining.length > 0) {
         await open(remaining[0])
       } else {

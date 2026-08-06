@@ -37,18 +37,16 @@ const shot = async (name, locator) => {
 }
 const rows = () => page.locator('[role="treeitem"]')
 const rowByName = (name) => page.locator('[role="treeitem"]').filter({ hasText: name }).first()
-// Scoped to the file strip: the console header is a role=tablist too ("Output
-// view", its CONSOLE/PREVIEW caps tabs), so a bare [role=tab] sweep would
-// count the panel tabs among the open files.
+// Scoped to the file strip — the console header is a role=tablist too ("Output
+// view"), so a bare [role=tab] sweep would catch its tabs too.
 const fileStrip = () => page.getByRole('tablist', { name: 'Open files' })
 const tabs = () => fileStrip().getByRole('tab')
 
 await page.goto(URL_, { waitUntil: 'load' })
 await page.waitForTimeout(2500)
 await page.waitForSelector('[role="tree"]', { timeout: 20000 })
-// This harness is a 1280px fine-pointer window, so the DENSITY media holds and
-// the desk (VS Code parity) treatments below are the ones in force. The forks
-// keep the file honest if it is ever pointed at a touch profile.
+// This harness is 1280px fine-pointer, so DENSITY resolves to desk treatments;
+// the `desk` forks below keep the file honest on a touch profile too.
 const desk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 
 /* ---------------------------------------------------------------- 1. empty */
@@ -58,9 +56,7 @@ await shot('empty-1280')
 /* ------------------------------------------------- 2. seed the Java starter */
 await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 10000 })
-// The tab can land a paint before the tree does; counting rows in that gap
-// reported "0 rows" against a perfectly seeded project. Wait for the tree
-// itself before reading it.
+// The tab can paint before the tree does, which once read as "0 rows" on a fine project — wait for the tree itself.
 await page.waitForSelector('[role="treeitem"]', { timeout: 10000 })
 info(`tree seeded: ${await rows().count()} rows`)
 check((await rows().count()) >= 3, 'template produced a nested tree')
@@ -70,8 +66,7 @@ const guides = await page.locator('.tree-row__guide').count()
 check(guides > 0, 'indent guides rendered', `${guides} hairlines`)
 
 const chevron = page.locator('[role="treeitem"][aria-expanded="true"] .tree-row__chevron').first()
-// Tailwind v4's rotate-90 emits the `rotate` longhand; older builds carried a
-// transform matrix. Either way, the open folder's twistie must be turned.
+// Tailwind v4 emits the `rotate` longhand, older builds a transform matrix — either way, the twistie must be turned.
 const rot = await chevron.evaluate((el) => {
   const s = getComputedStyle(el)
   return s.rotate !== 'none' && s.rotate !== '' ? s.rotate : s.transform
@@ -91,20 +86,15 @@ const railed = await openRow.first().evaluate((el) => {
   }
 })
 if (desk) {
-  // VS Code's list model (W1-C): selection is a full-row FILL — the reserved
-  // 2px border stays transparent — grey #2B2B31 (v5 --list-inactive-sel-bg)
-  // while the tree is unfocused, and weight stays 400 (VS Code weights
-  // nothing in the tree).
+  // VS Code's model: selection is a full-row fill (border stays transparent),
+  // grey while unfocused, weight stays 400 — VS Code never bolds tree rows.
   check(
     railed.border === 'rgba(0, 0, 0, 0)' && railed.bg === 'rgb(43, 43, 49)' && railed.weight === '400',
     'open row carries the inactive selection fill (no rail, weight 400)',
     JSON.stringify(railed),
   )
-  // Focus the row: [data-tree-root]:focus-within promotes the fill to the
-  // active-selection grey (#3A3A42) with a white label. `.tree-row` transitions
-  // background-color over --dur-fast, so let the fill settle before reading —
-  // sampling in the same tick catches the grey end of the tween, not the bug
-  // it would look like.
+  // Focusing promotes the fill to active grey with a white label; wait for the
+  // background-color transition to settle before reading, or you catch the tween mid-flight.
   await openRow.first().evaluate((el) => el.focus())
   await page.waitForTimeout(400)
   const focusedFill = await openRow.first().evaluate((el) => ({
@@ -117,8 +107,7 @@ if (desk) {
     JSON.stringify(focusedFill),
   )
   await page.evaluate(() => document.activeElement?.blur())
-  // The per-row ⋯ is GONE at desk, not merely hover-hidden — the right-click
-  // context menu covers it.
+  // The per-row ⋯ is gone at desk (not just hover-hidden) — right-click covers it.
   const moreDisplay = await page.locator('.tree-row__more').first().evaluate((el) => getComputedStyle(el).display).catch(() => 'absent')
   check(moreDisplay === 'none' || moreDisplay === 'absent', 'the per-row ⋯ is display:none at desk (context menu covers it)', moreDisplay)
 } else {
@@ -146,8 +135,7 @@ const states = await page.evaluate(() => {
 info('row states: ' + JSON.stringify(states))
 check(states.cursor === 'pointer', 'row cursor is pointer')
 check(states.userSelect === 'none', 'explorer chrome is not text-selectable')
-// Touch marks the open row with a rail; desk marks it with a full-row fill.
-// Either way the selected row must not read identical to an idle one.
+// Touch uses a rail, desk a full-row fill — either way selected must not look identical to idle.
 check(
   states.selected !== states.idle || states.selectedRail !== states.idleRail,
   'selected row differs from idle (fill at desk, rail on touch)',
@@ -162,8 +150,7 @@ await page.locator('aside[aria-label="Files"]').getByRole('button', { name: 'New
 const draft = page.locator('[role="tree"] input')
 check(await draft.isVisible(), 'New file opens an inline row, not a modal')
 const draftFont = await draft.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))
-// DENSITY: 16px is the iOS zoom floor, a touch obligation; the fine-pointer
-// desktop this harness runs as uses 14px (--fs-input under the DENSITY media).
+// DENSITY: 16px avoids iOS zoom on touch; this fine-pointer harness uses 14px (--fs-input).
 const draftDesk = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 check(draftFont >= (draftDesk ? 14 : 16), draftDesk ? 'inline field is ≥14px at desktop density' : 'inline field is ≥16px so iOS will not zoom', `${draftFont}px`)
 await shot('explorer-inline-create-1280', page.locator('aside[aria-label="Files"]'))
@@ -207,10 +194,8 @@ await folderDraft.fill('scratch')
 await folderDraft.press('Enter')
 await page.waitForTimeout(500)
 check(await rowByName('scratch').isVisible(), 'inline create made a folder')
-// The "This folder is empty." helper row is TOUCH-only now (`desk:hidden`,
-// W1-C): VS Code renders nothing under an empty folder, and at desk the
-// right-click menu already offers New file. files-touch.mjs owns the touch
-// assertion.
+// The empty-folder helper row is touch-only (`desk:hidden`) — VS Code shows
+// nothing at desk, where right-click already offers New file. files-touch.mjs covers touch.
 if (desk)
   check(
     !(await page.locator('[role="tree"] :text("This folder is empty.")').first().isVisible().catch(() => false)),
@@ -233,8 +218,7 @@ const ring = await page.evaluate(() => {
   const s = getComputedStyle(el)
   return { outlineWidth: s.outlineWidth, outlineColor: s.outlineColor, outlineStyle: s.outlineStyle }
 })
-// Founder ruling 2026-08-02: the ring is 1px/no-offset app-wide (was 2px/2px);
-// audit.mjs asserts the same geometry.
+// Ring is 1px/no-offset app-wide (was 2px/2px per a founder ruling); audit.mjs asserts the same.
 check(ring.outlineStyle === 'solid' && parseFloat(ring.outlineWidth) >= 1, 'focused row shows the focus ring', JSON.stringify(ring))
 await shot('explorer-focus-ring-1280', page.locator('aside[aria-label="Files"]'))
 
@@ -247,9 +231,8 @@ await page.locator('[role="treeitem"][aria-expanded="false"]').first().click()
 await page.waitForTimeout(200)
 
 /* ---------------------------------------------------------------- 8. tabs */
-// Fill the strip so it has to scroll. Desk tabs shrink to their content
-// (desk:min-w-0, max 240px — W2-A), so it takes more of them than the touch
-// strip's 96px-minimum tabs needed before the scroller genuinely overflows.
+// Desk tabs shrink to content (max 240px), so filling the strip to overflow
+// takes more tabs than touch's 96px-minimum ones would.
 for (const name of ['One.java', 'Two.java', 'Three.java', 'Four.java', 'Five.java', 'VeryLongTypeNameController.java',
   'SixthProcessor.java', 'SeventhValidator.java', 'EighthRepository.java', 'NinthConfiguration.java']) {
   await page.locator('aside[aria-label="Files"]').getByRole('button', { name: 'New file' }).click()
@@ -265,8 +248,7 @@ const scrollState = await strip.evaluate((el) => ({
   w: el.clientWidth,
   sw: el.scrollWidth,
   outer: el.offsetHeight,
-  // A horizontal scrollbar would eat a strip of pixels off the bottom, showing
-  // up as clientHeight well below offsetHeight. Allow 1px for a border.
+  // A horizontal scrollbar would shrink clientHeight below offsetHeight; allow 1px of border slack.
   gutter: el.offsetHeight - el.clientHeight,
 }))
 check(scrollState.sw > scrollState.w, 'tab strip overflows and scrolls', JSON.stringify(scrollState))
@@ -287,9 +269,8 @@ const ell = await longTab.locator('.tab__label').evaluate((el) => ({
 }))
 check(ell.overflow === 'ellipsis', 'tab labels ellipsize', JSON.stringify(ell))
 
-// Active tab signals. The accent rule rides in an inset box-shadow, not a
-// border, so it cannot eat the tab's content box (PIXEL-FINDINGS F-03;
-// audit.mjs reads the same shadow).
+// Active tab signals. The accent rule is an inset box-shadow, not a border, so
+// it can't eat the tab's content box (audit.mjs reads the same shadow).
 const activeTab = page.locator('[role="tab"][data-state="active"]')
 const sig = await activeTab.evaluate((el) => {
   const s = getComputedStyle(el)
@@ -301,10 +282,8 @@ const inactive = await page.locator('[role="tab"][data-state="inactive"]').first
   return { weight: l.fontWeight, color: l.color }
 })
 if (desk) {
-  // VS Code's grammar (W2-A): a 1px --accent rule on the TOP edge (white in
-  // v5), the editor-canvas fill (#0E0E11) running into the code below, a white
-  // label — and weight 400 on BOTH states, so activating a tab cannot reflow
-  // the strip.
+  // VS Code's grammar: 1px --accent rule on top, editor-canvas fill below,
+  // white label, weight 400 on both states so activating never reflows the strip.
   check(
     /rgb\(250, 250, 250\) 0px 1px 0px 0px inset/.test(sig.shadow) &&
       sig.bg === 'rgb(14, 14, 17)' &&
@@ -320,8 +299,7 @@ if (desk) {
     'active tab carries rule + weight + colour', JSON.stringify({ sig, inactive }))
 }
 
-// Breadcrumbs (W2-A, desk-only): the row under the strip mirrors the active
-// tab's file, and follows it when the active tab changes.
+// Breadcrumbs (desk-only) mirror the active tab's file and follow it when the tab changes.
 if (desk) {
   const crumbs = page.locator('.breadcrumbs')
   check((await crumbs.count()) === 1 && (await crumbs.getAttribute('aria-label')) === 'Breadcrumbs',
@@ -333,9 +311,7 @@ if (desk) {
   check((await crumbs.innerText()).includes('Five.java'), 'breadcrumbs track a tab switch', await crumbs.innerText())
 }
 
-// Dirty dot, then the close × on hover. The dot only lives for the 350ms write
-// debounce, so the mouse is parked on the tab *before* the keystroke and the
-// styles are read in the same tick — no hover() round-trip inside the window.
+// The dirty dot lives only for the 350ms write debounce, so park the mouse first and read styles in the same tick.
 await page.locator('.cm-content').click()
 await page.keyboard.type('x = 1')
 await page.waitForTimeout(60)
@@ -406,9 +382,8 @@ const code = await page.evaluate(() => {
   }
 })
 info('code type: ' + JSON.stringify(code))
-// DENSITY (W2-D): the desk default is VS Code's 14px with Math.round(14 × 1.35)
-// = 19px leading, and the gutter follows the editor's own px; touch keeps
-// 15px / 24px (1.6) with the 13px gutter.
+// Desk is VS Code's 14px / Math.round(14×1.35)=19px leading with a matching
+// gutter; touch is 15px/24px with a 13px gutter.
 const wantCodePx = desk ? 14 : 15
 const wantLeadPx = desk ? 19 : 24
 check(parseFloat(code.size) === wantCodePx, `code renders at the specified ${wantCodePx}px`, code.size)
@@ -467,8 +442,8 @@ const rgb = (hex) => {
   return `rgb(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)})`
 }
 if (desk) {
-  // W2-D: at desk the active line is VS Code's bordered treatment — a
-  // transparent fill with a 1px --code-active-line-border outline.
+  // At desk the active line is VS Code's bordered treatment: transparent fill,
+  // 1px --code-active-line-border outline.
   check(
     chrome.activeLine === 'rgba(0, 0, 0, 0)' && chrome.activeOutline === `1px solid ${rgb(chrome.borderToken)}`,
     'active line is the desk bordered treatment (transparent fill + 1px outline)',
@@ -478,9 +453,8 @@ if (desk) {
   check(chrome.activeLine === rgb(chrome.token), 'active line uses --code-active-line, not oneDark', `${chrome.activeLine} vs ${chrome.token}`)
 }
 check(parseFloat(chrome.caretW) === 2, 'caret is 2px wide', chrome.caretW)
-// --code-caret is a LITERAL (#FAFAFA in v5 — white, equal to the accent by
-// value but deliberately DECOUPLED, so retuning the accent never silently
-// moves the caret).
+// --code-caret is a literal (#FAFAFA), deliberately decoupled from --accent so
+// retuning the accent never silently moves the caret.
 check(chrome.caretC === rgb(chrome.caretToken), 'caret is --code-caret, decoupled from the accent', `${chrome.caretC} vs ${chrome.caretToken}`)
 const canvas = await page.evaluate(() => ({
   editor: getComputedStyle(document.querySelector('.cm-editor')).backgroundColor,
@@ -491,13 +465,11 @@ const canvas = await page.evaluate(() => ({
 check(canvas.editor === rgb(canvas.surface1) && canvas.gutter === rgb(canvas.surface1),
   'editor canvas and gutter are --surface-1, not oneDark #282c34', JSON.stringify(canvas))
 
-// Wrapped continuation rows hang at the code's own indentation instead of
-// jumping back to column 0 — and the caret still lands where it is clicked,
-// which is the thing a negative text-indent could plausibly break.
+// Wrapped rows hang at the code's indent instead of column 0; also checks the
+// caret lands correctly, which a negative text-indent could break.
 await page.setViewportSize({ width: 460, height: 900 })
 await page.waitForTimeout(500)
-// A .cm-line is a block, so element rects say nothing about wrapping — the row
-// boxes come from a Range over its text.
+// A .cm-line is a block, so its own rect says nothing about wrapping — measure via a Range over its text instead.
 const rowRects = () => `(() => {
   for (const line of document.querySelectorAll('.cm-line.cm-indentGuides')) {
     const r = document.createRange()
@@ -531,10 +503,8 @@ await page.keyboard.press('Control+Home')
 await page.waitForTimeout(200)
 await shot('editor-code-1280', page.locator('main'))
 
-// Font-size preference: works and survives a reload. At desk "Bigger Text"
-// lives in the menu bar's View menu (W1-B moved the app-scoped rows out of
-// the tab-strip ⋯, which keeps only Format / Share as image…); touch keeps it
-// under the title bar's More.
+// At desk "Bigger Text" lives in the View menu (moved out of the tab-strip ⋯,
+// which now keeps only Format / Share); touch keeps it under More.
 const beforeSize = await page.evaluate(() => getComputedStyle(document.querySelector('.cm-content')).fontSize)
 if (desk) {
   await page.getByRole('menuitem', { name: 'View', exact: true }).click()
@@ -564,7 +534,7 @@ check(await page.locator('.empty--pane').isVisible(), 'closing every tab shows a
 check((await page.title()) === 'Warsha', 'document.title falls back with no file open', await page.title())
 await shot('editor-placeholder-1280', page.locator('main'))
 
-/* ------------------------------------ 9b. workbench keybindings (W3-A, desk) */
+/* ------------------------------------ 9b. workbench keybindings (desk) */
 if (desk) {
   const asideState = () => page.locator('aside[aria-label="Files"]').getAttribute('data-state')
   const b0 = await asideState()
@@ -593,8 +563,7 @@ if (desk) {
 }
 
 /* -------------------------------------------------------- 10. narrow sizes */
-// One shell: below 900px the activity bar's Explorer item opens the overlay
-// drawer — the same control that toggles the docked pane at desk.
+// Below 900px the activity bar's Explorer item opens the overlay drawer — same control as the docked-pane toggle at desk.
 const filesBtn = () => page.locator('nav[aria-label="Activity bar"] button[aria-label="Explorer"]')
 await page.setViewportSize({ width: 768, height: 1024 })
 await page.waitForTimeout(400)
@@ -611,13 +580,11 @@ await filesBtn().click()
 await page.waitForTimeout(500)
 await shot('explorer-drawer-390')
 const drawerRow = await page.locator('[role="treeitem"]').first().boundingBox()
-// DENSITY (scale-down, 2026-08-05): --row-tree is 36px VISUAL off the desk
-// media — the tap target is the full-width row itself, so 36 is also the
-// effective height. The old 44px floor predates the retune.
+// --row-tree is 36px off the desk media; the full-width row IS the tap target,
+// so 36 is also the effective height (was 44px).
 check(drawerRow.height >= 36, 'rows are ≥36px on a phone (--row-tree, full-width target)', `${drawerRow?.height}px`)
-// The ⋯ is hover-gated behind `(hover: hover) and (pointer: fine)`, which a
-// 390px *desktop* window still matches — so it is checked in files-touch.mjs
-// under real coarse-pointer emulation instead, not here.
+// The ⋯ is hover-gated, which a 390px desktop window still matches (real
+// coarse-pointer emulation lives in files-touch.mjs, not here).
 const moreVisible = await page.locator('.tree-row__more').first().evaluate((el) => getComputedStyle(el).opacity)
 info(`⋯ opacity at a 390px desktop window: ${moreVisible} (touch path covered by files-touch.mjs)`)
 await page.keyboard.press('Escape')

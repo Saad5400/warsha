@@ -119,8 +119,7 @@ class OpfsProjects implements ProjectsStore {
       const projectDir = await dir.getDirectoryHandle(id).catch(() => null)
       if (!projectDir) continue
       const meta = await this.readMeta(projectDir, id)
-      // A directory with no readable manifest is still someone's work, so it is
-      // adopted under its own id rather than hidden or deleted.
+      // No readable manifest doesn't mean no work — adopt under its own id, don't hide or delete it.
       metas.push(meta ?? { id, name: 'Untitled project', createdAt: Date.now(), lastOpenedAt: 0 })
     }
     return sortByRecent(metas)
@@ -213,10 +212,7 @@ export type MigrationOutcome =
   | { kind: 'migration-kept-original'; files: number }
   /** Storage refused to work at all; this session is in memory only. */
   | { kind: 'storage-unavailable'; detail: string }
-  /**
-   * The project prefs pointed at is gone — the iOS eviction case, or a second
-   * tab deleting it. We opened something else rather than showing nothing.
-   */
+  /** Remembered project is gone (iOS eviction, or another tab deleted it) — opened something else instead. */
   | { kind: 'reopened-elsewhere'; wanted: string }
 
 export interface OpenedProjects {
@@ -227,32 +223,23 @@ export interface OpenedProjects {
 }
 
 /**
- * Resolves which project to open, migrating the single hardwired workspace of
- * earlier builds into a real project on the way.
- *
- * `preferredId` is the last-opened project from prefs; it wins when it still
- * exists, otherwise the most recently opened one does.
+ * Resolves which project to open, migrating the old single-workspace layout on
+ * the way; `preferredId` wins if still present, else the most recent.
  */
 export async function openProjects(preferredId: string | null): Promise<OpenedProjects> {
-  // OPFS is probed rather than feature-detected: Safari private browsing
-  // exposes the whole API and rejects every call, and the old code turned that
-  // into a rejected boot promise — the app rendered its shell with `ready`
-  // stuck false and no message at all. See probeOpfs().
+  // Probed not feature-detected — Safari private browsing exposes the API but
+  // rejects every call, which used to hang boot silently. See probeOpfs().
   const opfsWorks = await probeOpfs()
   try {
     const opened = await openWith(createProjects(), preferredId)
-    // Falling back to memory must not be silent. `capabilities.ts` cannot catch
-    // this case: it feature-detects `navigator.storage.getDirectory`, which
-    // Safari private browsing provides and then refuses to honour — so the
-    // capability warning stays quiet while every write goes to a Map that dies
-    // with the tab. This is the only place that knows the difference.
+    // Must surface this fallback — capabilities.ts feature-detects the API, which
+    // Safari private browsing offers then refuses; only here is the gap caught.
     if (!opfsWorks || opened.projects.kind === 'memory') {
       return { ...opened, migration: { kind: 'storage-unavailable', detail: 'OPFS is not usable in this browser' } }
     }
     return opened
   } catch (error) {
-    // Anything at all went wrong with real storage. A session in memory with a
-    // banner is a usable IDE; a thrown promise here is a dead app.
+    // Any storage failure: memory + a banner is usable; a thrown promise here is a dead app.
     const fallback = await openWith(new MemoryProjects(), preferredId)
     return { ...fallback, migration: { kind: 'storage-unavailable', detail: String(error) } }
   }
@@ -266,9 +253,7 @@ async function openWith(projects: ProjectsStore, preferredId: string | null): Pr
     const legacy = await readLegacy()
     if (legacy && (legacy.files.length > 0 || legacy.dirs.length > 0)) {
       const meta = await projects.create(DEFAULT_FIRST_NAME, legacy)
-      // Only retire the old copy once the new one is provably identical. Losing
-      // a student's only copy of their work is unrecoverable, so a failed check
-      // leaves the original exactly where it was and says so.
+      // Retire the old copy only once verified identical — losing a student's only copy is unrecoverable.
       const verified = await verifyCopy(projects.storeFor(meta.id), legacy)
       if (verified) {
         await retireLegacy()
@@ -285,16 +270,13 @@ async function openWith(projects: ProjectsStore, preferredId: string | null): Pr
 
   let current = list.find((p) => p.id === preferredId)
   if (!current) {
-    // The remembered project is not there. On iOS that is eviction, not a bug:
-    // Safari clears OPFS for sites that are not installed to the home screen.
-    // Open the next most recent one and say so, rather than crash-looping on an
-    // id that will never come back.
+    // Missing project is often iOS eviction, not a bug — fall back to the next
+    // most recent rather than loop forever.
     if (preferredId && list.length > 0) migration = { kind: 'reopened-elsewhere', wanted: preferredId }
     current = list[0]
   }
-  // `create` can itself fail on a store that lies about being writable, which
-  // would otherwise leave `current` undefined and the next line throwing on
-  // `.id`. One more create, then give up to the caller's fallback.
+  // `create` can fail too (a store lying about writability) — try once more,
+  // then let the caller's fallback take over.
   if (!current) {
     current = await projects.create(DEFAULT_FIRST_NAME)
     list = await projects.list()

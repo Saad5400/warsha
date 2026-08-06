@@ -65,10 +65,8 @@ for (const id of ['tile', 'glyph']) {
   }
 }
 
-// mark.svg ships verbatim as favicon.svg, which the browser parses as strict
-// XML — where two consecutive hyphens inside a comment are illegal. Inlined in
-// HTML the lenient parser hides this, so the only symptom is a favicon that
-// silently fails to load. Caught here instead.
+// favicon.svg is parsed as strict XML, where "--" inside a comment is illegal
+// (HTML's lenient parser hides this) — caught here instead of a silently broken favicon.
 for (const comment of markSvg.match(/<!--[\s\S]*?-->/g) ?? []) {
   if (comment.slice(4, -3).includes('--')) {
     throw new Error('docs/design/mark.svg has a comment containing "--", which is illegal in XML and will break favicon.svg. Write token names in prose.');
@@ -98,21 +96,12 @@ function buildIco(entries) {
   return Buffer.concat([header, ...directory, ...entries.map((e) => e.data)]);
 }
 
-/** Inline every subset face as base64. A headless render has no network, and a
- *  font that silently fails to load changes every metric in the layout — which
- *  is also why the Arabic card may not lean on system-ui the way the app does:
- *  the app resolves a real Arabic face on every target device (see the note in
- *  i18n/locale.ts), but a build box is not a target device, and "whatever
- *  Chromium happened to find" is not a reproducible artifact.
+/** Inlines every subset face as base64 — a headless render has no network, and a
+ *  failed font load would silently change every layout metric.
  *
- *  `arabic-*` is Readex Pro (OFL), and it is deliberately NOT one of the faces
- *  i18n/locale.ts names. That is not a contradiction of the app's no-webfont
- *  rule — it is the reason the rule can hold. The app ships no font because
- *  every byte lands on a student's data plan (DESIGN-SPEC §3.1); this card is
- *  a PNG rendered once at build time, so the typeface costs a reader nothing
- *  and may be chosen for how it reads rather than for what a device happens to
- *  have. Readex Pro was drawn for Arabic/Latin pairing, which is the whole job
- *  on a card that says «اكتب كود Java و Python» in one line. */
+ *  Readex Pro (`arabic-*`) is deliberately NOT one of i18n/locale.ts's faces: the
+ *  app ships no font to save student data (DESIGN-SPEC §3.1), but this card is a
+ *  build-time PNG, so a face chosen for Arabic/Latin pairing costs nothing. */
 function fontCss() {
   const dir = path.join(design, 'fonts');
 
@@ -132,11 +121,8 @@ const written = [];
 
 const iconPage = await browser.newPage({ viewport: { width: 512, height: 512 }, deviceScaleFactor: 2 });
 
-/**
- * Clean-silhouette tier, under 180px. Reshaping happens in the DOM rather
- * than by rewriting the SVG text, so the source stays the single authored
- * artifact and nothing depends on how it happens to be formatted.
- */
+/** Clean-silhouette tier, under 180px. Reshaped in the DOM, not by rewriting
+ *  SVG text, so the source stays the single authored artifact. */
 async function raster(size) {
   await iconPage.setViewportSize({ width: size, height: size });
   await iconPage.setContent(
@@ -150,11 +136,8 @@ async function raster(size) {
 const glitchMark = fs.readFileSync(path.join(design, 'brand-v3/mark-glitch-dark.png'));
 const glitchMarkDataUri = `data:image/png;base64,${glitchMark.toString('base64')}`;
 
-/**
- * Glitch tier, 180px and up. Just the source PNG resized down through
- * Chromium's own image scaling — never upscaled, see the header comment for
- * why no fullBleed/inset handling is needed here.
- */
+/** Glitch tier, 180px+ — the source PNG resized down via Chromium's own
+ *  scaling (never upscaled; see the header for why no inset handling is needed). */
 async function rasterGlitch(size) {
   await iconPage.setViewportSize({ width: size, height: size });
   await iconPage.setContent(
@@ -217,8 +200,7 @@ for (const card of cards) {
     await ogPage.goto(`file://${staged}`, { waitUntil: 'load' });
     await ogPage.evaluate(() => document.fonts.ready);
 
-    // Layout at 1200x630, rasterise at 2x, then `scale: 'css'` downsamples back —
-    // exactly the declared dimensions, and noticeably crisper than a 1x capture.
+    // Rasterise at 2x, then `scale: 'css'` downsamples back to 1200x630 — crisper than a 1x capture.
     await ogPage.screenshot({ path: path.join(out, png), type: 'png', scale: 'css' });
     written.push(`${png} (${OG.width}x${OG.height})`);
   } finally {

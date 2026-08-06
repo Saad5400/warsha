@@ -130,7 +130,7 @@ What each stack actually resolves to, verified:
 - `system-ui` — supported Chrome 56+ and Safari 11+. **San Francisco** on iPadOS, **Roboto** on Android. Both are excellent UI faces; nothing to add.
 - `ui-monospace` — **Safari 13.1+ / iOS 13.4+ only. Chromium ignores it entirely** (all versions to date; it is a 2026 Interop focus area but not shipped in Blink). So: on iPad it resolves to **SF Mono** and we get the good font for free. On Android Chrome the keyword is skipped and we fall through.
 - On **Android**, the generic `monospace` resolves to **Droid Sans Mono**. `"Roboto Mono"` is listed ahead of it optimistically — it is present on many devices but is *not* guaranteed addressable by name across OEM skins, so it must never be load-bearing.
-- `"Noto Sans Arabic"` is in the UI stack against a future Arabic UI (§12); both platforms ship Arabic system fonts, so this is a hint, not a dependency, and it costs nothing while the interface is English-only.
+- `"Noto Sans Arabic"` is in the UI stack for the Arabic UI (`app/src/i18n/ar.ts`, the `/ar/` route) that has since shipped, superseding the "future" framing this line and §12 below were written with; both platforms ship Arabic system fonts, so this remains a hint, not a dependency.
 
 **Two mandatory guards:**
 
@@ -371,7 +371,7 @@ Also bind **Cmd/Ctrl + Enter** to Run/Stop. iPads with Magic Keyboards are commo
 
 ## 7. Components
 
-Class names below match what already exists in `app/src/ui/dialogs.ts` (`.menu`, `.menu-item`, `.dlg`, `.btn`, `.toast`) — extend those, don't parallel-invent.
+Class names below match the hand-rolled `.menu`/`.menu-item`/`.dlg`/`.btn`/`.toast` this section was written against. That file is gone: LAYOUT-VSCODE.md's "Primitives refactor" replaced it with Radix-based components in `app/src/components/ui/` (`Dialog.tsx`, `Menu.tsx`, `Toast.tsx`, `Button.tsx`) — extend those, don't parallel-invent.
 
 ### 7.1 Explorer row
 
@@ -510,9 +510,9 @@ Backwards-compatible in spirit (`message` alone still works and the UI degrades 
 
 Shown when no project exists. Vertical stack, `max-width: 480px`, centred, 24px padding.
 
-1. **Lockup** — 40px logomark above `Warsha` at 28px/600. Latin only: the Arabic wordmark that used to sit beneath it was removed in brand v2, and the interface ships in English throughout (§12).
+1. **Lockup** — 40px logomark above `Warsha` at 28px/600. Latin only: the Arabic wordmark that used to sit beneath it was removed in brand v2. That still holds even now that the interface has Arabic localisation (§12) — the product name itself is not translated, per `app/src/i18n/`'s "the interface is translated, the domain is not" rule.
 2. **One line of purpose:** "Write and run Java or Python. In your browser, on your phone." `--text-2`, 15px.
-3. **Two template cards**, matching the two entries in `app/src/templates.ts`.
+3. **Template cards.** *(Stale: written for the two-template v1 lineup. `app/src/templates.ts` now defines 20+ templates across Python/Java/Web/C#/C, and the welcome screen renders them through a dedicated `TemplatePicker.tsx`, not the two fixed cards below. The individual-card visuals — fill, border, row layout — still describe one tile; the count and the "two cards, side-by-side above 720px" framing do not.)*
 
 Card spec (`.template-card`):
 - Full width, stacked with a 12px gap (side-by-side only above 720px), `--surface-3` fill, **1px `--border-control` border** (3.13:1 — the border does the work, since the fill is only 1.11:1 against the page), `--r-lg`, 16px padding, min-height 88px, `--r-md` press feedback to `--surface-4`.
@@ -642,4 +642,6 @@ In the app, build the lockup in **HTML** (`logo.svg` + a styled `<span>`), not f
 
 ## 12. Deferred
 
-Explicitly out of v1, recorded so they don't get smuggled in: light theme, theme switching, font-size UI beyond the three code sizes, split editor panes, minimap (actively wrong on a phone), breadcrumbs, git anything, settings screen beyond the overflow menu, Arabic UI localisation (brand v2 removed the Arabic wordmark from the lockup, so the product is English-only end to end — RTL layout is a real project, not a polish pass).
+Explicitly out of v1, recorded so they don't get smuggled in: light theme, theme switching, font-size UI beyond the three code sizes, split editor panes, minimap (actively wrong on a phone), breadcrumbs, git anything, settings screen beyond the overflow menu.
+
+Arabic UI localisation was deferred here in v1 for the same reason (RTL layout is a real project, not a polish pass) but has since shipped — see `app/src/i18n/{ar,en,locale}.ts` and the `/ar/` route. The lockup's wordmark itself stays Latin-only regardless, per §7.7 above.

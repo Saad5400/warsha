@@ -22,11 +22,8 @@ const DROPZONE =
   'data-[over=true]:bg-surface-4 data-[over=true]:text-text-2'
 
 /**
- * One dialog for the whole import: choose or drop the .zip, see what is in it,
- * see what it costs, confirm. The warning is stated *before* the file is picked
- * rather than in a second confirm afterwards — two stacked modals for one
- * decision is how a student ends up clicking through both without reading
- * either.
+ * One dialog for the whole import: pick, preview, confirm. The warning shows before
+ * picking rather than as a second modal after — stacked modals get clicked through unread.
  */
 export function ImportZipDialog({ currentFileCount, onCancel, onImport }: ImportZipDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -42,17 +39,14 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
     setProblem(null)
     if (!isZip(file)) return setProblem(COPY.importNotZip)
     setReading(true)
-    // Yield a frame first: `unzipSync` blocks the main thread, and without this
-    // the "Reading…" label never paints, so a slow archive looks like a dead
-    // button rather than work in progress.
+    // Yield a frame first: unzipSync blocks the main thread, so "Reading…" would never paint otherwise.
     await new Promise((r) => requestAnimationFrame(r))
     try {
       const result = await importZip(file)
       if (result.snapshot.files.length === 0) setProblem(COPY.importEmptyZip)
       else setPicked({ name: file.name, result })
     } catch (e) {
-      // A refusal we made on purpose already reads as a sentence; anything else
-      // is the decoder's own words and needs the wrapper.
+      // Our own refusals already read as sentences; anything else needs the wrapper.
       setProblem(e instanceof ZipImportError ? e.message : COPY.importUnreadable((e as Error).message))
     } finally {
       setReading(false)
@@ -60,8 +54,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
   }
 
   return (
-    // Dismissible until a .zip is staged: closing the picker costs nothing, but
-    // once a file is read, a stray tap outside should not throw it away.
+    // Dismissible only until a file is staged — a stray tap shouldn't discard a read zip.
     <Modal onCancel={onCancel} dismissible={!picked} labelledBy={titleId}>
       <form
         onSubmit={(e) => {
@@ -87,14 +80,11 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
             const file = e.dataTransfer.files?.[0]
             if (file) void take(file)
           }}
-          // The only dashed border in the app — dashed reads as "put something
-          // here", which is exactly the one place we mean it. It goes solid
-          // amber while a file is over it.
+          // The only dashed border in the app — "put something here" is exactly what's meant here.
           className={DROPZONE}
         >
           <IconFiles size={24} />
-          {/* Drag-and-drop is a laptop affordance; the button is the one that
-              matters on a phone, so it is never the small print. */}
+          {/* Drag-and-drop is a laptop affordance; the button is what matters on a phone. */}
           <p className="text-meta text-text-3">{COPY.importDropHint}</p>
           <Button variant="ghost" onClick={() => inputRef.current?.click()} disabled={reading}>
             {reading ? COPY.importReading : COPY.importChooseZip}
@@ -119,9 +109,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
             </span>
             <span>
               <span className="font-code">{picked.name}</span> — {COPY.importPicked(picked.result.snapshot.files.length)}
-              {/* Named, not silent: a project that arrives missing the one file
-                  the exercise needed is worse than an import that did not
-                  happen, because nothing says so. */}
+              {/* Named, not silent: a missing required file is worse when nothing says so. */}
               {picked.result.skipped.length > 0 ? (
                 <>
                   {' '}

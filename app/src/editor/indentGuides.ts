@@ -14,11 +14,9 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
  * clipped to `depth × step` paints exactly `depth` rules and no more.
  */
 
-/**
- * Deepest hanging indent we will pay for. On a 390px phone a line indented past
- * ~12 columns has almost no width left for the text itself, so beyond this the
- * wrap goes back to the left edge rather than squeezing the code into a gutter.
- */
+/** Deepest hanging indent we pay for — past ~12 columns a 390px phone has no
+ *  width left for text, so the wrap resets to the left edge instead of
+ *  squeezing into a gutter. */
 const MAX_HANG = 12
 
 /** CodeMirror's own `.cm-line` padding, which the guides have to start after. */
@@ -30,17 +28,15 @@ function decoFor(depth: number, hang: number, active: number, unit: number): Dec
   const key = `${unit}:${depth}:${hang}:${active}`
   let deco = cache.get(key)
   if (!deco) {
-    // Negative text-indent against a matching padding-left is the hanging-indent
-    // trick: the first visual row starts where it always did, and every wrapped
-    // row after it lines up with the code's own indentation instead of jumping
-    // back to column 0. On a phone, where nearly every Java line wraps, this is
-    // the difference between reading a continuation and mistaking it for a new
-    // statement.
+    // Negative text-indent + matching padding-left is the hanging-indent trick:
+    // the first row stays put, and wrapped rows line up with the code's own
+    // indent instead of column 0 — the difference between reading a
+    // continuation and mistaking it for a new statement.
     let style = `--cm-guides:${depth}`
     if (hang > 0) style += `;padding-left:calc(${LINE_PAD} + ${hang}ch);text-indent:-${hang}ch`
-    // The caret's own level re-paints in --code-indent-guide-active via a
-    // second background layer (see the theme below); switching the layer on is
-    // just giving its 0-width default a width and a position.
+    // The caret's level re-paints via a second background layer
+    // (--code-indent-guide-active, see theme below); this just gives its
+    // 0-width default a width and a position.
     if (active > 0)
       style +=
         `;--cm-guide-active-x:calc(${LINE_PAD} + ${(active - 1) * unit}ch)` +
@@ -62,11 +58,9 @@ function leadingColumns(text: string, tabSize: number): number {
   return n
 }
 
-/**
- * The nesting level the caret sits in — the guide at this level is the "active"
- * one, VS Code's highlightActiveIndentation. A blank caret line inherits the
- * nearest non-blank line above, matching the carried depth the guides draw with.
- */
+/** The nesting level the caret sits in — its guide is the "active" one
+ *  (VS Code's highlightActiveIndentation). A blank caret line inherits the
+ *  nearest non-blank line above, matching the guides' own carried depth. */
 function caretDepth(view: EditorView, unit: number): number {
   const { doc, tabSize, selection } = view.state
   let line = doc.lineAt(selection.main.head)
@@ -123,19 +117,17 @@ export function indentGuides(unit = 4) {
 
   const theme = EditorView.theme({
     '.cm-indentGuides': {
-      // Two layers: the active-level rule (a plain 1px gradient whose width
-      // defaults to 0 until decoFor switches it on per line), then the
-      // repeating base hairlines. Painted brightest-first so the active rule
-      // sits over its base twin.
+      // Two layers: the active-level rule (1px gradient, width 0 until decoFor
+      // turns it on) then the repeating base hairlines — brightest first, so
+      // active sits over its base twin.
       backgroundImage:
         'linear-gradient(var(--code-indent-guide-active), var(--code-indent-guide-active)), ' +
         `repeating-linear-gradient(to right, var(--code-indent-guide) 0 1px, transparent 1px ${unit}ch)`,
       backgroundRepeat: 'no-repeat',
-      // Positioned off the padding box and nudged past `.cm-line`'s own 6px, not
-      // off the content box: the hanging indent above moves the content edge, and
-      // guides must stay put. Clipping is left alone deliberately — clipping to
-      // the content box would also crop the active-line fill this same element
-      // carries, leaving indented lines highlighted narrower than the rest.
+      // Padding-box, not content-box: the hanging indent moves the content edge
+      // but guides must stay put. Clipping is left alone — clipping to
+      // content-box would also crop this element's active-line fill, narrowing
+      // indented lines' highlight.
       backgroundOrigin: 'padding-box',
       backgroundPositionX: `var(--cm-guide-active-x, 0px), ${LINE_PAD}`,
       backgroundSize:

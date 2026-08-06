@@ -10,13 +10,8 @@ import {
 import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
 import { memberSource } from './members'
 
-/**
- * The languages that carry Warsha's hand-written snippets, keyword lists and
- * beginner API dictionaries. This is narrower than the runtime's `LangId`: web
- * files (html/css/js) get syntax highlighting and identifier completion, but not
- * a curated dictionary — so `completionSources` takes this type, and `null` for
- * everything else, rather than the whole runtime key set.
- */
+/** Narrower than `LangId` — web files get highlighting but no curated
+ *  dictionary, so `completionSources` takes this type and `null` for the rest. */
 export type CompletionLang = 'java' | 'python'
 
 /**
@@ -203,12 +198,8 @@ const PYTHON_API: readonly (readonly [string, string])[] = [
   ['__init__', 'set a new object up'],
 ]
 
-/**
- * `math`/`random` functions, offered as the fully-qualified form
- * (`math.sqrt`) so accepting one also works as a completion for the plain
- * name — CodeMirror's fuzzy matcher finds `sqrt` inside `math.sqrt` — and its
- * `apply` inserts `import math` if the file does not have it yet.
- */
+/** Offered as `math.sqrt` so the fuzzy matcher still finds plain `sqrt`;
+ *  `apply` inserts `import math` if the file doesn't have it yet. */
 const PYTHON_MODULE_API: readonly (readonly [string, string, string])[] = [
   ['sqrt', 'math', 'square root'],
   ['floor', 'math', 'round down'],
@@ -224,13 +215,9 @@ const PYTHON_MODULE_API: readonly (readonly [string, string, string])[] = [
 /* ------------------------------------------------------------ built-in docs */
 
 /**
- * The docs layer over the same vocabulary: what the hover widget
- * (editor/hoverDocs.ts) and the completion info panel both show. One entry per
- * name a first-year course meets — a signature line in the code font, one or
- * two plain sentences, and an example only where it teaches something the
- * sentence could not. Keyed by the bare name (`println`) or, where the name is
- * only ever written qualified, by `Receiver.name` (`Math.abs`) — `builtinDoc`
- * below tries the qualified key first.
+ * Shared verbatim between hoverDocs.ts's hover card and the completion info
+ * panel. Keyed by bare name (`println`), or by `Receiver.name` (`Math.abs`)
+ * where the name is only ever written qualified — `builtinDoc` tries that first.
  */
 export interface BuiltinDoc {
   /** The call shape, rendered in --font-code. */
@@ -366,12 +353,8 @@ const BUILTIN_DOCS: Record<CompletionLang, Record<string, BuiltinDoc>> = {
   python: PYTHON_DOCS,
 }
 
-/**
- * The doc for a hovered word: the qualified spelling first (`Math` + `abs` →
- * `Math.abs`), then the bare name. Null means "no card" — the hover simply
- * does not appear, which is the correct amount of UI for a word we know
- * nothing about.
- */
+/** Tries the qualified spelling first (`Math` + `abs` → `Math.abs`), then the
+ *  bare name. Null means no card — nothing to say, nothing shown. */
 export function builtinDoc(lang: CompletionLang, word: string, receiver?: string): BuiltinDoc | null {
   const docs = BUILTIN_DOCS[lang]
   return (receiver ? docs[`${receiver}.${word}`] : undefined) ?? docs[word] ?? null
@@ -383,11 +366,9 @@ function docForLabel(lang: CompletionLang, label: string): BuiltinDoc | null {
 }
 
 /**
- * The docs card DOM, shared verbatim between the hover widget and the
- * completion info panel so the two can never drift apart. Styled by
- * `chromeTheme` in setup.ts (`.cm-docs-*`). `boldLead` bolds the first
- * sentence — used for user doc comments, where the lead sentence is the
- * author's own summary.
+ * Shared DOM between the hover widget and completion info panel, so they
+ * can't drift apart. Styled by `chromeTheme` in setup.ts (`.cm-docs-*`).
+ * `boldLead` bolds the first sentence, for user doc comments.
  */
 export function renderDocCard(entry: BuiltinDoc, opts?: { boldLead?: boolean }): HTMLElement {
   const root = document.createElement('div')
@@ -466,11 +447,8 @@ const staticOptions = (lang: CompletionLang): Completion[] => {
   ]
 }
 
-/**
- * Snippets, keywords and the API dictionary. Fires from the first character, so
- * typing `s` already offers `sout` — the abbreviations only pay off if they turn
- * up before you have finished typing them.
- */
+/** Snippets, keywords and the API dictionary. Fires from the first character,
+ *  since an abbreviation only pays off if it appears before you finish typing it. */
 function staticSource(lang: CompletionLang): CompletionSource {
   const inner = completeFromList(staticOptions(lang))
   return (ctx: CompletionContext) => {
@@ -481,10 +459,7 @@ function staticSource(lang: CompletionLang): CompletionSource {
 
 const IDENT = /[A-Za-z_$][\w$]*/g
 
-/**
- * Every identifier in this file and in every other file in the project, so a
- * name only has to be typed once anywhere to complete everywhere.
- */
+/** Every identifier in the project, so a name typed once anywhere completes everywhere. */
 function identifierSource(projectWords: () => readonly string[]): CompletionSource {
   return (ctx: CompletionContext): CompletionResult | null => {
     const before = ctx.matchBefore(WORD_BEFORE)
@@ -517,28 +492,19 @@ export function wordsInSource(text: string): string[] {
   return out
 }
 
-/**
- * Node types where a suggestion popup is never wanted. A student typing a
- * sentence inside `println("...")` should not be offered `nextDouble`.
- */
+/** Node types where a popup is never wanted — typing a sentence inside
+ *  `println("...")` shouldn't offer `nextDouble`. */
 const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComment', 'BlockComment']
 
 export function completionSources(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
   const ident = ifNotIn(NOT_IN, identifierSource(projectWords))
   if (!lang) return [ident]
   return [
-    // Member completion first: `sc.` should out-rank a same-named identifier
-    // elsewhere in the project, and the import sources are line-anchored so
-    // ordering against them does not matter.
+    // Member completion first: `sc.` should outrank a same-named project
+    // identifier; import sources are line-anchored, so order vs. them doesn't matter.
     ifNotIn(NOT_IN, memberSource(lang)),
     ifNotIn(NOT_IN, importStatementSource(lang)),
     ifNotIn(NOT_IN, staticSource(lang)),
     ident,
   ]
 }
-
-/** What shipped, for Education to review. Keyed the way the docs will want it. */
-export const SNIPPET_MANIFEST = {
-  java: JAVA_SNIPPETS.map((s) => s.label),
-  python: PYTHON_SNIPPETS.map((s) => s.label),
-} as const

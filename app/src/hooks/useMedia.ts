@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-/** Reactive media query. Used for the <900px drawer threshold. */
+/** Reactive media query: re-renders whenever `query`'s match state flips. */
 export function useMedia(query: string): boolean {
   const [matches, setMatches] = useState(() =>
     typeof window === 'undefined' ? false : window.matchMedia(query).matches,
@@ -15,10 +15,7 @@ export function useMedia(query: string): boolean {
   return matches
 }
 
-/**
- * Tracks the html[data-kb] state that ui/viewport.ts writes, so React can react
- * to the software keyboard (close the drawer, shed decoration).
- */
+/** Tracks the html[data-kb] attribute ui/viewport.ts writes, so React can react to the software keyboard. */
 export function useKeyboardOpen(): boolean {
   const [open, setOpen] = useState(false)
   useEffect(() => {

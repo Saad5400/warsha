@@ -39,16 +39,15 @@ export async function deliverFile(file: File): Promise<Delivered> {
       return 'shared'
     } catch (e) {
       if (isCancelled(e)) return 'shared'
-      // Fall through — some browsers advertise canShare() for files and then
+      // Fall through — some browsers advertise canShare() for files, then
       // reject the actual share() call.
     }
   }
 
   if (file.type === 'image/png' && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
     try {
-      // The promise form is what Safari's user-gesture accounting accepts;
-      // Chromium takes either. A rejection here (unfocused document, a
-      // browser that gates image writes) just means the download happens.
+      // Promise form: Safari's user-gesture accounting requires it, Chromium
+      // accepts either. A rejection here just falls through to download.
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': Promise.resolve(file) })])
       return 'copied'
     } catch {

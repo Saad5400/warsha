@@ -59,11 +59,10 @@ let fileSource: (() => readonly ProjectFileText[]) | null = null
 let sourceRevision = -1
 
 /**
- * App.tsx registers the project-files accessor here (the editor is a
- * singleton mount, so a module-level seam beats threading a prop through
- * Editor.tsx). `revision` is the project's change counter — the scan below is
- * lazy and cached against it, so hovering costs a re-scan at most once per
- * edit burst, and nothing at all while the project is untouched.
+ * App.tsx registers the project-files accessor here — a module-level seam
+ * beats threading a prop through the editor's singleton mount. `revision` is
+ * the project's change counter, so the cached scan below re-runs at most once
+ * per edit burst.
  */
 export function setProjectDocsSource(get: () => readonly ProjectFileText[], revision: number): void {
   fileSource = get
@@ -268,10 +267,9 @@ const PRESS_SLOP = 8
 const PRESS_MS = 500
 
 /**
- * After a touch, browsers synthesize compat mouse events at the touch point —
- * enough to make `hoverTooltip` "hover" on a plain tap. Touch input stamps
- * this; the hover source stays quiet while the stamp is fresh, so on a phone
- * the card comes only from the long-press path.
+ * Touch synthesizes compat mouse events, enough to make `hoverTooltip`
+ * "hover" on a plain tap. Touch stamps `lastTouchAt`; the hover source stays
+ * quiet while it's fresh, so on a phone the card only comes from long-press.
  */
 let lastTouchAt = 0
 const TOUCH_QUIET_MS = 1500
@@ -344,13 +342,10 @@ function touchDocs(lang: CompletionLang | null): Extension {
 const CHORD_MS = 3000
 
 /**
- * See the header comment: a two-key watcher, not a CM multi-stroke binding
- * (whose prefix handling would preventDefault Ctrl+K and break the shell's
- * own Ctrl+K chords). `Prec.highest` because the *completing* Ctrl/Cmd+I must
- * beat defaultKeymap's own Mod-i (selectParentSyntax) — claiming it there has
- * the same shell-level effect selectParentSyntax already has today. The
- * arming Ctrl/Cmd+K is never claimed, so Ctrl+K Ctrl+O still reaches the
- * shell untouched.
+ * A two-key watcher, not a CM multi-stroke binding (whose prefix handling
+ * would break the shell's own Ctrl+K chords). `Prec.highest` because the
+ * completing Ctrl/Cmd+I must beat defaultKeymap's own Mod-i. The arming
+ * Ctrl/Cmd+K is never claimed, so Ctrl+K Ctrl+O still reaches the shell.
  */
 function showHoverChord(lang: CompletionLang | null): Extension {
   let armedAt = 0
@@ -375,9 +370,8 @@ function showHoverChord(lang: CompletionLang | null): Extension {
 
 /**
  * The whole feature as one extension. `lang` gates the built-in dictionary
- * (Java/Python only — web files get no curated hover, same as completions);
- * user doc comments come from the project scan regardless of the file the
- * hover happens in.
+ * (Java/Python only, same as completions); user doc comments apply regardless
+ * of file.
  */
 export function hoverDocs(lang: CompletionLang | null): Extension {
   if (!lang) return []

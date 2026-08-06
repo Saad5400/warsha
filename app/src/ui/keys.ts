@@ -24,20 +24,14 @@ export interface Command {
   title: string
   /** Bindings: single chords or two-chord sequences ("Mod+K Mod+O"). */
   keys?: string[]
-  /**
-   * Mirrors real state, never a permanent stub: a command that answers false is
-   * skipped by the keydown (the browser keeps the key — Ctrl+W with no file
-   * open must still close the page) and left out of the palette.
-   */
+  /** Real state, not a stub — false skips the keydown (browser keeps the key,
+   *  e.g. Ctrl+W closes the page) and hides the palette row. */
   enabled?(): boolean
   /** Palette visibility (default true) — false for aliases like Mod+Enter. */
   inPalette?: boolean
-  /**
-   * Skip the BINDING while focus is in an input/textarea/select (the palette
-   * row is unaffected) — Ctrl+B in a dialog's text field belongs to the field,
-   * not the sidebar. The editor is not "typing" for this purpose: VS Code
-   * toggles the sidebar from the editor, and so do we.
-   */
+  /** Skips the binding (not the palette row) while focus is in an
+   *  input/textarea/select — e.g. Ctrl+B in a dialog belongs to the field, not
+   *  the sidebar. The editor doesn't count as typing here, matching VS Code. */
   skipWhenTyping?: boolean
   run(): void
 }
@@ -89,11 +83,8 @@ export function isModifierOnly(e: KeyboardEvent): boolean {
   return e.key === 'Control' || e.key === 'Meta' || e.key === 'Alt' || e.key === 'Shift'
 }
 
-/**
- * Does this KeyboardEvent land exactly on this single chord? Exact means
- * exact: `Mod+S` does not match Ctrl+Shift+S, and `Mod` requires the OTHER
- * primary to be up — ⌘S on a Mac, never Ctrl+S pretending.
- */
+/** True only on an exact chord match: `Mod+S` won't match Ctrl+Shift+S, and
+ *  `Mod` requires the other primary key to be up. */
 export function matchEvent(e: KeyboardEvent, chordSpec: string): boolean {
   const c = parseChord(chordSpec)
   const wantCtrl = c.ctrl || (c.mod && !isMacLike)
@@ -107,9 +98,9 @@ export function matchEvent(e: KeyboardEvent, chordSpec: string): boolean {
   )
 }
 
-/* Display names. Enter renders as ↵ on both platforms — that keeps the Run
- * hint byte-identical to what ui/shortcut.ts always produced ("⌘↵" /
- * "Ctrl+↵"), which the console's idle line quotes and QA reads. */
+/* Enter renders as ↵ on both platforms to keep the Run hint identical to
+ * ui/shortcut.ts's old output ("⌘↵"/"Ctrl+↵"), which QA and the console's
+ * idle line quote verbatim. */
 const MAC_KEY: Record<string, string> = {
   Enter: '↵',
   Escape: '⎋',

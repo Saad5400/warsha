@@ -1,5 +1,5 @@
 /**
- * The breadcrumbs row (W2-A): VS Code's path trail, mounted between the tab
+ * The breadcrumbs row: VS Code's path trail, mounted between the tab
  * strip and the editor. It sits on the editor-canvas surface — the active
  * tab's fill runs through this row and into the code below, which is what
  * makes the three read as one column.
@@ -35,12 +35,8 @@ export function Breadcrumbs({ path }: { path: string | null }) {
         'px-2 gap-0.5 select-none bg-surface-1 text-[13px] text-text-2'
       }
     >
-      {/* Long paths give way in the MIDDLE (founder overflow pass 2026-08-05):
-          folder segments carry shrink-[3] against the file span's default 1,
-          so they collapse to "s…" first while the file name stays whole; the
-          min-w-[2ch] floor keeps at least the ellipsis on screen. Chevrons are
-          flex-none. The row itself can never grow taller — fixed h-bar-crumbs,
-          nowrap children, overflow-hidden nav. */}
+      {/* Long paths shrink in the middle: folders collapse first (shrink-[3] vs
+          the file span's default 1), the file name stays whole. */}
       {folders.map((seg, i) => (
         <Fragment key={i}>
           <span className="min-w-[2ch] shrink-[3] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">
@@ -50,8 +46,7 @@ export function Breadcrumbs({ path }: { path: string | null }) {
         </Fragment>
       ))}
       <span className="flex min-w-0 items-center gap-1 whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">
-        {/* bare: the trail wants the 16px colored icon alone at every size —
-            a badge chip inside a path row would read as a second label. */}
+        {/* bare: a badge chip inside a path row would read as a second label. */}
         <FileBadge name={file} bare />
         <span className="overflow-hidden text-ellipsis">{file}</span>
       </span>

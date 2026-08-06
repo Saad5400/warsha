@@ -122,10 +122,8 @@ const PROBE = () => {
       // Deliberate stacking: either is out of flow relative to the shared root.
       if (A.c.position === 'absolute' || A.c.position === 'fixed') continue
       if (B.c.position === 'absolute' || B.c.position === 'fixed') continue
-      // Inline elements lie: getBoundingClientRect() on an inline span that wraps
-      // across lines returns the UNION of its line boxes, so two spans on
-      // different visual lines of the same wrapped line of code appear to
-      // overlap. Every real collision we care about is between block-level boxes.
+      // Inline spans lie: a wrapped span's getBoundingClientRect() unions all its
+      // line boxes, making different visual lines look like overlaps. Real collisions are block-level only.
       if (A.c.display === 'inline' || B.c.display === 'inline') continue
       if (!hit(A.r, B.r, 1.5)) continue
       const ov = Math.min(A.r.right, B.r.right) - Math.max(A.r.left, B.r.left)
@@ -135,11 +133,8 @@ const PROBE = () => {
     }
   }
 
-  /* 3. CLIP — cut off by a non-scrollable overflow:hidden ancestor.
-        Two exclusions, both legitimate: content inside a *closed* off-canvas
-        drawer is supposed to be clipped away, and content inside a scroll
-        container is supposed to be clipped (that is what scrolling is). Only a
-        hidden ancestor reached with no scroller in between is a real loss. */
+  /* 3. CLIP — cut off by overflow:hidden with no scroller in between. Closed
+        drawers and scroll containers are excluded; both are legitimate clipping. */
   for (const { el, r } of atoms) {
     if (el.closest('[data-state="closed"]')) continue
     let p = el.parentElement
@@ -164,10 +159,8 @@ const PROBE = () => {
     }
   }
 
-  /* 4. anything wider than the viewport.
-        Two legitimate reasons to sit outside it, both excluded: a closed
-        off-canvas drawer (translated -102%) and content inside a horizontal
-        scroll container (the tab strip is meant to scroll). */
+  /* 4. Wider than the viewport — excluding closed off-canvas drawers and
+        horizontal scroll containers (the tab strip scrolls on purpose). */
   const offCanvas = (el) => !!el.closest('[data-state="closed"]')
   const inHScroller = (el) => {
     let p = el.parentElement
@@ -188,10 +181,8 @@ const PROBE = () => {
   const q = (s) => document.querySelector(s)
   const box = (s) => { const e = q(s); return e && vis(e) ? R(e) : null }
   const inv = {
-    // `.stdin-input` / `.stdin-row` are the live line and exist only while the
-    // program is blocked on a read — usually null in this sweep, which is
-    // correct. The console foot is gone (one shell): the status bar carries
-    // the run state at every width, so the console's bottom edge is the panel.
+    // .stdin-input exists only while blocked on read (usually null here,
+    // correctly). Console foot is gone — the status bar is now the console's bottom edge.
     stdin: box('.stdin-input'),
     transcript: box('.console-transcript'),
     header: box('.console-header'),
@@ -224,10 +215,8 @@ function report(scenario, { out, inv }) {
   if (inv.docScrollX > 0) add('WIDE', `document scrolls horizontally by ${inv.docScrollX}px`)
 
   const gap = (a, b) => Math.round(b - a)
-  // The input is inside the transcript now, so "transcript vs input row" is no
-  // longer a thing that can overlap. The status line under the transcript is
-  // gone too (the status bar carries the run state at every width) — what must
-  // not overlap is the transcript and the bar itself.
+  // Input now lives inside the transcript, and the old status line is gone
+  // (status bar carries run state); what must not overlap is transcript vs. status bar.
   if (inv.transcript && inv.statusBar && inv.transcript.bottom > inv.statusBar.top + 1)
     add('INVARIANT-a', `transcript bottom (${Math.round(inv.transcript.bottom)}) is below the status bar's top (${Math.round(inv.statusBar.top)}) — output can run under the run state`)
   if (inv.divider && inv.headerBtn && inv.divider.bottom > inv.headerBtn.top + 1)
@@ -280,9 +269,7 @@ for (const w of widths) {
   })
 }
 
-/* Console dragged to min and max (the divider renders at every width now;
-   dragging is exercised at 1280). Driven through localStorage because that is
-   the same seam the drag writes to, and it survives the reload. */
+/* Console dragged to min/max via localStorage — the same seam the drag writes, and it survives reload. */
 for (const [label, h] of [['min', 100], ['max', 4000]]) {
   await scenario(`1280px · console dragged to ${label}`, async () => {
     await page.setViewportSize({ width: 1280, height: 860 })
@@ -333,14 +320,9 @@ await scenario('390px · console open again', async () => {
   if (await show.count()) await show.click()
 })
 
-/* Raise / lower the simulated software keyboard.
-   At its SOURCE — visualViewport.height — not by writing --kb-inset / --app-h.
-   Writing those by hand is undone by ui/viewport.ts's next sync(), and
-   `--app-h: 844px` (the whole window) is a shell geometry the app never has:
-   visualViewport.height is already the height ABOVE the keyboard on both
-   platforms, which is why nothing subtracts --kb-inset a second time. With the
-   old values the console honestly sat below the simulated keyboard line and
-   INVARIANT-f fired on the simulation instead of on the app. */
+/* Simulates the keyboard at its real source (visualViewport.height), not by
+   writing --kb-inset/--app-h directly — ui/viewport.ts's sync() would undo that,
+   and the old approach caused false INVARIANT-f hits. */
 const KB_PX = 336
 const raiseKeyboard = () => page.evaluate((KB) => {
   const vv = window.visualViewport
@@ -364,8 +346,7 @@ for (const w of [430, 390]) {
 }
 await lowerKeyboard()
 
-/* One control at every size: the activity bar's Explorer item (docked pane at
-   ≥900px, overlay drawer below). It TOGGLES, so open only when it is closed. */
+/* Explorer toggle: docked pane ≥900px, overlay drawer below. It TOGGLES — only open it when closed. */
 const ensureExplorerOpen = async () => {
   if (await page.locator('aside[aria-label="Files"][data-state="open"]').count()) return
   await page.locator('nav[aria-label="Activity bar"] button[aria-label="Explorer"]').click()
@@ -411,14 +392,9 @@ for (const w of [880, 899, 900, 920]) {
 await scenario('1280px · progress block during real cold boot', async () => {
   await page.setViewportSize({ width: 1280, height: 860 })
   await page.waitForTimeout(300)
-  // Run lives in the tab strip's editor-actions corner and names its file
-  // ("Run Main.java") — hence the prefix match.
+  // Run's label includes the filename ("Run Main.java") — hence the prefix match.
   const run = page.getByRole('button', { name: /^Run\b/ })
-  // Enabled, not just present. Run is disabled whenever the project has no entry
-  // candidate, and clicking a disabled button is a 30s timeout that takes the
-  // whole sweep with it rather than a failed scenario. Say so loudly instead:
-  // there is no progress block to test if nothing can start, and the reason the
-  // project became unrunnable is worth knowing.
+  // Must check isEnabled(), not just present — clicking a disabled Run hangs the whole sweep for 30s instead of failing cleanly.
   if ((await run.count()) && (await run.isEnabled())) {
     await run.click()
     await page.waitForTimeout(2500)
@@ -430,10 +406,8 @@ await scenario('1280px · progress block during real cold boot', async () => {
 })
 await page.screenshot({ path: `${SHOTS}/ovl-1280-progress.png` })
 
-/* Chrome geometry while the keyboard is up (brief item f). Ctrl+S is a SILENT
- * save now (W3-A — the dirty-dot machinery is the signal, no 'Saved' toast),
- * so this scenario proves the keystroke disturbs nothing rather than that a
- * toast clears the keyboard. */
+/* Ctrl+S is now a silent save (dirty-dot only, no toast) — this checks the
+ * keystroke disturbs nothing, not that a toast clears. */
 await scenario('390px · keyboard open + Ctrl+S (silent save)', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   await raiseKeyboard()

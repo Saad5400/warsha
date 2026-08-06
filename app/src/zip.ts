@@ -4,25 +4,15 @@ import type { FsSnapshot } from './fs/types'
 const SKIP = /(^|\/)(\.DS_Store|Thumbs\.db|__MACOSX)(\/|$)/
 
 /**
- * Import limits.
+ * Import limits — `unzipSync` runs on the main thread and allocates everything at once, so
+ * refusing early is the only alternative to freezing the tab.
  *
- * Every one of these exists because the unguarded version has a way to take the
- * tab down, and a student who has just been handed a .zip by a teacher has no
- * idea which kind they have. `unzipSync` runs on the main thread and allocates
- * everything at once, so "reject with a sentence" and "freeze, then crash" are
- * the only two options — there is no partial success to fall back to.
+ *  - `MAX_ARCHIVE_BYTES`: checked on the `File` itself — even reading a multi-gigabyte file crashes.
+ *  - `MAX_TOTAL_BYTES`: checked against declared sizes during unzip's filter, before inflating —
+ *    the zip-bomb guard (42.zip declares 4.5PB from 42kB).
+ *  - `MAX_ENTRIES`: bounds the explorer/tab strip as much as memory.
  *
- *  - `MAX_ARCHIVE_BYTES` is checked on the `File` before a single byte is read,
- *    because `file.arrayBuffer()` on a multi-gigabyte file is itself the crash.
- *  - `MAX_TOTAL_BYTES` is checked against the central directory's declared
- *    sizes *during* the filter callback, before anything is inflated. This is
- *    the zip-bomb guard: 42.zip is 42 kB and declares 4.5 PB, and it is
- *    rejected here having allocated nothing.
- *  - `MAX_ENTRIES` bounds the explorer and the tab strip as much as memory.
- *
- * The numbers are generous for the real thing — a Warsha project is a few
- * kilobytes of text — and small enough that hitting one means something is
- * wrong with the file rather than with the student.
+ * Generous for a real project (a few KB); hitting one means the file, not the student, is the problem.
  */
 export const ZIP_LIMITS = {
   MAX_ARCHIVE_BYTES: 50 * 1024 * 1024,
@@ -47,12 +37,8 @@ export class ZipImportError extends Error {
 
 export interface ZipImportResult {
   snapshot: FsSnapshot
-  /**
-   * Entries that were left out and why, so the dialog can say "3 files were
-   * skipped" instead of silently importing something different from what the
-   * student handed over. Silent partial imports are how a project arrives
-   * missing the one file the exercise needed.
-   */
+  /** Left-out entries and why, so the dialog says "3 files skipped" instead of silently importing
+   *  something different — that's how a project arrives missing the one file an exercise needed. */
   skipped: Array<{ path: string; reason: 'binary' | 'unsafe-path' | 'too-large' }>
 }
 
@@ -76,15 +62,10 @@ export function exportZip(snap: FsSnapshot, name = 'warsha-project.zip') {
 }
 
 /**
- * A path from a .zip, made safe or refused.
- *
- * Zip entries are attacker-controlled strings, not paths: `../../etc/passwd`
- * and `C:\evil` are both legal entry names. OPFS would not let us out of the
- * origin, but a `..` segment still lands the file somewhere the student did not
- * ask for and cannot see, and a `\` produces a file whose name contains a
- * separator the explorer will render as one level and the store as another.
- * Refuse rather than sanitise: a renamed file is a silent surprise, and there is
- * no legitimate .zip that needs this.
+ * Zip entries are attacker-controlled strings, not paths (`../../etc/passwd`, `C:\evil` are legal
+ * entry names). OPFS keeps us in-origin, but a `..` can still land a file somewhere unexpected, and
+ * `\` produces a name the explorer and the store would split differently. Refused, not sanitised —
+ * a renamed file is a silent surprise, and no legitimate .zip needs this.
  */
 export function safePath(raw: string): string | null {
   const path = raw.replace(/^\.?\//, '')
@@ -124,8 +105,7 @@ export async function importZip(file: File): Promise<ZipImportResult> {
     throw new ZipImportError('unreadable', String((error as Error).message ?? error))
   }
 
-  // Counted inside the filter, i.e. from the central directory, before anything
-  // is inflated. Throwing from the filter aborts the whole unzip.
+  // Counted from the central directory, before inflation; throwing here aborts the whole unzip.
   let declaredTotal = 0
   let entryCount = 0
   const oversize = new Set<string>()
@@ -180,9 +160,8 @@ export async function importZip(file: File): Promise<ZipImportResult> {
       dirs.add(path)
       continue
     }
-    // A .zip of a built project carries images and .class files. Decoding them
-    // as UTF-8 produces a wall of replacement characters in the editor, which
-    // looks to a student like their file was corrupted rather than skipped.
+    // Built-project zips carry images/.class files; decoding as UTF-8 would fill the editor
+    // with replacement chars, looking like corruption instead of a skip.
     if (looksBinary(data)) {
       skipped.push({ path, reason: 'binary' })
       continue

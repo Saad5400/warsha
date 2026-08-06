@@ -42,9 +42,7 @@ const check = (label, ok, extra = '') => {
 }
 
 const INSTALL = '.top-bar button[aria-label="Install Warsha"]'
-/* Verbatim from app/src/copy.ts — asserted whole, the same way verify.mjs pins
- * stdinWaitingPlaceholder, so a reworded string fails here instead of silently
- * shipping. */
+// Verbatim from app/src/copy.ts — asserted whole so a reworded string fails here, not silently.
 const IOS_COPY =
   'On iPhone and iPad: tap Share, then Add to Home Screen. Warsha then opens like any other app.'
 
@@ -56,16 +54,8 @@ const watch = (page) => {
   })
 }
 
-/**
- * Suppresses the browser's OWN offer, so the suite owns the timeline.
- *
- * This is not a workaround, it is the point: Chrome — headless included — fires
- * a real `beforeinstallprompt` at a moment of its own choosing, which makes
- * "the control is absent until offered" untestable and makes the iOS case, whose
- * whole premise is an event that never arrives, impossible to reach. A
- * capture-phase listener installed before any page script runs first and stops
- * the real one dead; the events this suite injects carry a marker and pass.
- */
+/** Blocks Chrome's real beforeinstallprompt (timing is unpredictable) so only
+ *  this suite's marked, injected events get through. */
 const OWN_OFFER_OFF = () => {
   window.addEventListener(
     'beforeinstallprompt',
@@ -76,11 +66,8 @@ const OWN_OFFER_OFF = () => {
   )
 }
 
-/**
- * Fires a `beforeinstallprompt` that behaves the way Chrome's does, and records
- * every `prompt()` on `window.__installPrompts` so the count can be asserted.
- * `outcome` is what the fake sheet reports back.
- */
+/** Fires a fake beforeinstallprompt; records each prompt() call on
+ *  window.__installPrompts for assertion. `outcome` is what the fake sheet reports. */
 const offerInstall = (page, outcome = 'accepted') =>
   page.evaluate((choice) => {
     window.__installPrompts ??= []
@@ -103,8 +90,7 @@ const page = ctx.pages()[0] ?? (await ctx.newPage())
 watch(page)
 await ctx.addInitScript(OWN_OFFER_OFF)
 await page.goto(URL_, { waitUntil: 'load' })
-// The app's one automatic coi-serviceworker reload lands somewhere in here; the
-// title bar is only meaningful once it has settled.
+// The one automatic coi-serviceworker reload happens somewhere in here; wait for the title bar to settle.
 await page.waitForTimeout(1500)
 await page.locator('.top-bar').first().waitFor()
 
@@ -120,10 +106,8 @@ await offerInstall(page)
 await page.waitForTimeout(200)
 check('the control appears the moment the browser offers', (await page.locator(INSTALL).count()) === 1)
 
-// It takes the leading slot of the trailing group, so the control that comes
-// and goes never displaces the ones that do not. One shell: the bar's fixed
-// trailing pair is the sidebar/panel toggles at EVERY size (Run and ⋯ live in
-// the tab strip).
+// Install takes the leading slot of the trailing group so it never displaces the
+// fixed sidebar/panel toggles (Run and ⋯ live in the tab strip).
 const order = await page.$$eval('.top-bar button', (bs) => bs.map((b) => b.getAttribute('aria-label')))
 const deskIC = await page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 check(
@@ -133,8 +117,7 @@ check(
   order.join(' | '),
 )
 
-// 40px per the icon-only founder ruling on touch layouts; the DENSITY media
-// compacts every icon-btn to 28px at a fine pointer (this 1280px window).
+// 40px on touch; DENSITY media compacts icon buttons to 28px at a fine pointer (this window).
 const box = await page.locator(INSTALL).boundingBox()
 const wantBox = deskIC ? 28 : 40
 check(`${wantBox}px box at this density`, box.width === wantBox && box.height === wantBox, `${box.width}x${box.height}`)
@@ -165,8 +148,7 @@ check(
 )
 
 // ---------------------------------------------------------------- installed
-// However it happened — our control, the omnibox icon, the browser menu — the
-// offer is over for good.
+// However install happened — our control, omnibox, or browser menu — the offer is over for good.
 await page.evaluate(() => window.dispatchEvent(new Event('appinstalled')))
 await offerInstall(page)
 await page.waitForTimeout(200)
@@ -176,10 +158,8 @@ check(
 )
 
 // ---------------------------------------------------------------- iOS
-// WebKit fires no install event ever, so the welcome panel carries the sentence
-// and the title bar carries nothing. A separate context because the user agent
-// is fixed when the context is made — and OWN_OFFER_OFF is what makes the UA
-// override mean anything, since Chromium keeps offering whatever UA it claims.
+// WebKit fires no install event; iOS gets the sentence instead. Separate context
+// (UA fixed at creation) plus OWN_OFFER_OFF, or Chromium would offer anyway.
 const iosCtx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'warsha-install-ios-')), {
   executablePath: CHROME,
   headless: true,

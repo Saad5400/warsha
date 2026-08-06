@@ -32,15 +32,10 @@ import { bundleProject, ensureBundler, needsBundle } from './bundle'
  */
 
 /**
- * The worker's own source, a MODULE worker run from a blob URL — no separate
- * build artifact, and no dependence on Vite's one-global `worker.format`. It
- * overrides `console`, tracks pending timers so it can report a real "finished"
- * when the event loop idles, and runs the student's code one of two ways:
- *
- *   • `script` mode — raw source in `new Function(async () => { … })`, which is
- *     non-strict and keeps the plain-JS feel; top-level await works.
- *   • `module` mode — a pre-bundled ESM chunk, imported as a blob module so its
- *     `import`s (already inlined by esbuild) and top-level await behave.
+ * Worker source (blob-URL MODULE worker, sidesteps Vite's worker.format).
+ * Overrides `console`, tracks timers to report real completion, and runs code
+ * as raw source in an async wrapper (`script` mode) or a pre-bundled ESM blob
+ * import (`module` mode).
  */
 const WORKER_SOURCE = `
 const post = (type, text, code) => postMessage({ type, text, code })
@@ -131,12 +126,7 @@ export class JsRuntime implements Runtime {
     return this.blobUrl
   }
 
-  /**
-   * Download the bundler only when this run actually needs it (TypeScript, or a
-   * script that imports another file). A plain one-file script skips it entirely
-   * and stays instant. Reports the bundler download through `onProgress`, so the
-   * shell's progress bar covers it exactly as it does an engine boot.
-   */
+  /** Downloads the bundler only when needed (TypeScript, or cross-file imports) — a plain script stays instant. Reports through `onProgress` like an engine boot. */
   async load(onProgress: (p: ProgressReport) => void, ctx?: RunContext): Promise<void> {
     if (!ctx) return
     const entryContent = ctx.files.find((f) => f.path === ctx.entry)?.content ?? ''
@@ -146,9 +136,8 @@ export class JsRuntime implements Runtime {
   async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
     const source = files.find((f) => f.path === entryPath)?.content ?? ''
 
-    // Decide the run shape. Bundling can fail (a type error, an unresolved
-    // import); that is a real program error, so print it and end the run cleanly
-    // rather than throwing up the "engine could not start" card.
+    // A bundle failure (type error, bad import) is a program error — print it
+    // and end cleanly, not as an engine-broken card.
     let mode: 'script' | 'module' = 'script'
     let code = source
     if (needsBundle(entryPath, source)) {

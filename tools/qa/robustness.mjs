@@ -44,10 +44,8 @@ const CHEERPJ_CDN = '**://cjrtnc.leaningtech.com/**'
 
 /**
  * One scenario, one browser context.
- *
- * `before` runs against the context before the first navigation, which is the
- * only place `addInitScript` and `route` can be installed early enough to catch
- * the app's own startup.
+ * `before` runs pre-navigation — the only point where addInitScript/route
+ * can catch the app's own startup.
  */
 async function scenario(name, { before, body }) {
   console.log(`\n--- ${name} ---`)
@@ -105,20 +103,14 @@ const BREAK_OPFS_ENTIRELY = `
   })
 `
 
-// Run's one home is the tab strip's editor-actions corner, where it names the
-// file it will start ("Run main.py") — hence the prefix match.
+// Prefix match: the accessible name includes the file, e.g. "Run main.py".
 const runBtn = (page) => page.getByRole('button', { name: /^Run\b/ }).first()
 const outputText = (page) => page.locator('[aria-label="Program output"]').innerText()
 const failureBlock = (page) => page.locator('[data-failure]')
 
 /**
- * A starter is applied, the files are really there, and Run is enabled.
- *
- * Waiting on `.cm-content` alone is not enough and finding that out was worth
- * the trip: the editor mounts from React state while the project's files come
- * from storage, so for a moment there is a tab, a CodeMirror instance, and no
- * project. Asserting on Run being enabled is asserting on the thing that
- * matters.
+ * Waits until Run is enabled, not just `.cm-content` — the editor can mount
+ * from React state before the project's files exist in storage.
  */
 async function waitForRunnable(page) {
   await page.waitForSelector('.cm-content', { timeout: 20000 })
@@ -133,14 +125,9 @@ async function waitForRunnable(page) {
 }
 
 /**
- * Load the app AND make sure it is cross-origin isolated before doing anything.
- *
- * Not optional politeness: without isolation, Python's `load()` rejects with
- * "needs cross-origin isolation" — a correct error for the wrong reason, which
- * made a network scenario report `data-failure=isolation` on maybe one run in
- * three. coi-serviceworker registers and then reloads to get the headers, and
- * occasionally the first reload does not stick, so we give it a second push
- * rather than testing whatever state we happened to land in.
+ * Without isolation, Python's load() rejects with a misleading error, which
+ * flaked network scenarios ~1 in 3 runs. The service worker's first reload
+ * doesn't always stick, so give it a second push.
  */
 async function openApp(page) {
   await page.goto(BASE, { waitUntil: 'load' })
@@ -166,10 +153,8 @@ async function startJavaProject(page) {
 }
 
 /**
- * Click a project-scoped action. One home at every size (one shell): the menu
- * bar's File menu. Above 1050px the titles sit in the bar; below, the bar
- * collapses to the single ☰ "Application Menu" trigger and File is a submenu
- * of it — VS Code's own behaviour.
+ * Click a project-scoped action via the File menu. Below 1050px the bar
+ * collapses into a single ☰ "Application Menu" trigger (VS Code parity).
  */
 async function clickProjectMenu(page, nameRe) {
   const wide = await page.evaluate(() => matchMedia('(min-width: 1050px)').matches)
@@ -194,9 +179,8 @@ async function typeProgram(page, source) {
 }
 
 // ---------------------------------------------------------------------------
-// A minimal ZIP writer. fflate is the app's dependency, not the suite's, and the
-// archives here are deliberately malformed or hostile — building them by hand is
-// the point, not an inconvenience.
+// A minimal ZIP writer — archives here are deliberately malformed, so hand-
+// building them (not fflate) is the point.
 // ---------------------------------------------------------------------------
 function crc32(buf) {
   let c
@@ -211,9 +195,8 @@ function crc32(buf) {
 }
 
 /**
- * `entries` is `[{ name, data }]` (stored) or `[{ name, deflated, originalSize, crc }]`
- * for a pre-compressed entry — which is how the bomb declares an unpacked size
- * far larger than the bytes on disk.
+ * `entries`: `[{name,data}]` (stored) or `[{name,deflated,originalSize,crc}]`
+ * for a pre-compressed entry — how the bomb declares a size far bigger than its bytes.
  */
 function makeZip(entries) {
   const chunks = []
@@ -267,8 +250,8 @@ async function importBuffer(page, name, buffer) {
   await page.getByRole('button', { name: /Import a \.zip|Import \.zip/ }).first().click()
   await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 5000 })
   await page.locator('input[type="file"]').setInputFiles({ name, mimeType: 'application/zip', buffer })
-  // Either a "ready to import" line or an error appears; both settle quickly
-  // except for the deliberately large ones, which is what the timeout is for.
+  // Ready-line or error settles quickly, except the deliberately oversized
+  // cases — hence the timeout.
   await page.waitForTimeout(2500)
 }
 
@@ -277,9 +260,8 @@ async function importBuffer(page, name, buffer) {
 // ===========================================================================
 await scenario('python engine CDN unreachable', {
   before: async (page, ctx) => {
-    // ctx.route, not page.route: coi-serviceworker proxies every engine fetch,
-    // and a service worker's own requests are outside the page's route table.
-    // Routing at the context is what actually reaches them.
+    // ctx.route, not page.route — the service worker's own fetches are
+    // outside the page's route table.
     await ctx.route(PYODIDE_CDN, (route) => route.abort('connectionfailed'))
   },
   body: async (page, ctx, consoleErrors) => {
@@ -340,8 +322,7 @@ await scenario('python engine CDN unreachable', {
 // ===========================================================================
 await scenario('python download aborted mid-flight', {
   before: async (page, ctx) => {
-    // Everything else is allowed through, so this is a connection that drops
-    // after the loader has already started — not a site that was never reached.
+    // Drops after the loader starts — not a site that was never reached.
     await ctx.route('**/pyodide.asm.wasm', (route) => route.abort('connectionreset'))
   },
   body: async (page) => {
@@ -416,8 +397,7 @@ await scenario('worker terminated mid-run', {
     const stillRunning = await page.getByRole('button', { name: /^Stop\b/ }).count()
     info(`control shows Stop: ${stillRunning > 0} (expected — nothing tells the page its worker died)`)
 
-    // Stop is what a student presses when it looks frozen, and it must always
-    // get them out — even though no onExit is ever coming.
+    // Stop must always get the student out, even with no onExit ever coming.
     if (stillRunning > 0) await page.getByRole('button', { name: /^Stop\b/ }).first().click()
     const recovered = await page
       .waitForFunction(
@@ -433,8 +413,7 @@ await scenario('worker terminated mid-run', {
       .catch(() => false)
     check(recovered, 'Stop ends the session even with no onExit from the engine')
 
-    // The transcript is flushed on an animation frame, so the line can land a
-    // beat after the control has already flipped back to Run.
+    // Transcript flushes on an animation frame — may land a beat after Run reappears.
     const said = await page
       .waitForFunction(
         () => /stopped responding|Stopped\./.test(
@@ -471,8 +450,7 @@ await scenario('worker terminated mid-run', {
 await scenario('OPFS writes fail', {
   body: async (page) => {
     await startPythonProject(page)
-    // Broken AFTER the project exists, so this is "storage filled up while the
-    // student was working" rather than "storage was never there".
+    // Broken AFTER the project exists — storage filled up mid-session, not missing from the start.
     await page.evaluate(BREAK_OPFS_WRITES)
     await typeProgram(page, 'print("this edit cannot be saved")')
 
@@ -542,20 +520,14 @@ await scenario('OPFS unavailable at startup', {
 await scenario('remembered project has vanished', {
   body: async (page) => {
     await startPythonProject(page)
-    // What iOS actually does: clear the origin's OPFS and leave localStorage
-    // alone, so prefs still point at a project id that no longer exists.
-    //
-    // The reload is issued from inside the same task as the wipe on purpose.
-    // `prefs()` caches in a module variable, so any `setPrefs` the app makes in
-    // between writes the real id back over the injected one from cache — which
-    // is a genuinely nasty way for a test to lie to you.
+    // Mimics iOS: wipes OPFS but leaves localStorage, so prefs point at a dead
+    // project id. Reload happens in the same task as the wipe — a setPrefs
+    // call in between would overwrite the injected id with the real one from
+    // prefs()'s module-level cache.
     await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory()
-      // The app's writes are open→write→close, but a debounced save (prefs
-      // touch, starter files, tab state) can still be IN FLIGHT here, and an
-      // open writable holds a lock that makes removeEntry throw
-      // NoModificationAllowedError. The app is behaving; the wipe retries
-      // until a full sweep completes with nothing mid-write, then reloads.
+      // A debounced save may still be in flight, holding a lock that makes
+      // removeEntry throw — retry until a full sweep hits nothing mid-write.
       for (let attempt = 0; attempt < 20; attempt++) {
         let locked = false
         for await (const [name] of root.entries()) {
@@ -667,8 +639,8 @@ await scenario('zip import edge cases', {
     await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
     await page.getByRole('button', { name: /Import a \.zip|Import \.zip/ }).first().click()
     await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 5000 })
-    // Handed over as a path, not a buffer: Playwright refuses in-memory files
-    // over 50 MB, and 50 MB is exactly the limit under test.
+    // Path, not buffer — Playwright refuses in-memory files over 50MB, which
+    // is the limit under test.
     const bigPath = join(mkdtempSync(join(tmpdir(), 'warsha-big-')), 'huge.zip')
     writeFileSync(bigPath, Buffer.alloc(55 * 1024 * 1024))
     const bigT0 = Date.now()
@@ -721,8 +693,8 @@ await scenario('500-file project', {
     info(`explorer rows rendered: ${rows}`)
     check(rows > 0, 'the explorer rendered the tree', `${rows} rows`)
 
-    // Export has to survive it too — this is the escape hatch every storage
-    // warning in the app points at, so it must work on the biggest project.
+    // Export is the escape hatch every storage warning points at — must work
+    // on the biggest project.
     const exportT0 = Date.now()
     const download = page.waitForEvent('download', { timeout: 60000 }).catch(() => null)
     await clickProjectMenu(page, /Export as \.zip/)
@@ -743,8 +715,8 @@ await scenario('500-file project', {
 await scenario('runaway output stays bounded', {
   body: async (page) => {
     await startPythonProject(page)
-    // No newline, so this grows ONE line — the case a line cap exists for, and
-    // the one Java has no engine-side output limit against.
+    // No newline — grows ONE line, the case a line cap exists for (Java has
+    // no engine-side limit).
     await typeProgram(page, 'while True: print("x" * 400, end="")')
     await runBtn(page).click()
     await page.waitForTimeout(15000)
@@ -825,8 +797,7 @@ await scenario('long session: 12 consecutive runs', {
     const workers = await page.evaluate(() => (window.__warshaWorkers ?? []).length)
     info(`workers constructed across the session: ${workers}`)
     info(`heap ${Math.round(firstHeap / 1e6)}MB -> ${Math.round(lastHeap / 1e6)}MB`)
-    // One worker per engine, reused across runs; a kill respawns one. Twelve
-    // clean runs should not have built twelve workers.
+    // One worker per engine, reused across runs — twelve clean runs shouldn't build twelve.
     check(workers <= 4, 'workers are reused across runs, not leaked', `${workers} constructed`)
     if (firstHeap > 0) {
       check(lastHeap < firstHeap * 3 + 50e6, 'heap did not grow without bound',
@@ -864,8 +835,8 @@ if (RUN_JAVA) {
       await page.getByRole('button', { name: /^Stop\b/ }).click().catch(() => {})
       await page.waitForTimeout(800)
 
-      // Delete a class the entry depends on, then reload so the JVM is rebuilt
-      // from the persisted /files/ — the exact conditions a stale .class needs.
+      // Reload rebuilds the JVM from persisted /files/ — the exact condition
+      // a stale .class needs.
       const deleted = await page.evaluate(async () => {
         const item = [...document.querySelectorAll('[role="treeitem"]')].find((el) =>
           /Person\.java|Student\.java/.test(el.textContent ?? ''),

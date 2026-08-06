@@ -23,18 +23,12 @@ import type { ProgressReport, SourceFile } from './types'
  */
 
 /** esbuild is initialised exactly once per page; both engines share it. */
-let esbuildMod: typeof import('esbuild-wasm') | null = null
 let ready: Promise<typeof import('esbuild-wasm')> | null = null
 
 /** Where `npm run assets` stages the bundler wasm (see package.json / .gitignore). */
 const WASM_URL = new URL('warsha-esbuild.wasm', document.baseURI).href
 
-/**
- * Fetch the wasm with byte progress, compile it, and hand esbuild a ready
- * `WebAssembly.Module`. Doing the fetch ourselves (rather than letting esbuild's
- * `wasmURL` do it) is what lets the shell show a determinate bar for the one big
- * download, exactly as the Python engine does for Pyodide.
- */
+/** Fetches the wasm with byte progress and compiles it — doing the fetch ourselves (not esbuild's `wasmURL`) is what enables a determinate progress bar. */
 async function fetchWasmModule(onProgress: (p: ProgressReport) => void): Promise<WebAssembly.Module> {
   const res = await fetch(WASM_URL)
   if (!res.ok) throw new Error(`Could not download the bundler (${res.status})`)
@@ -67,18 +61,13 @@ async function fetchWasmModule(onProgress: (p: ProgressReport) => void): Promise
   return WebAssembly.compile(bytes)
 }
 
-/**
- * Idempotent bootstrap. The first caller pays the download; concurrent and later
- * callers await the same promise. `worker: true` runs the wasm off the main
- * thread, so a large bundle never janks the editor.
- */
+/** Idempotent — first caller pays the download, later callers await the same promise. `worker: true` keeps a large bundle from janking the editor. */
 export function ensureBundler(onProgress: (p: ProgressReport) => void = () => {}): Promise<typeof import('esbuild-wasm')> {
   if (!ready) {
     ready = (async () => {
       const mod = await import('esbuild-wasm')
       const wasmModule = await fetchWasmModule(onProgress)
       await mod.initialize({ wasmModule, worker: true })
-      esbuildMod = mod
       return mod
     })().catch((err) => {
       // Let a later run retry from scratch rather than latching the failure.
@@ -89,23 +78,10 @@ export function ensureBundler(onProgress: (p: ProgressReport) => void = () => {}
   return ready
 }
 
-/** True once the bundler has finished booting — a caller can skip the progress
- *  UI on a warm engine. */
-export function isBundlerReady(): boolean {
-  return esbuildMod !== null
-}
-
-/**
- * React, bundled first-party and on-device (see tools/prebuild-react.mjs). A
- * page whose `main.tsx` imports `react` / `react-dom/client` gets React resolved
- * into its bundle from this asset, so the preview stays one self-contained,
- * inlinable document — the same "never link, always inline" rule Tailwind and
- * the wasm follow, and for the same COEP reason.
- */
+/** React, bundled first-party on-device (tools/prebuild-react.mjs) — keeps the preview one self-contained inlinable document, per the same COEP-driven never-link rule as Tailwind and the wasm. */
 const REACT_URL = new URL('warsha-react.json', document.baseURI).href
 
-/** A reserved virtual directory for the injected React shim/core files. The
- *  leading dot keeps it clear of any real project path a student would write. */
+/** Virtual dir for the injected React shim files; the leading dot avoids colliding with a real student path. */
 const REACT_DIR = '.warsha-react'
 
 /** Bare specifier → the virtual shim file that provides its named exports. */
@@ -122,10 +98,7 @@ interface ReactAssets {
 }
 let reactAssets: Promise<ReactAssets> | null = null
 
-/** Fetch the first-party React bundle once (same-origin from the parent, so the
- *  app's COEP is a non-issue here — the bytes are bundled *into* the student's
- *  output, never linked from the preview). Cached; a failure lets a later run
- *  retry rather than latching. */
+/** Fetches the React bundle once, same-origin (so COEP doesn't apply — bytes are bundled into student output, never linked). Cached; a failure lets the next run retry. */
 function loadReactAssets(): Promise<ReactAssets> {
   if (!reactAssets) {
     reactAssets = fetch(REACT_URL)
@@ -141,12 +114,7 @@ function loadReactAssets(): Promise<ReactAssets> {
   return reactAssets
 }
 
-/**
- * Does this project reach for React — a `.tsx`/`.jsx` file (its JSX compiles to
- * `react/jsx-runtime` imports) or any `import`/`require` of `react`/`react-dom`?
- * A false positive only costs an unused ~196 KB fetch (esbuild drops anything the
- * entry never imports), so the check errs toward loading.
- */
+/** Does this project use React (a .tsx/.jsx file, or an import of react/react-dom)? A false positive only costs an unused ~196KB fetch, so this errs toward loading. */
 export function needsReact(files: SourceFile[]): boolean {
   return files.some(
     (f) =>
@@ -156,22 +124,16 @@ export function needsReact(files: SourceFile[]): boolean {
 }
 
 /**
- * Svelte and Vue, served the same first-party way as React: their runtime is
- * prebuilt on-device (tools/prebuild-{svelte,vue}.mjs → warsha-{svelte,vue}.json)
- * and dropped into the virtual FS so the bundle stays one self-contained,
- * inlinable chunk. What React did not need — and these do — is a *compiler*: a
- * `.svelte`/`.vue` single-file component is transformed to JS at bundle time (see
- * the onLoad hook below). That compiler runs here in the parent app, not in the
- * sandboxed preview, so COEP never touches it; only the runtime is bundled into
- * the student's output.
+ * Svelte/Vue served like React (prebuilt on-device runtime in the virtual FS),
+ * but also need a *compiler* — the SFC compiles to JS at bundle time, in the
+ * parent app so COEP never touches it.
  */
 interface FrameworkAssets {
   version: string
   files: Record<string, string>
 }
 
-/** A cached, same-origin fetch of a prebuilt runtime JSON. Mirrors the React
- *  loader; a failure resets the cache so a later run can retry. */
+/** Cached same-origin fetch of a prebuilt runtime JSON, mirroring the React loader; failure resets the cache for retry. */
 function assetLoader(url: string, label: string): () => Promise<FrameworkAssets> {
   let cache: Promise<FrameworkAssets> | null = null
   return () => {
@@ -193,10 +155,7 @@ function assetLoader(url: string, label: string): () => Promise<FrameworkAssets>
 const SVELTE_DIR = '.warsha-svelte'
 const VUE_DIR = '.warsha-vue'
 
-/** Bare specifier → the virtual runtime file that provides it. Merged with
- *  REACT_SPECIFIERS in the resolver; a map entry only matters once the matching
- *  runtime has actually been injected (so an unrelated project still errors on a
- *  bare `import`). */
+/** Bare specifier → runtime file; merged with REACT_SPECIFIERS. Only resolves once that runtime's actually injected, so unrelated imports still error. */
 const SVELTE_SPECIFIERS: Record<string, string> = {
   svelte: `${SVELTE_DIR}/svelte.js`,
   'svelte/internal/client': `${SVELTE_DIR}/internal-client.js`,
@@ -210,8 +169,7 @@ const FRAMEWORK_SPECIFIERS: Record<string, string> = { ...REACT_SPECIFIERS, ...S
 const loadSvelteAssets = assetLoader(new URL('warsha-svelte.json', document.baseURI).href, 'Svelte')
 const loadVueAssets = assetLoader(new URL('warsha-vue.json', document.baseURI).href, 'Vue')
 
-/** The SFC compilers, lazily imported (a Vite chunk, like the esbuild glue) and
- *  cached. They run inside the bundler's onLoad, on the main thread. */
+/** SFC compilers, lazily imported (a Vite chunk, like esbuild) and cached; run inside the bundler's onLoad on the main thread. */
 let svelteCompiler: Promise<typeof import('svelte/compiler')> | null = null
 function loadSvelteCompiler(): Promise<typeof import('svelte/compiler')> {
   if (!svelteCompiler) svelteCompiler = import('svelte/compiler').catch((e) => ((svelteCompiler = null), Promise.reject(e)))
@@ -223,8 +181,7 @@ function loadVueCompiler(): Promise<typeof import('@vue/compiler-sfc')> {
   return vueCompiler
 }
 
-/** Does this project reach for Svelte / Vue — a `.svelte`/`.vue` file, or an
- *  import of the bare package? Same erring-toward-loading logic as needsReact. */
+/** Svelte/Vue file, or a bare-package import? Same erring-toward-loading logic as needsReact. */
 export function needsSvelte(files: SourceFile[]): boolean {
   return files.some((f) => /\.svelte$/i.test(f.path) || /(?:from|import)\s*['"]svelte(?:\/[^'"]*)?['"]/.test(f.content))
 }
@@ -232,25 +189,20 @@ export function needsVue(files: SourceFile[]): boolean {
   return files.some((f) => /\.vue$/i.test(f.path) || /(?:from|import)\s*['"]vue['"]/.test(f.content))
 }
 
-/** Compile one `.svelte` component to client JS. CSS is injected into the JS by
- *  the Svelte runtime (`css: 'injected'`), so no separate stylesheet handling. */
+/** Compiles one .svelte component to JS; CSS is injected by the runtime (`css: 'injected'`), no separate stylesheet handling. */
 function compileSvelte(compiler: typeof import('svelte/compiler'), source: string, path: string): string {
   const filename = path.split('/').pop() || path
   return compiler.compile(source, { filename, name: 'Component', generate: 'client', css: 'injected', dev: false }).js.code
 }
 
-/** A small, stable id per file path — feeds Vue's scoped-style attribute so a
- *  component's `[data-v-…]` CSS and its rendered DOM agree, without any RNG. */
+/** Stable id per file path, feeding Vue's scoped-style attribute so CSS and rendered DOM agree — no RNG needed. */
 function scopeHash(s: string): string {
   let h = 0
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
   return 'warsha' + (h >>> 0).toString(36)
 }
 
-/** Compile one `.vue` single-file component: `<script setup>` with its render
- *  function inlined, and scoped `<style>` compiled and injected at runtime via a
- *  `<style>` element (the preview has a DOM). Returns the loader so a `lang="ts"`
- *  script is transpiled by esbuild in the same pass. */
+/** Compiles a .vue SFC — inlined script-setup render, scoped styles injected at runtime via a `<style>` tag. Returns the loader so `lang="ts"` scripts get transpiled too. */
 function compileVue(compiler: typeof import('@vue/compiler-sfc'), source: string, path: string): { code: string; loader: 'js' | 'ts' } {
   const filename = path.split('/').pop() || path
   const id = scopeHash(path)
@@ -264,10 +216,8 @@ function compileVue(compiler: typeof import('@vue/compiler-sfc'), source: string
     inlineTemplate: true,
     templateOptions: { scoped: hasScoped, compilerOptions: { scopeId: hasScoped ? scopeId : undefined } },
   })
-  // The compiled `<script setup>` default-exports the component; name it so we can
-  // stamp `__scopeId` on it. That id is what makes Vue's renderer add the
-  // `data-v-…` attribute to this component's elements — without it, the scoped
-  // CSS (compiled to `.card[data-v-…]` below) matches nothing.
+  // Name the default export so we can stamp `__scopeId` on it — that's what makes
+  // Vue add the `data-v-…` attribute the scoped CSS needs to match.
   let code = compiler.rewriteDefault(script.content, '_sfc_main')
   if (hasScoped) code += `\n_sfc_main.__scopeId = ${JSON.stringify(scopeId)}`
   code += `\nexport default _sfc_main`
@@ -281,13 +231,7 @@ function compileVue(compiler: typeof import('@vue/compiler-sfc'), source: string
   return { code: code + inject, loader: lang }
 }
 
-/**
- * Does this entry need the bundler, or can it run as-is? A `.ts`/`.tsx`/`.jsx`
- * always does (it must be transpiled); a plain `.js`/`.mjs` only does when it
- * actually reaches for another module — so the common "one file, some
- * console.log" script keeps its zero-download, instant path (js.ts) and never
- * touches esbuild.
- */
+/** Does this entry need the bundler? TS/TSX/JSX always does; plain JS only if it imports another module — so a simple one-file script skips esbuild entirely (js.ts). */
 export function needsBundle(entryPath: string, content: string): boolean {
   if (/\.(tsx?|mts|cts|jsx)$/i.test(entryPath)) return true
   // import / export statements, dynamic import(), or CommonJS require().
@@ -315,8 +259,7 @@ function normalise(baseDir: string, spec: string): string {
   return out.join('/')
 }
 
-/** The candidate paths an extensionless import may mean, in resolution order —
- *  an exact file, then the TS/JS extensions, then an index file in a folder. */
+/** Candidate paths for an extensionless import, in order: exact file, then TS/JS extensions, then an index file. */
 function candidates(base: string): string[] {
   const exts = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.jsx', '.svelte', '.vue', '.json']
   return [base, ...exts.map((e) => base + e), ...exts.map((e) => `${base}/index${e}`)]
@@ -339,18 +282,11 @@ function isExternal(spec: string): boolean {
 }
 
 export interface BundleOptions {
-  /** Output format. ESM (the default) preserves top-level `await` and is what a
-   *  module worker or a `<script type="module">` loads; IIFE suits a classic
-   *  inline page script. */
+  /** Output format: ESM (default) preserves top-level `await`, for a module worker or `<script type="module">`; IIFE suits a classic inline script. */
   format?: 'esm' | 'iife'
 }
 
-/**
- * Bundle `entryPath` and everything it imports into one chunk of the requested
- * format. Throws an `Error` whose message is the collected, human-readable build
- * errors (path:line:col: text) — the caller prints it to stderr, so a student's
- * type error or bad import reads like any other program error in the Console.
- */
+/** Bundles `entryPath` and its imports into one chunk. Throws an `Error` with human-readable build errors (path:line:col: text), so it prints like any other program error. */
 export async function bundleProject(
   files: SourceFile[],
   entryPath: string,
@@ -359,10 +295,8 @@ export async function bundleProject(
   const esbuild = await ensureBundler()
   const byPath = new Map(files.map((f) => [f.path, f.content]))
 
-  // React on demand: drop the first-party shim/core files into the virtual FS so
-  // `react` / `react-dom/client` / `react/jsx-runtime` resolve to them and get
-  // bundled in (one shared instance — see prebuild-react.mjs). Nothing is fetched
-  // for a project that never touches React.
+  // React on demand — inject the shim files into the virtual FS so
+  // react/react-dom/jsx-runtime resolve and bundle in; nothing fetched otherwise.
   if (needsReact(files)) {
     const { files: reactFiles } = await loadReactAssets()
     for (const [name, content] of Object.entries(reactFiles)) {
@@ -370,9 +304,8 @@ export async function bundleProject(
     }
   }
 
-  // Svelte / Vue: inject the on-device runtime the same way, and load the SFC
-  // compiler up front so the onLoad hook (below) can transform `.svelte`/`.vue`
-  // synchronously. Nothing is fetched for a project that uses neither.
+  // Svelte/Vue: inject the runtime the same way and preload the SFC compiler so
+  // onLoad can transform files synchronously.
   let svelte: typeof import('svelte/compiler') | null = null
   if (needsSvelte(files)) {
     const [{ files: svelteFiles }, compiler] = await Promise.all([loadSvelteAssets(), loadSvelteCompiler()])
@@ -395,13 +328,11 @@ export async function bundleProject(
           return { path: normalise('', args.path), namespace: VFS }
         }
         if (isExternal(args.path)) return { path: args.path, external: true }
-        // A framework bare specifier (react / svelte / vue and friends) maps to
-        // its on-device runtime file — present only when that framework was
-        // injected above, so a missing map entry still errors cleanly.
+        // A framework bare specifier maps to its runtime file, present only when
+        // injected above — otherwise it errors cleanly like any missing import.
         const framework = FRAMEWORK_SPECIFIERS[args.path]
         if (framework && byPath.has(framework)) return { path: framework, namespace: VFS }
-        // Anything else not relative/root is a bare specifier (an npm package) —
-        // there is no node_modules on the device, so let esbuild report it.
+        // A remaining bare specifier is an npm package — no node_modules on-device, so let esbuild report it.
         if (!args.path.startsWith('.') && !args.path.startsWith('/')) return null
 
         const baseDir = dirOf(args.importer)
@@ -414,9 +345,7 @@ export async function bundleProject(
       build.onLoad({ filter: /.*/, namespace: VFS }, (args) => {
         const content = byPath.get(args.path)
         if (content === undefined) return null
-        // A single-file component is source, not JS: compile it first. A compile
-        // failure is returned as a build error (with the file named) so it reads
-        // like any other build error in the Console, and the rest still reports.
+        // A single-file component isn't JS yet — compile it first; a failure becomes a named build error, like any other.
         const named = args.path.split('/').pop() || args.path
         if (svelte && /\.svelte$/i.test(args.path)) {
           try {
@@ -445,12 +374,10 @@ export async function bundleProject(
       write: false,
       format: opts.format ?? 'esm',
       platform: 'browser',
-      // es2022 (the app's own build target) so top-level `await` is allowed in
-      // ESM output — a lower target makes esbuild reject it outright.
+      // es2022, matching the app's own target, so top-level `await` is allowed in ESM output.
       target: 'es2022',
-      // Automatic JSX: `.jsx`/`.tsx` compiles to `react/jsx-runtime` imports
-      // (resolved to the on-device shim above), so no `import React` is needed in
-      // scope. Harmless for plain JS/TS, which emits no JSX calls.
+      // Automatic JSX compiles to react/jsx-runtime imports (resolved to the shim
+      // above) — no `import React` needed; harmless for plain JS/TS.
       jsx: 'automatic',
       sourcemap: false,
       logLevel: 'silent',

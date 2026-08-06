@@ -6,11 +6,7 @@ export interface FsSnapshot {
   dirs: string[]
 }
 
-/**
- * Everything the IDE needs from storage. Paths are POSIX-ish, relative to the
- * project root, never leading-slashed: "app/Main.java", "models".
- * Implemented by OpfsStore (default) and MemoryStore (fallback / tests).
- */
+/** Storage the IDE needs. Paths are POSIX-ish, relative to root, never leading-slashed. Implemented by OpfsStore and MemoryStore. */
 export interface ProjectStore {
   readonly kind: string
   snapshot(): Promise<FsSnapshot>

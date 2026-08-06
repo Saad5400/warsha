@@ -29,37 +29,25 @@ const ToastContext = createContext<(message: string, kind?: ToastKind) => void>(
 export const useToast = () => useContext(ToastContext)
 
 /**
- * Where the stack pins (founder pass, 2026-08-05 — toasts must never cover
- * chrome):
+ * Stack position (toasts must never cover chrome):
+ *   - ≥900px: top-trailing, under the title bar — clear of everything but editor margin.
+ *   - <900px: bottom-centre, above the status bar — pinned to the top it sat on the
+ *     44px tab strip and read as collapsed.
+ *   - keyboard up: back to the top — the bottom belongs to the console transcript,
+ *     stdin row and keyboard (spec §4.3 rule 1).
  *
- *   - ≥900px: top-trailing, under the title bar — the corner that overlaps
- *     nothing but editor margin at desktop widths.
- *   - <900px: bottom-centre, above the status bar — VS Code's notification
- *     edge. Pinned to the top it sat exactly on the 44px tab strip (the strip
- *     read as collapsed; only the active tab's blue top accent peeked out).
- *   - software keyboard up (any width): back to the top, under the compacted
- *     bar. The bottom then belongs to the console transcript, the sticky stdin
- *     row and the keyboard itself (spec §4.3 rule 1), and a toast that covers
- *     the question a program just asked is worse than no toast at all.
- *
- * A sonner-style stack: each toast slides in from the edge it is pinned to and
- * slides back out when it goes. The whole stack pauses its clocks while a
- * pointer is over it or a key has focused something inside it, so nothing
- * expires while it is being read or while the dismiss button is being aimed at.
+ * Sonner-style: each toast slides in/out from its pinned edge. The stack pauses
+ * its clocks on hover/focus so nothing expires mid-read or mid-dismiss.
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([])
   const [paused, setPaused] = useState(false)
-  // The top bar compacts to --bar-top-kb with the keyboard up (spec §4.3 rule 3);
-  // the stack rides down with it rather than leaving a 4px gap.
+  // Top bar compacts to --bar-top-kb with keyboard up (spec §4.3 rule 3); the stack rides down with it, not leaving a gap.
   const keyboardOpen = useKeyboardOpen()
-  // Same 900px line as the overlay-sidebar breakpoint: the width below which
-  // the tab strip sits flush under the title bar and a top-pinned toast lands
-  // on it.
+  // Same 900px line as the overlay-sidebar breakpoint — below it the tab strip sits flush under the title bar, where a top-pinned toast would land.
   const wide = useMedia('(min-width: 900px)')
 
-  // Two steps: mark it leaving so the exit can play, then drop it. Anything
-  // already leaving is left alone, so a second dismiss cannot restart the clock.
+  // Marks it leaving (so the exit plays), then drops it. Already-leaving items are left alone so a second dismiss can't restart the clock.
   const dismiss = useCallback((id: number) => {
     setItems((cur) => {
       const t = cur.find((i) => i.id === id)
@@ -73,8 +61,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = Date.now() + Math.random()
     setItems((cur) => {
       const next = [...cur, { id, message, kind }]
-      // Count only what is still alive: a toast on its way out must not push a
-      // live one off the end of the stack.
+      // Count only what's still alive — a toast on its way out shouldn't push a live one off the stack.
       const live = next.filter((t) => !t.leaving)
       if (live.length <= MAX_VISIBLE) return next
       const drop = new Set(live.slice(0, live.length - MAX_VISIBLE).map((t) => t.id))
@@ -88,20 +75,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        // Top-trailing at ≥900px (nothing under that corner but editor); at
-        // phone widths bottom-centre above the status bar, VS Code's
-        // notification edge — top-pinned it covered the tab strip (see the
-        // provider comment). Keyboard up trumps width: the bottom is spoken for.
+        // Top-trailing at ≥900px; bottom-centre above the status bar below that
+        // (see provider comment for why). Keyboard up trumps width either way.
         className={
           'pointer-events-none fixed inset-x-0 z-(--z-toast) flex flex-col gap-2 px-4 ' +
           (keyboardOpen || wide ? 'items-end' : 'items-center')
         }
-        // The one computed value here, and the exception ARCHITECTURE §4.2
-        // already names: the offset tracks a bar. Top mode tracks the top bar,
-        // which compacts to --bar-top-kb when the software keyboard is up
-        // (--bar-title, not --bar-top: the title bar is its own token so a
-        // toast never sits ON the bar instead of 8px under it). Bottom mode
-        // tracks the status bar, plus the home-indicator safe area beneath it.
+        // The offset tracks a bar (ARCHITECTURE §4.2's exception): top mode tracks
+        // --bar-title (not --bar-top) so a toast sits 8px under it, not on it, and
+        // switches to --bar-top-kb with the keyboard up. Bottom mode tracks the
+        // status bar plus the home-indicator safe area.
         style={
           keyboardOpen
             ? { top: 'calc(var(--bar-top-kb) + var(--sp-2))' }
@@ -125,35 +108,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Never colour alone: every kind carries a glyph as well (spec §10), so the
- * three stay distinguishable in greyscale. `data-kind` stays on the element —
- * ARCHITECTURE §4 publishes it as the way a stylesheet reads this state.
+ * Never colour alone — every kind carries a glyph too (spec §10), so they stay
+ * distinguishable in greyscale. `data-kind` is the published state contract
+ * (ARCHITECTURE §4) a stylesheet reads.
  */
 const GLYPH: Record<ToastKind, string> = { info: 'i', success: '✓', error: '✕' }
 
 const toast = cva(
   cx(
-    // `toast` carries NO styles any more — the rule it used to name is gone from
-    // index.css. It stays on the element purely as a selector hook, because
-    // `.toast` is how screenshots and ad-hoc QA have always found these. The
-    // published state contract is still `role="status"` on the stack and
-    // `data-kind` on the row (ARCHITECTURE §4).
+    // `toast` is a dead style hook now, kept only because screenshots/QA select `.toast`.
+    // Real state contract: `role="status"` on the stack, `data-kind` on the row (ARCHITECTURE §4).
     'toast',
     'pointer-events-auto flex min-h-touch w-full max-w-[min(32rem,90vw)] items-center gap-2',
     'rounded-md border py-2 pe-1 ps-4 text-meta leading-normal shadow-raised',
     'animate-toast-in data-[leaving=true]:pointer-events-none data-[leaving=true]:animate-toast-out',
-    // A toast under a finger follows it with nothing in the way — in particular
-    // without the enter animation still overriding its inline transform.
+    // A toast under a finger follows it with nothing in the way — no enter animation still fighting the inline transform.
     'data-[dragging=true]:animate-none',
   ),
   {
     variants: {
       kind: {
         info: 'border-border-subtle bg-surface-3 text-text-1',
-        // The glyph carries the tone; a full green frame floating over the tab
-        // strip was the loudest thing on screen for a message that says
-        // "everything worked" (founder, 2026-08-05). Errors keep their frame —
-        // they are the one kind worth interrupting for.
+        // Glyph carries the tone — a green frame over the tab strip was the loudest thing on
+        // screen for "everything worked" (founder, 2026-08-05). Errors keep their frame; worth interrupting for.
         success: 'border-border-subtle bg-surface-3 text-text-1',
         error: 'border-danger bg-danger-soft text-danger',
       },
@@ -183,9 +160,7 @@ function Toast({
   const drag = useRef<{ id: number; x: number; y: number } | null>(null)
   const close = () => onDismiss(item.id)
 
-  // Keyed on the item, so a later toast arriving cannot restart this one's clock.
-  // Held while the stack is paused or this one is being dragged, and abandoned
-  // once it is on its way out.
+  // Keyed on the item, so a later toast can't restart this one's clock. Held while paused/dragged, abandoned once leaving.
   const remaining = useRef(LIFETIME[item.kind])
   const startedAt = useRef(0)
   const held = paused || dragging || !!item.leaving
@@ -203,8 +178,7 @@ function Toast({
     if (!drag.current) return
     drag.current = null
     setDragging(false)
-    // Dismissed by swipe: dx is deliberately left where the finger let go, so
-    // the exit animation carries on from there instead of snapping back first.
+    // dx is left where the finger let go, so the exit animation continues from there instead of snapping back first.
     if (Math.abs(dx) > SWIPE_OUT) close()
     else setDx(0)
   }

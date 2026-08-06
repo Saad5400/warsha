@@ -39,31 +39,19 @@
 import type { Bundle } from './en'
 
 /**
- * First-strong isolate (U+2068 … U+2069) around interpolated text.
- *
- * The Unicode bidi algorithm resolves a neutral character — `/`, `.`, `(` — by
- * its surroundings, so `داخل models/` puts the slash on the *Arabic* side and
- * shows `داخل /models`. An isolate makes the run resolve its own direction and
- * keeps its punctuation with it. FSI rather than LRI on purpose: a project the
- * student named «مشروعي» must stay RTL, and only first-strong detection gets
+ * First-strong isolate (U+2068 … U+2069) around interpolated text — bidi
+ * otherwise resolves a neutral char like `/` by its surroundings, turning
+ * `داخل models/` into `داخل /models`. FSI, not LRI: an Arabic project name
+ * like «مشروعي» must still resolve RTL, and only first-strong detection gets
  * both cases right from one call.
  */
 const iso = (s: string | number) => `⁨${s}⁩`
 
 /**
- * File extensions, pre-isolated — and they MUST be, unlike the Latin words
- * around them.
- *
- * `Java` or `PDF` dropped into an Arabic sentence is fine: it opens with a
- * strong left-to-right letter, so the bidi algorithm gives the whole run to
- * LTR and it renders as written. `.zip` does not. Its first character is a
- * NEUTRAL full stop, which resolves to the direction of whatever surrounds it
- * — Arabic — so the dot is emitted on the Arabic side of the letters and
- * «صدّر ملف .zip» renders on screen as «صدّر ملف zip.»، an extension that does
- * not exist. Isolating the token keeps the dot with the letters it belongs to.
- *
- * Every literal extension in this file goes through one of these. A bare
- * '.zip' inside a string is a bug, not a style choice.
+ * File extensions, pre-isolated — unlike `Java`/`PDF` (strong-LTR, so they
+ * render fine bare), `.zip` opens on a neutral full stop that resolves to
+ * Arabic and renders reversed as «zip.». Every literal extension in this file
+ * must go through one of these — a bare '.zip' in a string is a bug.
  */
 const ZIP = iso('.zip')
 const JAVA = iso('.java')
@@ -73,34 +61,28 @@ const C = iso('.c')
 const H = iso('.h')
 
 /**
- * `C#`, isolated — the same bug as `.zip`, arriving from the other end.
- *
- * Here the neutral character TRAILS the Latin letters instead of leading them,
- * and it resolves exactly as badly: the `#` sits between an L run and Arabic,
- * takes the paragraph's RTL direction, and is emitted to the *left* of the `C`
- * — so «أساسيات C#» reads «#C» on screen, which is not a language. Any token
- * that opens or closes on punctuation needs the isolate; a bare `Java`, `React`
- * or `scanf` does not, because it is strong-LTR at both ends.
+ * `C#`, isolated — same bug as `.zip` but trailing: the `#` takes the
+ * paragraph's RTL direction and renders left of the `C`, so «أساسيات C#»
+ * shows as «#C». Only tokens that open or close on punctuation need this;
+ * `Java` or `scanf` don't, being strong-LTR at both ends.
  */
 const CSHARP = iso('C#')
 
 /**
- * Arabic counted nouns. Not a nicety — «3 ملف» is wrong the way "3 file" is.
+ * Arabic counted nouns — «3 ملف» is as wrong as "3 file".
  *
  *   1  → ملف واحد          (mufrad)
  *   2  → ملفان             (muthanna)
  *   3–10 → 3 ملفات          (jamʿ qilla)
  *   11+  → 11 ملفًا          (tamyīz, singular accusative)
  *
- * Hundreds (100, 200 …) formally take the singular genitive; they are folded
- * into the 11+ form here, which is the reading everyone accepts and which no
- * student of ours will hit — the counts in this UI are files in a project.
+ * Hundreds formally take the singular genitive but fold into 11+ here — a
+ * reading nobody will notice, since counts here are just files in a project.
  *
- * A counted noun also drags agreement along with it, which is why several call
- * sites below either put the verb *before* the count (a verb preceding its
- * subject stays singular in Arabic, so one form fits all four cases) or bake
- * the adjective into the four forms. Appending a fixed adjective to the result
- * of `files()` is what produces «ملف واحد جاهزة».
+ * Agreement travels with the count, so call sites below either put the verb
+ * *before* it (stays singular regardless of number) or bake the adjective
+ * into all four forms — e.g. `files()` plus a fixed adjective would wrongly
+ * produce «ملف واحد جاهزة».
  */
 function arCount(n: number, one: string, two: string, few: string, many: string): string {
   if (n === 1) return one
@@ -135,8 +117,6 @@ export const AR: Bundle = {
   runStopped: 'توقّف البرنامج. وملفاتك كلها محفوظة.',
 
   // ---- console ----
-  stdinHint: 'برنامجك ينتظر منك إجابة — اكتبها ثم اضغط Enter.',
-  stdinHintShort: 'ينتظر إجابتك — اكتبها ثم Enter.',
   consoleEmpty: 'شغّل كودك وستظهر مخرجاته هنا.',
   consoleCleared: 'مُسحت المخرجات.',
 
@@ -151,23 +131,13 @@ export const AR: Bundle = {
   stdinIdle: 'لا شيء يعمل الآن — اضغط زر التشغيل أولًا.',
   stdinWaitingPlaceholder: 'اكتب إجابتك ثم اضغط Enter',
 
-  // ---- console status line ----
-  statusIdle: 'كل شيء جاهز — اضغط زر التشغيل متى شئت.',
-  statusIdleShortcut: (shortcut) => `كل شيء جاهز — اضغط زر التشغيل، أو ${iso(shortcut)}.`,
-  statusRunning: 'برنامجك يعمل الآن.',
-  statusOk: 'انتهى البرنامج — exit code 0.',
-  statusFailed: (code) => `توقّف قبل أن يكمل — exit code ${code}. السبب في الأسطر الحمراء.`,
-  statusFailedShort: (code) => `توقّف قبل أن يكمل — exit code ${code}.`,
-  statusFailedNoCode: 'توقّف قبل أن يكمل — السبب في الأسطر الحمراء.',
-  statusStopped: 'أوقفتَه أنت. وملفاتك محفوظة.',
-
   // ---- transcript controls ----
   copyOutput: 'نسخ المخرجات',
   copyOutputDone: 'نُسخت',
   copyOutputFailed: 'لم ينجح النسخ — حدّد النص وانسخه بنفسك.',
   clearOutput: 'مسح المخرجات',
-  // "999+" is dropped rather than translated: a `+` glued to a number inside an
-  // RTL badge renders on the wrong side, and the sentence says the same thing.
+  // "999+" is dropped, not translated — a `+` glued to a number in an RTL
+  // badge renders on the wrong side, and the words already say it.
   newLines: (n) =>
     n > 999 ? 'أكثر من 999 سطرًا جديدًا' : arCount(n, 'سطر جديد', 'سطران جديدان', 'أسطر جديدة', 'سطرًا جديدًا'),
   jumpToLatest: 'الانتقال إلى الأحدث',
@@ -192,8 +162,8 @@ export const AR: Bundle = {
   searchMatchCase: 'مطابقة حالة الأحرف',
   searchWholeWord: 'الكلمة بأكملها',
   searchNoResults: 'لا نتائج',
-  // Aa and ab are the labels printed on the two toggles, so they are named, not
-  // described — the student is being pointed at a thing they can see.
+  // Aa and ab are the toggles' own printed labels — named, not described,
+  // since the student can see them.
   searchNoResultsHint: 'جرّب كلمات أخرى، أو أوقف زرَّي Aa و ab.',
   searchSummary: (matches, fileCount) => `${results(matches)} في ${files(fileCount)}`,
   searchCapped: (n) => `تُعرض أول ${n} نتيجة — ضيّق بحثك لترى البقية.`,
@@ -263,7 +233,6 @@ export const AR: Bundle = {
   importAction: 'استيراد',
   // The adjective is inside the count for agreement — see arCount's note.
   importPicked: (n) => `${arCount(n, 'ملف واحد جاهز', 'ملفان جاهزان', 'ملفات جاهزة', 'ملفًا جاهزًا')} للاستيراد.`,
-  importFileCount: (n) => files(n),
 
   // ---- accessible names for the chrome ----
   a11yActivityBar: 'شريط الأنشطة',
@@ -487,13 +456,13 @@ export const AR: Bundle = {
   menuToggleConsole: 'إظهار/إخفاء وحدة التحكم',
   menuBiggerText: 'تكبير الخط',
   menuSmallerText: 'تصغير الخط',
-  // Text size and view scale are two different controls, so the four rows say
-  // which one they move: الخط for the code, الواجهة for everything around it.
+  // Text size and view scale are different controls — الخط names the code
+  // font, الواجهة names everything around it.
   menuZoomIn: 'تكبير الواجهة',
   menuZoomOut: 'تصغير الواجهة',
   menuResetZoom: 'إعادة ضبط حجم الواجهة',
-  // Literal edges, not reading order: this moves the button to that side of the
-  // glass, and in RTL «اليسار» is still the left of the screen.
+  // Literal screen edges, not reading order — in RTL «اليسار» is still the
+  // left of the screen.
   menuRunOnLeft: 'زر التشغيل على اليسار',
   menuRunOnRight: 'زر التشغيل على اليمين',
   menuRun: 'تشغيل',
@@ -513,8 +482,8 @@ export const AR: Bundle = {
   menuBack: 'رجوع',
 
   // ---- the command palette ----
-  // The category before the colon is the same word that heads the menu bar, so
-  // a student who read it in a menu can type it here and find the command.
+  // The category before the colon matches the menu bar's word, so a student
+  // who saw it there can find it here.
   cmdCloseQuickInput: 'إغلاق الإدخال السريع',
   cmdCloseDrawer: 'إغلاق درج الملفات',
   cmdFileNewFile: 'ملف: ملف جديد…',
@@ -550,19 +519,16 @@ export const AR: Bundle = {
   cmdProjectsDelete: 'المشاريع: حذف المشروع…',
   cmdViewLanguage: 'عرض: تغيير لغة الواجهة',
 
-  // Starter names and blurbs, by Template id — see the note in en.ts for why
-  // this record is empty there and filled here. Any id missing falls back to
-  // the template's own English fields rather than disappearing from the picker.
+  // Starter names and blurbs, by Template id — see en.ts's note on why this
+  // record lives only here. Missing ids fall back to the template's English
+  // fields rather than disappearing.
   //
-  // The name says what the starter IS and the blurb says what is inside it, in
-  // the voice of a teacher pointing at an exercise — not a feature list. The
-  // level is already a heading above the card, so no blurb repeats it.
+  // Name says what the starter IS; blurb says what's inside, teacher-voice,
+  // not a feature list — the level heading above already covers that.
   //
-  // Where the language names the thing, the language's word is kept: Java and
-  // C# call them `methods`, so the card does too, while Python and C call them
-  // functions and «الدوالّ» is what every Arabic curriculum calls those. Same
-  // for `class`, `struct`, `interface`, `ref`, `runes`, `import`/`export` —
-  // the student meets them spelled that way in the file the card opens.
+  // Keep each language's own term for a concept it names differently: Java/C#
+  // say `methods`, Python/C say functions/«الدوالّ» — the student meets it
+  // spelled that way in the file the card opens.
   templates: {
     'python-basics': {
       name: 'أساسيات Python',

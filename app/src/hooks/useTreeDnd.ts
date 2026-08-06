@@ -9,24 +9,16 @@ export interface DndNode {
 }
 
 /**
- * Pointer-based drag-and-drop for the file tree — one code path for mouse,
- * touch and pen, because the HTML5 drag API never worked under a thumb (it
- * fires no events for touch) and a phone is exactly where a student reorganises
- * their files. Modelled on ConsoleDivider's pointer-capture handle.
+ * Pointer-based DnD for the file tree (not HTML5 drag, which never fires on
+ * touch), one code path for mouse/touch/pen — modelled on ConsoleDivider.
  *
- * The gesture differs by input, and it has to: a list that scrolls with a swipe
- * cannot also start a drag on that same swipe.
- *   • Mouse — press and move past a few pixels starts the drag. A plain click
- *     still opens the file; there is nothing to disambiguate.
- *   • Touch / pen — a short press-and-hold *lifts* the row first (native
- *     reordering everywhere does this), so a quick swipe still scrolls the tree.
- *     Holding without then moving is a long-press, and falls through to the
- *     context menu — the gesture it always was.
+ * Mouse: press + move past a threshold starts the drag; a click still opens
+ * the file. Touch/pen: press-and-hold lifts first so a swipe still scrolls;
+ * holding without moving falls through to the context menu.
  *
- * A drop lands the node in a folder: onto a folder row, into it; onto a file,
- * beside it (its parent); onto empty tree space, at the root. Moving a folder
- * into itself or its own subtree, or back into the folder it already lives in,
- * is a no-op and shows no target.
+ * Drop target: onto a folder goes into it, onto a file lands beside it (its
+ * parent), onto empty space goes to root. Moving into itself/its own subtree
+ * or back into its current folder is a no-op.
  */
 
 const TOUCH_HOLD_MS = 360 // press-and-hold before a touch lifts into a drag
@@ -50,8 +42,7 @@ interface Pending {
 export interface TreeDnd {
   /** The node currently being dragged, or null. Drives the floating chip. */
   dragging: DndNode | null
-  /** The folder a drop would land in right now: a folder path, '' for root, or
-   *  null when the pointer is over no valid target. Highlights that row. */
+  /** Folder a drop would land in: a path, '' for root, or null for no valid target. Highlights that row. */
   dropDir: string | null
   /** Pointer position and input kind for the floating drag chip. */
   chip: { x: number; y: number; touch: boolean } | null
@@ -81,8 +72,8 @@ export function useTreeDnd(opts: {
   const cb = useRef(opts)
   cb.current = opts
 
-  // All drag state lives in refs: the pointer listeners are created once (so
-  // add/removeEventListener pair up) and must see live values on every event.
+  // State lives in refs — listeners are created once (so add/removeEventListener
+  // pair up) and need live values on every event.
   const pending = useRef<Pending | null>(null)
   const active = useRef(false) // has the press crossed into a real drag?
   const movedSinceLift = useRef(false) // did the pointer travel after lifting?
@@ -94,8 +85,7 @@ export function useTreeDnd(opts: {
   const autoScroll = useRef(0) // signed px/frame; 0 = idle
   const raf = useRef<number | undefined>(undefined)
 
-  // One stable object of methods, built once. Everything it needs is in a ref,
-  // so it never goes stale and never needs to be a dependency of anything.
+  // Built once; everything it reads is in a ref, so it never goes stale or needs to be a dependency.
   const self = useRef<{
     lift(x: number, y: number): void
     move(e: PointerEvent): void
@@ -124,9 +114,8 @@ export function useTreeDnd(opts: {
       raf.current = autoScroll.current ? requestAnimationFrame(tickAutoScroll) : undefined
     }
 
-    // Resolve the drop folder under the pointer and highlight it. elementFromPoint
-    // still hit-tests the real element under the finger even while another element
-    // holds pointer capture, which is what makes cross-row targeting work.
+    // Resolves and highlights the drop folder under the pointer — elementFromPoint
+    // still hit-tests under pointer capture, enabling cross-row targeting.
     const updateTarget = (x: number, y: number) => {
       const drag = pending.current
       if (!drag) return
@@ -190,8 +179,7 @@ export function useTreeDnd(opts: {
       active.current = true
       movedSinceLift.current = false
       clearHold()
-      // Capture now, not on press: on touch, capturing before the hold would
-      // steal the scroll gesture; on mouse it is harmless but pointless earlier.
+      // Captured now, not on press — on touch, capturing earlier would steal the scroll gesture.
       try {
         drag.el.setPointerCapture(drag.pointerId)
       } catch {
@@ -253,8 +241,7 @@ export function useTreeDnd(opts: {
       up(e: PointerEvent) {
         const drag = pending.current
         const dir = dropDirRef.current
-        // A touch that was lifted but never moved is a long-press: hand it to
-        // the menu instead of dropping nowhere.
+        // Touch lifted but never moved = long-press; hand it to the context menu instead of dropping nowhere.
         const longPress = !!drag?.touch && active.current && !movedSinceLift.current
         const node = drag?.node
         const dragged = active.current
@@ -273,8 +260,7 @@ export function useTreeDnd(opts: {
 
   const onRowPointerDown = (e: ReactPointerEvent, node: DndNode) => {
     if (e.button !== 0) return // let right-click reach the context menu
-    // Never hijack a press meant for the row's own controls (the ⋯ button, the
-    // rename field): those own the interaction, and a drag from them is noise.
+    // Don't hijack presses meant for the row's own controls (⋯ button, rename field) — those own the interaction.
     if ((e.target as HTMLElement).closest('button, input, a, [role="menu"]')) return
     if (pending.current) self.current!.cancel() // abandon a half-started gesture
     justDragged.current = false // a fresh press; any stale swallow is void now

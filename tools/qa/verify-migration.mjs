@@ -10,13 +10,8 @@ import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -83,9 +78,7 @@ for (const [label, needle] of [['main.py', 'main.py'], ['helpers/', 'helpers'], 
   else fail(`migrated file present: ${label}`, files.join(', '))
 }
 
-// One shell: the project list is File > Open Recent at every size (this
-// harness is wide, so the File title sits in the menu bar; below 1050px it
-// would live behind the ☰ "Application Menu" trigger).
+// Project list is under File > Open Recent (behind ☰ Application Menu below 1050px; this harness is wide).
 let rows
 await page.getByRole('menuitem', { name: 'File', exact: true }).click()
 await page.waitForSelector('[role="menu"]', { timeout: 5000 })

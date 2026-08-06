@@ -31,7 +31,6 @@ mkdirSync(SHOTS, { recursive: true })
 const results = []
 const pass = (n, d = '') => { results.push(['PASS', n, d]); console.log(`PASS  ${n}${d ? ' :: ' + d : ''}`) }
 const fail = (n, d = '') => { results.push(['FAIL', n, d]); console.log(`FAIL  ${n}${d ? ' :: ' + d : ''}`) }
-const info = (m) => console.log(`      ${m}`)
 
 const launch = async (tag) => {
   const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), `warsha-share-${tag}-`)), {

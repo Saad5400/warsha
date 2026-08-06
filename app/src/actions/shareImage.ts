@@ -25,12 +25,11 @@ import { splitPath } from '../fs/project'
 import { highlightCss, highlightLines } from './highlight'
 import { deliverFile, type Delivered } from './deliver'
 
-/** Past this many lines the card stops and says how many more there were —
- *  a screenshot is a snippet, not a scroll of the whole file. */
+/** Past this many lines the card truncates and says how many more — a
+ *  screenshot is a snippet, not the whole file. */
 const MAX_LINES = 60
-/** carbon.now.sh's own sweet spot: narrow enough to read, wide enough that a
- *  typical line does not wrap even though wrapping is off. Purely a floor —
- *  a longer line still renders at its own full width, never clipped. */
+/** carbon.now.sh's sweet spot — readable but wide enough that typical lines
+ *  don't wrap. A floor only: a longer line still renders at full width, uncapped. */
 const MIN_BODY_WIDTH = 640
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
@@ -41,35 +40,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): H
 
 const DOT_COLORS = ['#FF5F56', '#FFBD2E', '#27C93F']
 
-/** Builds the off-screen card and attaches it to `document.body`.
- *  `card` is what to hand to `toPng` — the visible, styled element. `wrap` is
- *  what to remove afterwards: `card`'s invisible positioning container, kept
- *  separate because capturing `wrap` itself captures its own `opacity: 0`
- *  (needed so the card is never visible to the student, however briefly) —
- *  passing it to `toPng` produced a technically-successful, silently blank
- *  PNG, with no error to say why. */
+/** Builds the off-screen card. Pass `card` (not `wrap`) to `toPng` —
+ *  capturing `wrap` also captures its own `opacity: 0` and silently produces
+ *  a blank PNG. */
 async function buildCard(path: string, source: string): Promise<{ wrap: HTMLDivElement; card: HTMLDivElement }> {
   const lines = await highlightLines(source, path, oneDarkHighlightStyle)
   const shown = lines.slice(0, MAX_LINES)
   const hidden = lines.length - shown.length
 
-  // Invisible and untouchable, not off-canvas: `opacity-0` + `pointer-events-none`
-  // at (0, 0) rather than a huge negative offset. `position: fixed` already
-  // keeps it out of document flow/scroll regardless of position, so there is
-  // nothing an offset would buy — and `toPng()` is called on `card` below,
-  // never on `wrap`, which is the part that actually matters: `wrap`'s own
-  // opacity is exactly what must NOT be what gets rasterised.
+  // `opacity-0` + `pointer-events-none` at (0,0), not a huge negative offset —
+  // `position: fixed` already keeps it out of flow, so an offset buys nothing.
+  // `toPng()` must capture `card`, never `wrap` (whose opacity would get rasterised).
   const wrap = el('div', 'fixed left-0 top-0 opacity-0 pointer-events-none')
-  // THE CARD IS ENGLISH LTR IN EVERY LANGUAGE. It is built inside the live
-  // document, so in an Arabic session it would otherwise inherit
-  // `<html dir="rtl">` and every flex row below would reverse: the line numbers
-  // would sit to the right of the code they number, the traffic-light dots and
-  // the filename would swap ends, and the `warsha` mark would move to the left.
-  // The card is a picture of code, and code is left-to-right — same rule as the
-  // editor it is a picture of (editor/setup.ts).
-  //
-  // Set here, before freezeComputedStyles() below, so `direction` is frozen as
-  // ltr along with everything else the capture reads.
+  // Forced LTR: built inside the live document, so an Arabic session would
+  // otherwise reverse every row via inherited `dir="rtl"`. Code is always
+  // LTR, like the editor it's a picture of (editor/setup.ts). Set before
+  // freezeComputedStyles() below so `direction` gets frozen too.
   wrap.dir = 'ltr'
   wrap.style.direction = 'ltr'
   wrap.style.textAlign = 'left'
@@ -138,35 +124,23 @@ async function buildCard(path: string, source: string): Promise<{ wrap: HTMLDivE
   card.appendChild(footer)
 
   document.body.appendChild(wrap)
-  // Every colour, size and radius on this card comes from a Tailwind utility
-  // that resolves through `var(--token)` (index.css's `@theme inline`, per
-  // ARCHITECTURE §4) — and html-to-image rasterises by serialising the node
-  // into an SVG <foreignObject> and painting THAT through a fresh `Image()`,
-  // a context where `var()` no longer resolves against this page's `:root`.
-  // Without this, the card renders as a same-colour blank rectangle: every
-  // `var()` falls through to its property's initial value, which is
-  // `transparent` for colour and `0` for a dimension. Freezing every
-  // computed value as a literal inline style, while the card is still in
-  // this document and every var() still resolves normally, is what makes the
-  // capture pixel-faithful regardless of that limitation.
+  // Every style here resolves through Tailwind's `var(--token)`, but
+  // html-to-image rasterises through an SVG <foreignObject> painted via a
+  // fresh `Image()`, where var() no longer resolves — everything would render
+  // blank without freezing computed values to literal inline styles first.
   freezeComputedStyles(wrap)
   return { wrap, card }
 }
 
 /**
- * See the comment above the one call site. Walks `root` and every
- * descendant, replacing each one's live (`var()`-bearing) style with the
- * literal values the cascade actually resolved them to right now.
+ * Walks `root` and every descendant, replacing each one's live
+ * (`var()`-bearing) style with the literal values the cascade resolved them
+ * to right now.
  *
- * Two passes, deliberately — read every value first, apply second. A single
- * combined pass (read this node's computed style, write it, move on) is
- * subtly wrong: `getComputedStyle()` returns a *live* `CSSStyleDeclaration`,
- * so writing property N of M through it can change what property N+1 reads
- * back before this same node is even done, if the two interact (in
- * practice, this is exactly what made every syntax-highlighted span in the
- * card render in one flat colour — some property alphabetically after
- * `color` was overwriting the paint colour with a now-stale computed value).
- * Snapshotting first means every read sees the same pre-freeze style.
+ * Two passes, deliberately: `getComputedStyle()` returns a *live* object, so
+ * a combined read-write pass can let writing property N change what property
+ * N+1 reads later on the same node — this once flattened every
+ * syntax-highlighted span in the card to one colour. Snapshot first, then apply.
  */
 function freezeComputedStyles(root: HTMLElement): void {
   const nodes = [root, ...root.querySelectorAll('*')].filter((n): n is HTMLElement => n instanceof HTMLElement)
@@ -185,22 +159,18 @@ function freezeComputedStyles(root: HTMLElement): void {
 }
 
 /**
- * Render `path`'s `source` to a PNG and hand it over — share sheet or
- * download, whichever this device has (see actions/deliver.ts, including why
- * a cancelled share sheet resolves rather than throws).
+ * Renders `source` to a PNG and delivers it — share sheet or download (see
+ * deliver.ts, including why a cancelled share resolves rather than throws).
  */
 export async function shareFileAsImage(path: string, source: string): Promise<Delivered> {
-  // Built and attached to the DOM first, on its own — `buildCard` and the
-  // `html-to-image` import are then wrapped in the same try/finally that
-  // removes it, so a failed dynamic import can never leave `wrap` orphaned.
+  // buildCard and the html-to-image import share one try/finally, so a failed
+  // dynamic import can never leave `wrap` orphaned.
   const { wrap, card } = await buildCard(path, source)
   try {
     const { toPng } = await import('html-to-image')
-    // `card`, not `wrap`: `wrap` is the thing with `opacity: 0` on it (so the
-    // card is never visible to the student, however briefly), and capturing
-    // an ancestor's own opacity captures the 0 right along with it.
-    // Two device pixels per CSS pixel: sharp on a Retina/iPad display without
-    // ballooning a 40-line snippet into a multi-megabyte image.
+    // `card`, not `wrap` — capturing an ancestor also captures its own opacity:0.
+    // 2x pixel ratio: sharp on Retina/iPad without ballooning a 40-line
+    // snippet into a multi-megabyte image.
     const dataUrl = await toPng(card, { pixelRatio: 2, backgroundColor: undefined })
     const blob = await (await fetch(dataUrl)).blob()
     const fileName = `${splitPath(path).name}.png`

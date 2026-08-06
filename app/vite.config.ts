@@ -156,6 +156,11 @@ ${urls}
 type LocaleMeta = {
   dir: 'ltr' | 'rtl'
   ogLocale: string
+  /** Filename in public/, rendered from the matching docs/design/og-image*.html
+   *  by tools/brand/build-brand-assets.mjs. An RTL card is not a mirrored LTR
+   *  card — the window shells mirror, the code and console panes deliberately do
+   *  not — which is why they are two authored documents, not one template. */
+  image: string
   title: string
   description: string
   socialDescription: string
@@ -166,6 +171,7 @@ const LOCALE_META: Record<'en' | 'ar', LocaleMeta> = {
   en: {
     dir: 'ltr',
     ogLocale: 'en_US',
+    image: 'og-image.png',
     title: 'Warsha — Java & Python IDE in your browser',
     description:
       'Warsha is a free, open-source IDE that runs Java and Python entirely in your browser — no install, no account. It works on a phone, and your files stay on your device.',
@@ -177,6 +183,7 @@ const LOCALE_META: Record<'en' | 'ar', LocaleMeta> = {
   ar: {
     dir: 'rtl',
     ogLocale: 'ar_SA',
+    image: 'og-image-ar.png',
     title: 'ورشة — بيئة برمجة Java و Python داخل المتصفّح',
     description:
       'ورشة بيئة برمجة مجانية ومفتوحة المصدر، تشغّل Java و Python داخل متصفّحك — بلا تثبيت وبلا حساب. تعمل على الجوال، وملفاتك تبقى على جهازك.',
@@ -223,10 +230,38 @@ function warshaLocaleEntries(): Plugin {
         return // No HTML in this output (a library build); nothing to localise.
       }
       for (const [loc, meta] of Object.entries(LOCALE_META)) {
+        assertCardSize(resolve(distDir, meta.image), root, meta.image)
         mkdirSync(resolve(distDir, loc), { recursive: true })
         writeFileSync(resolve(distDir, loc, 'index.html'), localiseHtml(root, loc, meta, origin))
       }
     },
+  }
+}
+
+/**
+ * Every locale's card must be exactly the dimensions index.html declares.
+ *
+ * `og:image:width`/`height` are a promise to the scraper, not a hint: a card
+ * whose real pixels disagree gets laid out against the declared box and comes
+ * back letterboxed or cropped, and — like every other failure on this path —
+ * says nothing at all about why. Now that a second PNG shares one declared size,
+ * that is an invariant across two files nobody is watching, so it is checked
+ * here instead of remembered.
+ *
+ * Read straight out of the PNG's IHDR (8-byte signature, 4-byte length, "IHDR",
+ * then two big-endian uint32s). No image library for two integers.
+ */
+function assertCardSize(file: string, rootHtml: string, name: string) {
+  const declared = (attr: string) =>
+    Number(rootHtml.match(new RegExp(`property="og:image:${attr}"[^>]*content="(\\d+)"`))?.[1])
+  const png = readFileSync(file)
+  if (png.readUInt32BE(0) !== 0x89504e47) throw new Error(`${name} is not a PNG`)
+  const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)]
+  const [dw, dh] = [declared('width'), declared('height')]
+  if (w !== dw || h !== dh) {
+    throw new Error(
+      `${name} is ${w}x${h} but index.html declares og:image ${dw}x${dh}. Re-render it (node tools/brand/build-brand-assets.mjs) or change the declared size — a card that disagrees with its own dimensions is cropped by the scraper with no error.`,
+    )
   }
 }
 
@@ -255,6 +290,15 @@ function localiseHtml(root: string, loc: string, meta: LocaleMeta, origin: strin
   html = setMeta(html, 'name="twitter:title"', meta.title)
   html = setMeta(html, 'name="twitter:description"', meta.socialDescription)
   html = setMeta(html, 'name="twitter:image:alt"', meta.imageAlt)
+
+  // The card itself. An Arabic result that previews an English screenshot is
+  // half a translation — and this is the one asset a reader judges before they
+  // have read a word. og:image:width/height are NOT rewritten: both cards are
+  // 1200x630, which assertCardSize() checks on every build precisely because
+  // that shared assumption now spans two files.
+  const image = `${origin}/${meta.image}`
+  html = setMeta(html, 'property="og:image"', image)
+  html = setMeta(html, 'name="twitter:image"', image)
 
   // og:locale is what this page IS; the alternate is the other one. Swapping
   // both keeps the pair honest on each copy.
@@ -293,6 +337,8 @@ function localiseHtml(root: string, loc: string, meta: LocaleMeta, origin: strin
       data.name = loc === 'ar' ? 'ورشة' : 'Warsha'
       data.description = meta.description
       data.inLanguage = loc
+      data.image = image
+      data.screenshot = image
       return `${open}\n      ${JSON.stringify(data, null, 2).split('\n').join('\n      ')}\n    ${close}`
     },
   )

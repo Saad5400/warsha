@@ -11,13 +11,8 @@ import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/* Overridable so this runs anywhere:
- *   WARSHA_URL    base URL of a SERVED BUILD  (default http://127.0.0.1:8086/)
- *   WARSHA_SHOTS  where screenshots land      (default tools/qa/screenshots/)
- *   CHROME        Chrome binary               (default /usr/bin/google-chrome)
- *
- * 127.0.0.1 rather than localhost deliberately: a preview server bound to IPv4
- * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
+// WARSHA_URL / WARSHA_SHOTS / CHROME override the defaults below.
+// 127.0.0.1, not localhost — a preview bound to IPv4 only breaks once Chrome resolves "localhost" to ::1.
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
 const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
@@ -43,20 +38,11 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 240000) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle), s, { timeout: t })
-// Run lives in the tab strip's editor-actions corner and names its file
-// ("Run main.py") — hence the prefix match.
+// Run's label includes the filename ("Run main.py") — hence the prefix match.
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 
-/**
- * WHERE project switching lives no longer forks (one shell, founder ruling):
- * the menu bar's File > Open Recent submenu is the project list at every size
- * and pointer — one row per project, most recent first, the open one marked
- * "Open" and unselectable. Above 1050px the File title sits in the bar; below,
- * the bar collapses to the single ☰ "Application Menu" trigger and File is a
- * submenu of it (VS Code's own behaviour). Lifecycle actions (rename / delete
- * / empty) are File-menu rows AND 'Projects: …' palette commands; this desk
- * harness drives the palette.
- */
+// Project list is File > Open Recent everywhere (behind ☰ below 1050px); this
+// harness runs lifecycle actions via the palette, not the menu rows.
 const isDesk = () => page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
 
 /** Open the File menu, wherever this width puts it, leaving it open. */
@@ -84,8 +70,7 @@ async function openMenu() {
 }
 async function menuRows() {
   const rows = await openMenu()
-  // Escape once per open menu level (the submenu, its parents, and — below
-  // 1050px — the ☰ menu behind them all).
+  // Escape once per open menu level, including the ☰ menu below 1050px.
   for (let i = 0; i < 4 && (await page.locator('[role="menu"]').count()); i++) {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(150)
@@ -99,9 +84,8 @@ async function clickMenu(nameRe) {
   await page.locator('[role="menu"]').last().getByRole('menuitem').filter({ hasText: nameRe }).first().click()
   await page.waitForTimeout(400)
 }
-/** Run a lifecycle command by its palette title ('Projects: Rename Project…').
- *  The same actions are File-menu rows; `fileRowRe` drives those where the
- *  palette's keyboard entry point is not the natural one (a touch profile). */
+/** Runs a lifecycle command via the palette (or its File-menu row via `fileRowRe`
+ *  on touch, where the palette shortcut isn't natural). */
 async function runProjectCommand(paletteTitle, fileRowRe) {
   if (await isDesk()) {
     await page.keyboard.press('Control+Shift+P')
@@ -144,9 +128,8 @@ let rows = await menuRows()
 info(`project list on first visit: ${JSON.stringify(rows)}`)
 if (rows.some((r) => /^My project/.test(r))) pass('first visit has exactly one project, listed in the menu', rows.find((r) => /^My project/.test(r)))
 else fail('first visit has exactly one project, listed in the menu', JSON.stringify(rows))
-// One File menu at every size: creation, transfer AND lifecycle rows live in
-// it (the lifecycle pair is also 'Projects: …' palette commands, exercised for
-// real in sections 6 and 7).
+// One File menu holds creation, transfer, and lifecycle rows (lifecycle also
+// exists as palette commands, exercised in sections 6-7).
 {
   await openFileMenu()
   const fileRows = (await page.locator('[role="menu"]').last().getByRole('menuitem').allInnerTexts()).map((r) => r.replace(/\s+/g, ' ').trim())
@@ -162,9 +145,8 @@ else fail('first visit has exactly one project, listed in the menu', JSON.string
 }
 
 // ============================== 2. python project from the start panel, then Run
-// One entry point now (New from a starter → language → starter); the advanced
-// starter is the two-file shapes project this suite runs. It fills the empty
-// first project in place and takes its name.
+// New from a starter → language → starter is the only entry point; the advanced
+// starter fills the empty first project in place.
 await seedStarter(page, { name: 'Python (OOP starter)' })
 await page.waitForTimeout(1200)
 info(`explorer after python starter: ${JSON.stringify(await explorerFiles())}`)
@@ -193,10 +175,8 @@ await setEditor('print("python project fingerprint")\n')
 await page.waitForTimeout(600)
 
 // ================================================= 3. new java project from menu
-// The per-template menu rows are gone; "New Project…" opens the picker (from
-// the one File menu, whatever the width), and from a project that already has
-// files a starter opens the "New project from …" name prompt rather than
-// replacing anything.
+// "New Project…" opens the picker from the one File menu; if the project already
+// has files it prompts for a name instead of replacing it.
 await openFileMenu()
 await page.getByRole('menuitem', { name: /New Project…/i }).click()
 await page.waitForTimeout(400)

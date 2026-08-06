@@ -50,8 +50,7 @@ page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message))
 
 const outputText = () => page.locator('[aria-label="Program output"]').innerText()
 
-/* Replace the editor's whole content with `code`, then wait out the 350ms OPFS
- * debounce (same trick verify.mjs uses) so a reload can't race the write. */
+// Replaces editor content, then waits out the 350ms OPFS debounce so a reload can't race the write.
 async function setEditor(code) {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
@@ -144,10 +143,8 @@ if (off.includes('offline works') && off.includes('Finished. (exit code 0)'))
 else fail('offline: Python ran from the cached runtime', off.slice(-200))
 
 // ------------------------------------------------------- Java (best-effort, warn)
-// Java is not driven here: it was never downloaded in this session, so there is
-// nothing cached to run offline, and CheerpJ's offline story depends on whether
-// its CDN assets are CORS/CORP-cacheable (see the header of this file). Left as a
-// manual check so a flaky third-party CDN can never fail this suite.
+// Java untested here (nothing cached, and CheerpJ's CDN caching is flaky) — left
+// as a manual check so a third-party CDN can't fail this suite.
 warn('Java offline not exercised by this suite', 'verify by hand: run Java online, go offline, run again')
 
 // ---------------------------------------------------------------- console errors

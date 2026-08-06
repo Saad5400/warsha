@@ -3,41 +3,18 @@ import { IconFilesStack } from './ui/Icons'
 import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
 import { COPY } from '../copy'
 
-/* The rail itself. It starts in row 2, under the full-width title bar (the
- * title bar spans both columns), so the two stack instead of meeting at a
- * corner — VS Code's frame, where the title runs edge to edge and the rail
- * hangs below it. Same fill as that bar, and the same inset-shadow divider
- * every other bar in the app uses (a real border would come out of its 48px).
- *
- * NO top padding, deliberately. It used to have 4px, which started the first
- * button at y=4 and left its active rule floating with bare surface above it
- * at x=0 — the founder read that, correctly, as a stray sliver on the app's
- * edge. VSCode's rail starts its first item flush with the top. */
+// Row 2, under the full-width title bar, so they stack instead of meeting at a corner (VS Code's frame).
+// No top padding: it used to be 4px, leaving the active rule floating above a bare sliver of surface.
 const RAIL =
   'flex flex-col items-center flex-none w-activity bg-surface-0 ' +
   'shadow-[inset_-1px_0_0_0_var(--border-subtle)] pl-[env(safe-area-inset-left)] ' +
   'col-start-1 row-start-2 row-span-1'
 
-/* 48px square — the column's own width, comfortably past the 44px floor.
- *
- * Hover feedback is FOREGROUND-ONLY: an intentional divergence from the
- * icon-btn recipe. VS Code's rail never paints a fill behind a hovered or
- * active glyph — the whole column stays flat and the ink does the talking
- * (#868686 resting, #D7D7D7 hovered/active, via the --ab-* tokens; never
- * pure white).
- *
- * The active indicator is a 2px accent rule drawn as an inset box-shadow.
- * It used to be a `border-l-[length:var(--rail)]` border, which needed a
- * `length:` type hint to survive Tailwind v4 (a bare custom property on
- * `border-l-` is read as a colour and compiles to width 0 — ARCHITECTURE
- * §4.1) and, being box-sized, pushed every glyph 1px off the column's true
- * center at all times. The shadow paints over the padding box instead: no
- * type-hint trap, no reserved width, glyphs dead-center.
- *
- * Disabled is a colour change, never opacity — opacity destroys measured
- * contrast. Disabled ink deliberately equals the inactive tone, so the rail
- * reads as exactly two tones: bright where you are or point, dim everywhere
- * else. */
+// 48px square — the column's own width, past the 44px floor.
+// Hover/active is ink-only, no fill, unlike the normal icon-btn recipe (VS Code's rail).
+// Active rule is an inset box-shadow, not a border-l: Tailwind v4 reads a bare custom
+// property on border-l as a color (width 0), and a real border would offset the glyph 1px.
+// Disabled is a color swap, not opacity, to keep measured contrast.
 const SLOT =
   'grid place-items-center flex-none size-activity cursor-pointer touch-manipulation ' +
   'text-(--ab-fg-inactive) transition-colors duration-(--dur-fast) ease-standard ' +
@@ -45,10 +22,7 @@ const SLOT =
   'data-[state=active]:text-(--ab-fg) ' +
   'data-[state=active]:shadow-[inset_2px_0_0_0_var(--ab-active-border)] ' +
   'disabled:text-(--ab-fg-inactive) disabled:cursor-default ' +
-  // The ring goes inside the box: the column is exactly as wide as the button,
-  // so any outset ring would be clipped by the rail's own edge. -1px matches
-  // the app-wide 1px ring width (founder ruling 2026-08-02: 1px/0 default,
-  // was 2px/2px) so it sits flush against the inside with zero overflow.
+  // Inset ring: an outset one would be clipped by the rail's own edge.
   'focus-visible:outline-offset-[-1px]'
 
 export type SideView = 'explorer' | 'search'
@@ -67,25 +41,9 @@ export interface ActivityBarProps {
 }
 
 /**
- * VSCode's far-left icon column (LAYOUT-VSCODE §1), at EVERY width — one shell
- * (founder ruling 2026-08-05). Below 900px it drives the overlay drawer. (A
- * fold-away strip and a sub-480 40px narrowing shipped briefly on 2026-08-05
- * and were reverted the same day — the founder confirmed the 48px column is
- * fine on a real device, and the extra chevron was chrome without a job.)
- *
- * Every slot on this rail does something real (the founder's no-dead-UI
- * mandate). The W1-D silhouette slots — Source Control, Run and Debug,
- * Extensions, Accounts — were permanently disabled stand-ins for views that do
- * not exist, and are gone until the views do; familiarity is not worth a
- * column of buttons that answer nothing. What remains: Explorer and Search
- * switch the sidebar between its two views (each toggles the sidebar closed
- * when its view is already up — VS Code's rail), and the Manage gear opens a
- * menu of the app-scoped actions VS Code keeps behind its own gear.
- * aria-labels are the bare VS Code view names, so `[aria-label^=...]` prefix
- * selectors in QA keep matching when shortcut suffixes arrive.
- *
- * The column is 48px per the plan, and every hit area is the full column
- * square — past the 44px floor at full width.
+ * VS Code's icon column, unchanged at every width (a narrower/fold-away variant
+ * was tried and reverted the same day). Explorer/Search toggle the sidebar shut
+ * when their view is already up; Manage opens the app-scoped actions menu.
  */
 export function ActivityBar({
   activeView,
@@ -94,10 +52,7 @@ export function ActivityBar({
   manageItems,
 }: ActivityBarProps) {
   const [manageOpen, setManageOpen] = useState(false)
-  // The gear holds a submenu now (Language), and this rail is on screen at
-  // every width — so it needs the same in-place navigation the menu bar's ☰
-  // uses on a phone. Without it the flyout opens beside a panel that already
-  // reaches the edge and the rows land off-screen.
+  // So the Manage submenu drills in-place instead of opening off-screen at narrow widths.
   const drillIn = useDrillIn()
 
   return (
@@ -114,9 +69,7 @@ export function ActivityBar({
         <IconFilesStack size={24} />
       </button>
 
-      {/* A VIEW now, like VS Code's: the slot switches the sidebar to the
-          cross-file Search view (SearchView.tsx). The editor's own find panel
-          stays on Mod+F / Edit > Find. */}
+      {/* Switches the sidebar to cross-file Search; editor's own find stays on Mod+F. */}
       <button
         type="button"
         className={SLOT}
@@ -129,8 +82,7 @@ export function ActivityBar({
         <IconSearch size={24} />
       </button>
 
-      {/* Everything after this spacer sits flush with the bottom of the rail —
-          VS Code's Manage gear. */}
+      {/* Pushes Manage to the bottom of the rail, VS Code style. */}
       <div className="mt-auto" aria-hidden="true" />
 
       <TriggerMenu
@@ -151,17 +103,9 @@ export function ActivityBar({
   )
 }
 
-/* ---- codicon glyphs, local to the rail. ----------------------------------
- *
- * Path data traced from microsoft/vscode-codicons (MIT): search and
- * settings-gear. Fill-based on a 24px grid — NOT the 20px/1.6px-stroke grid of
- * ui/Icons.tsx, and deliberately so: the rail renders VS Code's own shapes at
- * VS Code's own size, and a restroked 20px approximation is exactly the
- * "almost right" that reads as a knock-off. The 16px-native search codicon is
- * scaled ×1.5 onto the same grid, which lands its 1px strokes at the 1.5px
- * weight of the 24px set. They stay here rather than in ui/Icons.tsx because
- * nothing else may use them: one odd grid, one owner. (IconFilesStack lives in
- * ui/Icons.tsx beside the folder it deliberately is not.) */
+// ---- codicon glyphs, local to the rail ----
+// Path data traced from microsoft/vscode-codicons (MIT), kept on their native 24px
+// grid (not ui/Icons.tsx's 20px stroke grid) so they render as VS Code's own shapes.
 type IconProps = Omit<SVGProps<SVGSVGElement>, 'viewBox' | 'children'> & { size?: number }
 
 function CodIcon({ size = 24, children, ...rest }: IconProps & { children?: React.ReactNode }) {

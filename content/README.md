@@ -1,6 +1,6 @@
 # Warsha content
 
-Everything students and teachers read, plus the two starter projects that ship inside the app.
+Everything students and teachers read, plus the starter projects that ship inside the app.
 
 ```
 templates/       the projects the app offers on first open
@@ -11,7 +11,15 @@ CURRICULUM.md    where the content goes after v0.1
 
 ## templates/
 
-Two projects, meant to be copied into the app verbatim:
+22 starter projects across five languages — Python, Java, Web (HTML/CSS/JS/TS/React/Vue/Svelte),
+C#, and C — each meant to be copied into the app verbatim and each with a matching entry in
+[`app/src/templates.ts`](../app/src/templates.ts), which is generated from this directory (see
+[`app/ARCHITECTURE.md`](../app/ARCHITECTURE.md) §5 — never hand-edit the code strings there; change
+the starter here and regenerate).
+
+Two of them are different from the rest: `templates/java-oop/` and `templates/python-starter/` are
+Education's reviewed, compiled, stdin-tested originals, and the exercise pack below is written
+against them.
 
 - `templates/java-oop/` — `app/Main.java`, `models/Person.java`, `models/Student.java`.
   Entry point `app/Main.java`. Teaches packages, a base class, one `@Override`, one `Scanner` read.
@@ -20,6 +28,11 @@ Two projects, meant to be copied into the app verbatim:
 
 Both were compiled and run before being committed. The Java files compile clean under
 `javac --release 8 -Xlint:all`.
+
+The other twenty — `java-basics`, `java-methods`, `python-basics`, `python-functions`, the ten
+`web-*` starters, `csharp-basics`, `csharp-methods`, `csharp-starter`, `c-basics`, `c-methods`, and
+`c-starter` — are later drafts: each compiles and runs with piped stdin, but is pending the same
+review. Hold them to that bar before treating them as final.
 
 ## What the templates assume of the runtime
 

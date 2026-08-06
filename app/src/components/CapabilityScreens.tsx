@@ -5,13 +5,8 @@ import { LogoLockup } from './Logo'
 import { COPY } from '../copy'
 
 /**
- * The sentence for a failed check, by id.
- *
- * The check in capabilities.ts answers a boolean and carries no prose, so the
- * report can be built at boot — before a locale is even resolved — and still
- * read in whichever language is active when it is finally rendered. Adding a
- * check means adding a case; the fallthrough is silent on purpose, because a
- * blank line is better than an English one on an Arabic screen.
+ * Sentence for a failed check, by id. Fallthrough is silent on purpose — a blank
+ * line beats an English one on an Arabic screen.
  */
 function capabilityMessage(id: string): string {
   switch (id) {
@@ -28,11 +23,7 @@ function capabilityMessage(id: string): string {
   }
 }
 
-/**
- * Shown instead of the IDE when a hard requirement is missing, so a student
- * never sits in front of a spinner that will never finish. Plain English, what
- * still works, and a concrete suggestion.
- */
+/** Shown instead of the IDE when a hard requirement is missing, so a student never waits on a spinner that will never finish. */
 export function CapabilityFatalScreen({ report }: { report: CapabilityReport }) {
   return (
     <div className="scroller fixed inset-0 bg-surface-0">

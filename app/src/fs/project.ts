@@ -14,11 +14,7 @@ type Listener = () => void
 
 const WRITE_DEBOUNCE_MS = 350
 
-/**
- * The in-memory single source of truth for the open project. Every mutation
- * lands here first, then gets flushed to the ProjectStore (debounced for edits,
- * immediate for structural changes) so the UI never waits on disk.
- */
+/** Single source of truth for the open project; mutations land here then flush to ProjectStore — debounced for edits, immediate for structural changes. */
 export class Project {
   private store: ProjectStore
   private files = new Map<string, string>()
@@ -30,13 +26,7 @@ export class Project {
   private storageListeners: Listener[] = []
   private problem: StorageProblem | null = null
 
-  /**
-   * Starts on an empty in-memory store and is pointed at real storage by
-   * `switchStore` once the project to open has been resolved. That indirection
-   * is what keeps the constructor from touching OPFS: reaching for a directory
-   * handle with `create: true` would recreate the pre-multi-project root before
-   * the migration in fs/projects.ts had a chance to look for it.
-   */
+  /** Starts on an in-memory store; `switchStore` points it at real storage later — touching OPFS here could recreate the legacy root before migration runs. */
   constructor(store: ProjectStore = new MemoryStore()) {
     this.store = store
   }
@@ -58,12 +48,7 @@ export class Project {
       this.dirtyListeners = this.dirtyListeners.filter((l) => l !== cb)
     }
   }
-  /**
-   * Fires when a write to storage failed, and again when one finally succeeds.
-   * The shell turns this into the persistent banner: a student who cannot save
-   * has to be told while they can still export a .zip, not when they reopen the
-   * tab tomorrow and the work is gone.
-   */
+  /** Fires on write failure, and again on recovery. Drives the persistent banner — told now, while a .zip export is still possible, not tomorrow. */
   onStorageProblem(cb: Listener): () => void {
     this.storageListeners.push(cb)
     return () => {
@@ -91,12 +76,7 @@ export class Project {
     if (before !== (next?.fault ?? null)) this.emitStorage()
   }
 
-  /**
-   * Every path from this class to the store goes through here. A rejected write
-   * used to escape as an unhandled rejection from a `setTimeout`, which is
-   * invisible to a student and to `try/catch` at the call site alike; now it
-   * becomes state the UI can render, and the caller learns whether it worked.
-   */
+  /** Every store write funnels through here — used to fail as an invisible unhandled rejection in a `setTimeout`; now it's UI-renderable state. */
   private async attempt(op: () => Promise<void>, path?: string): Promise<boolean> {
     try {
       await op()
@@ -108,15 +88,7 @@ export class Project {
     }
   }
 
-  /**
-   * Point this instance at another project's storage and load it.
-   *
-   * Pending edits are flushed to the *old* store first, so switching away from a
-   * project mid-keystroke cannot drop the last 350 ms of typing — and cannot
-   * write it into the project being switched to either. The instance identity is
-   * kept deliberately: React holds this object, and replacing it would remount
-   * the editor and the runner for what is, to them, the same open project.
-   */
+  /** Switches storage after flushing pending edits to the old store (no dropped keystrokes or cross-writes); keeps this instance's identity so React doesn't remount. */
   async switchStore(store: ProjectStore): Promise<void> {
     await this.saveAll()
     this.store = store
@@ -124,10 +96,8 @@ export class Project {
   }
 
   async load(): Promise<void> {
-    // A store that cannot even be read is reported, not thrown: the caller is a
-    // startup path, and an exception there leaves the app with no project at all
-    // and no way to say why. An empty tree plus a banner is recoverable; a
-    // rejected boot promise is a blank screen.
+    // Unreadable store is reported, not thrown — an exception here leaves boot
+    // with no project and no explanation.
     let snap: FsSnapshot = { files: [], dirs: [] }
     await this.attempt(async () => {
       snap = await this.store.snapshot()
@@ -191,11 +161,7 @@ export class Project {
     )
   }
 
-  /**
-   * A file that would not write stays **dirty**. That is deliberate: the amber
-   * dot is the one honest signal left, the next flush retries it for free, and
-   * `saveAll()` can then tell Run that the engine would be reading stale bytes.
-   */
+  /** A failed write stays dirty on purpose — the amber dot is the only honest signal, and the next flush retries free. */
   private async flush(path: string): Promise<boolean> {
     const content = this.files.get(path)
     if (content === undefined) return true
@@ -204,11 +170,7 @@ export class Project {
     return ok
   }
 
-  /**
-   * Run() calls this so the engine always sees what's on screen. Returns false
-   * when something could not be written, so the caller can say so rather than
-   * running last-known-good bytes and blaming the student's code.
-   */
+  /** Called before Run so the engine sees what's on screen; returns false so the caller doesn't blame stale bytes on the student's code. */
   async saveAll(): Promise<boolean> {
     for (const [, t] of this.timers) clearTimeout(t)
     this.timers.clear()
@@ -220,8 +182,7 @@ export class Project {
     if (this.files.has(path)) throw new Error(`"${path}" already exists`)
     this.files.set(path, content)
     for (const d of ancestors(path)) this.dirs.add(d)
-    // In memory first, then storage: a create that cannot reach disk still gives
-    // the student the file they asked for, marked dirty, with the banner up.
+    // Memory first, then storage — a failed disk write still gives the student their file, just marked dirty.
     if (!(await this.attempt(() => this.store.writeFile(path, content), path))) this.markDirty(path)
     this.emitStructure()
   }
@@ -286,8 +247,7 @@ export class Project {
     }
     const snapshot = this.snapshot()
     if (!(await this.attempt(() => this.store.replaceAll(snapshot)))) {
-      // An import or a starter that could not be written is still on screen and
-      // still runnable; every file is marked dirty so the next save retries it.
+      // Still on screen and runnable even if the write failed — mark everything dirty so the next save retries.
       for (const f of snapshot.files) this.dirty.add(f.path)
     }
     this.emitStructure()

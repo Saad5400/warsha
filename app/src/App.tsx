@@ -54,57 +54,31 @@ import { DirectionProvider } from '@radix-ui/react-direction'
 import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
 import pkg from '../package.json'
 
-/** The one structural adjustment small screens keep (founder ruling: ONE
- *  layout — the VS Code desktop shell at every size and pointer): below 900px
- *  the sidebar overlays as a drawer instead of docking, and the software-
- *  keyboard compaction applies. Everything else is the same chrome restyled
- *  by tokens, never a different composition. */
+/** Below this, the sidebar becomes a drawer and keyboard compaction applies —
+ *  the only layout change at any screen size. */
 const NARROW = '(max-width: 899px)'
 
-/** View-scale bounds (prefs.uiScale — the founder's "everything feels really
- *  zoomed in" slider). CSS `zoom` on #root, NEVER transform:scale — zoom
- *  reflows real layout (Chromium/WebKit/FF126+), transform only paints it
- *  smaller and breaks every measurement. Snapped to the 0.05 notch so the
- *  slider, Zoom In/Out and the persisted value always agree. */
+/** Applied via CSS `zoom` on #root, never transform:scale — zoom reflows
+ *  layout, transform only rescales paint and breaks every measurement. */
 const SCALE_MIN = 0.7
 const SCALE_MAX = 1.3
 const SCALE_STEP = 0.05
 const clampScale = (v: number) =>
   Number.isFinite(v) ? Math.min(SCALE_MAX, Math.max(SCALE_MIN, Math.round(v * 20) / 20)) : 1
 
-/* VSCode's floor plan (docs/design/LAYOUT-VSCODE.md, the ASCII drawing): a
- * FULL-WIDTH title bar over an activity-bar column beside the body, with a
- * full-width status bar underneath (the title bar spans both columns —
- * `col-span-2` in TopBar — and the rail starts under it, VS Code's own
- * stacking). ONE floor plan at every width and pointer (founder ruling): the
- * rail and the status bar render on phones too — 48px of rail is the price of
- * the same shell everywhere, and the body column is minmax(0,1fr) so the
- * editor keeps the rest. The `auto` tracks still collapse to 0 when a child
- * stands down (the status bar while the software keyboard is up).
- *
- * Placement is explicit (`col-start`/`row-start`/`row-span`) rather than by flow
- * order, because the title bar spans two columns while the status bar does too —
- * auto-placement cannot express that. Fixed and sized from --app-h
- * (written by ui/viewport.ts) so iOS cannot scroll the document out from under a
- * focused input. */
+/* VS Code's floor plan (docs/design/LAYOUT-VSCODE.md): same grid at every
+ * width — rail and status bar render on phones too, by design. Placement is
+ * explicit (col/row-start), not flow order, since both bars span two columns.
+ * Sized from --app-h (ui/viewport.ts) so iOS can't scroll the page out from
+ * under a focused input. */
 const SHELL =
-  // The dvh fallback is load-bearing: --app-h is written by JS on first sync, so
-  // the very first paint has nothing to read.
-  //
-  // The height divides by --ui-scale (the #root zoom, index.css): --app-h is
-  // measured in UNZOOMED viewport px by ui/viewport.ts, and inside a zoomed
-  // subtree a px length renders multiplied by the zoom — without the division
-  // a 0.8 scale left the bottom fifth of the viewport blank, and 1.3 pushed
-  // the status bar off-screen. The 100dvh fallback wants the same division for
-  // a different reason: a viewport unit inside the zoom resolves against the
-  // raw viewport and THEN paints scaled (measured — see the view scale block
-  // in index.css), so undivided it would be a scaled 720px, not 720px.
+  // 100dvh fallback for the first paint, before ui/viewport.ts writes --app-h.
+  // Both divide by --ui-scale: they're measured/resolved unzoomed but paint
+  // inside the #root zoom, so undivided they'd render scaled.
   'app-shell fixed inset-0 h-[calc(var(--app-h,100dvh)/var(--ui-scale,1))] pb-[env(safe-area-inset-bottom)] overflow-hidden grid ' +
   'grid-cols-[auto_minmax(0,1fr)] grid-rows-[var(--bar-title)_minmax(0,1fr)_auto] ' +
-  // Keyboard-open compaction (spec §4.3 rule 3) is a PHONE behaviour and stays
-  // scoped to below 900px: that is where a software keyboard actually eats the
-  // viewport, and the compacted tokens (--bar-top-kb, --touch-kb) are tuned
-  // for exactly that bar.
+  // Keyboard-open compaction (spec §4.3 rule 3) is phone-only: a software
+  // keyboard only eats the viewport below 900px.
   'max-[899px]:kb-open:grid-rows-[var(--bar-top-kb)_minmax(0,1fr)_auto]'
 
 const BODY = 'app-body col-start-2 row-start-2 relative flex min-h-0 min-w-0 overflow-hidden'
@@ -121,38 +95,14 @@ function slug(name: string | undefined): string {
 export function App() {
   const report = useMemo(() => checkCapabilities(), [])
   useEffect(() => installViewport(), [])
-  // The whole propagation mechanism for a language switch: every string in the
-  // tree is read off `COPY` during render, so re-rendering from the root is
-  // what swaps the language. Subscribed HERE rather than in `Ide` so the fatal
-  // capability screen — which is all a student on the wrong browser ever sees —
-  // is translated too.
+  // Subscribed here, not in `Ide`, so the fatal capability screen is translated too.
   const locale = useLocale()
-  // A missing hard requirement is a dead end, and saying so beats a spinner
-  // that never finishes.
+  // A missing hard requirement is a dead end — better to say so than spin forever.
   const body = report.level === 'fatal' ? <CapabilityFatalScreen report={report} /> : <Ide report={report} />
 
-  /**
-   * RADIX DOES NOT READ `<html dir>`, AND EVERY MENU IN THE APP IS RADIX.
-   *
-   * Its primitives default to `dir="ltr"` and only take a direction from an
-   * explicit prop or from this provider — the DOM attribute is invisible to
-   * them. Three things go wrong without it, all of them in the portalled panel
-   * rather than in the page, which is why the rest of the RTL work looked
-   * finished while the menus were still English-handed:
-   *
-   *   - the panel lays out LTR, so an Arabic label sits on the left with its
-   *     shortcut hint stranded on the right;
-   *   - `SubTrigger` puts its submenu on the LTR trailing side, so a flyout
-   *     that should open leftward opens right and walks off a 390px screen —
-   *     the language switch was unreachable on a phone, which is the device
-   *     this app exists for;
-   *   - ArrowLeft/ArrowRight stay swapped, so a keyboard user opens a submenu
-   *     with the key that visually closes it.
-   *
-   * Sits at the root so every Menu, ContextMenu, Dialog and Tooltip below
-   * inherits it, and re-renders with `locale` so a language switch moves the
-   * menus with everything else.
-   */
+  /** Radix ignores `<html dir>` — without this, every portalled Menu/Dialog/
+   *  Tooltip renders LTR regardless of locale (submenus can even open
+   *  off-screen on a phone). Re-renders with `locale` to follow the switch. */
   return <DirectionProvider dir={dirOf(locale)}>{body}</DirectionProvider>
 }
 
@@ -192,55 +142,33 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [activePath, setActivePath] = useState<string | null>(null)
   const [entryPath, setEntryPath] = useState<string | null>(initial.entryPath)
   const [fontSize, setFontSize] = useState(initial.fontSize)
-  // Whole-shell zoom. Clamped on read: a hand-edited localStorage value must
-  // not be able to open the app at zoom 5 (or NaN) with no way back to the menu.
+  // Clamped on read — a bad localStorage value must not strand the app at an unusable zoom.
   const [uiScale, setUiScale] = useState(() => clampScale(initial.uiScale))
   const [consoleOpen, setConsoleOpen] = useState(!initial.consoleCollapsed)
   const [consoleHeight, setConsoleHeight] = useState(initial.consoleHeight)
-  // VS Code's Maximize Panel Size (RunBar's chevron). "Maximized" is
-  // an over-asked height the flex layout then bounds — the editor keeps its
-  // 96px floor (.console-panel--open shrinks, index.css), which is as far as a
-  // maximize can honestly go while the tab strip and editor floor exist. The
-  // pre-maximize height lives in a ref so Restore has somewhere to go back to;
-  // a hand drag of the divider re-takes ownership and drops the flag.
+  // VS Code's Maximize Panel Size — bounded by the editor's 96px floor, so not truly full height.
+  // Restore height lives in a ref; dragging the divider clears the maximized flag.
   const [consoleMaximized, setConsoleMaximized] = useState(false)
   const consoleRestoreHeight = useRef(initial.consoleHeight)
-  // Which face the output pane shows for a web project — or null for "not chosen
-  // yet", in which case the entry decides (a page opens to the Preview, a lone
-  // script to its Console log). Once the student picks, that sticks. Ignored
-  // entirely for a Java/Python project, which has no preview.
+  // Null means unset: the entry decides (page → Preview, script → Console) until picked.
+  // Unused for Java/Python, which have no preview.
   const [outputView, setOutputView] = useState<OutputView | null>(null)
   const [hand, setHand] = useState<'right' | 'left'>(initial.hand)
   const [explorerDocked, setExplorerDocked] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // Which view the ONE sidebar hosts (VS Code's model): the Explorer tree or
-  // the cross-file Search view. The activity bar switches it; visibility stays
-  // the explorerDocked/drawerOpen pair above, so every existing toggle
-  // (Mod+B, the title bar, View menu) hides/shows whichever view is up.
+  // One sidebar, two views (Explorer/Search); visibility still tracked by explorerDocked/drawerOpen above.
   const [sideView, setSideView] = useState<SideView>('explorer')
   const [importOpen, setImportOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
-  // Which QuickInput face is up, or none: 'commands' is the palette
-  // (Ctrl+Shift+P / F1), 'files' is Go to File (Ctrl+P), 'goto' is Go to Line
-  // (Ctrl+G, and the status bar's Ln/Col item), 'recent' is Open Recent on the
-  // keyboard (Ctrl+R, Ctrl+K Ctrl+O).
+  // Which QuickInput face is up: commands (Ctrl+Shift+P), files (Ctrl+P), goto (Ctrl+G), recent (Ctrl+R).
   const [quickPick, setQuickPick] = useState<QuickInputMode | null>(null)
-  // Ln:Col for the status bar. Null until a file is open, because a caret
-  // position for a document nobody is looking at is a small lie.
+  // Null until a file is open — a caret position for nothing on screen would be a lie.
   const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null)
 
   const candidates = useMemo(() => entryCandidates(project.sourceFiles()), [project, revision])
 
-  // Identifiers from every file, for editor completion. Recomputed on `revision`
-  // (structure or dirty changes) rather than per keystroke — the editor scans the
-  // buffer being typed in on its own, so this only has to cover the other files.
-  //
-  // Bounded, because `revision` bumps twice per edited file per debounce window
-  // and this is a full re-tokenise of the whole project each time. At a few
-  // dozen files that is free; at five hundred it is the difference between an
-  // editor that keeps up with typing and one that does not. Past the budget we
-  // stop early — the completions get less complete, which a student will never
-  // notice, rather than the editor getting slow, which they will.
+  // Recomputed on `revision`, not per keystroke — the active buffer is scanned separately by the editor.
+  // Bounded so a full re-tokenise can't stall typing on a big project; completions just get less complete instead.
   const projectWords = useMemo(() => {
     const words = new Set<string>()
     let budget = 2_000_000
@@ -252,10 +180,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     return [...words]
   }, [project, revision])
 
-  // Docs on hover (editor/hoverDocs.ts) read user doc comments across every
-  // file. The editor is a singleton mount, so a module-level source beats
-  // threading a new prop chain; `revision` keys its lazy re-scan cache, and
-  // the accessor itself is only called when a hover actually needs the docs.
+  // Module-level source, not a prop — the editor is a singleton mount; `revision` keys its lazy re-scan cache.
   useEffect(() => {
     setProjectDocsSource(() => project.sourceFiles(), revision)
   }, [project, revision])
@@ -263,15 +188,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   const runner = useRunner(project, buffer, entryPath)
 
   // ---- a #share= link in the URL (sharelink.ts) ----
-  // Two ways a share payload arrives: in the URL a fresh load starts with
-  // (clicking the link anywhere), and as a bare hashchange when the link is
-  // pasted into a tab Warsha is already open in — same document, no reload,
-  // so a boot-only parser would silently ignore exactly the "re-open the
-  // same link" case. Both funnel through `applyShared`. The boot one is
-  // parsed before the first effects run and gates workspace restore below:
-  // the import switches projects, and restoring the previous session's tabs
-  // into the project being left would race the switch. The hash itself is
-  // cleared only once the import lands — peekSharedFromUrl explains why.
+  // Funnels URL (fresh load) and hashchange (link pasted into an open tab) through `applyShared`.
+  // The boot value gates workspace restore below, to avoid racing the project switch; hash clears only once import lands (see peekSharedFromUrl).
   const pendingShareRef = useRef<SharedProject | 'broken' | null | undefined>(undefined)
   if (pendingShareRef.current === undefined) pendingShareRef.current = peekSharedFromUrl()
   const [shareHandled, setShareHandled] = useState(pendingShareRef.current === null)
@@ -295,16 +213,10 @@ function Ide({ report }: { report: CapabilityReport }) {
         notify(COPY.noteShareSaveFailed, 'error')
         return false
       }
-      // Re-point the workspace only when the link landed somewhere else. When
-      // it resolved to the project already on screen, the tabs the student has
-      // open ARE the right workspace — and closing the active file only to
-      // re-open the same path with the same content would leave the editor's
-      // controller detached from it (Editor re-opens on [path, content]
-      // change, and in the dedup case neither changes), silently swallowing
-      // every keystroke after. The boot case (no tabs yet) still adopts.
+      // Skip re-pointing to a project already open: reopening identical [path, content] doesn't
+      // remount Editor, leaving it detached and silently swallowing keystrokes. Boot case still adopts.
       if (result.meta.id !== before || tabs.length === 0) {
-        // Same per-path editor-state eviction as every project switch — two
-        // projects can both hold a "main.py" (see adoptProject).
+        // Same per-path eviction as any project switch — two projects can both have a "main.py".
         for (const path of leaving) editorRef.current?.closeFile(path)
         const entry = shared.entry ?? entryCandidates(shared.snapshot.files)[0] ?? shared.snapshot.files[0]?.path ?? null
         setTabs(entry ? [entry] : [])
@@ -407,10 +319,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     document.documentElement.dataset.hand = hand
   }, [hand])
 
-  // The view scale, as a CSS var on <html> rather than a style on the shell
-  // div: `#root { zoom: var(--ui-scale) }` (index.css) applies it, and the
-  // same var is what the shell's height and the kb-open top rule divide their
-  // unzoomed-viewport px back out by.
+  // On <html>, not the shell div — index.css's `#root { zoom: var(--ui-scale) }` and the SHELL height calc above both read this same var.
   useEffect(() => {
     document.documentElement.style.setProperty('--ui-scale', String(uiScale))
   }, [uiScale])
@@ -424,56 +333,39 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!entryPath || !candidates.includes(entryPath)) setEntryPath(candidates[0])
   }, [candidates, entryPath])
 
-  // Pre-warm the Java engine while the student is still reading their code.
-  // This is the single most valuable thing on the page for Java: a fresh JVM
-  // spends ~12s loading ECJ's classes before it can compile anything, and that
-  // cost is irreducible per JVM (measured 2026-08-06 — see
-  // runtimes/java/INTEGRATION.md). Every millisecond of it paid before the
-  // student presses Run is a millisecond they do not wait.
-  //
-  // Hence the short delay: long enough to stay out of the way of first paint,
-  // short enough that the warm-up is most of the way done by the time anyone
-  // has read their code. Silent on purpose: progress UI belongs to a run the student asked
-  // for (one progress voice — founder ruling 2026-08-05), and load() is
-  // idempotent so the run's own load() call simply joins this one.
-  // Java only: its engine is ~1MB + the 3MB compiler jar, where Python and
-  // C# would pull tens of MB the student never asked for.
+  // Java only: ECJ's ~12s cold JVM load is irreducible (see runtimes/java/INTEGRATION.md), so pre-warming
+  // saves real wait time; its ~1MB+3MB engine is small, where Python/C# would pull tens of MB unasked.
+  // 600ms delay balances not blocking first paint against finishing before the student reads their code.
+  // Silent on purpose (progress UI belongs to an explicit run); load() is idempotent so Run's call just joins this one.
   useEffect(() => {
     if (!hydrated || !entryPath || langForPath(entryPath) !== 'java') return
     const timer = window.setTimeout(() => {
       runtimeFor(entryPath)
         ?.load(() => {})
         .catch(() => {
-          // A dead network fails the pre-warm; the student's own Run will
-          // retry and is where the failure should be reported.
+          // Swallowed: Run's own load() retries and is where a failure should surface.
         })
     }, 600)
     return () => window.clearTimeout(timer)
   }, [hydrated, entryPath])
 
-  // Language is per file, never per app: the file you are looking at is the file
-  // Run starts, as long as it is runnable. Otherwise the last choice stands.
-  // Without this, a student with Main.java and main.py both open could press Run
-  // and have Warsha start the one they are not looking at. (ui-console's request.)
+  // Per file, not per app: Run starts whatever file is active (if runnable), never the one you're not looking at.
   useEffect(() => {
     if (activePath && candidates.includes(activePath)) setEntryPath(activePath)
   }, [activePath, candidates])
 
-  // The drawer gets out of the way of typing (spec §4.3 rule 2) — UNLESS the
-  // typing is into the drawer itself: the Search view's query field lives
-  // there and is auto-focused, and closing over it would slam the drawer shut
-  // on the first letter of every phone search.
+  // Spec §4.3 rule 2 (drawer yields to typing) excludes typing into the drawer itself, or Search's
+  // auto-focused query field would close on its own first letter.
   useEffect(() => {
     if (!(keyboardOpen && narrow)) return
-    const aside = document.querySelector('aside[aria-label={COPY.a11yFiles}]')
+    const aside = document.querySelector(`aside[aria-label="${COPY.a11yFiles}"]`)
     if (aside && aside.contains(document.activeElement)) return
     setDrawerOpen(false)
   }, [keyboardOpen, narrow])
 
   // ---- file operations ----
-  /** A selection waiting for its file to become the open one — the Search
-   *  view's openAt, same deferred pattern as focusOnOpen below. Cleared by any
-   *  ordinary open so a stale range can never fire on the wrong document. */
+  /** Pending selection for Search's openAt (same deferred pattern as focusOnOpen).
+   *  Cleared on any ordinary open so a stale range can't fire on the wrong doc. */
   const selectOnOpen = useRef<{ path: string; from: number; to: number } | null>(null)
 
   const openFile = useCallback(
@@ -487,12 +379,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     [project, narrow],
   )
 
-  /** Dispatch a selection into the live editor. Reached through the DOM like
-   *  editorCommand below (setup.ts belongs to another package this wave);
-   *  clamped so a range measured before an edit can never dispatch past the
-   *  document's end. rAF because the caller may have just mounted/opened the
-   *  file this frame. No focus() on a narrow screen: tapping a search result
-   *  should show the match, not summon the software keyboard over it. */
+  /** DOM-reached (setup.ts is another package this wave). Range clamped to the doc's
+   *  end; rAF covers a same-frame mount. No focus() on narrow — a search tap shouldn't open the keyboard. */
   const applySelection = useCallback(
     (from: number, to: number) => {
       requestAnimationFrame(() => {
@@ -510,9 +398,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     [narrow],
   )
 
-  /** Open `path` and select [from, to) — the Search view's row tap. The open
-   *  goes through the one openFile flow (tabs, drawer close); the selection
-   *  lands now if the file is already up, or once it is (the effect below). */
+  /** Search view's row tap: opens via the normal openFile flow, then selects now
+   *  or via the effect below once the file is up. */
   const openAt = useCallback(
     (path: string, from: number, to: number) => {
       if (project.read(path) === undefined) return
@@ -523,8 +410,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     [project, openFile, activePath, applySelection],
   )
 
-  // Same deferral (and the same deps) as focusOnOpen: the editor for a file
-  // opened from Search may not exist until a render later.
+  // Same deferral as focusOnOpen — the editor for a file opened from Search may not exist yet.
   useEffect(() => {
     const wanted = selectOnOpen.current
     if (!wanted || activePath !== wanted.path) return
@@ -544,17 +430,14 @@ function Ide({ report }: { report: CapabilityReport }) {
     [tabs, activePath],
   )
 
-  // Focusing the editor cannot be done at the moment a file is created: on an
-  // empty project the Editor is not even mounted yet (the start panel holds that
-  // slot), so `editorRef` is still null, and after a template the mount happens a
-  // render later. So we record what to focus and do it once that file is actually
-  // the open one.
+  // Deferred: right after creating a file on an empty project, Editor isn't mounted yet —
+  // record the target and focus once it's actually open.
   const focusOnOpen = useRef<string | null>(null)
   useEffect(() => {
     const wanted = focusOnOpen.current
     if (!wanted || activePath !== wanted) return
     focusOnOpen.current = null
-    // One frame, so CodeMirror has been created and had its content set.
+    // One frame, so CodeMirror exists with its content set.
     requestAnimationFrame(() => editorRef.current?.focus())
   }, [activePath, revision])
 
@@ -565,26 +448,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (/[\\:*?"<>|]/.test(name)) return COPY.nameBadCharacter
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f\u007f]/.test(name)) return COPY.nameBadCharacter
-    // OPFS itself has no documented limit, but the filesystems underneath it cap
-    // a name at 255 bytes and reject the write, which surfaced as a save that
-    // silently never happened.
+    // Underlying filesystems cap names at 255 bytes; over that OPFS silently fails to save.
     if (new TextEncoder().encode(name).length > 240) return COPY.nameTooLong
-    // ".java" is a valid file name and an invalid Java file: the class name would
-    // be empty, so `public class  {` never compiles, and CheerpJ requires the
-    // public class to match the file name. Caught here rather than as a compiler
-    // error the student cannot connect to what they typed. Same for ".py", whose
-    // module name would be empty.
+    // ".java"/".py" alone would compile to an empty class/module name — caught here,
+    // not as a compiler error the student can't connect to what they typed.
     const leaf = name.split('/').pop() ?? ''
     if (/^\.(java|py)$/i.test(leaf)) return COPY.nameNeedsStem(leaf)
     if (leaf.startsWith('.') && leaf.slice(1).includes('.')) return COPY.nameDotStart
-    // Trailing dots and spaces are silently stripped by some filesystems, so
-    // "Main.java " and "Main.java" become the same file and one of them is lost.
+    // Some filesystems strip trailing dots/spaces, so "Main.java " and "Main.java" would collide.
     if (/[ .]$/.test(leaf)) return COPY.nameDotEnd
     return null
   }
 
-  /** In-dialog validation, so a bad name is answered under the field the
-   *  student is already looking at rather than by a toast after it closes. */
+  /** In-dialog: answers under the field being looked at, not a toast after it closes. */
   const nameTaken = (dir: string, name: string): string | null => {
     const path = dir ? `${dir}/${name}` : name
     return project.has(path) || project.hasDir(path) ? COPY.nameTaken(name) : null
@@ -713,18 +589,16 @@ function Ide({ report }: { report: CapabilityReport }) {
   /** Resolves false when something could not be written. Never rejects. */
   const saveAll = useCallback(async () => project.saveAll(), [project])
 
-  /** Ctrl+S and every "Save all" row: silent on success — the dirty dots
-   *  emptying IS the confirmation, and a toast on every save is noise (VS Code
-   *  says nothing either) — but a save that did NOT land still speaks. */
+  /** Silent on success — dirty dots emptying is confirmation enough (VS Code does the same);
+   *  a failed save still speaks. */
   const saveAllQuiet = useCallback(() => {
     void saveAll().then((ok) => {
       if (!ok) notify(COPY.saveFailed, 'error')
     })
   }, [saveAll, notify])
 
-  /** "Format file" (⋯ menu, Shift+Alt+F) — see actions/format.ts for the
-   *  Java/Python split. Applied through the editor controller so it lands as
-   *  one undo step and flows through the normal onChange/dirty/save path. */
+  /** Shift+Alt+F (see actions/format.ts for the Java/Python split). Applied via the editor
+   *  controller so it's one undo step through the normal onChange/dirty/save path. */
   const formatActiveFile = useCallback(async () => {
     const path = activePath
     if (!path || !canFormat(path)) return
@@ -738,18 +612,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       editorRef.current?.applyEdit(formatted)
       notify(COPY.noteFormatted)
     } catch (e) {
-      // Booting Python just to format a file would be a silent 11 MB download
-      // behind a menu click, so it never happens (see PythonNotLoadedError) —
-      // the fix is to run the file once, which the student was already about
-      // to do anyway.
+      // Never boots Python just for this (a silent 11MB download) — see PythonNotLoadedError;
+      // running the file once is the fix.
       if (e instanceof PythonNotLoadedError) notify(COPY.noteFormatNeedsPython)
       else notify(COPY.noteFormatFailed, 'error')
     }
   }, [activePath, project, notify])
 
-  /** "Share as image…" (⋯ menu) — renders the active file to a PNG and hands
-   *  it over: share sheet on handhelds, the clipboard (or a download) on
-   *  desktop. See actions/shareImage.ts and deliver.ts for the fork. */
+  /** Renders the active file to PNG: share sheet on handhelds, clipboard/download on
+   *  desktop (see actions/shareImage.ts, deliver.ts). */
   const shareActiveFile = useCallback(async () => {
     const path = activePath
     if (!path) return
@@ -763,12 +634,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }, [activePath, project, notify])
 
-  /** "Share as link…" (⋯ menu) — the whole project folded into a URL that
-   *  recreates it on whatever device opens it (sharelink.ts). Share sheet on
-   *  handhelds, straight to the clipboard on desktop — Windows Chrome/Edge
-   *  advertises a share dialog whose own Copy button strands the link (same
-   *  finding as deliver.ts), and on a desktop "copy the link" is the whole
-   *  ask anyway. */
+  /** Folds the project into a URL (sharelink.ts). Clipboard on desktop, not the share
+   *  sheet — Windows Chrome/Edge's own Copy button in that dialog strands the link (see deliver.ts). */
   const shareLink = useCallback(async () => {
     const url = buildShareUrl(currentProject?.name ?? COPY.defaultSharedName, entryPath, project.snapshot())
     if (!url) {
@@ -781,8 +648,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         return
       } catch (e) {
         if (isCancelled(e)) return
-        // Some browsers advertise canShare and then refuse — the clipboard
-        // path below answers either way.
+        // Some browsers advertise canShare and then refuse — the clipboard path below covers it.
       }
     }
     try {
@@ -810,34 +676,25 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [project, currentProject, notify])
 
   // ---- starters + zip ----
-  // A starter populates the project you are already in. It is an action, not a
-  // mode: nothing about the app changes afterwards except which files exist.
+  // A starter is an action on the current project, not a mode — nothing else about the app changes.
   const replaceProject = async (snapshot: FsSnapshot, entry: string | null, label: string) => {
-    // The start panel is on screen before storage has finished opening, and a
-    // tap in that window used to write the starter into the throwaway store
-    // that `switchStore` then loaded over — leaving an open tab for a file that
-    // was not there. Wait rather than refuse: a tap that does nothing is the
-    // "dead card" complaint this panel exists to answer.
+    // Storage may still be opening when the start panel shows; wait rather than refuse,
+    // so an early tap on a starter isn't a no-op.
     await whenReady()
     await project.replaceAll(snapshot)
     editorRef.current?.closeFile(editorRef.current.currentPath() ?? '')
     setTabs(entry ? [entry] : [])
     setActivePath(entry)
     setEntryPath(entry)
-    // Put the caret in the entry file on a laptop, but NOT on a phone: a starter
-    // is something you read and then Run, and focusing CodeMirror there summons
-    // the on-screen keyboard over the code the student just asked to see.
+    // Caret only on a laptop — on a phone it would summon the keyboard over code the student just asked to read.
     if (entry && !narrow) focusOnOpen.current = entry
     buffer.clear()
     notify(label, 'success')
   }
 
   const confirmReplace = async (title: string, what: string, okLabel: string) => {
-    // Guarded on FILES, not on `isEmpty()` (which is also false for a project
-    // holding nothing but an empty folder or a freshly migrated manifest). A
-    // first-time student's very first tap on a starter must apply it, never open
-    // a destructive confirm about work that does not exist — that reads as "the
-    // card is dead", which is the single loudest complaint we have had.
+    // Guarded on FILES, not isEmpty() (also false for an empty folder or fresh manifest) —
+    // a first starter tap must apply, never trigger a confirm about work that doesn't exist.
     if (project.paths().length === 0) return true
     return dialogs.confirm({
       title,
@@ -855,26 +712,19 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const applyTemplate = async (t: Template) => {
-    // The start panel only ever shows on an empty project, and a starter picked
-    // there fills *that* project in and takes its name, rather than creating a
-    // second project beside it — otherwise a first visit always leaves an empty
-    // "My project" behind, which is exactly the clutter multi-project is meant to
-    // avoid. Either way the student ends up with a named project they can switch
-    // back to, which is the point.
+    // Fills the current empty project and takes its name, rather than leaving an
+    // empty "My project" behind on first visit.
     if (project.isEmpty()) {
       await replaceProject(t.snapshot, t.entry, COPY.noteTemplateReady(t.name, t.snapshot.files.length))
       if (currentProject) await renameProject(currentProject.id, uniqueProjectName(t.name))
       return
     }
-    // Reached only if a starter is ever offered from a project that has files:
-    // making a new project is the non-destructive answer.
+    // Non-empty project: make a new one instead — the non-destructive path.
     return newProject(t)
   }
 
-  // The template picker resolves to a starter or to "blank". A starter goes
-  // through applyTemplate (fill this empty project, or make a new one). Blank is
-  // the old "New project…" default: an empty project you name, unless you are
-  // already sitting in one — then there is nothing to create, so open a file.
+  // Starter fills/creates via applyTemplate above; "blank" is the old New Project default —
+  // name an empty project, or open a file if already in one.
   const pickStarter = (t: Template) => {
     setPickerOpen(false)
     void applyTemplate(t)
@@ -903,21 +753,17 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   // ---- projects ----
-  // Switching, creating or deleting a project is the one operation that
-  // invalidates the whole workspace, because tabs, the console transcript and the
-  // editor's per-file state all belong to the project being left.
+  // Switch/create/delete all invalidate the workspace: tabs, console transcript, and
+  // editor per-file state belong to the project being left.
   const adoptProject = (leavingTabs: string[]) => {
-    // Every path the old project had open is dropped from the editor's state
-    // cache by name. Two projects can both contain a "main.py", and without this
-    // the cached document from the old one is shown for the new one's file.
+    // Old project's open paths are evicted from editor state by name — two projects can both have a "main.py".
     for (const path of leavingTabs) editorRef.current?.closeFile(path)
     const entry = entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
     setTabs(entry ? [entry] : [])
     setActivePath(entry)
     setEntryPath(entry)
     buffer.clear()
-    // An empty project gives its room back to the start panel, exactly as on a
-    // first visit.
+    // Empty project hands its room back to the start panel, as on first visit.
     if (project.isEmpty()) setConsoleOpen(false)
   }
 
@@ -986,29 +832,22 @@ function Ide({ report }: { report: CapabilityReport }) {
     stopIfRunning()
     const leaving = tabs
     const gone = currentProject.name
-    // The last project cannot be deleted into nothing: the hook opens the next
-    // most recent one, or a fresh empty project if that was the only one.
+    // Deleting the last project opens the next most recent one, or a fresh empty project.
     await deleteProject(currentProject.id)
     adoptProject(leaving)
     notify(COPY.noteProjectDeleted(gone))
   }
 
   // ---- keyboard shortcuts ----
-  // ONE window keydown for the whole app (W3-A): every binding lives in the
-  // command table (below, near the menus) and is matched here. The
-  // `defaultPrevented` early-return is the arbitration with CodeMirror — any
-  // key the editor's own keymap claimed is never handled twice. The ONE
-  // exception is Mod+Enter: setup.ts swallows it purely to keep
-  // defaultKeymap's insertBlankLine out of Run's way, and preventDefault is
-  // how a CM binding swallows — so that key must still fall through to
-  // run.run here, or Ctrl+Enter from the editor runs nothing at all. The
-  // table is read through a ref so the listener registers once; the table
-  // itself is rebuilt every render and so never goes stale.
+  // One window keydown for the whole app; `defaultPrevented` arbitrates with CodeMirror
+  // so a key its keymap claimed is never handled twice.
+  // Exception: Mod+Enter is swallowed by CM (setup.ts, to protect insertBlankLine) but must
+  // still reach run.run here, or Ctrl+Enter from the editor does nothing.
+  // Table read via a ref so the listener registers once, but is rebuilt fresh every render.
   const runnerRef = useRef(runner)
   runnerRef.current = runner
   const commandsRef = useRef<Command[]>([])
-  // A chord in flight: the first half of a two-chord binding ("Mod+K"),
-  // waiting up to 3s for its second half, VS Code's own patience.
+  // First half of a two-chord binding ("Mod+K"), waiting up to 3s for its second half — VS Code's own timeout.
   const pendingChord = useRef<{ spec: string; timer: number } | null>(null)
   useEffect(() => {
     const clearPending = () => {
@@ -1052,8 +891,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             }
           }
         }
-        // The first chord announced a sequence, so a second key that finishes
-        // no binding is swallowed rather than typed into whatever has focus.
+        // A second key that completes no binding is swallowed, not typed into whatever has focus.
         e.preventDefault()
         return
       }
@@ -1086,26 +924,16 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }, [])
 
-  // Three events, not one, because no single one of them fires everywhere the
-  // tab can go away:
-  //
-  //  - `visibilitychange` covers switching apps and switching tabs, and is the
-  //    only one iOS Safari reliably fires when the student presses Home.
-  //  - `pagehide` covers navigating away and being put into the bfcache, which
-  //    on iOS often happens with no `visibilitychange` at all.
-  //  - `freeze` covers Chrome discarding a backgrounded tab.
-  //
-  // All three call the same idempotent flush, so firing twice costs nothing.
-  // The flush is async and the page may be gone before OPFS finishes; that is
-  // unavoidable (there is no synchronous write) and is exactly why the debounce
-  // is 350 ms rather than something more comfortable.
+  // Three events because none alone covers every way a tab can go away: visibilitychange
+  // (iOS Home), pagehide (bfcache, often silent on iOS), freeze (Chrome discarding a
+  // backgrounded tab). All call the same idempotent flush, so firing twice is free.
+  // Async, so the page may vanish before OPFS finishes — unavoidable, hence the tight 350ms debounce.
   useEffect(() => {
     const flush = () => void project.saveAll()
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush()
     }
-    // Engines hold a WASM JVM and a CPython heap. A page that is being unloaded
-    // should not still be holding them while iPadOS looks for memory.
+    // Engines hold a WASM JVM/CPython heap that shouldn't linger while iPadOS hunts for memory.
     const onPageHide = (e: PageTransitionEvent) => {
       flush()
       if (!e.persisted) disposeRuntimes()
@@ -1120,10 +948,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }, [project])
 
-  // Files from a single-workspace build become a real project on first load. Said
-  // out loud, because otherwise the student's work appears to have moved by
-  // itself — and if the copy could not be verified, that they still have the
-  // original matters far more than tidiness.
+  // Said out loud so migrated files don't look like they moved by themselves; if the copy
+  // couldn't be verified, keeping the original beats a tidy migration message.
   useEffect(() => {
     if (!migration) return
     if (migration.kind === 'migrated') {
@@ -1135,10 +961,8 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const empty = project.isEmpty()
 
-  // One row per project — File > Open Recent and QuickInput's recent face,
-  // most recently opened first, with the open one marked and unselectable.
-  // Labels are made unique because `Menu` keys its rows by label, and two
-  // projects may be named the same thing.
+  // Feeds File > Open Recent and QuickInput's recent face. Labels de-duped since
+  // `Menu` keys rows by label and two projects can share a name.
   const projectRows: MenuItem[] = (() => {
     const used = new Set<string>()
     return projects.map((p) => {
@@ -1147,14 +971,10 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (let n = 2; used.has(label); n++) label = `${p.name} (${n})`
       used.add(label)
       return {
-        // `id` keys the row, so two projects a student names the same thing
-        // cannot collide in React's reconciliation. The label is still made
-        // unique above, for the reader rather than for React.
+        // `id` keys the row for React; the label above is de-duped for the reader, not for reconciliation.
         id: `project:${p.id}`,
         label,
-        // Every row carries a glyph, open or not: a closed folder for the ones
-        // you can switch to, an open one for the project you are in. A blank slot
-        // on some rows and not others left the column ragged.
+        // Every row gets a glyph (open/closed folder) — a blank slot on only some rows left the column ragged.
         icon: isOpen ? <IconFolderOpen size={18} /> : <IconFiles size={18} />,
         hint: isOpen ? COPY.menuProjectOpenHint : undefined,
         disabled: isOpen,
@@ -1163,9 +983,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
   })()
 
-  // One row per language, each written IN that language — a switch that names
-  // «العربية» in English is unreadable to exactly the person who needs it.
-  // Same shape as projectRows: the active one is marked and unselectable.
+  // Each language name written in itself — naming «العربية» in English defeats the
+  // point for the reader who needs the switch.
   const languageRows: MenuItem[] = LOCALES.map((l) => ({
     id: `locale:${l}`,
     label: LOCALE_NAMES[l],
@@ -1175,12 +994,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   }))
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
-  /** ONE sidebar toggle behind every entry point (title-bar toggle, View menu,
-   *  Mod+B): the docked pane at ≥900px, the overlay drawer below — same
-   *  control, different docking. It hides/shows whichever view is up. */
+  /** One toggle behind every entry point (title bar, View menu, Mod+B) — docked pane ≥900px, drawer below. */
   const toggleExplorer = () => (narrow ? setDrawerOpen((v) => !v) : setExplorerDocked((v) => !v))
-  /** The activity bar's contract (VS Code's rail): selecting a view shows it;
-   *  selecting the view already up toggles the sidebar closed. */
+  /** VS Code's rail contract: selecting a view shows it; selecting the one already up closes the sidebar. */
   const showSideView = (view: SideView) => {
     if (explorerVisible && sideView === view) {
       toggleExplorer()
@@ -1190,8 +1006,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (narrow) setDrawerOpen(true)
     else setExplorerDocked(true)
   }
-  /** Always-open form, for the menu row and the Mod+Shift+F binding — a menu
-   *  item named "Find in Files" must never close the search it names. */
+  /** Always opens, never toggles — a menu item named "Find in Files" shouldn't close the search it names. */
   const openSearchView = () => {
     setSideView('search')
     if (narrow) setDrawerOpen(true)
@@ -1199,10 +1014,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
 
-  // One state object for Run/Stop. Its one rendered home at every size is the
-  // tab strip's trailing group (Tabs.tsx — VS Code's play corner); the Run
-  // menu and the F5/Shift+F5 bindings call the same handlers, so none can
-  // drift from the others because there is only one of it.
+  // Single state object so Run/Stop in the tab strip (Tabs.tsx), the Run menu, and
+  // F5/Shift+F5 all share the same handlers and can't drift apart.
   const runControl: RunControlState = {
     status: runner.status,
     busy: runner.busy,
@@ -1217,11 +1030,8 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const projectName = currentProject?.name ?? ''
 
-  /** Run a CodeMirror command (Undo/Redo/Find) from a menu row. The view is
-   *  reached through the DOM (`EditorView.findFromDOM`) rather than through a
-   *  controller method because editor/setup.ts belongs to another package this
-   *  overhaul — and focusing first matters: an editor command on an unfocused
-   *  editor is a surprise to whoever WAS focused. */
+  /** DOM-reached (`EditorView.findFromDOM`), not a controller method — setup.ts is another
+   *  package this overhaul. Focuses first: a command on an unfocused editor would surprise whoever was focused. */
   const editorCommand = (command: (view: EditorView) => boolean) => {
     const dom = document.querySelector('.cm-editor')
     const view = dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null
@@ -1230,9 +1040,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     command(view)
   }
 
-  /** Help > About, and the Manage gear's row. A real alert — one OK — rather
-   *  than the confirm it used to ride on, whose Cancel button cancelled
-   *  nothing. The version is the package's own, inlined at build time. */
+  /** A real alert (one OK), not the old confirm whose Cancel did nothing. Version is inlined at build time. */
   const showAbout = () =>
     void dialogs.alert({
       title: COPY.aboutTitle,
@@ -1244,17 +1052,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       ),
     })
 
-  // ---- the command table (W3-A) ----
-  // One list feeds both the central keydown (through commandsRef) and the
-  // command palette (QuickInput's `>` face): what you can press is exactly
-  // what the palette lists, minus rows whose enabled() says the moment is
-  // wrong — a palette row that would do nothing is not shown at all, and a
-  // binding whose enabled() answers false leaves its key to the browser
-  // (Ctrl+W with nothing open must still close the page — the guard Tabs.tsx
-  // used to carry). Rebuilt every render, so the closures never go stale.
+  // ---- the command table ----
+  // Feeds both the central keydown (via commandsRef) and the command palette: disabled rows
+  // are hidden from the palette, and their keys fall through to the browser (so Ctrl+W with
+  // nothing open still closes the page). Rebuilt every render so closures stay fresh.
   const commands: Command[] = [
-    // Escape, in order: the quick input first (it normally swallows its own
-    // Escape — this row is the fallback for a stray focus), then the drawer.
+    // Escape order: quick input first (fallback for a stray focus; it normally swallows its own Escape), then drawer.
     {
       id: 'quickInput.close',
       title: COPY.cmdCloseQuickInput,
@@ -1324,10 +1127,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       id: 'view.togglePanel',
       title: COPY.cmdViewTogglePanel,
-      // Ctrl+` binds by physical position (keys.ts matches e.code Backquote),
-      // exactly as VS Code does, and Ctrl is literal on the Mac too. Plain
-      // backquote is typing and is never intercepted. preventDefault (the
-      // dispatcher's) is what keeps Ctrl+J from opening Chrome's Downloads.
+      // Ctrl+` binds by physical position (e.code Backquote, like VS Code); plain backquote still types.
+      // preventDefault stops Ctrl+J from opening Chrome's Downloads.
       keys: ['Mod+J', 'Ctrl+`'],
       run: () => setConsoleOpen((v) => !v),
     },
@@ -1339,8 +1140,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         setSideView('explorer')
         if (narrow) setDrawerOpen(true)
         else setExplorerDocked(true)
-        // Focus lands after the open state has painted; the active file's row
-        // is preferred, the first row is the fallback.
+        // Waits for the open state to paint; prefers the active file's row, else the first.
         requestAnimationFrame(() => {
           const row = activePath
             ? document.querySelector<HTMLElement>(`[role="treeitem"][data-path="${CSS.escape(activePath)}"]`)
@@ -1371,9 +1171,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     { id: 'view.biggerText', title: COPY.cmdViewBiggerText, run: () => setFontSize((s) => Math.min(26, s + 1)) },
     { id: 'view.smallerText', title: COPY.cmdViewSmallerText, run: () => setFontSize((s) => Math.max(11, s - 1)) },
-    // Whole-shell zoom — a different pref from the text size above (which is
-    // editor type only). VS Code's own bindings; the dispatcher's
-    // preventDefault is what keeps Ctrl+=/− from ALSO zooming the browser.
+    // Whole-shell zoom, distinct from the editor-only text size above. preventDefault
+    // stops Ctrl+=/− from also zooming the browser.
     { id: 'view.zoomIn', title: COPY.cmdViewZoomIn, keys: ['Mod+='], run: () => changeScale(+SCALE_STEP) },
     { id: 'view.zoomOut', title: COPY.cmdViewZoomOut, keys: ['Mod+-'], run: () => changeScale(-SCALE_STEP) },
     { id: 'view.resetZoom', title: COPY.cmdViewResetZoom, keys: ['Mod+0'], run: () => setUiScale(1) },
@@ -1393,10 +1192,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       id: 'run.run',
       title: COPY.cmdRunFile,
-      // F5 and Ctrl+F5 both run (the dispatcher's preventDefault is what
-      // cancels the browser reload they normally mean); Mod+Enter is the
-      // historic binding the console's idle line still quotes. While a run is
-      // busy the same key stops it — the toggle Mod+Enter always was.
+      // F5/Ctrl+F5 run (preventDefault cancels their normal browser-reload meaning); Mod+Enter is the
+      // historic binding the console's idle line still quotes. Busy: same key stops instead.
       keys: ['F5', 'Ctrl+F5', 'Mod+Enter'],
       enabled: () => runControl.canRun,
       run: () => {
@@ -1427,10 +1224,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       id: 'projects.openRecent',
       title: COPY.cmdProjectsOpenRecent,
-      // Ctrl+R is literal on the Mac too (VS Code's own spelling — ⌘R belongs
-      // to the browser reload, which the preventDefault here blocks on
-      // Windows/Linux). With no other project the picker would be an empty
-      // list, so the key is left to the browser instead.
+      // Ctrl+R is literal on Mac too (⌘R is browser reload, blocked here on Windows/Linux).
+      // Left to the browser with no other project to pick from.
       keys: ['Ctrl+R', 'Mod+K Mod+O'],
       enabled: () => projects.length > 1,
       run: () => setQuickPick('recent'),
@@ -1456,9 +1251,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   ]
   commandsRef.current = commands
 
-  /** The palette's rows: the same table, palette-visible entries only, with
-   *  the first binding platform-formatted for the keycap chips. Disabled rows
-   *  are passed so QuickInput can hide them — its contract, not a grey-out. */
+  /** Palette-visible rows only, first binding formatted for the keycap chip. Disabled rows
+   *  are passed so QuickInput can hide them, not grey them out. */
   const paletteCommands: QuickCommand[] = commands
     .filter((c) => c.inPalette !== false)
     .map((c) => ({
@@ -1469,25 +1263,18 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: c.run,
     }))
 
-  // VS Code's menu bar, at every size (below 1050px MenuBar collapses itself
-  // to the ☰ "Application Menu" — the same menus behind one button). Every row
-  // calls the same action its old home called; the labels are VS Code's, and
-  // every hint is rendered by formatKeys from a binding the command table
-  // actually serves — a menu that names a shortcut that does not work is worse
-  // than none. The File menu is also the one home of every project-scoped job
-  // the touch drawer's project switcher used to carry: switch (Open Recent),
-  // new, rename, export, import, empty, delete. Destructive rows sit last
-  // behind a divider (Menu enforces that) and never near Save.
+  // VS Code's menu bar (collapses to the ☰ button below 1050px). Every row calls the same
+  // action its old home did; hints render from the command table so a shown shortcut always
+  // works. File also holds every project-scoped job the old touch drawer switcher carried;
+  // destructive rows sit last behind a divider, never near Save.
   const menuBarMenus: MenuBarMenu[] = [
     {
       label: COPY.menuFile,
       items: [
         { label: COPY.menuNewFile, onSelect: () => void newFile('') },
-        // One row, whatever the language list grows to: it opens the picker,
-        // where language and starter are chosen (languages.ts, TemplatePicker).
+        // Opens the picker regardless of list size; language and starter are chosen there.
         { label: COPY.menuNewProject, onSelect: () => setPickerOpen(true) },
-        // The relocated project switcher (global dedupe #6): most recent
-        // first, the open one marked and unselectable — projectRows exactly.
+        // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
         { label: COPY.menuOpenRecent, items: projectRows },
         { label: COPY.menuImportZip, startsGroup: true, onSelect: () => setImportOpen(true) },
         { label: COPY.menuExportZip, disabled: empty, onSelect: exportProject },
@@ -1539,9 +1326,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: COPY.menuZoomOut, hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
         { label: COPY.menuResetZoom, hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
         {
-          // Handedness (html[data-hand]) mirrors the console header's Run side.
-          // Relocated from the retired touch "⋯" menu; it matters most on touch
-          // but is one preference, so it has one home.
+          // Handedness (html[data-hand]) mirrors the console header's Run side — one
+          // preference, one home, even though it matters most on touch.
           label: hand === 'right' ? COPY.menuRunOnLeft : COPY.menuRunOnRight,
           startsGroup: true,
           onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
@@ -1574,24 +1360,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
   ]
 
-  // The rail's gear (ActivityBar) — VS Code keeps the app-scoped odds and ends
-  // behind its own gear, and every row here is an action that already exists.
+  // VS Code keeps the app-scoped odds and ends behind the rail's own gear; every row here is an action that already exists.
   const manageItems: MenuItem[] = [
     { label: COPY.menuCommandPalette, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
     {
-      // The View-scale slider — a CONTROL row, not a command: `render` rows
-      // are not Radix Items (Menu.tsx), so dragging the thumb never
-      // select-and-closes the menu, and the % label answers live. Same pref
-      // as View > Zoom In/Out; the editor A−/A+ stepper is the other pref
-      // (editor type) and stays out of this row.
+      // Control row, not a command: `render` rows aren't Radix Items, so dragging the thumb never
+      // closes the menu. Same pref as View > Zoom In/Out (not the editor's separate text-size stepper).
       id: 'view-scale',
       label: COPY.menuViewScale,
       startsGroup: true,
       render: (
         <div
           className="flex min-h-touch items-center gap-3 px-3 desk:min-h-[26px]"
-          // The slider's own keys must reach the slider, not Radix's roving
-          // focus. ONLY those — Escape still bubbles, so the menu closes.
+          // Only arrow/paging keys are claimed here, so they reach the slider, not Radix's roving focus.
           onKeyDown={(e) => {
             if (/^(Arrow(Left|Right|Up|Down)|Home|End|Page(Up|Down))$/.test(e.key)) e.stopPropagation()
           }}
@@ -1605,8 +1386,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             step={SCALE_STEP}
             value={uiScale}
             onChange={(e) => setUiScale(clampScale(e.currentTarget.valueAsNumber))}
-            // accent-color from the one accent token; min-h-touch keeps the
-            // 44px hit band on touch (the track paints centred regardless).
+            // min-h-touch keeps a 44px hit band on touch; the track still paints centred.
             className="min-h-touch min-w-0 flex-1 cursor-pointer accent-(--accent) desk:min-h-0"
           />
           <span className="w-[4ch] flex-none text-end text-micro tabular-nums text-text-2 desk:text-[13px]">
@@ -1619,12 +1399,9 @@ function Ide({ report }: { report: CapabilityReport }) {
     { label: COPY.menuAbout, startsGroup: true, onSelect: showAbout },
   ]
 
-  // The tab-strip "⋯" (every size, with the trailing group) carries what is
-  // scoped to the work on screen: the file rows first, then the share family
-  // together — image (this file), link and PDF (the whole project) — because
-  // "share" is one job to a student even though the scopes differ. The rest of
-  // the app-scoped rows live in the menu bar above.
-  // "Share as image…" is a QA-clicked string.
+  // Tab-strip "⋯": file rows first, then the share family (image/link/PDF) grouped as
+  // one job despite differing scopes. App-scoped rows live in the menu bar above.
+  // "Share as image…" is a QA-clicked string — keep it stable.
   const deskMoreItems: MenuItem[] = [
     {
       label: COPY.menuFormatFileRow,
@@ -1653,26 +1430,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
   ]
 
-  // The output pane has two faces. A page project (html/css) drives the preview
-  // iframe and may switch to the Console (its log); a standalone script (.js) is
-  // a headless console program with no preview, and everything else (Java,
-  // Python) is console-only too. Preview is the default face for a page; the
-  // student's own choice overrides it.
+  // Two faces: a page project (html/css) can show Preview or switch to Console; a script
+  // or Java/Python is console-only (no preview). Preview defaults for a page; choice overrides it.
   const previewActive = isPreviewEntry(runControl.entry)
   const outputFace: OutputView = previewActive ? (outputView ?? 'preview') : 'console'
 
   return (
     <div className={SHELL}>
-      {/* VSCode's icon column, at every width (one shell). Below 900px its
-          Explorer item toggles the overlay drawer — same control, same place,
-          different docking. */}
+      {/* Icon column at every width; below 900px its Explorer item toggles the overlay drawer instead of docking. */}
       <ActivityBar
-        // VS Code's rail selection: the item for the view the sidebar shows
-        // carries the active rule; none while the sidebar is hidden.
+        // Active rule follows whichever view the sidebar shows; none while it's hidden.
         activeView={explorerVisible ? sideView : null}
         onShowExplorer={() => showSideView('explorer')}
-        // Search is a VIEW now (SearchView in the sidebar) — the editor's own
-        // find panel stays on Mod+F / Edit > Find.
+        // Search is a VIEW now — the editor's own find panel stays on Mod+F / Edit > Find.
         onShowSearch={() => showSideView('search')}
         manageItems={manageItems}
       />
@@ -1686,16 +1456,13 @@ function Ide({ report }: { report: CapabilityReport }) {
         dirty={activePath ? project.isDirty(activePath) : false}
         onToggleSidebar={toggleExplorer}
         onTogglePanel={() => setConsoleOpen((v) => !v)}
-        // A slot because the control renders itself away when there is
-        // nothing to install (which is most sessions, at every width).
+        // A slot: the control renders itself away when there's nothing to install (most sessions).
         installSlot={<InstallControl />}
       />
 
       <div className={BODY}>
-        {/* The ONE sidebar — docked at ≥900px, an overlay drawer below that —
-            hosting whichever view the rail selected (Explorer or Search).
-            aria-label stays "Files" at all times: it is the QA suites' handle
-            for this aside, and the files are what both views operate on. */}
+        {/* One sidebar: docked ≥900px, overlay drawer below. aria-label stays "Files"
+            always — it's the QA suites' handle, and files are what both views operate on. */}
         <aside
           aria-label={COPY.a11yFiles}
           aria-hidden={!explorerVisible}
@@ -1704,9 +1471,8 @@ function Ide({ report }: { report: CapabilityReport }) {
           className={
             'z-20 shrink-0 border-e border-border-subtle ' +
             (narrow
-              ? // `.drawer` owns the transform and the --dur transition: the
-                // utility form of both compiled to invalid CSS under Tailwind v4,
-                // so the drawer used to snap open with no animation at all.
+              ? // `.drawer` owns transform/--dur transition — the Tailwind v4 utility form of both
+                // compiled to invalid CSS, so it used to snap open with no animation.
                 'drawer absolute inset-y-0 start-0 w-drawer shadow-raised'
               : explorerDocked
                 ? 'w-explorer'
@@ -1720,10 +1486,8 @@ function Ide({ report }: { report: CapabilityReport }) {
             project={project}
             tree={tree}
             activePath={activePath}
-            // The pane header's bold label. The Explorer renders its own VS
-            // Code pane header at every size now — the touch-only project
-            // switcher row is gone, and every project-scoped job lives in the
-            // menu bar's File menu (Open Recent switches).
+            // Explorer renders its own VS Code pane header at every size now; the old
+            // touch-only project switcher row is gone (File menu's Open Recent replaces it).
             projectName={projectName}
             onOpenFile={openFile}
             onNewFile={(dir, name) => void newFile(dir, name)}
@@ -1731,33 +1495,26 @@ function Ide({ report }: { report: CapabilityReport }) {
             onRename={(p, isDir, name) => void renameEntry(p, isDir, name)}
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
             onMove={(p, toDir) => void moveEntry(p, toDir)}
-            // The starters live in the workspace itself now, so from a drawer
-            // the useful move is to get out of the way and show them. Docked,
-            // they are already on screen and the button would be a no-op.
+            // From a drawer, closing it reveals the starters already in the workspace;
+            // docked, they're already visible so the button would be a no-op.
             onShowStarters={narrow ? () => setDrawerOpen(false) : undefined}
           />
           )}
         </aside>
 
         {narrow && drawerOpen ? (
-          // `.scrim`, not the bare-bracket custom-property form: that utility
-          // compiles to
-          // `background-color:--scrim` under Tailwind v4 and the browser drops
-          // it, which left the open drawer with no scrim behind it at all.
+          // `.scrim`, not the bare-bracket form — that compiles to `background-color:--scrim`
+          // under Tailwind v4, which the browser drops, leaving no scrim at all.
           <div className="scrim absolute inset-0 z-10" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         ) : null}
 
-        {/* overflow-hidden is a layout guard, not decoration: it is the backstop
-            that stops any panel inside from painting outside the work area. The
-            console's height comes from a persisted pixel pref, and an oversized
-            one used to push its own transcript straight through the bottom of the
-            layout. `.console-panel--open` now bounds itself in CSS as well —
-            belt and braces, because this is the collision the founder saw. */}
+        {/* overflow-hidden is a backstop, not decoration: an oversized persisted console-height
+            pref used to push the transcript through the layout's bottom. `.console-panel--open`
+            now also bounds itself in CSS — belt and braces. */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-1">
           <CapabilityBanner report={report} />
-          {/* Below the capability banner deliberately: "this browser cannot run
-              your code" outranks "this browser cannot save it". Both are
-              standing conditions, so neither is a toast. */}
+          {/* Below the capability banner on purpose: "can't run your code" outranks
+              "can't save it". Both are standing conditions, not toasts. */}
           <StorageBanner
             problem={storageProblem}
             quotaTight={quotaTight}
@@ -1766,17 +1523,14 @@ function Ide({ report }: { report: CapabilityReport }) {
             onExportZip={exportProject}
           />
 
-          {/* An empty project has nothing to tab through and nothing to edit, so
-              the editor area carries the start panel instead. This is Warsha's
-              entire first-run experience: no gate, no route, no modal, and it is
-              gone for good the moment a file exists. */}
+          {/* Empty project: editor area shows the start panel instead — the entire
+              first-run experience (no gate/route/modal), gone once a file exists. */}
           {empty ? (
             <WelcomePanel
               onNewFile={() => void newFile('')}
               onNewProject={() => setPickerOpen(true)}
               onImportZip={() => setImportOpen(true)}
-              // Same MRU ordering as projectRows; the open (empty) project is
-              // excluded — a link to where you already are is a dead link.
+              // Same MRU ordering as projectRows; the open (empty) project is excluded as a dead link.
               recent={projects.filter((p) => p.id !== currentProject?.id).map((p) => ({ id: p.id, name: p.name }))}
               onOpenProject={(id) => void switchToProject(id)}
             />
@@ -1788,15 +1542,13 @@ function Ide({ report }: { report: CapabilityReport }) {
                 activePath={activePath}
                 onSelect={(p) => setActivePath(p)}
                 onClose={closeTab}
-                // The strip's trailing group: Run + the file-scoped "⋯" —
-                // VS Code's editor-actions corner, Run's one home at every
-                // size (it left the title bar and the console header).
+                // Run + file-scoped "⋯" — VS Code's editor-actions corner; Run's one home now
+                // (left the title bar and console header).
                 runControl={runControl}
                 moreItems={deskMoreItems}
               />
 
-              {/* VS Code's breadcrumbs row, static v1 (W2-A). Sits on the
-                  editor surface so the active tab reads into the code. */}
+              {/* Breadcrumbs sit on the editor surface so the active tab reads into the code. */}
               <Breadcrumbs path={activePath} />
 
               <Editor
@@ -1808,9 +1560,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 onController={(c) => {
                   editorRef.current = c
                 }}
-                // Only offered where the explorer is hidden behind a drawer;
-                // docked, the files are already on screen and the button would be
-                // a no-op.
+                // Only offered behind a drawer — docked, the files are already visible.
                 onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
                 projectWords={projectWords}
                 onCursor={(line, col) => setCursor({ line, col })}
@@ -1818,15 +1568,12 @@ function Ide({ report }: { report: CapabilityReport }) {
             </>
           )}
 
-          {/* The console sash, at every width — ConsoleDivider itself grows a
-              visible 12px handle on a coarse pointer, so a thumb has something
-              to grab (one shell, touch-sized adjustments only). */}
+          {/* ConsoleDivider grows a 12px handle on a coarse pointer, so a thumb has something to grab. */}
           {consoleOpen ? (
             <ConsoleDivider
               height={consoleHeight}
-              // A hand drag is the student choosing a height, so it retires any
-              // standing maximize — otherwise Restore would later jump to a
-              // pre-maximize height the drag already replaced.
+              // A hand drag retires any standing maximize, or Restore would later jump to
+              // a height the drag already replaced.
               onHeight={(px) => {
                 setConsoleMaximized(false)
                 setConsoleHeight(px)
@@ -1837,23 +1584,14 @@ function Ide({ report }: { report: CapabilityReport }) {
           <section
             aria-label={COPY.a11yConsole}
             data-state={runner.status}
-            // `.console-panel` carries the fill, the top divider, the stdin floor
-            // and the accent rule that marks a running process. The min-height
-            // here used to be a bare-custom-property utility, which Tailwind v4
-            // compiles to invalid CSS — so the floor from spec §4.3 rule 4 ("the
-            // single most important number in this section") was doing nothing at
-            // all. (Spelling that class name out in a comment is enough for
-            // Tailwind to emit it again, so it stays paraphrased.)
+            // `.console-panel` holds fill/divider/stdin-floor/accent-rule. Its min-height used to be a
+            // bare-custom-property utility, which Tailwind v4 compiles to invalid CSS, silently breaking
+            // spec §4.3 rule 4's console floor. (Not spelled out literally here — that would make
+            // Tailwind emit the class again.)
             className={'console-panel ' + (consoleOpen ? 'console-panel--open' : 'h-bar-top')}
-            // The dragged, persisted pixel height at every width (one shell —
-            // the old fixed 40% below 900px was a second layout). The panel's
-            // own CSS bounds an oversized pref. EXCEPT while a software
-            // keyboard is up on a narrow screen: a fixed height of a
-            // keyboard-shrunk viewport leaves the transcript ~33px — one and a
-            // half output lines, against the four rule 4 asks for. Handing the
-            // height to CSS lets `--console-floor` claim what the panel
-            // actually needs; the editor keeps its own floor and yields the
-            // rest. The panel being typed into should win the space.
+            // Persisted height at every width (no more phone-only 40% hack). Suspended under an open
+            // keyboard — a fixed height there would starve the transcript to ~33px — so CSS's
+            // `--console-floor` takes over instead.
             style={consoleOpen && !(narrow && keyboardOpen) ? { height: `${consoleHeight}px` } : undefined}
           >
             <RunBar
@@ -1875,30 +1613,19 @@ function Ide({ report }: { report: CapabilityReport }) {
                   setConsoleMaximized(false)
                 } else {
                   consoleRestoreHeight.current = consoleHeight
-                  // Over-ask on purpose; the panel's flex-shrink + the editor's
-                  // min-height floor decide what "maximized" actually is.
-                  // Divided by the view scale because innerHeight is unzoomed
-                  // viewport px while the height is a px length inside the
-                  // zoomed #root — at 0.7 the raw value is only 70% of the
-                  // shell and stopped over-asking, so "maximize" left a third
-                  // of the editor showing.
+                  // Over-asks on purpose — flex-shrink + the editor's min-height floor decide the
+                  // real max. Divided by uiScale since innerHeight is unzoomed while height is a
+                  // zoomed #root px length; undivided, a 0.7 scale under-asked and left a third of
+                  // the editor showing.
                   setConsoleHeight(window.innerHeight / uiScale)
                   setConsoleMaximized(true)
                 }
               }}
             />
-            {/* Two faces share this pane. A page project shows the live page
-                (Preview) with the Console one tap away for its log; a script and
-                the Java/Python engines have only the Console.
-
-                The preview iframe IS the page's execution — so for a page project
-                it stays MOUNTED whenever the pane is open, even while the Console
-                face is on top, and is merely hidden (`hidden`, display:none). A
-                display:none iframe keeps running, so the page's `console.log` fills
-                the Console whichever tab you are looking at. Unmounting it on the
-                Console tab was the bug where output only appeared after a visit to
-                Preview. `contents` lets the iframe's own flex sizing reach the
-                pane when it is the shown face. */}
+            {/* Preview iframe stays MOUNTED whenever the pane is open (merely hidden via `hidden`),
+                even behind the Console face — a display:none iframe keeps running, so its
+                console.log still fills the Console. Unmounting it was the bug where output only
+                appeared after a Preview visit. `contents` lets its own flex sizing reach the pane when shown. */}
             {consoleOpen && previewActive ? (
               <div className={outputFace === 'preview' ? 'contents' : 'hidden'}>
                 <Preview srcdoc={runner.previewDoc} />
@@ -1909,9 +1636,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                 buffer={buffer}
                 status={runner.status}
                 progress={runner.progress}
-                // A run that never started — no engine, no output, nothing the
-                // transcript can say. Its own block, with the one button that
-                // does something about it.
+                // A run that never started has no engine/output for the transcript to show —
+                // its own block with a retry button instead.
                 failure={runner.failure}
                 onRetry={runControl.onRun}
                 onDismissFailure={runner.clearFailure}
@@ -1925,9 +1651,8 @@ function Ide({ report }: { report: CapabilityReport }) {
 
       </div>
 
-      {/* The bottom bar (LAYOUT-VSCODE §3), at every width (one shell) — but
-          never while a software keyboard is up, because §4.3 rule 4's console
-          floor gets its pixels before any decoration does. */}
+      {/* LAYOUT-VSCODE §3, at every width — but hidden under an open keyboard, since
+          §4.3 rule 4's console floor claims those pixels first. */}
       {keyboardOpen ? null : (
         <StatusBar
           status={runner.status}
@@ -1946,12 +1671,10 @@ function Ide({ report }: { report: CapabilityReport }) {
       {quickPick ? (
         <QuickInput
           mode={quickPick}
-          // Open tabs lead — they are what "recently opened" means for the
-          // file picker — then the rest of the project in explorer order.
+          // Open tabs lead (that's "recently opened" for the file picker), then the rest in explorer order.
           files={[...tabs, ...project.paths().filter((p) => !tabs.includes(p))]}
           commands={paletteCommands}
-          // Same MRU ordering and same exclusion as WelcomePanel's Recent: a
-          // row for the project you are already in is a dead link.
+          // Same MRU ordering as WelcomePanel's Recent — excluded because a row for the current project is a dead link.
           recent={projects.filter((p) => p.id !== currentProject?.id).map((p) => ({ id: p.id, name: p.name }))}
           currentLine={cursor?.line ?? null}
           lineCount={activePath ? activeContent.split('\n').length : null}

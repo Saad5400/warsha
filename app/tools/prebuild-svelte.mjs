@@ -32,8 +32,7 @@ const version = require('svelte/package.json').version
 async function main() {
   await esbuild.initialize({})
 
-  // Three entry points, code-split: the shared runtime (scheduler, reactivity)
-  // is deduped into one chunk → a single Svelte instance, as the runtime requires.
+  // Code-split entry points share one runtime chunk — a single Svelte instance, which the scheduler requires.
   const built = await esbuild.build({
     entryPoints: {
       svelte: 'svelte',

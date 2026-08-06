@@ -19,12 +19,8 @@ export interface ConsoleProps {
   buffer: ConsoleBuffer
   status: RunStatus
   progress: LoadProgress | null
-  /**
-   * A run that could not start — the engine download blocked, the browser
-   * missing isolation, a worker that stopped answering. Rendered as a block with
-   * its own button rather than a red line, because the transcript scrolls and
-   * "press Run again" is not obvious to a student looking at an error.
-   */
+  /** A run that could not start (blocked download, missing isolation, dead worker) —
+   *  rendered as a block with its own button, not a red line a scrolling transcript would bury. */
   failure?: RunFailure | null
   onRetry?(): void
   onDismissFailure?(): void
@@ -38,61 +34,35 @@ export interface ConsoleProps {
 const STICK_SLACK_PX = 40
 
 /**
- * How many trailing lines are actually in the DOM.
- *
- * The buffer caps at 5,000, but a tight `while True: print(i)` re-renders the
- * list on every frame, and 5,000 rows of reconciliation per frame is what turns
- * "my loop is printing" into "the Stop button doesn't work" (spec §7.3). Rows are
- * memoised so an unchanged row costs one identity check, and everything older
- * than this window is one click away rather than in the tree.
+ * Trailing lines kept in the DOM. The buffer caps at 5,000, but reconciling that many
+ * every frame during a tight print loop is what makes Stop feel dead (spec §7.3) —
+ * older lines are memoised out of the tree, one click away via "show earlier".
  */
 const RENDER_WINDOW = 1200
 
 /**
- * How long the live line survives an Enter.
- *
- * A program that asks two questions in a row (`input(); input()`) leaves stdin
- * for a few milliseconds between them. Unmounting the input in that gap blurs it,
- * and a blur on a phone shuts the software keyboard — so the student watches it
- * slam closed and reopen between question one and question two, and the viewport
- * resizes twice for nothing. Keeping the *same element* mounted briefly means the
- * second read reuses a still-focused input and nothing moves. It is not an input
- * bar in disguise: it carries no placeholder and no waiting styling while the
- * program is not reading, and anything typed into it goes through the runner's
- * type-ahead queue, which is exactly where a line typed between two reads belongs.
+ * How long the live input survives an Enter. Back-to-back `input()` calls leave a gap
+ * where unmounting would blur the input and flash the software keyboard closed/open.
+ * Keeping the same element mounted through the gap avoids that; it stays a bare focus
+ * holder (no placeholder/styling) until the next read, and anything typed goes through
+ * the runner's type-ahead queue.
  */
 const LIVE_GRACE_MS = 900
 
 /**
- * The largest batch of newly-arrived lines that still fades in.
- *
- * DESIGN-SPEC §9 says "never animate the console's own content", and it is right
- * about the case it was written for: a runaway `for i in range(10000): print(i)`
- * lands hundreds of lines in a single flush, and 1,200 rows fading at once is the
- * jank that makes Stop feel dead (§7.3). So the fade is gated to small,
- * human-paced batches — a prompt, an answer, a few lines of output — and a burst
- * animates nothing at all. Softens §9 for interactive output only (founder
- * ruling 2026-08-04); the burst path is untouched, which is the part §9 protects.
- *
- * The buffer's paced reveal (REVEAL_PER_FLUSH, founder ruling 2026-08-05) leans
- * on this gate deliberately: it feeds bounded bursts through in batches smaller
- * than this, so a fast program's output scrolls in with the fade, while a
- * backlog past MAX_REVEAL_BACKLOG snaps in one large batch and lands here, in
- * the animate-nothing path.
+ * Largest batch of new lines that still fades in. A runaway print loop can flush
+ * hundreds of lines at once, and fading 1,200 rows together is the jank that makes
+ * Stop feel dead (§7.3) — DESIGN-SPEC §9's "never animate console content" is softened
+ * only for small, human-paced batches; a burst animates nothing. Works with the
+ * buffer's paced reveal (REVEAL_PER_FLUSH), which keeps bursts under this size.
  */
 const FRESH_MAX_BATCH = 8
 
 /**
- * The console is a transcript, not a log viewer (spec §7.3), and it has ONE
- * surface: output and input share the stream the way they do in a terminal.
- *
- * There is no standing input bar. While the program is not reading stdin there is
- * no input in the DOM at all; when it blocks on a read, an input appears *in the
- * transcript* at the point the cursor would be — joining a partial-line prompt so
- * `Your name: ` and what the student types are one visual line. Row treatment —
- * a 3px leading rule and a row tint, never colour alone — lives in
- * `.console-row[data-kind]`; per-segment colour lives in `[data-seg]`, which is
- * what lets `Your name: Saad` be one visual line in two colours.
+ * A transcript, not a log viewer (spec §7.3): output and input share one stream, like
+ * a terminal. No standing input bar — an input only exists in the DOM while the program
+ * blocks on a read, joining a partial-line prompt so "Your name: " and the answer are
+ * one visual line (row tint in `.console-row[data-kind]`, per-segment colour in `[data-seg]`).
  */
 export function Console({
   buffer,
@@ -110,10 +80,8 @@ export function Console({
   const inputRef = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState('')
   const stick = useRef(true)
-  // Which trailing rows arrived just now, so ONLY they fade in. Recomputed once
-  // per snapshot (guarded on identity, so StrictMode's double render and the
-  // extra renders around grace/scroll state cost nothing), and it marks nothing
-  // fresh during a burst — see FRESH_MAX_BATCH.
+  // Which trailing rows just arrived, so only they fade in. Recomputed once per snapshot
+  // (identity-guarded, so StrictMode/extra renders cost nothing); marks nothing fresh during a burst.
   const freshRef = useRef<{ snap: ConsoleSnapshot | null; prevMax: number; freshFrom: number }>({
     snap: null,
     prevMax: 0,
@@ -130,19 +98,14 @@ export function Console({
   /** Is there a cursor on the transcript's last line at all? */
   const live = waiting || (grace && busy)
 
-  // Always instant. An auto-follow during a print burst must not animate (it would
-  // lag a frame behind the output and read as stutter), and the resume pill's jump
-  // can span thousands of pixels, where a smooth scroll is a long, sluggish glide
-  // rather than "take me to the bottom now". The console's calmer feel comes from
-  // the per-line fade and the stdin choreography, not from animating the scroll.
+  // Always instant: a smooth scroll during a print burst lags a frame and reads as stutter,
+  // and the resume pill's jump can span thousands of pixels — "now", not a slow glide.
   const scrollToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [])
 
-  // Auto-scroll only while the reader is already at the bottom. Scrolling up
-  // pauses it and raises the resume pill — being yanked out of a stack trace by
-  // late output is the single most-missed console basic.
+  // Auto-scroll only while already at the bottom; scrolling up pauses it and raises the resume pill.
   const onScroll = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -159,11 +122,8 @@ export function Console({
   useLayoutEffect(() => {
     const el = scrollerRef.current
     if (!el) return
-    // While the engine boots, the progress block IS the content: its heading
-    // carries the "this happens once" promise and the bar carries the numbers,
-    // and both are taller than the transcript half of a 220px console — so
-    // pinning the bottom would show a student the reassurance line and cut off
-    // the thing that proves the app is not frozen. Top, until output arrives.
+    // While booting, the progress block IS the content — pin to the top so its heading and
+    // bar (taller than a 220px console's transcript half) aren't cut off by bottom-pinning.
     if (progress) {
       el.scrollTop = 0
       return
@@ -171,12 +131,8 @@ export function Console({
     if (stick.current) scrollToBottom()
   }, [snapshot, progress, showAll, live, scrollToBottom])
 
-  // The transcript changing SIZE moves the bottom of the stream just as surely as
-  // new output does — a software keyboard opening, the divider being dragged, the
-  // panel yielding space to the editor. Without this the cursor a student is
-  // typing at slides out of the scroll window the moment the keyboard appears,
-  // which is the exact failure §4.3 rule 1 exists to prevent, now that the input
-  // is in the stream rather than pinned under it.
+  // A resize (keyboard opening, divider drag, panel resize) moves the bottom just like new
+  // output does — without this the cursor a student is typing at slides out of view (§4.3 rule 1).
   useEffect(() => {
     const el = scrollerRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
@@ -196,11 +152,8 @@ export function Console({
     setShowAll(false)
   }, [snapshot])
 
-  // The runner asks for focus from inside an engine callback, where React has
-  // batched the `waiting` state change and not yet committed it — so at that
-  // moment the input does not exist. Focusing on commit is the reliable half;
-  // the registered callback is what re-focuses when the input is already there
-  // (a second read inside the grace window).
+  // Runner may ask for focus before React commits the `waiting` state change, when the
+  // input doesn't exist yet; this covers the case where it already does (grace window).
   useEffect(() => {
     bindStdinFocus(() => inputRef.current?.focus())
     return () => bindStdinFocus(null)
@@ -210,8 +163,7 @@ export function Console({
     if (waiting) inputRef.current?.focus()
   }, [waiting])
 
-  // Enter has been pressed: hold the cursor on the line long enough for a second
-  // read to reuse it. A new read (`waiting`) supersedes the grace immediately.
+  // Enter pressed: hold the line for a potential second read; a new `waiting` read cancels the grace immediately.
   useEffect(() => {
     if (waiting) setGrace(false)
   }, [waiting])
@@ -222,19 +174,15 @@ export function Console({
     return () => window.clearTimeout(id)
   }, [grace])
 
-  // Spec §4.4: the prompt is flushed and the input focused by the runner; the
-  // scroll has to come *after* the keyboard resize settles, or the question the
-  // student is answering ends up behind the keyboard. Whatever they were reading,
-  // a pending prompt wins — so follow the bottom again.
+  // §4.4: scroll must come after the keyboard resize settles, or the question ends up
+  // behind the keyboard. A pending prompt always wins, so re-follow the bottom.
   useEffect(() => {
     if (!waiting) return
     stick.current = true
     setPausedAt(null)
     let cancelled = false
     void afterViewportSettles().then(() => {
-      // Still only if they have not scrolled away in the meantime: the viewport
-      // can settle a keyboard-animation later, and a scroll that lands then would
-      // yank a reader who went back up to re-read the question.
+      // Only if they haven't since scrolled away — a late-settling viewport shouldn't yank a reader back down.
       if (!cancelled && stick.current) scrollToBottom()
     })
     return () => {
@@ -254,9 +202,7 @@ export function Console({
     if (result === 'queued') onNotify(COPY.stdinQueued)
   }
 
-  // Ctrl+L clears, the way it does in a shell. Scoped to the console: the handler
-  // sits on the panel, so it only fires while focus is inside it and the browser's
-  // own Ctrl+L (focus the address bar) is untouched everywhere else.
+  // Ctrl+L clears (like a shell), scoped to the panel so the browser's own Ctrl+L elsewhere is untouched.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return
     if (e.key !== 'l' && e.key !== 'L') return
@@ -264,10 +210,8 @@ export function Console({
     buffer.clear()
   }
 
-  // Right-click (and a trackpad two-finger click) copies the selection outright,
-  // the way a terminal emulator does. With nothing selected the native menu opens
-  // as usual — and on touch, long-press selection is the platform's own and is
-  // deliberately not intercepted.
+  // Right-click copies the selection outright (like a terminal); with nothing selected the
+  // native menu opens as usual. Touch long-press selection is the platform's own, untouched.
   const onContextMenu = (e: React.MouseEvent) => {
     const text = window.getSelection()?.toString() ?? ''
     if (!text) return
@@ -278,13 +222,9 @@ export function Console({
     )
   }
 
-  // Touch: the cursor is somewhere in a scrolling transcript, so "tap the console"
-  // has to mean "type here". Never while a selection is being made, and never over
-  // a control that has its own job.
-  //
-  // On `click`, not `pointerup`: the transcript is focusable (it has to be, for
-  // Ctrl+L), and the browser moves focus to it on the mousedown that follows a
-  // tap's pointerup — so focusing the input any earlier is immediately undone.
+  // Touch: tapping the console means "type here", unless selecting text or tapping a control.
+  // Uses `click`, not `pointerup`: the focusable transcript (needed for Ctrl+L) steals focus
+  // on the mousedown between them, undoing an earlier focus attempt.
   const onClick = (e: React.MouseEvent) => {
     if (!live) return
     const target = e.target as HTMLElement | null
@@ -295,11 +235,8 @@ export function Console({
 
   const lines = snapshot.lines
 
-  // Ids only ascend and never reset, so a rising max is the honest "what is new".
-  // A small batch since the last snapshot is interactive output and fades; a large
-  // one is a burst and does not. prevMax is left alone on an empty snapshot (Clear
-  // / a new run) so the next run's first line still reads as one appended line, not
-  // a jump from zero that would suppress its fade.
+  // Ids only ascend, so a rising max is "what's new": a small batch fades, a large one is a burst.
+  // prevMax is left alone on an empty snapshot (Clear/new run) so the next run's first line still fades.
   const fr = freshRef.current
   if (fr.snap !== snapshot) {
     const maxId = lines.length ? lines[lines.length - 1].id : fr.prevMax
@@ -316,17 +253,10 @@ export function Console({
   const unseen = pausedAt === null ? 0 : countAfter(lines, pausedAt)
   const empty = lines.length === 0 && !progress && !live
 
-  // The cursor sits after the last thing printed. If the program left that line
-  // open (`print("Your name: ", end="")`, or `input("Your name: ")`), the input
-  // belongs ON it; otherwise it starts a fresh line and takes the `› ` marker —
-  // which is exactly the choice `buffer.echo()` will make a moment later, so the
-  // line does not reflow when the answer lands.
-  //
-  // Gated on `waiting`, not `live`: during the post-Enter grace the program is no
-  // longer reading, so the answered line stays a normal completed row instead of
-  // being pulled back up into a live row — which is what left a phantom "› "
-  // prompt hanging under every answer for ~900ms and shifting the transcript out
-  // from under the reader (founder ruling 2026-08-04).
+  // The input joins the last line if it's still open (an unterminated print/input prompt);
+  // otherwise it starts a fresh `› ` line, matching what `buffer.echo()` will do next.
+  // Gated on `waiting`, not `live`: during the post-Enter grace this must stay a completed row,
+  // or a phantom "›" prompt hangs under every answer for ~900ms.
   const tail = visible.length > 0 ? visible[visible.length - 1] : null
   const joinTail = waiting && !!tail && !tail.complete
   const rows = joinTail ? visible.slice(0, -1) : visible
@@ -338,8 +268,7 @@ export function Console({
       onKeyDown={onKeyDown}
       onClick={onClick}
     >
-      {/* Anchor for the resume pill, which has to float over the transcript
-          rather than scroll away inside it. */}
+      {/* Anchor for the resume pill, which floats over the transcript instead of scrolling with it. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollerRef}
@@ -350,10 +279,8 @@ export function Console({
           aria-live="polite"
           aria-atomic="false"
           aria-label={COPY.a11yProgramOutput}
-          // A scrollable region has to be reachable without a mouse — and it is
-          // also what gives Ctrl+L somewhere to be pressed: a click on a
-          // non-focusable div leaves focus on <body>, where the panel's keydown
-          // handler never sees it.
+          // Focusable so it's keyboard-reachable and so Ctrl+L has somewhere to land —
+          // a non-focusable div would leave focus on <body>, past the panel's keydown handler.
           tabIndex={0}
         >
           {progress ? <ProgressBlock progress={progress} /> : null}
@@ -414,16 +341,10 @@ export function Console({
 }
 
 /**
- * The live line: the terminal cursor, rendered.
- *
- * `line` is the still-open transcript line the input has to share ("Your name: "
- * and the answer on one row), or null when the cursor is on a fresh line and
- * takes the `› ` marker instead. It reuses `.console-row`, so the input sits on
- * the transcript's own grid rather than in a bar with its own geometry.
- *
- * `.stdin-row` / `.stdin-input` keep their names from the old input bar: the
- * class names are what the design audits measure, and the *thing* is the same
- * thing — the place a student types — even though it has moved into the stream.
+ * The terminal cursor, rendered. `line` is the still-open row the input joins
+ * ("Your name: " + the answer), or null when it starts a fresh `› ` line; it reuses
+ * `.console-row` so the input sits on the transcript's own grid. `.stdin-row`/`.stdin-input`
+ * keep their old names since design audits measure by class name.
  */
 function LiveLine({
   line,
@@ -454,11 +375,8 @@ function LiveLine({
             </span>
           ))
         ) : waiting ? (
-          // The same marker `buffer.echo()` writes when an answer starts its own
-          // line, so the row reads identically before and after Enter. Only while
-          // actually reading: in the post-Enter grace the input is a collapsed,
-          // invisible focus-holder (see `.stdin-row[data-waiting='false']`), so it
-          // must not paint a prompt marker for a read nobody asked for.
+          // Matches the marker buffer.echo() writes, so the row looks the same before/after Enter.
+          // Only while actually reading — in the grace window this is just an invisible focus-holder.
           <span aria-hidden="true" className="stdin-marker">
             ›{' '}
           </span>
@@ -472,9 +390,7 @@ function LiveLine({
             e.preventDefault()
             onSubmit()
           }}
-          // Only while the program is actually reading. In the grace window after
-          // Enter the element is still here to hold focus, but it must not invite
-          // a line nobody asked for.
+          // Only while actually reading — in the grace window it just holds focus, not inviting input.
           placeholder={waiting ? COPY.stdinWaitingPlaceholder : ''}
           aria-label={COPY.a11yProgramInput}
           autoCapitalize="off"
@@ -497,9 +413,8 @@ function countAfter(lines: readonly ConsoleLine[], id: number): number {
 }
 
 /**
- * True for 3 seconds after the transcript goes from having lines to having none,
- * so a cleared console says "Cleared." before falling back to the standing
- * explanation (spec §7.5). View-level only — the buffer knows nothing about it.
+ * True for 3s after the transcript empties, so it says "Cleared." before falling back
+ * to the standing explanation (spec §7.5). View-level only.
  */
 function useJustCleared(lineCount: number): boolean {
   const [cleared, setCleared] = useState(false)
@@ -518,26 +433,20 @@ function useJustCleared(lineCount: number): boolean {
 }
 
 /**
- * One row, memoised on the line's identity.
- *
- * The buffer replaces the object for the row it touches and keeps every other
- * object identical, so a 5,000-line burst re-renders one row per frame instead of
- * five thousand. This is a *design* requirement, not an optimisation: the visible
- * symptom of dropping it is that Stop stops responding (spec §7.3).
+ * One row, memoised on line identity: the buffer replaces only the touched object, so a
+ * 5,000-line burst re-renders one row, not five thousand. Not an optimisation — drop this
+ * and Stop stops responding (spec §7.3).
  */
 const Row = memo(function Row({ line, fresh }: { line: ConsoleLine; fresh?: boolean }) {
   return (
-    // `data-fresh` fades a just-arrived interactive line in (transform + opacity,
-    // one shot). It flips off on the next snapshot, which re-renders only this row
-    // — memo keeps every settled row untouched, so a burst, where nothing is ever
-    // marked fresh, pays nothing.
+    // `data-fresh` is a one-shot fade, flipped off next snapshot; memo means a burst
+    // (where nothing is ever marked fresh) re-renders nothing extra.
     <div data-kind={line.kind} data-fresh={fresh ? 'true' : undefined} className="console-row">
       <span className="console-row__text">
         {line.segments.length === 0
           ? ' '
-          : // `[data-seg]` carries hue and, for an echoed answer, italic too — an
-            // answer that joined an open prompt ("Your name: Saad") shares its row
-            // with stdout, so the row's leading rule cannot separate the two.
+          : // [data-seg] carries hue (and italic for an echoed answer) since a joined
+            // prompt+answer row can't be split by the row's own leading rule.
             line.segments.map((seg, i) => (
               <span key={i} data-seg={seg.kind}>
                 {seg.text}
@@ -549,18 +458,12 @@ const Row = memo(function Row({ line, fresh }: { line: ConsoleLine; fresh?: bool
 })
 
 /**
- * A run that could not start, as a block the student can act on.
- *
- * Deliberately not a transcript row. A red line is the right shape for "your
- * program crashed" and the wrong shape for "Warsha could not download Java":
- * the second is not the student's fault, is not about their code, and has
- * exactly one useful next action. So it gets a heading, one hint, a button that
- * performs the action, and the engine's own words folded away behind Details —
- * which is where `TypeError: Failed to fetch` belongs, since it reads to a
- * beginner as an accusation.
- *
- * The button styling reuses `.console-earlier` rather than `ui/Button` so the
- * console has no dependency on the primitives while they are being reworked.
+ * A run that couldn't start, as an actionable block — not a transcript row. A red line
+ * fits "your program crashed"; this is "Warsha couldn't download Java", not the
+ * student's fault, so it gets a heading, a hint, and a retry button, with the engine's
+ * raw error folded behind Details (`TypeError: Failed to fetch` reads as an accusation).
+ * Reuses `.console-earlier` styling rather than `ui/Button` to avoid a dependency
+ * on primitives still being reworked.
  */
 function FailureBlock({
   failure,

@@ -12,13 +12,20 @@ cd app && npm run build && npx vite preview --port 8086 --strictPort --host
 
 # 2. run the suites (from this directory)
 cd tools/qa && npm install
-npm run all          # python + java + csharp + projects + migration + robustness
+npm run all          # python + java + csharp + projects + migration + robustness + sw-range
 npm run python       # or one at a time
 npm run java
 npm run csharp       # needs the .NET bundle staged (app/public/warsha-dotnet/)
 npm run projects
 npm run migration
+npm run robustness
+npm run offline
+npm run sw-range
 npm run timings      # progress-continuity + cold/warm Java numbers, not pass/fail
+
+# two suites aren't wired into package.json — invoke node directly
+node share-check.mjs           # 11 checks: share-as-link + share-as-PDF (same WARSHA_URL/WARSHA_SHOTS/CHROME env vars as above)
+CHROME=/usr/bin/google-chrome node measure-java-startup.mjs   # cold Run + reload->Run cache timings, not pass/fail (reads APP_URL, not WARSHA_URL)
 ```
 
 Each suite exits non-zero if any check fails, prints `PASS`/`FAIL` per check and a

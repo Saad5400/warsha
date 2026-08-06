@@ -19,13 +19,8 @@ export interface Capability {
   ok: boolean
   /** 'fatal' — the IDE cannot work. 'warn' — degraded, still usable. */
   severity: 'fatal' | 'warn'
-  /**
-   * No message here on purpose. A check is a boolean and runs at boot, which
-   * may be before a locale is resolved; the student-facing sentence for each
-   * `id` lives in the i18n bundles and is looked up at render time by
-   * `capabilityMessage()` in CapabilityScreens.tsx. Adding a check means adding
-   * a case there and a string in en.ts / ar.ts.
-   */
+  /** No message here — this runs at boot, maybe before locale resolves. The student-facing
+   *  string per `id` lives in i18n, looked up by `capabilityMessage()` in CapabilityScreens.tsx. */
 }
 
 export interface CapabilityReport {

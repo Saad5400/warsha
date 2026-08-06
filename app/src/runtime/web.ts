@@ -61,14 +61,9 @@ const MARK = '__warsha_preview__'
 const TAILWIND_URL = new URL('warsha-tailwind.js', document.baseURI).href
 
 /**
- * Fetch the Tailwind build once (same-origin, so it is allowed under the app's
- * COEP) and cache it. The source is INLINED into the preview, never referenced by
- * URL: the preview iframe is sandboxed without `allow-same-origin`, so it has an
- * opaque origin, and a `<script src>` back to our own origin is *cross-origin*
- * from its point of view — which `COEP: require-corp` blocks unless the response
- * carries `Cross-Origin-Resource-Policy` (production nginx does not add it, and
- * the browser's HTTP cache can hold a header-less copy). Inlining the bytes makes
- * the document fully self-contained and sidesteps the whole COEP/CORP question.
+ * Fetches and caches the Tailwind build once. Inlined, never linked — the
+ * sandboxed iframe has an opaque origin, so a same-origin `<script src>` would
+ * be cross-origin to it and COEP would block it.
  */
 let tailwindSource: Promise<string> | null = null
 function loadTailwindSource(): Promise<string> {
@@ -86,15 +81,12 @@ function loadTailwindSource(): Promise<string> {
   return tailwindSource
 }
 
-/** Does this `<script src>` point at a Tailwind CDN we can serve on-device? Both
- *  the v3 Play CDN and the v4 `@tailwindcss/browser` build are recognised. */
+/** Recognises both the v3 Play CDN and the v4 `@tailwindcss/browser` build as servable on-device. */
 function isTailwindCdn(url: string): boolean {
   return /cdn\.tailwindcss\.com/i.test(url) || /@tailwindcss\/browser/i.test(url)
 }
 
-/** The console-forwarding bridge, injected as the document's first script.
- *  `nonce` scopes its messages to one run, so output from a superseded iframe
- *  that is still tearing down cannot leak into the next run's Console. */
+/** Forwards console output to the parent. `nonce` scopes messages to one run so a tearing-down iframe can't leak into the next run's Console. */
 function bridge(nonce: string): string {
   return `(function(){
   var NONCE=${JSON.stringify(nonce)};
@@ -126,11 +118,7 @@ function isExternal(ref: string): boolean {
   return /^(?:[a-z][a-z0-9+.-]*:|\/\/|data:|blob:|#)/i.test(ref)
 }
 
-/**
- * Resolve a reference written inside `baseDir` to a normalised project path.
- * Returns null for anything that is not a plain relative/root path (a URL, an
- * anchor, a protocol) — those are left in the document for the browser to fetch.
- */
+/** Resolves a reference relative to `baseDir` to a project path; null for a URL/anchor/protocol, which the browser fetches itself. */
 function resolveRef(baseDir: string, ref: string): string | null {
   const trimmed = ref.trim()
   if (!trimmed || isExternal(trimmed)) return null
@@ -146,25 +134,17 @@ function resolveRef(baseDir: string, ref: string): string | null {
   return out.join('/')
 }
 
-/** Neutralise a `</script>` that would otherwise close the inline tag early when
- *  the document is serialised (script content is raw text, not escaped). */
+/** Escapes `</script>` so it doesn't close the inline tag early when the document is serialised. */
 function safeScript(code: string): string {
   return code.replace(/<\/(script)/gi, '<\\/$1')
 }
 
 /**
- * What to do with one `<script>` element when assembling the page. `resolveRef`
- * and `needsBundle` decide between four outcomes:
- *   - `leave`     — external URL/CDN, a missing project file, or an inline classic
- *                   / import-free module: keep it exactly as written.
- *   - `verbatim`  — a project script with no imports and no TypeScript: inline its
- *                   current text as-is (the Phase-1 behaviour), no bundler needed.
- *   - `bundle`    — a project script that is TypeScript or reaches for another
- *                   module (via `src`, or an inline `type="module"` block): must
- *                   go through esbuild. `esm` keeps `type="module"`; a classic
- *                   script that grew imports is bundled to `iife`.
- * Shared by `pageNeedsBundle` (to decide whether to fetch the bundler up front)
- * and `assemble` (to actually do it), so the two never disagree.
+ * What to do with a `<script>` when assembling the page — shared by
+ * `pageNeedsBundle` and `assemble` so they agree:
+ *   - `leave` — external, missing, or already-runnable as written.
+ *   - `verbatim` — a project script, no imports, no TS: inline as-is.
+ *   - `bundle` — TypeScript or cross-file imports: goes through esbuild (`esm` or `iife`).
  */
 type ScriptPlan =
   | { kind: 'leave' }
@@ -192,8 +172,7 @@ function planScript(
     return { kind: 'verbatim', code }
   }
 
-  // An inline block: bundle only a module that actually imports a project file;
-  // a classic inline script (or an import-free module) already runs as written.
+  // Inline block: bundle only a module that actually imports a project file; anything else already runs as written.
   const text = script.textContent ?? ''
   if (isModule && needsBundle(`${baseDir ? `${baseDir}/` : ''}__warsha_inline_${inlineIndex}.mjs`, text)) {
     return { kind: 'bundle', entry: `${baseDir ? `${baseDir}/` : ''}__warsha_inline_${inlineIndex}.mjs`, format: 'esm', inlineText: text }
@@ -201,12 +180,7 @@ function planScript(
   return { kind: 'leave' }
 }
 
-/**
- * Does this project need the esbuild bundler to preview — i.e. does its entry page
- * contain a module/TypeScript script that imports a project file? Parses the entry
- * exactly as `assemble` will, so `load()` can fetch the bundler (with a progress
- * bar) before the run rather than paying an invisible 12 MB mid-render.
- */
+/** Does the entry page need esbuild (a module/TS script importing a project file)? Parses it exactly as `assemble` will, so `load()` can fetch the bundler up front instead of mid-render. */
 function pageNeedsBundle(files: SourceFile[], entryPath: string): boolean {
   const byPath = new Map(files.map((f) => [f.path, f.content]))
   const entry = byPath.get(entryPath)
@@ -225,7 +199,7 @@ function pageNeedsBundle(files: SourceFile[], entryPath: string): boolean {
 function hostPage(entryPath: string, content: string): string {
   const title = entryPath.split('/').pop() ?? entryPath
   if (entryPath.endsWith('.css')) {
-    // Something for the CSS to actually style, so the preview is not blank.
+    // Something for the CSS to style, so the preview isn't blank.
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
@@ -236,9 +210,8 @@ function hostPage(entryPath: string, content: string): string {
 <button type="button">A button</button>
 </body></html>`
   }
-  // Anything else (a .js entry): run it, and let console output carry the result.
-  // The note keeps the Preview from looking blank/broken when a script has no
-  // page of its own — its output is in the Console, one tap away.
+  // A .js entry: run it, and note in the page that its output is in the Console
+  // — keeps the preview from looking blank.
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title></head>
@@ -251,8 +224,7 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'))
 }
 
-/** A red banner injected at the top of the body when a script failed to bundle,
- *  so the preview names the problem instead of just silently missing a script. */
+/** Red banner injected at the top of the body so a failed script names the problem instead of silently vanishing. */
 function errorBanner(doc: Document, messages: string[]): HTMLElement {
   const banner = doc.createElement('div')
   banner.setAttribute('data-warsha-build-error', '')
@@ -265,12 +237,9 @@ function errorBanner(doc: Document, messages: string[]): HTMLElement {
 }
 
 /**
- * Build the document to load into the preview from an entry HTML file and the
- * rest of the project. Uses DOMParser rather than regex so malformed markup and
- * attribute quoting are the browser's problem, not ours. Async because a module
- * or TypeScript script is transpiled and bundled through esbuild on the way in;
- * a build failure is reported to `onError` (which routes to the Console) and
- * surfaced as a banner rather than throwing, so the rest of the page still runs.
+ * Builds the preview document via DOMParser (not regex, so malformed markup is
+ * the browser's problem). Async for esbuild bundling; a build failure surfaces
+ * as a banner via `onError`, not a throw, so the page still runs.
  */
 async function assemble(
   entryPath: string,
@@ -300,11 +269,9 @@ async function assemble(
     link.replaceWith(style)
   }
 
-  // Replace a Tailwind CDN <script> with our on-device build, INLINED (see
-  // loadTailwindSource for why inlined, not linked). Done before the loop below
-  // and keeping the element's position, since Tailwind must run before the page's
-  // own scripts. On a fetch failure the original CDN script is left as a last
-  // resort rather than dropping styling silently.
+  // Replace a Tailwind CDN script with our inlined on-device build, in place
+  // (must run before other scripts). On fetch failure, leave the original CDN
+  // script rather than dropping styling silently.
   const twScripts = Array.from(doc.querySelectorAll('script[src]')).filter((s) =>
     isTailwindCdn(s.getAttribute('src') ?? ''),
   )
@@ -322,9 +289,8 @@ async function assemble(
     }
   }
 
-  // Inline project scripts. A plain script is inlined verbatim; a module or
-  // TypeScript script that reaches for another file is bundled through esbuild
-  // first (see planScript). External (CDN) scripts are left untouched.
+  // Inline project scripts verbatim; a module/TS script with cross-file imports
+  // is bundled first (planScript). CDN scripts are untouched.
   const buildErrors: string[] = []
   let inlineIndex = 0
   for (const script of Array.from(doc.querySelectorAll('script')) as HTMLScriptElement[]) {
@@ -343,9 +309,8 @@ async function assemble(
       continue
     }
 
-    // plan.kind === 'bundle': transpile + resolve project imports via esbuild.
-    // An inline module carries a synthetic entry file so its relative imports
-    // resolve against the page's directory.
+    // 'bundle': transpile via esbuild. An inline module gets a synthetic entry
+    // file so relative imports resolve against the page's directory.
     const bundleFiles = plan.inlineText !== undefined ? [...files, { path: plan.entry, content: plan.inlineText }] : files
     try {
       const code = await bundleProject(bundleFiles, plan.entry, { format: plan.format })
@@ -380,12 +345,9 @@ export class WebRuntime implements Runtime {
   readonly id = 'web'
   readonly kind = 'preview' as const
 
-  /** Usually nothing to download: a plain HTML/CSS/JS page resolves immediately
-   *  and reports no progress, so the shell's progress block never appears. Only a
-   *  page whose scripts need transpiling/bundling (a module that imports a project
-   *  file, or a `.ts`) fetches the esbuild bundler here — with the same progress
-   *  bar the standalone JS engine uses — so the 12 MB is never paid invisibly
-   *  mid-render, and never at all for a page that does not need it. */
+  /** Usually nothing to download — a plain page reports no progress. Only a page
+   *  needing transpiling/bundling fetches esbuild here (same progress bar as the
+   *  JS engine), so the 12MB is never paid invisibly mid-render. */
   async load(onProgress: (p: ProgressReport) => void, ctx?: RunContext): Promise<void> {
     if (ctx && pageNeedsBundle(ctx.files, ctx.entry)) {
       await ensureBundler(onProgress)
@@ -395,9 +357,8 @@ export class WebRuntime implements Runtime {
   async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
     const nonce = `w${Math.random().toString(36).slice(2)}`
 
-    // The bridge posts console output to the parent; route it to the Console
-    // exactly as an engine's stdout/stderr would arrive. Scoped by nonce so a
-    // previous run's iframe cannot bleed into this transcript.
+    // Routes the bridge's console output to the Console like any engine's
+    // stdout/stderr; nonce-scoped so a previous iframe can't bleed in.
     const onMessage = (e: MessageEvent) => {
       const d = e.data
       if (!d || d.mark !== MARK || d.nonce !== nonce) return
@@ -412,8 +373,7 @@ export class WebRuntime implements Runtime {
         if (closed) return
         closed = true
         window.removeEventListener('message', onMessage)
-        // Blank the surface; a live page has no exit code, so "stopped" is the
-        // shell tearing the preview down on the student's behalf.
+        // Blank the surface — a live page has no exit code, so this is the shell tearing the preview down.
         io.onRender?.('')
         io.onExit(null)
       },
@@ -422,8 +382,7 @@ export class WebRuntime implements Runtime {
     }
 
     const srcdoc = await assemble(entryPath, files, nonce, (t) => io.onStderr(t))
-    // A Stop between the await starting and finishing already tore the session
-    // down; do not paint a superseded document over the blanked preview.
+    // A Stop mid-assemble already tore the session down — don't paint a superseded document over the blanked preview.
     if (!closed) io.onRender?.(srcdoc)
     return session
   }

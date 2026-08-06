@@ -33,15 +33,10 @@ import { type SVGProps } from 'react'
 type IconProps = Omit<SVGProps<SVGSVGElement>, 'viewBox' | 'children'> & { size?: number }
 
 /**
- * Devicon's `java-plain` mark (icons/java/java-plain.svg), embedded unaltered:
- * same single path, only reparented from its native 128×128 viewBox into our
- * 20-unit grid via a translate+scale on a wrapping <g>, which changes nothing
- * about the artwork itself.
- *
- * currentColor: `java-plain` is Devicon's monochrome, recolour-by-design
- * variant, so it inherits the badge's foreground ink. The old two-tone cup
- * (blue cup, red steam) read as a faint smudge on the dark badge; one solid
- * ink is both far more visible and squarely inside this black/white UI.
+ * Devicon's `java-plain` path, unaltered — reparented into our 20-unit grid via
+ * translate+scale on a wrapping <g>. currentColor because the old two-tone cup
+ * (blue/red) read as a faint smudge on the dark badge; one solid ink reads
+ * better and fits this monochrome UI.
  */
 export const IconJava = ({ size = 20, ...rest }: IconProps) => (
   <svg
@@ -63,13 +58,8 @@ export const IconJava = ({ size = 20, ...rest }: IconProps) => (
 )
 
 /**
- * The two-snake Python shape, scaled into our 20 grid and drawn in one ink.
- *
- * Monochrome by design (see the file header): the two halves that carried the
- * PSF blue and gold now both take currentColor, so the mark inherits the
- * badge's foreground like every other glyph in this black/white UI. If strict
- * PSF-mark fidelity is ever required, restore `python-original`'s two colours
- * here — the header note spells out the trade-off.
+ * Two-snake Python shape in one ink (currentColor) — monochrome by design,
+ * see the file header for the PSF-mark trade-off.
  */
 export const IconPython = ({ size = 20, ...rest }: IconProps) => (
   <svg
@@ -95,11 +85,9 @@ export const IconPython = ({ size = 20, ...rest }: IconProps) => (
 )
 
 /**
- * The Web mark: a `</>` in the code font's spirit, drawn as strokes on the same
- * 20-unit grid as the language logos above. There is no single vendor logo for
- * "HTML + CSS + JS", and a monochrome angle-bracket pair is the universal shorthand
- * for markup/code — which is exactly what this tile stands for. currentColor, like
- * the others, so it inherits the badge ink.
+ * The Web mark: a `</>` — there's no single vendor logo for "HTML+CSS+JS", and
+ * angle brackets are the universal shorthand for markup/code. currentColor,
+ * like the others.
  */
 export const IconWeb = ({ size = 20, ...rest }: IconProps) => (
   <svg
@@ -122,12 +110,9 @@ export const IconWeb = ({ size = 20, ...rest }: IconProps) => (
 )
 
 /**
- * The C# mark: a "C" and a sharp, drawn as strokes on the same 20-unit grid as
- * the others. Unlike Python's snakes or Java's cup, C#'s brand *is* its
- * letterform, so a geometric "C#" is the mark here, not a placeholder — the same
- * reasoning that lets IconWeb use a `</>`. currentColor, monochrome, like the
- * rest. Two sharp strokes lean like a musical ♯ so it does not read as "C#" the
- * hashtag.
+ * C#'s brand IS its letterform (same logic as IconWeb's `</>`), so a geometric
+ * "C#" is the mark, not a placeholder. The strokes lean like a musical ♯ so it
+ * doesn't read as a hashtag.
  */
 export const IconCSharp = ({ size = 20, ...rest }: IconProps) => (
   <svg
@@ -152,9 +137,8 @@ export const IconCSharp = ({ size = 20, ...rest }: IconProps) => (
 )
 
 /**
- * The C mark: a single geometric "C". Like C#, C's brand IS its letterform, so a
- * clean stroked C is the mark, not a placeholder (IconWeb/IconCSharp precedent).
- * currentColor, monochrome, on the same 20-unit grid as the rest.
+ * C's brand IS its letterform too (IconWeb/IconCSharp precedent) — a clean
+ * stroked "C" is the mark, not a placeholder.
  */
 export const IconC = ({ size = 20, ...rest }: IconProps) => (
   <svg
@@ -184,19 +168,13 @@ export function LangIcon({ lang, ...rest }: { lang: IconLang } & IconProps) {
   return <IconPython {...rest} />
 }
 
-/* ---- bare file icons (W2-A) ---------------------------------------------- *
- *
- * The tab strip, breadcrumbs and (at desk) the explorer tree render a bare
- * 16px file icon instead of the chip badge — VS Code parity, where each file
- * type carries its language's brand ink (the Seti convention). This is a
- * deliberate, scoped amendment to the monochrome story in this file's header:
- * chips stay single-ink; the BARE icons are the one place chroma identifies.
- * The hex fills below are sanctioned here the way setup.ts's syntax colours
- * are — they are the palette, not layout, and never leave this file.
- *
- * The letterform marks (JS, TS, #, {}, M↓) follow IconCSharp's precedent: for
- * these languages the brand IS the letterform, so a geometric trace of it is
- * the mark, not a placeholder.
+/* ---- bare file icons ------------------------------------------------------ *
+ * Tab strip, breadcrumbs and (at desk) the explorer tree use a colored 16px
+ * icon instead of the chip badge — VS Code/Seti parity, and a deliberate
+ * exception to this file's monochrome rule (chips stay single-ink). The hex
+ * fills are a sanctioned palette here, like setup.ts's syntax colours — never
+ * reused elsewhere. Letterform marks (JS, TS, #, {}, M↓) follow IconCSharp's
+ * precedent: brand IS the letterform.
  */
 
 const Mark = ({ size = 20, ...rest }: IconProps & { children?: React.ReactNode }) => (
@@ -271,7 +249,7 @@ const IconDocMark = (p: IconProps) => (
   </Mark>
 )
 
-/** ext → brand ink. Values are the VS Code Seti fills (W2-A task 4). */
+/** ext → brand ink. Values are the VS Code Seti fills. */
 const FILE_FILLS: Record<string, string> = {
   py: '#519aba',
   java: '#e76f00',
@@ -294,9 +272,8 @@ const FILE_FILLS: Record<string, string> = {
 const DOC_FILL = '#c5c5c5'
 
 /**
- * The bare colored file icon, keyed by extension. Every glyph draws in
- * currentColor, so the fill rides in as an inline `color` — consumers can
- * still override it via `style` if a context ever needs the neutral ink.
+ * Bare colored icon keyed by extension. Every glyph draws in currentColor, so
+ * the fill rides in as inline `color` — overridable via `style` if needed.
  */
 export function FileIcon({ ext, size = 16, style, ...rest }: { ext: string } & IconProps) {
   const props = { size, style: { color: FILE_FILLS[ext] ?? DOC_FILL, ...style }, ...rest }

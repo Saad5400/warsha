@@ -29,15 +29,13 @@ const errs = []
 const notFound = []
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
 page.on('pageerror', (e) => errs.push('pageerror: ' + e.message))
-// The console message for a failed request does not name the URL, so capture it
-// from the response — otherwise "2 × 404" is unattributable.
+// Console errors don't name the URL for a failed request; grab it from the response instead.
 page.on('response', (r) => { if (r.status() === 404) notFound.push(r.url()) })
 const shot = async (n) => { await page.screenshot({ path: `${SHOTS}/final-${n}.png` }); console.log(`      shot -> final-${n}.png`) }
 const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s) => page.waitForFunction(
   (n) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(n), s, { timeout: 300000 })
-// Run lives in the tab strip's editor-actions corner and names its file
-// ("Run Main.java") — hence the prefix match.
+// Prefix match: the button's accessible name includes the file, e.g. "Run Main.java".
 const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
 
 const css = (sel, props) => page.evaluate(([s, ps]) => {
@@ -48,29 +46,20 @@ const css = (sel, props) => page.evaluate(([s, ps]) => {
 }, [sel, props])
 
 await page.goto(URL_, { waitUntil: 'load' })
-// WelcomePanel's cards lost their `template-card` class in a concurrent refactor,
-// so wait on the accessible name instead — that is the part that cannot be
-// refactored away without changing what the page means.
+// Wait on the accessible name, not `.template-card` — the class has churned before.
 const startCard = () => page.getByRole('button', { name: /starter/i }).first()
 await startCard().waitFor({ timeout: 20000 })
 await page.waitForTimeout(600)
 
 // ============================================== §2 / §7.4 fills and boundaries
-// The accent-fill check is deferred until a project exists (see below): on an
-// EMPTY project the only primary on screen is a correctly-disabled Run, and
-// measuring that reports surface-4 / text-disabled and reads as a contrast
-// failure when it is in fact the spec's disabled treatment working.
-// task #22: `.btn--primary` no longer exists as a class — Button.tsx generates
-// pure Tailwind utilities via cva now, and publishes which variant is which
-// through `data-variant` instead (the same role `data-kind` plays on a toast).
-// DENSITY (2026-08-05): a fine-pointer ≥900px window compacts the chrome —
-// --fs-btn 15→13, --touch 44→28 — so the expected numbers fork on the same
-// media the app forks on. This harness is a desktop Chrome, so `desk` is true
-// at 1280 and false at the 390px viewport the touch checks below use.
+// Accent-fill check runs later: an empty project's only primary is a disabled
+// Run, which would misreport as a contrast failure.
+// `.btn--primary` is gone — Button.tsx uses cva + `data-variant` now.
+// DENSITY: a fine-pointer ≥900px window compacts chrome (--fs-btn 15→13,
+// --touch 44→28); `desk` is true at 1280px, false at the 390px viewport below.
 const isDesk = () => page.evaluate(() => matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches)
-// Any `.btn`: the type ramp is on the cva base, shared by every variant — and
-// there may be no primary on screen at all (Run dresses down to a quiet
-// toolbar glyph in its one home, the tab strip's editor-actions corner).
+// Uses `.btn`: the type ramp is shared by all variants via the cva base, and
+// Run itself may not be on screen (it's just a toolbar glyph in the tab strip).
 const primary = await css('.btn', ['min-height', 'font-weight', 'font-size'])
 info(`button geometry: ${JSON.stringify(primary)}`)
 const wantBtnFs = (await isDesk()) ? '13px' : '15px'
@@ -80,9 +69,8 @@ else fail(`§3.2 button label is ${wantBtnFs}/600`, JSON.stringify(primary))
 
 const CARD_SEL = '.template-card, [aria-label="Start a project"] button'
 const card = await css(CARD_SEL, ['border-color', 'border-width', 'border-radius', 'min-height'])
-// THEME-V5: --border-control is back to v3's #8D8D9A (rgb(141,141,154)) —
-// the value that clears 3:1 on all four surfaces. v4's sub-3:1 #3C3C3C
-// exception is retired with the Dark Modern skin (THEME-V5 §4).
+// THEME-V5: --border-control reverted to v3's #8D8D9A (clears 3:1 everywhere);
+// v4's sub-3:1 #3C3C3C exception is gone with Dark Modern.
 if (card['border-width'] === '1px' && card['border-color'] === 'rgb(141, 141, 154)')
   pass('5. welcome card has the --border-control edge', 'v3/v5 #8D8D9A — clears 3:1 on every surface')
 else fail('5. welcome card border', JSON.stringify(card))
@@ -99,11 +87,9 @@ const ring = await page.evaluate(() => {
   return { tag: el.tagName, cls: el.className, outline: c.outlineColor, w: c.outlineWidth, off: c.outlineOffset }
 })
 info(`focus ring: ${JSON.stringify(ring)}`)
-// THEME-V5: --focus-ring is still var(--accent), and --accent is white again
-// (#FAFAFA, rgb(250,250,250)) — one edit moved the ring with it.
-// Founder ruling, 2026-08-02: ring geometry is 1px/no-offset app-wide (was
-// 2px/2px) — this is the welcome panel, which uses the global default rather
-// than one of the -1px inset variants (ActivityBar/StatusBar/stdin-input).
+// THEME-V5: --focus-ring tracks --accent, now white (#FAFAFA).
+// Founder ruling 2026-08-02: ring is 1px/no-offset app-wide (was 2px/2px);
+// this is the global default, not one of the -1px inset variants.
 if (ring && ring.w === '1px' && ring.outline === 'rgb(250, 250, 250)' && ring.off === '0px')
   pass('20. hardware keyboard gets a 1px white accent focus ring at no offset')
 else fail('20. focus ring', JSON.stringify(ring))
@@ -122,9 +108,8 @@ await page.waitForTimeout(300)
 await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
 await page.waitForSelector('[role="tab"]', { timeout: 15000 })
 await page.waitForTimeout(700)
-// Dismiss the capability banner so it does not eat the captures. Scoped to the
-// banner: a loose /Dismiss|Close/ also matches a tab's "Close Main.java" button,
-// and .first() then quietly closed the tab the later checks depend on.
+// Scoped to the banner — a loose /Dismiss|Close/ also matches a tab's Close
+// button, and .first() would close that instead.
 const dismiss = page.locator('[role="status"]').locator('button[aria-label="Dismiss"]').first()
 if (await dismiss.count()) { await dismiss.click().catch(() => {}); await page.waitForTimeout(300) }
 for (const f of ['Person.java', 'Student.java']) {
@@ -133,22 +118,14 @@ for (const f of ['Person.java', 'Student.java']) {
 }
 
 // ---- 1. active tab + open file carry a rule, not just a fill
-// The 2px accent rule moved from `border-bottom` to an inset box-shadow
-// (PIXEL-FINDINGS F-03): a border-box tab with `border-b-2` measured 42px of
-// content box inside its 44px border box, so every centred child — the 44px
-// close button, the language badge — rode 1px proud of the tab. A shadow costs
-// no layout, so `border-bottom-width` is 0 by design now; the rule itself is
-// still there, just carried in `box-shadow`.
+// Accent rule moved from border-bottom to an inset box-shadow (PIXEL-FINDINGS
+// F-03) — border-bottom pushed centred children 1px off; 0px border is intentional.
 const tab = await css('[role="tab"][data-state="active"]', ['box-shadow', 'background-color'])
 const tabLabel = await css('[role="tab"][data-state="active"] .tab__label', ['font-weight', 'color', 'font-size'])
 info(`active tab: ${JSON.stringify(tab)} label ${JSON.stringify(tabLabel)}`)
-// Chrome's serialised order is "color offset-x offset-y blur spread inset",
-// the reverse of the source order in the Tailwind arbitrary value.
-// V5 keeps V4's tab grammar with V5 values: the accent rule is 1px on the TOP
-// edge (--tab-accent-top = --accent, now white #FAFAFA), the tab's fill is the
-// editor canvas (--tab-active-bg = --surface-1 #0E0E11) running seamlessly into
-// the code below, the label is #FFFFFF — and the weight stays 400, because VS
-// Code never bolds a tab (the white fg + top rule carry the state).
+// Chrome serialises box-shadow as "color x y blur spread inset" — reverse of
+// the Tailwind source order.
+// Weight stays 400: VS Code never bolds tabs; the white label + top rule carry the state.
 if (
   /rgb\(250, 250, 250\) 0px 1px 0px 0px inset/.test(tab['box-shadow']) &&
   tab['background-color'] === 'rgb(14, 14, 17)' &&
@@ -158,11 +135,8 @@ if (
   pass('1a. active tab = 1px accent top rule + editor fill + white label at weight 400', `${tabLabel.color} @ ${tabLabel['font-size']}`)
 else fail('1a. active tab signals', JSON.stringify({ tab, tabLabel }))
 
-// V5 keeps V4's list model at desk: selection is a full-row FILL, not a
-// leading rail — --list-active-sel-bg #3A3A42 (the monochrome grey/white
-// selection language) with --list-active-sel-fg #FFFFFF while the tree holds
-// focus (the click above left it there), --list-inactive-sel-bg #2B2B31 once
-// focus moves on. Weight stays 400: VS Code weights nothing in the tree.
+// Selection is a full-row fill, not a leading rail; bg differs by whether the
+// tree still holds focus. Weight stays 400 (VS Code weights nothing in the tree).
 const row = await css('[role="treeitem"][data-state="open"]', ['background-color', 'border-left-color'])
 const rowLabel = await css('[role="treeitem"][data-state="open"] .tree-row__label', ['font-weight', 'color'])
 const rowFill =
@@ -171,14 +145,10 @@ if (rowFill && row['border-left-color'] === 'rgba(0, 0, 0, 0)' && rowLabel['font
   pass('1b. open explorer row = full-row selection fill, no rail, weight 400', JSON.stringify({ row, rowLabel }))
 else fail('1b. open explorer row', JSON.stringify({ row, rowLabel }))
 
-// The console starts collapsed on a fresh, empty project and auto-opens on Run.
-// Anything inside it has to be measured with it open, or the checks silently
-// pass over an unmounted subtree.
+// Console starts collapsed; must open it or checks silently pass over an unmounted subtree.
 const toggle = page.getByRole('button', { name: 'Show output' })
 if (await toggle.count()) { await toggle.click(); await page.waitForTimeout(400) }
-// Wait for the transcript, NOT for `.stdin-input`: the console has no standing
-// input any more. `.stdin-input` is the live line and exists only while the
-// program is blocked on a read, which is much later in this script.
+// Wait for the transcript, not `.stdin-input` — that only exists once a program blocks on read.
 await page.waitForSelector('.console-transcript', { timeout: 5000 })
 
 // ---- 4. fills are honest, measured on a LIVE accent button and a disabled one
@@ -188,17 +158,13 @@ const btnStates = await page.evaluate(() =>
     return { label: (el.textContent || '').trim().slice(0, 14), disabled: el.disabled, bg: c.backgroundColor, fg: c.color }
   }))
 info(`primary buttons: ${JSON.stringify(btnStates)}`)
-// THEME-V5: the invariant is unchanged — "an --accent fill's text is always
-// --accent-ink, never a literal colour" — only the values moved with the
-// sweep. --accent #FAFAFA -> rgb(250,250,250); --accent-ink #09090B
-// (19.06:1 on the accent).
+// THEME-V5: invariant unchanged (accent fill's text is always --accent-ink); only the colors moved.
 const live = btnStates.filter((b) => !b.disabled)
 if (live.length && live.every((b) => b.bg === 'rgb(250, 250, 250)' && b.fg === 'rgb(9, 9, 11)'))
   pass('4a. enabled primary is --accent-ink on --accent, never a literal colour', '19.06:1')
 else if (live.length === 0) {
-  // The chrome deliberately has no filled primary at rest at ANY width (Run is
-  // a quiet toolbar glyph in the tab strip) — the invariant is carried by the
-  // token pair itself, so assert it there.
+  // No filled primary exists at rest (Run is a toolbar glyph) — assert the
+  // --accent/--accent-ink pair directly instead.
   const pair = await page.evaluate(() => {
     const probe = document.createElement('div')
     probe.style.cssText = 'position:fixed;left:-9999px;background:var(--accent);color:var(--accent-ink)'
@@ -233,28 +199,16 @@ if (Object.values(cursors).every((v) => v === 'pointer'))
 else fail('cursor: pointer', JSON.stringify(cursors))
 
 // ---- 14. touch targets
-// Founder ruling (P1): icon-only controls and Run/Stop dropped from 44px to
-// 40px visually. `.tab__close` and `.icon-btn` (and some `.btn` instances —
-// Run/Stop, console Copy/Clear — that selector also matches every OTHER
-// Button variant, still 44/48px) now carry a real box as small as 40px, so
-// the raw-height floor drops to 40 for everything. What must still hold at
-// 44 is the EFFECTIVE hit area: where `ui/Button.tsx`'s `after:` pseudo is
-// present (a negative-inset transparent expansion), it has to add up to
-// ≥44px — checked directly off the pseudo's own computed box, not assumed.
-// Controls that opted out of the pseudo (`after:content-none` — tab close,
-// Explorer's tight-gap trio and its per-row "⋯", documented in Button.tsx
-// and at each call site) are exempted from the effective-area check, same as
-// they are in the app: their floor is the 40px raw box, nothing more.
+// Founder ruling (P1): icon-only controls have a 40px raw-box floor; the 44px
+// hit-area floor is instead met via Button.tsx's `after:` pseudo expansion,
+// checked off its own computed box rather than assumed.
+// Controls with `after:content-none` (tab close, Explorer's tight controls)
+// opt out — their floor is just the 40px raw box.
 const targets = await page.evaluate(() => {
-  // DENSITY: on a fine-pointer ≥900px window the touch floors are stood down
-  // by design — controls compact to 28px (WCAG 2.2 AA pointer floor is 24).
-  // The 40/44 touch obligations are asserted where they bind: coarse pointers
-  // and <900px, which the 390px viewport passes below exercise.
-  //
-  // Two named desk exemptions below the 24px pointer floor, both VS Code
-  // parity metrics: tree rows are 22px (--row-tree), and .tab__close is 20px
-  // (--tab-close), which rides INSIDE the larger 35px tab target — the same
-  // rides-inside-larger-target reasoning WCAG 2.2 itself allows.
+  // DENSITY: desk (≥900px fine pointer) floors drop to 28px, above the WCAG
+  // 2.2 AA 24px pointer floor; the 40/44 touch obligations apply below that.
+  // Tree rows (22px) and .tab__close (20px) are named desk exemptions — both
+  // ride inside a larger target, which WCAG 2.2 allows.
   const desk = matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches
   const floors = (s) => {
     if (!desk) return { raw: 40, hit: 44 }
@@ -270,11 +224,8 @@ const targets = await page.evaluate(() => {
     for (const el of document.querySelectorAll(s)) {
       const r = el.getBoundingClientRect()
       if (r.width === 0 && r.height === 0) continue
-      // Named desk exemptions beyond floors(): status-bar items fill VS
-      // Code's own 22px bar (--bar-status), and the pane header's action trio
-      // fills its 22px row (--pane-action riding --row-tree; DENSITY.md §QA).
-      // Same rides-the-full-bar reasoning as the 22px tree row; anything
-      // SHORTER than its bar in either place is still a defect.
+      // Status-bar items and the pane-header action trio fill their own 22px
+      // bar/row — same rides-the-bar exemption as tree rows.
       if (
         desk &&
         r.height >= 22 &&
@@ -300,10 +251,8 @@ if (targets.bad.length === 0)
 else fail('14. touch targets', targets.bad.join(' | '))
 
 // ---- 7/8. type scale
-// DENSITY (editor internals, W2-D): the desk default is VS Code's 14px with
-// Math.round(14 × 1.35) = 19px leading, and the gutter follows the editor's
-// own px instead of a forced 13px. Touch keeps 15px / 24px (1.6) and the 13px
-// gutter.
+// DENSITY: desk code is 14px/19px leading (14×1.35), gutter matches editor
+// size; touch stays 15px/24px with a 13px gutter.
 const code = await css('.cm-content', ['font-size', 'line-height', 'padding-left'])
 const gutter = await css('.cm-lineNumbers .cm-gutterElement', ['font-size', 'line-height'])
 info(`code ${JSON.stringify(code)} gutter ${JSON.stringify(gutter)}`)
@@ -322,13 +271,10 @@ const inputs = await page.evaluate(() =>
     .filter((el) => el.offsetParent !== null)
     .map((el) => ({ n: el.getAttribute('aria-label') || el.tagName, fs: getComputedStyle(el).fontSize })))
 info(`focusable inputs: ${JSON.stringify(inputs)}`)
-// Vacuously true is a PASS here, and that is the point: with the console idle
-// there is deliberately no stdin input on screen to measure (the live line exists
-// only while a program is reading). The 16px floor for that input is asserted
-// further down, at the moment it exists.
-// DENSITY: the 16px floor is the iOS zoom rule — a touch obligation. The desk
-// chrome runs 13px UI controls by design (the entry select), so its floor is
-// the app's own 12px minimum.
+// Vacuous pass is intended — stdin input only exists while a program is
+// reading; its 16px floor is checked later, once it's on screen.
+// DENSITY: 16px is the iOS-zoom floor (touch only); desk UI runs 13px
+// controls by design, so its floor is 12px.
 const inputDesk = await isDesk()
 const inputFloor = inputDesk ? 12 : 16
 if (inputs.every((i) => parseFloat(i.fs) >= inputFloor))
@@ -336,9 +282,8 @@ if (inputs.every((i) => parseFloat(i.fs) >= inputFloor))
 else fail(`8/10. input font-size ≥${inputFloor}px`, JSON.stringify(inputs))
 
 const tiny = await page.evaluate(() => {
-  // DENSITY: the desk chrome deliberately ships two 11px VS Code metrics —
-  // the panel's caps tabs and the explorer pane-header name — so the floor at
-  // a fine pointer is 11. Touch keeps the spec's 12px absolute minimum.
+  // DENSITY: desk ships two intentional 11px metrics (panel caps tabs,
+  // pane-header name), so its floor is 11; touch stays at 12.
   const floor = matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches ? 11 : 12
   const bad = []
   for (const el of document.querySelectorAll('body *')) {
@@ -385,47 +330,30 @@ if (mono.iiii === mono.WWWW) pass('6. code font is genuinely monospaced', `iiii 
 else fail('6. code font is monospaced', JSON.stringify(mono))
 
 // ---- §4.3 rule 4 / rule 5 floors, and the running-state signature
-// Measure the OPEN panel: the floor is on `.console-panel--open`, and a collapsed
-// console reports `auto` for a rule that is simply not in play.
+// Must measure the OPEN panel — a collapsed console reports `auto` since the rule isn't in play.
 const reopen = page.getByRole('button', { name: 'Show output' })
 if (await reopen.count()) { await reopen.click(); await page.waitForTimeout(400) }
 const floors = await css('.console-panel--open', ['min-height', 'border-left-width'])
 const editorMin = await css('.editor-pane', ['min-height'])
 info(`console ${JSON.stringify(floors)} editor ${JSON.stringify(editorMin)}`)
-// The spec writes rule 4 as 144px, which is 4 output lines + the input row and
-// nothing else. index.css derives the PANEL floor from that plus the console's
-// own header (--console-floor), because 144 on the panel left the transcript with
-// one line where the rule asks for four.
-//
-// So derive the expectation too, rather than typing the sum. The literal used to
-// be 188 (144 + a 44px header) and went stale the day the header grew to 52 for
-// its Run button's clearance — the floor became 196, which is CORRECT, and the
-// check failed anyway. What rule 4 actually protects is the 144px of CONTENT
-// under the header; that is the invariant worth asserting.
-//
-// Measured off the rendered header, not off --bar-console: a token name is one
-// rename away from resolving to '' and turning this into min(NaNpx), which is a
-// green-looking harness reporting on nothing. The header's own height is the
-// number the floor has to clear, whatever it is called this week.
+// Rule 4 is 144px of transcript content under the header; the panel floor is
+// that plus the header's OWN measured height.
+// A hardcoded sum (previously 188) went stale when the header grew — measure
+// the live header rather than freezing a literal or trusting a token name.
 const headerH = await page.evaluate(() => {
   const h = document.querySelector('.console-header')
   return h ? Math.round(h.getBoundingClientRect().height) : null
 })
-// DENSITY: the 144 was 4×21px output lines + a 44px input row + 16px padding.
-// Every term forks with the density now — the input row is --touch (28 fine),
-// the line is --fs-console × --lh-console (14 × 1.36 ≈ 19.04px at desk, × 1.5
-// on touch) — so derive all of them from the live page rather than freezing
-// either density's sum here. The line height is read off the transcript's own
-// computed style, the same place the CSS calc reads it.
+// DENSITY: every term of the 144px sum forks by density now (input row, line
+// height), so derive them live rather than hardcoding either sum.
 const touchPx = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--touch')))
 const linePx = await page.evaluate(() => {
   const t = document.querySelector('.console-transcript')
   return t ? parseFloat(getComputedStyle(t).lineHeight) : null
 })
 const wantFloor = headerH === null || linePx === null ? null : 4 * linePx + 16 + touchPx + headerH
-// The computed min-height keeps its min() form (the 100% cannot resolve at
-// computed-value time); parse the px term out rather than string-matching a
-// float Chrome may serialise with trailing digits.
+// min() can't fully resolve (100% is unknown at compute time) — parse out the
+// px term instead of string-matching the float.
 const gotFloor = /min\(([\d.]+)px, 100%\)/.exec(floors['min-height'] ?? '')
 if (wantFloor !== null && gotFloor && Math.abs(parseFloat(gotFloor[1]) - wantFloor) < 0.5)
   pass(`§4.3 r4. console floor is the derived ~${Math.round(wantFloor)}px (4 × ${linePx}px lines + the ${touchPx}px input row + the ${headerH}px header)`, floors['min-height'])
@@ -500,9 +428,8 @@ if (absent <= 2000 && staticGap <= 2000)
 else fail('17. progress ticks every 2s', `blank ${absent}ms, static ${staticGap}ms`)
 
 // stdin state
-// One shell: the live line is flat at EVERY width — no leading rule — and the
-// --info caret + the status bar carry the waiting state. --info is v3's
-// #7FC4F5 (rgb 127,196,245) again post-v5.
+// One shell: the live line is flat at every width — the --info caret + status
+// bar carry the waiting state.
 const stdinBorder = await css('.stdin-row[data-waiting="true"]', ['border-left-color', 'border-left-width'])
 if (stdinBorder && stdinBorder['border-left-width'] === '0px')
   pass('§4.3/§7.3 the live line is flat — the caret and status bar carry "waiting"', JSON.stringify(stdinBorder))
@@ -511,27 +438,21 @@ const stdinCaret = await css('.stdin-row[data-waiting="true"] .stdin-input', ['c
 if (stdinCaret && stdinCaret['caret-color'] === 'rgb(127, 196, 245)')
   pass('the caret itself is --info, so the cursor names the state where it sits', JSON.stringify(stdinCaret))
 else fail('--info caret on the live line', JSON.stringify(stdinCaret))
-// Check 14 above cannot see the live line — it runs while the console is idle and
-// the input does not exist — so its 44px/16px obligations are asserted here, at the
-// only moment the element is on screen.
+// Check 14 runs while idle and can't see this element, so its 44px/16px floor is asserted here instead.
 const liveBox = await page.evaluate(() => {
   const el = document.querySelector('.stdin-input')
   if (!el) return null
   const r = el.getBoundingClientRect()
   return { h: Math.round(r.height), fs: getComputedStyle(el).fontSize }
 })
-// DENSITY: the 44px/16px pair is a touch obligation; a fine-pointer desktop
-// runs the input at 28px/14px (the iOS zoom floor is a touch-device rule).
+// DENSITY: 44px/16px is touch-only; desk runs the input at 28px/14px (the
+// iOS-zoom floor doesn't apply there).
 const liveDesk = await isDesk()
 if (liveBox && liveBox.h >= (liveDesk ? 24 : 44) && parseFloat(liveBox.fs) >= (liveDesk ? 14 : 16))
   pass(`14/8. the live input is a ${liveDesk ? '24px+ target at 14px+' : '44px target at the 16px iOS floor'}`, JSON.stringify(liveBox))
 else fail('live input floor', JSON.stringify(liveBox))
-// One shell: the console's accent running-rail is gone at EVERY width — VS
-// Code's panel has no rail. The status bar's remote block (StatusPill
-// variant="bar", the `.status-remote` class) carries the run state on the
-// --statusbar-remote-bg fill instead — in v5 a success-green #1F6640 (white
-// text 6.9:1), no longer the accent (the accent is white and the block's
-// text is white).
+// One shell: no accent rail on the console (VS Code parity); the status bar's
+// remote block carries run state via a green fill instead.
 const consoleRule = await css('.console-panel', ['border-left-color', 'border-left-width'])
 {
   const remote = await css('footer[aria-label="Status bar"] .status-remote[data-state="waiting"]', ['background-color'])
@@ -558,10 +479,8 @@ if (echoColor === 'rgb(127, 196, 245)') pass('§7.3 stdin echo renders in --info
 else info(`stdin echo colour: ${echoColor}`)
 
 // ============================================ 2. stderr, in colour and greyscale
-// Type into Main.java specifically. Earlier this typed a Main class into whatever
-// tab happened to be active (Student.java), which turned the run into a compile
-// failure with no stdout at all — and then there was no stdout row to compare
-// stderr against.
+// Must target Main.java explicitly — typing into whatever tab was active
+// previously caused a compile failure with no stdout to compare against.
 const mainTab = page.locator('[role="tab"]', { hasText: 'Main.java' }).first()
 if (await mainTab.count()) await mainTab.click()
 else await page.locator('[role="treeitem"]', { hasText: 'Main.java' }).first().click()
@@ -582,9 +501,8 @@ const rowKinds = await page.evaluate(() =>
 for (const r of rowKinds) info(`row[${r.kind}] rule=${r.rule} ${r.w} bg=${r.bg} :: ${r.text}`)
 const errRow = rowKinds.find((r) => r.kind === 'err')
 const outRow = rowKinds.find((r) => r.kind === 'out')
-// One shell: rows are VS Code-flat at EVERY width — no rules, no tints —
-// and stderr separates by its red INK alone (the [data-seg] hue, --danger
-// #FF8A8F — v3's light stderr red, back in v5).
+// One shell: rows are flat at every width; stderr is distinguished only by
+// its red ink (--danger #FF8A8F).
 const errInk = await page.evaluate(() => {
   const s = document.querySelector('[data-seg="err"]')
   return s ? getComputedStyle(s).color : null
@@ -667,8 +585,7 @@ await p2.screenshot({ path: `${SHOTS}/final-ide-1280-python.png` })
 console.log('      shot -> final-ide-1280-python.png')
 
 for (const u of new Set(notFound)) info(`404 -> ${u}`)
-// CheerpJ probes for optional runtime paths and tolerates their absence; those
-// 404s are the engine's own behaviour, not a missing asset of ours.
+// CheerpJ's own 404 probes for optional runtime paths — not a missing asset of ours.
 const ourOwn = [...new Set(notFound)].filter((u) => !/cheerpj|\/lt\/|\/lib\/|runtime/i.test(u))
 if (ourOwn.length === 0) pass('no missing assets of our own — the standing /favicon.ico 404 is gone')
 else { fail('missing assets', ourOwn.join(' ')) }

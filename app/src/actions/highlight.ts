@@ -28,9 +28,8 @@ export interface Segment {
   cls: string | null
 }
 
-/** Finer than `EditorLang`: the editor colours every script file with one
- *  multi-dialect extension, but a headless parse must pick the dialect itself —
- *  a TSX parse of plain JS reads `a < b` as an opening tag. */
+/** Finer than `EditorLang` — a headless parse must pick the exact dialect
+ *  itself, since a TSX parse of plain JS reads `a < b` as a tag. */
 type GrammarKey = 'java' | 'python' | 'csharp' | 'c' | 'html' | 'css' | 'js' | 'jsx' | 'ts' | 'tsx'
 
 function grammarKeyForPath(path: string): GrammarKey | null {
@@ -94,11 +93,9 @@ async function parserFor(key: GrammarKey): Promise<CodeParser> {
 }
 
 /**
- * One file's source, tokenised into per-line segments under `style`. A token
- * that spans a newline (a block comment, a triple-quoted string) is split at
- * each `\n` into same-class segments on the lines it actually covers —
- * building one HTML string and cutting it on `\n` instead would leave an
- * unbalanced, still-open span dangling across line boundaries.
+ * Tokenises `code` into per-line segments under `style`. A token spanning a
+ * newline is split at each `\n` into same-class segments — building one HTML
+ * string and cutting on `\n` would leave an unbalanced span dangling across lines.
  */
 export async function highlightLines(code: string, path: string, style: HighlightStyle): Promise<Segment[][]> {
   const lines: Segment[][] = [[]]
@@ -134,11 +131,9 @@ export function highlightCss(style: HighlightStyle): string {
 }
 
 /**
- * Print colours for the PDF: the VS Code Light+ family, the exact light-side
- * sibling of the editor's Dark+ `syntaxColors` (setup.ts) — same familiarity
- * rule, on paper-white instead of the editor canvas. Colour literals are
- * allowed here for the same reason they are there: syntax colour is an
- * editor-domain palette, not chrome.
+ * VS Code Light+ colours — the light-side sibling of the editor's Dark+
+ * `syntaxColors` (setup.ts). Literals allowed here for the same reason as
+ * there: syntax colour is editor-domain, not chrome.
  */
 export const printHighlightStyle = HighlightStyle.define([
   { tag: [t.keyword, t.modifier, t.operatorKeyword, t.definitionKeyword], color: '#0000FF' },

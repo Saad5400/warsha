@@ -1,9 +1,6 @@
 import type { FsSnapshot, ProjectStore } from './types'
 
-/**
- * The pre-multi-project root: one hardwired workspace, files at its top level.
- * Still read (and then retired) by the migration in ./projects.ts.
- */
+/** Pre-multi-project root, now only read (then retired) by the migration in ./projects.ts. */
 export const LEGACY_ROOT = 'warsha-project'
 
 /** Origin Private File System store. Chrome/Edge/Safari 16.4+, secure contexts only. */
@@ -11,10 +8,8 @@ export class OpfsStore implements ProjectStore {
   readonly kind = 'opfs'
 
   /**
-   * Directory segments this store is rooted at, e.g.
-   * `['warsha', 'projects', '<id>', 'files']`. Everything below is the student's
-   * own tree, which is why a project's manifest.json lives one level *above*
-   * `files/` — inside it, it would show up in the explorer as a project file.
+   * e.g. `['warsha', 'projects', '<id>', 'files']`. manifest.json sits one level
+   * above `files/` so it doesn't show up in the explorer.
    */
   private readonly segments: readonly string[]
 
@@ -102,8 +97,8 @@ export class OpfsStore implements ProjectStore {
   }
 
   async replaceAll(snap: FsSnapshot): Promise<void> {
-    // Only this store's own leaf is wiped, never an ancestor: a project's
-    // manifest.json is a sibling of `files/`, and other projects live alongside.
+    // Wipes only this store's leaf, never an ancestor — manifest.json and other
+    // projects are siblings.
     let parent = await navigator.storage.getDirectory()
     for (const segment of this.segments.slice(0, -1)) {
       parent = await parent.getDirectoryHandle(segment, { create: true })
@@ -159,17 +154,8 @@ export class MemoryStore implements ProjectStore {
 }
 
 /**
- * A store for one project's files. `segments` addresses it inside OPFS; the
- * memory fallback keeps one store per distinct address for the session, so
- * switching projects and switching back does not lose what was typed.
- */
-/**
- * Set by `probeOpfs()` when the API is present but does not actually work —
- * Safari private browsing being the case that matters, where
- * `navigator.storage.getDirectory` exists and every call to it rejects. Feature
- * *detection* says yes and the feature says no, so the only honest test is to
- * use it once. Everything downstream then routes to `MemoryStore` instead of
- * failing one write at a time forever.
+ * Set when the API exists but fails at runtime (Safari private browsing) —
+ * detection lies, so callers fall back to `MemoryStore`.
  */
 let opfsDisabled = false
 
@@ -178,12 +164,8 @@ let probing: Promise<boolean> | null = null
 
 /** True once OPFS has been proven usable (or proven not to be). */
 export function probeOpfs(): Promise<boolean> {
-  // Single-flight, because two probes at once race each other on the SAME
-  // probe dir: one's removeEntry lands while the other's writable is still
-  // open, the loser sees NoModificationAllowedError, and a perfectly working
-  // OPFS gets condemned to the memory fallback for the whole session
-  // (StrictMode's dev double-mount reproduces this on every reload). One
-  // probe, one verdict, shared by every caller.
+  // Single-flight: concurrent probes race the same dir and can falsely doom a
+  // working OPFS to the memory fallback (hit by StrictMode's double-mount).
   return (probing ??= probeOnce())
 }
 
@@ -195,8 +177,7 @@ async function probeOnce(): Promise<boolean> {
   }
   try {
     const root = await navigator.storage.getDirectory()
-    // A directory handle alone proves little; Safari hands one out and then
-    // refuses the write. Round-trip a probe file and delete it.
+    // A handle alone proves nothing — Safari hands one out then refuses the write.
     const dir = await root.getDirectoryHandle('.warsha-probe', { create: true })
     const handle = await dir.getFileHandle('w', { create: true })
     const writable = await handle.createWritable()
@@ -210,6 +191,7 @@ async function probeOnce(): Promise<boolean> {
   }
 }
 
+/** memory fallback caches one store per `segments` address, so switching projects and back keeps what was typed. */
 export function createStore(segments?: readonly string[]): ProjectStore {
   if (OpfsStore.available()) return new OpfsStore(segments)
   const key = (segments ?? [LEGACY_ROOT]).join('/')
