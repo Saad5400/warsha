@@ -151,12 +151,36 @@ export const IconCSharp = ({ size = 20, ...rest }: IconProps) => (
   </svg>
 )
 
-export type IconLang = 'java' | 'python' | 'web' | 'csharp'
+/**
+ * The C mark: a single geometric "C". Like C#, C's brand IS its letterform, so a
+ * clean stroked C is the mark, not a placeholder (IconWeb/IconCSharp precedent).
+ * currentColor, monochrome, on the same 20-unit grid as the rest.
+ */
+export const IconC = ({ size = 20, ...rest }: IconProps) => (
+  <svg
+    viewBox="0 0 20 20"
+    width={size}
+    height={size}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.9"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+    {...rest}
+  >
+    <path d="M13.4 7A4.5 4.5 0 1 0 13.4 13" />
+  </svg>
+)
+
+export type IconLang = 'java' | 'python' | 'web' | 'csharp' | 'c'
 
 export function LangIcon({ lang, ...rest }: { lang: IconLang } & IconProps) {
   if (lang === 'java') return <IconJava {...rest} />
   if (lang === 'web') return <IconWeb {...rest} />
   if (lang === 'csharp') return <IconCSharp {...rest} />
+  if (lang === 'c') return <IconC {...rest} />
   return <IconPython {...rest} />
 }
 
@@ -252,6 +276,8 @@ const FILE_FILLS: Record<string, string> = {
   py: '#519aba',
   java: '#e76f00',
   cs: '#68217a',
+  c: '#649ad2',
+  h: '#8aa8c4',
   js: '#cbcb41',
   mjs: '#cbcb41',
   jsx: '#cbcb41',
@@ -281,6 +307,9 @@ export function FileIcon({ ext, size = 16, style, ...rest }: { ext: string } & I
       return <IconJava {...props} />
     case 'cs':
       return <IconCSharp {...props} />
+    case 'c':
+    case 'h':
+      return <IconC {...props} />
     case 'js':
     case 'mjs':
     case 'jsx':

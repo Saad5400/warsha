@@ -28,7 +28,7 @@ export function extOf(name: string): string {
   return i === -1 ? '' : name.slice(i + 1).toLowerCase()
 }
 
-const langs: Record<string, IconLang> = { java: 'java', py: 'python', cs: 'csharp' }
+const langs: Record<string, IconLang> = { java: 'java', py: 'python', cs: 'csharp', c: 'c', h: 'c' }
 
 export type BadgeSize = 'sm' | 'md'
 export type BadgeTone = 'java' | 'py' | 'plain'

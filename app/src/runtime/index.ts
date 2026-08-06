@@ -2,6 +2,7 @@ import type { Runtime, SourceFile } from './types'
 import { PythonRuntime } from '../../../runtimes/python/src'
 import { JavaRuntime } from '../../../runtimes/java/src'
 import { CSharpRuntime } from '../../../runtimes/csharp/src'
+import { ClangRuntime } from '../../../runtimes/clang/src'
 import { WebRuntime } from './web'
 import { JsRuntime } from './js'
 
@@ -13,7 +14,7 @@ import { JsRuntime } from './js'
  *  while a standalone script (`js`) is a headless, Node-like console program —
  *  JavaScript or TypeScript. A `.js`/`.ts` referenced from an HTML page is not
  *  chosen here; the `web` engine inlines it into the document. */
-export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp'
+export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
 
 /**
  * The single place that maps a language to its engine.
@@ -36,6 +37,11 @@ const registry: Record<LangId, Runtime> = {
   // bundled, so the worker's relative dotnet.js import resolves. See
   // runtimes/csharp/INTEGRATION.md.
   csharp: new CSharpRuntime({ workerUrl: new URL('warsha-dotnet/dotnet.worker.js', document.baseURI).href }),
+  // clang-wasm: the @wasmer/sdk `clang/clang` package compiles the .c files in a
+  // module worker (staged to public/warsha-clang.worker.js by `npm run assets`),
+  // then the worker runs the WASIX output itself under a WASI shim so stdin can
+  // block on the shared buffer (interactive scanf). See runtimes/clang/INTEGRATION.md.
+  c: new ClangRuntime({ workerUrl: new URL('warsha-clang.worker.js', document.baseURI).href }),
   // First-party: a page and its assets, rendered into the preview iframe (web)
   // versus a standalone script run headless like Node (js). A page and plain JS
   // are what the browser already is (nothing to download); TypeScript and
@@ -81,6 +87,7 @@ export function langForPath(path: string): LangId | null {
   if (path.endsWith('.java')) return 'java'
   if (path.endsWith('.py')) return 'python'
   if (path.endsWith('.cs')) return 'csharp'
+  if (path.endsWith('.c')) return 'c'
   if (/\.(html?|css)$/i.test(path)) return 'web'
   if (SCRIPT_RE.test(path)) return 'js'
   return null
@@ -93,6 +100,7 @@ const SCRIPT_RE = /\.(m?js|cjs|jsx|tsx?|mts|cts)$/i
 
 const JAVA_MAIN = /public\s+static\s+void\s+main\s*\(/
 const CSHARP_MAIN = /\bstatic\s+(?:async\s+)?(?:void|int|Task(?:<\s*int\s*>)?)\s+Main\s*\(/
+const C_MAIN = /\b(?:int|void)\s+main\s*\(/
 
 /**
  * Entry-point candidates, best first. Java: any file declaring a main method.
@@ -126,10 +134,20 @@ export function entryCandidates(files: SourceFile[]): string[] {
     .sort(byDepthThenName)
   const csOrdered = csMain.length ? csMain : cs.length === 1 ? cs : []
 
+  // C: the .c file that declares main. All .c compile together into one program,
+  // so a project with a single main offers it; a lone .c is offered whatever it is
+  // named. Headers (.h) are never entries.
+  const c = files.filter((f) => f.path.endsWith('.c')).map((f) => f.path)
+  const cMain = files
+    .filter((f) => f.path.endsWith('.c') && C_MAIN.test(f.content))
+    .map((f) => f.path)
+    .sort(byDepthThenName)
+  const cOrdered = cMain.length ? cMain : c.length === 1 ? c : []
+
   const browser = browserCandidates(files)
 
   // Whichever stack actually has a runnable entry leads the list.
-  return dedupe([...java, ...pyOrdered, ...csOrdered, ...browser])
+  return dedupe([...java, ...pyOrdered, ...csOrdered, ...cOrdered, ...browser])
 }
 
 /** Candidates that run in the browser itself: a page (html) preferred, else a

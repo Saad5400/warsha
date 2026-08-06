@@ -69,12 +69,13 @@ const DESK_KEY = `@media ${DESK_MEDIA}`
  * here rather than in runtime/index.ts because it is an editor concern (which
  * Lezer grammar to parse with), not a "which engine runs this" one.
  */
-export type EditorLang = 'java' | 'python' | 'csharp' | 'html' | 'css' | 'javascript'
+export type EditorLang = 'java' | 'python' | 'csharp' | 'c' | 'html' | 'css' | 'javascript'
 
 export function editorLangForPath(path: string): EditorLang | null {
   if (path.endsWith('.java')) return 'java'
   if (path.endsWith('.py')) return 'python'
   if (path.endsWith('.cs')) return 'csharp'
+  if (path.endsWith('.c') || path.endsWith('.h')) return 'c'
   if (/\.html?$/i.test(path)) return 'html'
   if (/\.css$/i.test(path)) return 'css'
   if (/\.(m?js|jsx|ts|tsx)$/i.test(path)) return 'javascript'
@@ -927,6 +928,13 @@ async function loadLanguage(lang: EditorLang): Promise<LanguageSupport> {
       // (keywords, strings, comments, numbers) — enough for syntax colour.
       support = new LanguageSupport(
         StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).csharp),
+      )
+      break
+    case 'c':
+      // Same clike family (there is no dedicated Lezer C grammar); covers keywords,
+      // types, strings, comments, numbers and the preprocessor — enough for colour.
+      support = new LanguageSupport(
+        StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).c),
       )
       break
     case 'html':

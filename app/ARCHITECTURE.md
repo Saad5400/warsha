@@ -513,18 +513,24 @@ that compile and run with piped stdin but have not been through that review. Eac
 
 ## 6. Known gaps
 
-- Five runtimes are real, verified end-to-end: `python` → `PythonRuntime` (Pyodide 314.0.3 /
+- Six runtimes are real, verified end-to-end: `python` → `PythonRuntime` (Pyodide 314.0.3 /
   CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.46, Java 17), `csharp` →
   `CSharpRuntime` (.NET 9 wasm + Roslyn — compiles and runs student C# in a module worker;
   ~13–15 MB brotli, blocking `Console.ReadLine()` over `SharedArrayBuffer`; see
-  `runtimes/csharp/INTEGRATION.md`), `web` → `WebRuntime` (a **page** — html/css — in a sandboxed
-  iframe), and `js` → `JsRuntime` (a **standalone script** — JavaScript or TypeScript — run headless
-  in a Web Worker, Node-like).
+  `runtimes/csharp/INTEGRATION.md`), `c` → `ClangRuntime` (the `@wasmer/sdk` `clang/clang`
+  package — clang 16 — compiles student C in a module worker; the worker then runs the compiled
+  WASIX `.wasm` *itself* under `@bjorn3/browser_wasi_shim`, so `scanf`/`getchar` block on a
+  `SharedArrayBuffer` for true interactive input; ~47 MB one-time toolchain + ~24 s sysroot warm
+  behind the loader; see `runtimes/clang/INTEGRATION.md`), `web` → `WebRuntime` (a **page** —
+  html/css — in a sandboxed iframe), and `js` → `JsRuntime` (a **standalone script** — JavaScript or
+  TypeScript — run headless in a Web Worker, Node-like).
   All but `web` are `kind: 'console'`; `web` is `kind: 'preview'` — see §2's runtime contract. The
-  entry's extension picks the engine: `.cs` → `csharp`, html/css → `web`, js/mjs/ts/tsx/… → `js`, and
-  a `.js`/`.ts` *referenced from a page* is inlined by `web`, never run by `js`. `src/runtime/fake.ts` is
-  unreferenced — kept as the fastest way to demo the shell without an engine, and it documents the
-  console contract by example.
+  entry's extension picks the engine: `.cs` → `csharp`, `.c` → `c`, html/css → `web`,
+  js/mjs/ts/tsx/… → `js`, and a `.js`/`.ts` *referenced from a page* is inlined by `web`, never run by
+  `js`. `src/runtime/fake.ts` is unreferenced — kept as the fastest way to demo the shell without an
+  engine, and it documents the console contract by example. **C++ stays a "soon" tile** — the same
+  toolchain compiles it, but the first libc++ header compile is CPU-bound and impractical cold (6+ min);
+  it needs a precompiled-header path first (see `runtimes/clang/M0-FINDINGS.md`).
 - **A preview's iframe is its execution.** For a page project the `Preview` iframe stays MOUNTED
   while the output pane is open even when the Console face is on top (it is merely `display:none`),
   because a display:none iframe keeps running — so the page's `console.log` fills the Console

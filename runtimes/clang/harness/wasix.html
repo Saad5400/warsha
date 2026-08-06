@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-wasm self-hosted WASIX execution</title>
+    <style>
+      body { font: 14px/1.5 ui-monospace, monospace; margin: 24px; background: #0b0e14; color: #cdd6f4; }
+      #log { white-space: pre-wrap; } .ok { color: #a6e3a1; } .bad { color: #f38ba8; } .dim { color: #7f849c; }
+    </style>
+  </head>
+  <body>
+    <h1>self-hosted WASIX — compile via SDK, run via shim with stubbed wasix + supplied memory</h1>
+    <div id="log" class="dim">booting…</div>
+    <script type="module" src="./wasix.js"></script>
+  </body>
+</html>

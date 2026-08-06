@@ -47,7 +47,7 @@ export const languages: Language[] = [
   // landed. Each file still gets its own editor grammar and badge.
   { id: 'web', label: 'Web', status: 'ready', version: 'HTML · CSS · JS · TS · React', mark: '</>' },
   { id: 'csharp', label: 'C#', status: 'ready', version: '.NET 9 · Roslyn', mark: 'C#' },
-  { id: 'c', label: 'C', status: 'soon', mark: 'C' },
+  { id: 'c', label: 'C', status: 'ready', version: 'C · clang 16', mark: 'C' },
   { id: 'cpp', label: 'C++', status: 'soon', mark: 'C++' },
   { id: 'go', label: 'Go', status: 'soon', mark: 'Go' },
   { id: 'rust', label: 'Rust', status: 'soon', mark: 'Rs' },

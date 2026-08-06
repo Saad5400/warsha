@@ -1,0 +1,13 @@
+{
+  "name": "@warsha/runtime-clang",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "clang-wasm backed C runtime for Warsha, implementing the app's Runtime contract",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "node --check src/clang.worker.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "harness": "cd harness && node serve.mjs 8090"
+  }
+}

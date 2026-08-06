@@ -27,7 +27,7 @@ export interface Template {
    * editor grammar still come from its extension.
    */
   name: string
-  lang: 'java' | 'python' | 'web' | 'csharp'
+  lang: 'java' | 'python' | 'web' | 'csharp' | 'c'
   level: TemplateLevel
   blurb: string
   entry: string
@@ -916,6 +916,130 @@ class Rectangle : Shape
 }
 `
 
+const C_BASICS_MAIN_C = `#include <stdio.h>
+
+/* C starts here, in main(). Press Run. */
+int main(void) {
+    printf("=== Warsha C starter ===\\n");
+
+    // Typed variables: C needs a type for each one.
+    int year = 2026;
+    double pi = 3.14159;
+    printf("year = %d, pi = %.2f\\n", year, pi);
+
+    // A loop.
+    printf("Counting: ");
+    for (int i = 1; i <= 5; i++) {
+        printf("%d ", i);
+    }
+    printf("\\n");
+
+    // scanf reads what you type into the console.
+    char name[64];
+    printf("Your name: ");
+    if (scanf("%63s", name) == 1) {
+        printf("Hello, %s! Now edit main.c and press Run again.\\n", name);
+    }
+    return 0;
+}
+`
+
+const C_METHODS_MAIN_C = `#include <stdio.h>
+
+// A function you call from main. C needs it defined (or prototyped) before use.
+double average(const int *values, int count) {
+    int sum = 0;
+    for (int i = 0; i < count; i++) {
+        sum += values[i];
+    }
+    return count > 0 ? (double) sum / count : 0.0;
+}
+
+const char *grade(double score) {
+    if (score >= 90) return "excellent";
+    if (score >= 60) return "passing";
+    return "needs work";
+}
+
+int main(void) {
+    int scores[] = {72, 88, 95, 51, 64};
+    int n = (int) (sizeof scores / sizeof scores[0]);
+
+    double avg = average(scores, n);
+    printf("Average of %d scores: %.1f (%s)\\n", n, avg, grade(avg));
+
+    // Decide per value.
+    for (int i = 0; i < n; i++) {
+        printf("  %d -> %s\\n", scores[i], grade(scores[i]));
+    }
+
+    // One number from you, graded the same way.
+    int yours;
+    printf("Enter a score: ");
+    if (scanf("%d", &yours) == 1) {
+        printf("You scored %d: %s\\n", yours, grade(yours));
+    }
+    return 0;
+}
+`
+
+const C_STARTER_MAIN_C = `#include <stdio.h>
+#include "shapes.h"
+
+int main(void) {
+    // An array of rectangles — a loop over "objects", each its own struct.
+    Rectangle shapes[] = {
+        {3.0, 4.0},
+        {5.0, 5.0},
+        {2.5, 8.0},
+    };
+    int n = (int) (sizeof shapes / sizeof shapes[0]);
+
+    printf("=== rectangles ===\\n");
+    for (int i = 0; i < n; i++) {
+        Rectangle r = shapes[i];
+        printf("%.1f x %.1f  area=%.1f  perimeter=%.1f\\n",
+               r.width, r.height, rectangle_area(r), rectangle_perimeter(r));
+    }
+
+    // Build one from your input, then reuse the same functions.
+    Rectangle mine;
+    printf("Width and height: ");
+    if (scanf("%lf %lf", &mine.width, &mine.height) == 2) {
+        printf("Your rectangle: area=%.1f  perimeter=%.1f\\n",
+               rectangle_area(mine), rectangle_perimeter(mine));
+    }
+    return 0;
+}
+`
+
+const C_STARTER_SHAPES_H = `#ifndef SHAPES_H
+#define SHAPES_H
+
+// A rectangle: its data (width, height) and the operations on it, declared here
+// and defined in shapes.c. main.c includes this header to use them.
+typedef struct {
+    double width;
+    double height;
+} Rectangle;
+
+double rectangle_area(Rectangle r);
+double rectangle_perimeter(Rectangle r);
+
+#endif
+`
+
+const C_STARTER_SHAPES_C = `#include "shapes.h"
+
+double rectangle_area(Rectangle r) {
+    return r.width * r.height;
+}
+
+double rectangle_perimeter(Rectangle r) {
+    return 2 * (r.width + r.height);
+}
+`
+
 export const templates: Template[] = [
   {
     id: 'python-basics',
@@ -1150,6 +1274,46 @@ export const templates: Template[] = [
       files: [
         { path: 'Program.cs', content: CSHARP_STARTER_PROGRAM_CS },
         { path: 'Shapes.cs', content: CSHARP_STARTER_SHAPES_CS },
+      ],
+    },
+  },
+  {
+    id: 'c-basics',
+    name: 'C basics',
+    lang: 'c',
+    level: 'beginner',
+    blurb: 'Print, typed variables, a loop, and scanf — one file, top to bottom.',
+    entry: 'main.c',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'main.c', content: C_BASICS_MAIN_C }],
+    },
+  },
+  {
+    id: 'c-methods',
+    name: 'C functions',
+    lang: 'c',
+    level: 'intermediate',
+    blurb: 'Write functions, average an array, and decide per value.',
+    entry: 'main.c',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'main.c', content: C_METHODS_MAIN_C }],
+    },
+  },
+  {
+    id: 'c-starter',
+    name: 'C (structs starter)',
+    lang: 'c',
+    level: 'advanced',
+    blurb: 'A struct and its functions across a header and source file, a loop, and input.',
+    entry: 'main.c',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'main.c', content: C_STARTER_MAIN_C },
+        { path: 'shapes.h', content: C_STARTER_SHAPES_H },
+        { path: 'shapes.c', content: C_STARTER_SHAPES_C },
       ],
     },
   },

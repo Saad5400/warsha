@@ -31,7 +31,7 @@ export interface Segment {
 /** Finer than `EditorLang`: the editor colours every script file with one
  *  multi-dialect extension, but a headless parse must pick the dialect itself —
  *  a TSX parse of plain JS reads `a < b` as an opening tag. */
-type GrammarKey = 'java' | 'python' | 'csharp' | 'html' | 'css' | 'js' | 'jsx' | 'ts' | 'tsx'
+type GrammarKey = 'java' | 'python' | 'csharp' | 'c' | 'html' | 'css' | 'js' | 'jsx' | 'ts' | 'tsx'
 
 function grammarKeyForPath(path: string): GrammarKey | null {
   const lang = editorLangForPath(path)
@@ -63,6 +63,10 @@ async function parserFor(key: GrammarKey): Promise<CodeParser> {
       // Same story as the editor: no Lezer grammar for C#, the clike stream
       // mode covers keywords/strings/comments/numbers.
       parser = StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).csharp).parser
+      break
+    case 'c':
+      // Same clike family as the editor's C grammar.
+      parser = StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).c).parser
       break
     case 'html':
       // htmlLanguage carries the mixed parser, so <style> and <script> bodies

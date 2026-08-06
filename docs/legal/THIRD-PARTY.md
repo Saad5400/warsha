@@ -14,7 +14,7 @@ Two words are used precisely throughout:
   redistributing them. What remains is a use-permission question (are our users allowed
   to use it?) plus a privacy consequence (the third party sees the request).
 
-Last reviewed: 2026-08-02.
+Last reviewed: 2026-08-06.
 
 ## Summary table
 
@@ -31,6 +31,9 @@ Last reviewed: 2026-08-02.
 | [Devicon](https://github.com/devicons/devicon) — `java-original` icon | commit [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96) (2021-05-15), file unchanged since | [MIT](https://github.com/devicons/devicon/blob/master/LICENSE) | Java language badge glyph (file badges, welcome cards, the OG image's Java tab) | **Bundled** — SVG path data vendored inline into `LangIcons.tsx` and `og-image.html` | Redistributed — MIT notice recorded below; see also the trademark note under "Language icons" |
 | [.NET WebAssembly runtime](https://github.com/dotnet/runtime) (Microsoft, `Microsoft.NET.Sdk.WebAssembly` + `Microsoft.NETCore.App.Runtime.Mono.browser-wasm`) | 9.0.x | [MIT](https://github.com/dotnet/runtime/blob/main/LICENSE.TXT) | C# runtime: Mono + the .NET base class library compiled to WebAssembly, runs student C# in the browser | **Bundled** — `dotnet publish` output (`_framework/`) staged by `runtimes/csharp/build.sh` and served as same-origin static assets under `warsha-dotnet/` | Redistributed — MIT notice must be preserved |
 | [Roslyn](https://github.com/dotnet/roslyn) (Microsoft, `Microsoft.CodeAnalysis.CSharp`) | 4.11.x | [MIT](https://github.com/dotnet/roslyn/blob/main/License.txt) | C# compiler: compiles student C# source into an assembly in the browser | **Bundled** — its assemblies land in the .NET publish `_framework/` above | Redistributed — MIT notice must be preserved |
+| [`@wasmer/sdk`](https://github.com/wasmerio/wasmer-js) (Wasmer) | 0.10.x | [MIT](https://github.com/wasmerio/wasmer-js/blob/main/LICENSE.md) | C runtime: loads and runs the `clang/clang` Wasmer package in a worker to compile student C to WebAssembly | **CDN-loaded** from `unpkg.com` (self-hosting permitted — an M3 item) | Not currently redistributed; MIT permits bundling when we self-host |
+| [`clang/clang` package](https://wasmer.io/wasmer/clang) (LLVM/Clang 16 + wasm-ld + a WASI sysroot, served via Wasmer) | clang 16 | [Apache-2.0 WITH LLVM-exception](https://github.com/llvm/llvm-project/blob/main/LICENSE.TXT) (bundled wasi-libc: BSD-like) | C compiler + linker + system headers/libc, run in the browser to compile student C | **CDN-loaded** at runtime from the Wasmer registry via `@wasmer/sdk` | Not redistributed by us today; when self-hosting the `.webc`, confirm each bundled component's licence |
+| [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/browser_wasi_shim) | 0.4.x | [MIT](https://github.com/bjorn3/browser_wasi_shim/blob/main/LICENSE-MIT) / Apache-2.0 (dual) | WASI host we run the compiled C `.wasm` under ourselves, so stdin can block on a `SharedArrayBuffer` (interactive `scanf`) | **CDN-loaded** from `unpkg.com` (self-hosting permitted — an M3 item) | Not currently redistributed; MIT permits bundling when we self-host |
 
 MIT and MPL-2.0 are both compatible with distributing Warsha under Apache-2.0. MPL-2.0
 is file-level copyleft: if we ever *modify* Pyodide's own source files and ship the
