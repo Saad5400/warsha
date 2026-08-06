@@ -66,6 +66,23 @@ export function installViewport(): () => void {
 }
 
 /**
+ * The view scale in force (prefs.uiScale — App publishes it as `--ui-scale` on
+ * <html>, and `#root { zoom: var(--ui-scale) }` in index.css applies it).
+ *
+ * The geometry contract lives in that index.css block; this is the JS side of
+ * its px-lengths clause. Pointer coordinates and everything measured through
+ * getBoundingClientRect / innerHeight are UNZOOMED viewport px, but a px length
+ * handed back to the zoomed #root paints multiplied by the scale — so anything
+ * that measures the viewport and then writes px into the shell divides by this
+ * first. Read from the computed value rather than from prefs so it cannot
+ * disagree with what is actually painting.
+ */
+export function uiScale(): number {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'))
+  return Number.isFinite(v) && v > 0 ? v : 1
+}
+
+/**
  * Resolves after the keyboard-driven viewport resize settles, so the console
  * can scroll to the bottom *after* the layout changed rather than before
  * (spec §4.4 step 3). Falls back to two frames when no resize arrives.

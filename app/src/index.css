@@ -1021,7 +1021,11 @@
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    max-width: 60vw;
+    /* Divided by the view scale because a `vw` inside the zoomed #root is not
+       (only the ICB of a fixed box is — see the view scale block below): the
+       raw cap paints at --ui-scale times 60vw, which at 0.7 truncated names
+       that had room to spare. */
+    max-width: calc(60vw / var(--ui-scale, 1));
     padding: var(--sp-1) var(--sp-2);
     border-radius: var(--r-md);
     background: var(--surface-3);
@@ -1703,14 +1707,31 @@ html[data-kb='open'] .app-shell {
  * re-runs layout at the new size (Chromium/WebKit/FF126+), transform only
  * paints smaller and breaks every hit-test and measurement.
  *
- * Geometry contract, reasoned once here so nobody re-derives it wrong:
- *   - viewport UNITS (dvh/vw) and the ICB of fixed elements are divided by
- *     the effective zoom per spec, so `inset-0` overlays and `100dvh`
- *     fallbacks inside #root stay full-viewport with no correction;
- *   - px lengths from JS-MEASURED viewport vars do render multiplied by the
+ * Geometry contract, reasoned once here so nobody re-derives it wrong.
+ * Measured, not assumed (Chromium 140, 2026-08-06 — the first two clauses are
+ * a pair of opposites and reading only one of them is how this goes wrong):
+ *   - the ICB of a FIXED box IS divided by the effective zoom, so `inset-0`
+ *     overlays and `left-1/2` centring inside #root need no correction —
+ *     percentages and insets already cover the true viewport;
+ *   - viewport UNITS are NOT. `100vw` inside the zoom resolves against the
+ *     raw viewport and then paints multiplied by the zoom, i.e. a plain
+ *     `100vw` cap is --ui-scale too small. Anything that means a REAL
+ *     fraction of the screen divides it back out (QuickInput's panel,
+ *     .tree-drag-chip, the CM tooltip caps in editor/setup.ts);
+ *   - px lengths from JS-MEASURED viewport values render multiplied by the
  *     zoom, so their consumers divide back out: the shell's height
  *     (App.tsx SHELL, --app-h), the kb-open `top` rule above (--app-top),
- *     and Menu.tsx's point-anchor marker (pointer coords);
+ *     Menu.tsx's point-anchor marker and Explorer's drag chip (pointer
+ *     coords), ConsoleDivider's drag delta;
+ *   - a `position: fixed` box that a LIBRARY positions from client rects is
+ *     the trap: the library's px are unzoomed and the box multiplies them.
+ *     CodeMirror's tooltips (the completion popup, the docs card) are the one
+ *     such surface inside #root; editor/setup.ts puts them on CM's
+ *     `position: absolute` path, where CM divides by the editor's own measured
+ *     scale — a ratio of rect ÷ offsetWidth, which reads `zoom` correctly;
+ *   - and a transformed ancestor quietly steals the viewport out from under a
+ *     fixed child (the phone drawer did this to the explorer's drag chip),
+ *     which is why that chip portals to #root;
  *   - portalled overlays (menus, dialogs, toasts, dialog::backdrop) mount on
  *     <body>, OUTSIDE this rule, and keep true viewport coordinates — they
  *     stay at 100% deliberately, the way OS menus ignore app zoom.

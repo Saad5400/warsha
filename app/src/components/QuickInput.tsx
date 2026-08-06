@@ -90,7 +90,14 @@ const MAX_ROWS = 128
  * the wide soft shadow are VS Code's quick-input chrome verbatim. */
 const PANEL =
   'fixed left-1/2 top-[6px] z-(--z-menu) -translate-x-1/2 ' +
-  'w-[600px] max-w-[calc(100vw-24px)] ' +
+  // The 600px and the 24px margin are scaled px (this renders inside the zoomed
+  // #root), but `vw` is NOT — a viewport unit inside the zoom resolves against
+  // the raw viewport and then paints multiplied by --ui-scale, so an
+  // uncorrected 100vw cap is the scale too narrow: at 0.7 on a 390px phone the
+  // palette gave up a fifth of the screen it was entitled to. (The ICB of a
+  // fixed box IS divided, which is why left-1/2 still centres — see the view
+  // scale block in index.css.)
+  'w-[600px] max-w-[calc(100vw/var(--ui-scale,1)-24px)] ' +
   'rounded-[8px] border border-(--qi-border) bg-(--qi-bg) p-[6px] ' +
   'shadow-[0_0_20px_rgba(0,0,0,0.15)]'
 

@@ -9,6 +9,7 @@ import {
   dropCursor,
   highlightSpecialChars,
   runScopeHandlers,
+  tooltips,
   type Panel,
   type ViewUpdate,
 } from '@codemirror/view'
@@ -404,12 +405,19 @@ const chromeTheme = EditorView.theme(
     // The completion popup. Width is capped against the *viewport*, not the
     // editor, because at 390px an uncapped popup runs off the screen edge and
     // takes its scrollbar with it.
+    //
+    // Every `vw`/`vh` here divides by --ui-scale, and only the vw/vh part does.
+    // A viewport unit inside the zoomed #root resolves against the raw viewport
+    // and THEN paints scaled (the view scale block in index.css), so a bare
+    // 100vw cap is the view scale too small — at 0.7 the popup gave up a third
+    // of the phone screen it was entitled to. The px and ch caps beside them are
+    // UI lengths and stay scaled, which is the whole point of them.
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete': {
-      maxWidth: 'calc(100vw - 2 * var(--sp-3))',
+      maxWidth: 'calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3))',
     },
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul': {
       fontFamily: 'var(--font-code)',
-      maxHeight: 'min(40vh, 320px)',
+      maxHeight: 'min(calc(40vh / var(--ui-scale, 1)), 320px)',
       maxWidth: '100%',
     },
     '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
@@ -480,7 +488,7 @@ const chromeTheme = EditorView.theme(
     '&.cm-editor .cm-completionIcon-constant::after': { content: "'K'" },
     // The "no matches" line, and the info panel if a completion ever carries one.
     '&.cm-editor .cm-tooltip.cm-completionInfo': {
-      maxWidth: 'min(32ch, calc(100vw - 2 * var(--sp-3)))',
+      maxWidth: 'min(32ch, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
       padding: 'var(--sp-2) var(--sp-3)',
       fontFamily: 'var(--font-ui)',
       fontSize: 'var(--fs-meta)',
@@ -489,7 +497,7 @@ const chromeTheme = EditorView.theme(
     // An info panel hosting a docs card (dictionary entries carry one) gets
     // the card's own measure — 32ch truncates a signature line too eagerly.
     '&.cm-editor .cm-tooltip.cm-completionInfo:has(.cm-docs)': {
-      maxWidth: 'min(420px, calc(100vw - 2 * var(--sp-3)))',
+      maxWidth: 'min(420px, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
     },
     // ---- Docs card (hover / long-press / Ctrl+K Ctrl+I — editor/hoverDocs.ts).
     // One card DOM (`.cm-docs`, built in completions.ts), two hosts: the hover
@@ -501,7 +509,7 @@ const chromeTheme = EditorView.theme(
       border: '1px solid var(--border-widget)',
       borderRadius: '3px',
       boxShadow: 'var(--shadow-raised)',
-      maxWidth: 'min(420px, calc(100vw - 2 * var(--sp-3)))',
+      maxWidth: 'min(420px, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
       padding: 'var(--sp-2) var(--sp-3)',
     },
     '&.cm-editor .cm-docs': {
@@ -1117,6 +1125,39 @@ export function createEditor(
   }
 
   const extensions = (lang: EditorLang | null) => [
+    // Where the completion popup and the docs card are allowed to be.
+    //
+    // Both are CodeMirror "tooltips": CM measures the caret with
+    // getBoundingClientRect and writes the result straight back as the widget's
+    // own left/top. Which coordinate space those px land in is the whole story
+    // under the view scale (`#root { zoom: var(--ui-scale) }`, index.css):
+    //
+    //   - `position: fixed` — CM's default everywhere but iOS — writes UNZOOMED
+    //     viewport px into a box that lives inside the zoomed #root, where a px
+    //     length paints multiplied by --ui-scale. At 0.7 the popup landed 30% of
+    //     the way back toward the viewport's top-left corner, further adrift the
+    //     further down the file the caret was: the reported bug. CM cannot see
+    //     it coming, because it only suspects a scale when the tooltip has an
+    //     offsetParent, and `zoom` (unlike a transform) leaves that null.
+    //   - `position: absolute` converts into the editor's own box AND divides by
+    //     the editor's measured scale — rect ÷ offsetWidth, which reads `zoom`
+    //     exactly right — so CM's px are finally in the space they land in.
+    //     This is the path iOS has taken all along.
+    //
+    // Absolute costs the one thing fixed gave away free: the popup is now a
+    // child of .cm-editor, so .editor-pane's overflow:hidden would slice
+    // anything hanging past the editor (with the console open there is plenty of
+    // window below the pane, so CM would happily place one there). Hence
+    // tooltipSpace: the PANE, not the window, is the room a tooltip may use, so
+    // CM flips it above the caret or shrinks it to fit instead. VS Code keeps
+    // its suggest widget inside the editor for the same reason.
+    tooltips({
+      position: 'absolute',
+      tooltipSpace: (view) => {
+        const r = (view.dom.closest('.editor-pane') ?? view.dom).getBoundingClientRect()
+        return { top: r.top, left: r.left, bottom: r.bottom, right: r.right }
+      },
+    }),
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightActiveLine(),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { Project, TreeNode } from '../fs/project'
 import { FileBadge } from './FileBadge'
 import { Button, IconButton } from './ui/Button'
@@ -400,9 +401,21 @@ export function Explorer(props: ExplorerProps) {
         />
       ) : null}
 
-      {dnd.dragging && dnd.chip ? (
-        <DragChip node={dnd.dragging} x={dnd.chip.x} y={dnd.chip.y} touch={dnd.chip.touch} />
-      ) : null}
+      {/* Portalled OUT of the tree, and specifically out of the drawer.
+          The chip is `position: fixed` at pointer coordinates, but on a phone
+          the sidebar is `.drawer`, which carries a transform for its slide
+          (translateX(0) even at rest) — and a transformed ancestor becomes the
+          containing block for a fixed child. Left in place, the chip measured
+          from the drawer's top-left instead of the viewport's and rode a rail's
+          width to the right of the finger and a title bar's height below it.
+          #root, not <body>: the chip is app furniture and should take the view
+          scale with everything else (DragChip divides the pointer px by it). */}
+      {dnd.dragging && dnd.chip
+        ? createPortal(
+            <DragChip node={dnd.dragging} x={dnd.chip.x} y={dnd.chip.y} touch={dnd.chip.touch} />,
+            document.getElementById('root') ?? document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -418,7 +431,16 @@ function DragChip({ node, x, y, touch }: { node: DndNode; x: number; y: number; 
     <div
       aria-hidden="true"
       className="tree-drag-chip"
-      style={{ left: x, top: y, transform: touch ? 'translate(-50%, calc(-100% - 20px))' : 'translate(14px, 10px)' }}
+      // Pointer px are UNZOOMED viewport px, and this chip is `fixed` INSIDE
+      // the zoomed #root (index.css view scale) where a px length paints
+      // multiplied by --ui-scale — divide it back out, exactly as the
+      // point-anchored menus do (ui/Menu.tsx), or the chip trails the finger
+      // toward the origin at scale < 1 and runs ahead of it above 1.
+      style={{
+        left: `calc(${x}px / var(--ui-scale, 1))`,
+        top: `calc(${y}px / var(--ui-scale, 1))`,
+        transform: touch ? 'translate(-50%, calc(-100% - 20px))' : 'translate(14px, 10px)',
+      }}
     >
       <span className="grid size-5 shrink-0 place-items-center text-text-3">
         {node.isDir ? <IconFiles size={20} /> : <FileBadge name={node.name} />}

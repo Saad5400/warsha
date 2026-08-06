@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { COPY } from '../copy'
+import { uiScale } from '../ui/viewport'
 
 /** Matches the console's own floor (spec §4.3 rule 4) and leaves the editor its 96px. */
 const MIN_H = 144
@@ -30,10 +31,17 @@ const DEFAULT_H = 240
  * stop-at-the-header reason as above.
  */
 export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(px: number): void }) {
-  const drag = useRef<{ y: number; h: number } | null>(null)
+  const drag = useRef<{ y: number; h: number; scale: number } | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  const clamp = (px: number) => Math.max(MIN_H, Math.min(px, Math.max(MIN_H + 56, window.innerHeight - 200)))
+  // `height` is a px length inside the zoomed #root (index.css view scale), so
+  // it is the SCALED unit — the same unit as MIN_H and the 200px the editor
+  // keeps. window.innerHeight is unzoomed viewport px, so it converts before it
+  // can bound one: at 0.7 the un-converted ceiling capped the panel at 70% of
+  // the height it should reach, and at 1.3 it let it push the editor past its
+  // floor. The scale is read once per drag (pointerdown) rather than per move.
+  const clamp = (px: number, scale: number = uiScale()) =>
+    Math.max(MIN_H, Math.min(px, Math.max(MIN_H + 56, window.innerHeight / scale - 200)))
 
   return (
     <div
@@ -61,13 +69,17 @@ export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(
         // dblclick are unaffected, and keyboard focus (Tab) still lands and
         // still lights the sash face / grabber via group-focus-visible.
         e.preventDefault()
-        drag.current = { y: e.clientY, h: height }
+        drag.current = { y: e.clientY, h: height, scale: uiScale() }
         setDragging(true)
         e.currentTarget.setPointerCapture(e.pointerId)
       }}
       onPointerMove={(e) => {
         if (!drag.current) return
-        onHeight(clamp(drag.current.h + (drag.current.y - e.clientY)))
+        const { h, y, scale } = drag.current
+        // The pointer moves in unzoomed px; the height it drives is scaled.
+        // Without the division the panel ran away from the cursor — 1.4x too
+        // fast at 0.7 scale, and short of it above 1.
+        onHeight(clamp(h + (y - e.clientY) / scale, scale))
       }}
       onPointerUp={(e) => {
         drag.current = null
