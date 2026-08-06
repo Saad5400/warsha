@@ -77,25 +77,47 @@ function fromUrl(): Locale | null {
   }
 }
 
+const ENTRY_KEY = 'warsha:entry-locale'
+
 /**
  * `/ar/` and `/en/` — prerendered per-locale entry points, for search
  * engines: a single `/` can only offer a crawler one `<html lang>`/title, so
  * this serves each locale its own (build emits a copy of index.html per
  * prefix — see app/ARCHITECTURE.md §7 and the `warsha:locale-entries` plugin).
  *
- * Real entry points, not landing pages — `/ar/` boots the same bundle.
- * Reading the path (not a build-injected global) means the generated HTML
- * carries no script of its own, and `vite dev` gets it for free too.
+ * Real entry points, not landing pages — `/ar/` boots the same bundle. The
+ * inline script in index.html strips the prefix off the URL once it has read
+ * it, because every runtime asset resolves against `document.baseURI` and a
+ * prefix makes that base one directory too deep. The pathname is still read as
+ * a fallback, for a blocked sessionStorage.
  *
  * Not persisted, like `?lang=` — a URL naming a language is a fact about this
- * visit, not a standing choice.
+ * visit, not a standing choice. `setLocale()` clears it, or an explicit switch
+ * would be undone by the next reload.
  */
-function fromPath(): Locale | null {
+function fromEntry(): Locale | null {
+  const read = (raw: string | null | undefined): Locale | null => {
+    const l = raw?.toLowerCase()
+    return l === 'ar' || l === 'en' ? l : null
+  }
   try {
-    const first = location.pathname.split('/').filter(Boolean)[0]?.toLowerCase()
-    return first === 'ar' || first === 'en' ? first : null
+    const stashed = read(sessionStorage.getItem(ENTRY_KEY))
+    if (stashed) return stashed
+  } catch {
+    // Blocked storage — fall through to the path.
+  }
+  try {
+    return read(location.pathname.split('/').filter(Boolean)[0])
   } catch {
     return null
+  }
+}
+
+function clearEntry() {
+  try {
+    sessionStorage.removeItem(ENTRY_KEY)
+  } catch {
+    // Nothing was stored if storage is blocked.
   }
 }
 
@@ -114,7 +136,7 @@ export const locale = (): Locale => current
  * then the browser default.
  */
 export function initLocale(): Locale {
-  current = fromUrl() ?? fromPath() ?? prefs().locale ?? detectLocale()
+  current = fromUrl() ?? fromEntry() ?? prefs().locale ?? detectLocale()
   applyToDocument(current)
   return current
 }
@@ -122,6 +144,7 @@ export function initLocale(): Locale {
 export function setLocale(next: Locale) {
   if (next === current) return
   current = next
+  clearEntry()
   setPrefs({ locale: next })
   applyToDocument(next)
   for (const fn of listeners) fn()

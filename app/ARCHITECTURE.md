@@ -650,12 +650,23 @@ each PNG's real IHDR dimensions against what index.html declares, rather than tr
 an invariant that now spans two files.
 
 **They are entry points, not landing pages.** `/ar/` boots the same app from the same hashed bundle one
-directory up (`base: './'` is what makes a path rewrite sufficient), and `src/i18n/locale.ts`'s
-`fromPath()` reads the prefix to open in that language. No script is injected into the generated copy;
-reading `location.pathname` also means `vite dev` gets the same behaviour free through its history
-fallback. The prefix ranks with `?lang=` — above the stored preference, below nothing — and like
-`?lang=` it is **not persisted**: a link that names a language describes the visit, not a new standing
-choice, so a student who has explicitly picked English still has that choice waiting at `/`.
+directory up (`base: './'` is what makes a path rewrite sufficient), opens in Arabic, and then **takes
+the prefix back off the URL** — an inline script in `index.html` stashes it and `history.replaceState`s
+to the root before the module bundle loads. `src/i18n/locale.ts`'s `fromEntry()` reads it back.
+
+That strip is not cosmetic. Everything the app fetches at runtime — the JVM, .NET and clang workers,
+`esbuild.wasm`, the React/Vue/Svelte bundles, `warsha-tailwind.js` — is resolved as
+`new URL(name, document.baseURI)`, and under a prefix that base is one directory too deep. `/ar/` asked
+for `/ar/warsha-jvm.worker.js`, got the SPA fallback, and every language with a worker failed to start.
+It cannot be fixed in module code: `src/runtime/index.ts` computes its worker URLs at import time, which
+is before any module body — and therefore before `initLocale()` — has run. Hence an inline script, and
+hence `sessionStorage` rather than a variable, to carry the prefix across coi-serviceworker's one
+first-visit reload. The pathname is still read as a fallback for a blocked `sessionStorage`.
+
+The prefix ranks with `?lang=` — above the stored preference, below nothing — and like `?lang=` it is
+**not persisted**: a link that names a language describes the visit, not a new standing choice, so a
+student who has explicitly picked English still has that choice waiting at `/`. `setLocale()` clears the
+stash, or an explicit switch would be undone by the next reload.
 
 Two consequences worth knowing. The service worker keys cached navigations by their own pathname
 (`public/coi-serviceworker.js`); it used to key every one under `./index.html`, which would now hand the

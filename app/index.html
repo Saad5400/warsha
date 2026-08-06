@@ -52,6 +52,25 @@
          downloaded runtimes so the installed PWA works offline; see
          app/ARCHITECTURE.md §2.5). See runtimes/python/INTEGRATION.md §3. -->
     <script src="./coi-serviceworker.js"></script>
+    <!-- /ar/ and /en/ are crawler entry points, not app routes: read the prefix,
+         then take it off the URL. Every runtime asset is `new URL(name,
+         document.baseURI)`, and under a prefix that base is one directory too
+         deep — the JVM, .NET and clang workers all 404. Inline because
+         src/runtime/index.ts bakes its worker URLs at import time, before any
+         module body runs; sessionStorage because coi-serviceworker reloads once
+         on a first visit. See app/ARCHITECTURE.md §7. -->
+    <script>
+      ;(function () {
+        try {
+          var here = location.pathname.match(/^(.*\/)(ar|en)\/?$/)
+          if (!here) return
+          sessionStorage.setItem('warsha:entry-locale', here[2])
+          history.replaceState(history.state, '', here[1] + location.search + location.hash)
+        } catch (e) {
+          // Blocked storage must not stop the boot — locale.ts falls back to the path.
+        }
+      })()
+    </script>
     <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
          student pinching into a stack trace. Double-tap zoom is killed per
          control with touch-action instead. See DESIGN-SPEC §4.2. -->
