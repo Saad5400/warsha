@@ -5,8 +5,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
@@ -41,9 +41,8 @@ import java.util.Map;
  * with no jrt-fs.jar at all -- FileSystems.getFileSystem("jrt:/") just works,
  * and reads all 50 modules and ~20 000 classes. So:
  *
- *  1. Build a java.home under /files/ (the one mount Java can write) holding
- *     nothing but a release file, and point ECJ at it with --system. Check one
- *     is satisfied by a file we control.
+ *  1. Build a java.home holding nothing but a release file, and point ECJ at it
+ *     with --system. Check one is satisfied by a file we control.
  *
  *  2. Seed ECJ's own jrt-filesystem cache, keyed by that path, with the running
  *     image. JRTUtil.getJrtFileSystem does a computeIfAbsent on that map, so a
@@ -67,7 +66,15 @@ public final class Platform {
     /**
      * The java.home handed to ECJ via --system. It only ever holds a release
      * file; the actual classes come from the running image (see the header).
-     * Under /files/ because that is the only Java-writable mount.
+     *
+     * Under /files/, and NOT served as a static asset under /app/, which was
+     * tried and reverted on 2026-08-06. /app/ is the web server, and ECJ also
+     * probes <java.home>/lib/ext and lib/endorsed. Any host with an SPA
+     * fallback (nginx `try_files ... /index.html`, `vite preview`) answers 200
+     * for those, so CheerpJ tried to read them as files and logged
+     * "HTTP server does not support the 'Range' header. CheerpJ cannot run."
+     * twice per compile -- alarming, and untrue. /files/ is IndexedDB and knows
+     * exactly what exists, so the probes come back "absent" and stay silent.
      */
     static final String SYSTEM_HOME = "/files/warsha-jdk";
 
@@ -88,7 +95,7 @@ public final class Platform {
      */
     static synchronized String prepare() {
         if (prepared) return SYSTEM_HOME;
-        writeReleaseFile();
+        ensureReleaseFile();
         seedJrtCache();
         prepared = true;
         return SYSTEM_HOME;
@@ -96,17 +103,24 @@ public final class Platform {
 
     /**
      * ECJ reads JAVA_VERSION out of this to decide the JDK's level, and that is
-     * the file's whole purpose -- nothing reads the classes from here. The value
-     * is the running JVM's own version so the two can never drift.
+     * the file's whole purpose -- nothing reads the classes from here.
+     *
+     * WRITTEN ONCE EVER, not once per JVM. /files/ is IndexedDB and survives
+     * both a Stop and a page reload, so on every visit after the first this is
+     * one existence check. That matters more than it looks: creating this
+     * 21-byte file measured 1.1-1.4s (2026-08-06), and a fresh JVM is exactly
+     * what a student gets after pressing Stop or refreshing the page.
      */
-    private static void writeReleaseFile() {
+    private static void ensureReleaseFile() {
         File home = new File(SYSTEM_HOME);
+        File release = new File(home, "release");
+        if (release.isFile() && release.length() > 0) return;
+
         if (!home.mkdirs() && !home.isDirectory()) {
             throw new IllegalStateException("warsha: cannot create the compiler's system home at " + SYSTEM_HOME);
         }
         String version = System.getProperty("java.version", "17");
         String content = "JAVA_VERSION=\"" + version + "\"\n";
-        File release = new File(home, "release");
         try (OutputStream out = new FileOutputStream(release)) {
             out.write(content.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {

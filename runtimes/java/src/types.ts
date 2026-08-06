@@ -40,6 +40,8 @@ export interface RunIO {
   onStdinRequest(): void
   /** 0 = clean exit, non-zero = program or compile error, null = killed. Fires exactly once. */
   onExit(code: number | null): void
+  /** Progress from inside the run — the compile. See the shell's RunIO. */
+  onProgress?(report: ProgressReport): void
 }
 
 export interface RunSession {

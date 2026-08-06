@@ -54,7 +54,11 @@ const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 async function setEditor(text) {
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+a')
-  await page.keyboard.type(text)
+  // insertText, not type(): typing a MULTI-LINE program key by key runs it
+  // through CodeMirror's auto-close-brackets and auto-indent, which balances
+  // braces the source already balanced and mangles a `"""` text block outright.
+  // insertText dispatches one input event, which is also what a paste does.
+  await page.keyboard.insertText(text)
   await page.waitForTimeout(700) // 350ms persistence debounce + slack
 }
 

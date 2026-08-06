@@ -64,22 +64,84 @@ definitely being served).
 Execution throughput is *better* on 17 (collections roughly 1.7× faster,
 strings faster, arithmetic level) and the engine download is smaller (13.6 MB
 against Java 8's 18.7 MB). The regression is entirely the **first compile of a
-session**: on a modular runtime every platform type is read out of the packed
-image on first touch, which cost ~15 s here against Java 8's ~2 s. It is paid
-once per JVM, so repeat runs are unchanged.
+session**, and it is paid once per JVM — repeat runs are unchanged.
 
-That cost is pushed into the background warm-up, which is why `WARM_SOURCE` in
-`jvm.worker.js` is no longer an empty class — it references `Scanner`, the
+### Where the first compile actually goes (measured 2026-08-06)
+
+The first explanation written here was wrong, and it is worth recording why:
+the guess was that a modular runtime reads every platform type out of the
+packed image on first touch. A probe (`runtimes/java/probe/`, throwaway) took
+that apart in the browser and it is not true.
+
+| phase, fresh JVM | ms |
+| --- | --- |
+| `cheerpjInit` | 600 |
+| open `jrt:/` | 300 |
+| read 150 `java.util` class files from the image | 216 |
+| read the same 150 again | 73 |
+| **full walk of `/modules`** (20 963 files, 50 modules) | **760** |
+| **ECJ's own `ClasspathJrt.initialize()`** | **790** |
+| `Platform.prepare()` — a 21-byte write into `/files/` | 1 150 |
+| loading 10 named ECJ classes (`Parser` alone: 1 380) | 4 900 |
+| first `BatchCompiler.compile` of `class Tiny {}`, after all of the above | 5 200 |
+| second compile, a real Scanner + collections program | 1 900 |
+| third compile, same program | 250 |
+
+The module image is under a second, end to end. Raw reads out of it run at
+~1.4 ms per class file. What costs 12 s is **CheerpJ 17 loading and preparing
+ECJ's own classes** — the same compiler bytes cost 3.1 s on CheerpJ 8 and 2.2 s
+on CheerpJ 11 (identical ECJ 3.26.0 jar, ten `Class.forName` calls, no compile).
+Java 17's runtime is simply ~2× slower at this than Java 8's and ~3× slower
+than Java 11's, and it is the dominant term.
+
+Two consequences follow, and both are load-bearing:
+
+- **`ct.sym` is not the lever.** It was written up here as the next thing to
+  try; it would replace ~800 ms of module-image work with zip reads and change
+  nothing about the 12 s. Dropped.
+- **Trimming `ecj.jar` is not the lever either.** The JVM loads classes lazily,
+  so classes a compile never touches already cost nothing.
+
+The cost is irreducible *per JVM*, which means the only real fix is to stop
+paying it per JVM. Three changes do that, and together they take a page refresh
+followed by Run from ~20 s to **0.8 s**:
+
+- **The compile-reuse cache now outlives the JVM.** `Build` writes the project
+  hash into the run directory it just built (`key.txt`), and `gcOldRuns` already
+  leaves exactly one of those behind, so the first Run of a fresh JVM adopts it.
+  An unchanged project is launched without ECJ being loaded at all. The key is
+  only ever trusted as far as `projectKey()` agrees with it, so a stale one
+  costs a compile and can never run the wrong classes.
+- **The warm-up yields to a real Run.** Commands are serialised inside the JVM,
+  so a warm-up already in flight made the student wait out all ~12 s of it. It
+  is now scheduled 1.2 s after boot and cancelled outright if a Run arrives
+  first — and re-scheduled after that run finishes, so the next *edit* still
+  gets a warm compiler.
+- **`Platform` writes its `release` file once ever, not once per JVM.** `/files/`
+  is IndexedDB and survives both a reload and a Stop, so every visit after the
+  first is one existence check instead of a 1.1–1.4 s create.
+
+Serving that `release` file as a static asset under `/app/` was tried and
+reverted: ECJ also probes `<java.home>/lib/ext` and `lib/endorsed`, and any host
+with an SPA fallback answers 200 for those, so CheerpJ logged *"HTTP server does
+not support the 'Range' header. CheerpJ cannot run."* twice per compile.
+IndexedDB knows exactly what exists and stays silent.
+
+The rest of it is `jvm.worker.js`'s background warm-up, which is why
+`WARM_SOURCE` there is not an empty class: it references `Scanner`, the
 collections, `String.format`, boxing and an exception, because warming an empty
-class left a three-file Scanner program still paying the full ~16 s. Warming a
-representative source moves it: after the warm-up completes, a student's first
-compile is ~2.5 s.
+class left a three-file Scanner program still paying nearly the whole bill.
+After the warm-up completes a student's first compile is ~2.5 s; the exposure is
+a student who presses Run before it finishes.
 
-**If this ever needs revisiting:** the identified next lever is `ct.sym`. ECJ
-takes a different, zip-based path (`ClasspathJep247Jdk12`) when the requested
-release is older than the JDK's own, so shipping a `ct.sym` and declaring a
-higher version in the fake `release` file would avoid the module image entirely.
-Untested, and it adds a ~7 MB asset.
+**The remaining lever, not yet built:** split the compiler and the student's
+program into two workers. Stop is `worker.terminate()` — the only kill CheerpJ
+has — so today it throws away the warm ECJ along with the runaway loop, and the
+next Run pays the full ~15 s again. A runner worker never loads ECJ, so killing
+one costs a `cheerpjInit` (~0.6 s) instead. The handoff is already proven to
+work: a second CheerpJ JVM in a second worker sees files the first wrote to
+`/files/`, live, with no reopen, including binary payloads (verified
+2026-08-06). The cost is two resident JVMs, which is a real question on a phone.
 
 **Pins that are now load-bearing.** ECJ 3.46.0 is pinned by sha256 in
 `fetch-compiler.sh` because `JRT_FILE_SYSTEMS` is a private static field that

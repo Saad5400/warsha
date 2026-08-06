@@ -51,6 +51,7 @@ interface Active {
   runId: string
   ended: boolean
   awaitingStdin: boolean
+  progressListener?: (report: ProgressReport) => void
 }
 
 /**
@@ -172,6 +173,19 @@ export class JavaRuntime implements Runtime {
     const active: Active = { io, runId, ended: false, awaitingStdin: false }
     this.active = active
     this.lastRun = null
+
+    // The compile happens INSIDE the run, and on a JVM that has not compiled
+    // yet it is the longest phase there is (~12s of ECJ class loading; see
+    // INTEGRATION.md). Keep reporting through it, or the console falls back to
+    // its empty-state placeholder for the whole wait. Registered per run and
+    // dropped in finish(), so a report can never outlive the run it describes.
+    if (io.onProgress) {
+      const forward = (report: ProgressReport) => {
+        if (!active.ended) io.onProgress?.(report)
+      }
+      active.progressListener = forward
+      this.progressListeners.add(forward)
+    }
 
     worker.postMessage({ type: 'run', runId, files: sources, entryPath: entry })
 
@@ -337,6 +351,7 @@ export class JavaRuntime implements Runtime {
     if (!active || active.ended) return
     active.ended = true
     active.awaitingStdin = false
+    if (active.progressListener) this.progressListeners.delete(active.progressListener)
     this.active = null
     if (stderrNote) active.io.onStderr(stderrNote)
     active.io.onExit(code)

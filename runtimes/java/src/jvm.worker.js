@@ -246,10 +246,21 @@ self.onmessage = (event) => {
       return
 
     case 'run':
+      // A run outranks the warm-up. If the warm-up has not been sent to the
+      // Server yet, drop it: commands are serialised inside the JVM, so a
+      // warm-up already in flight would make this run wait out the whole ~12s
+      // ECJ load -- which is exactly what a student sees when they refresh and
+      // press Run. Their own project may not even need ECJ (Build reuses the
+      // previous session's compiled output when nothing changed), and finding
+      // that out takes milliseconds.
+      cancelPendingWarmUp()
       enqueueCommandWork(() =>
-        compileAndRun(message).catch((error) => {
-          post({ type: 'fatal', text: describe(error) })
-        }),
+        compileAndRun(message)
+          .catch((error) => {
+            post({ type: 'fatal', text: describe(error) })
+          })
+          // Whatever the run needed, the NEXT compile still wants a warm ECJ.
+          .finally(() => scheduleWarmUp(0)),
       )
       return
 
@@ -325,7 +336,34 @@ async function boot(cdnBase) {
   // command chain serializes this behind-the-scenes compile with real runs, so
   // a Run pressed immediately just waits for it, which still beats the old
   // design where the SAME wait happened before load() ever resolved.
-  enqueueCommandWork(() => warmCompiler())
+  scheduleWarmUp(WARM_UP_DELAY_MS)
+}
+
+/* How long the warm-up waits before claiming the JVM.
+ *
+ * Long enough that a student who reloads and hits Run straight away gets in
+ * first -- the Server is single-threaded, so whoever is in the JVM owns it
+ * until they are done, and the warm-up owns it for ~12s. Short enough that a
+ * student who is reading their code has a warm compiler by the time they edit
+ * anything. */
+const WARM_UP_DELAY_MS = 1200
+
+let warmUpTimer = null
+let warmedUp = false
+
+function scheduleWarmUp(delayMs) {
+  if (warmedUp || warmUpTimer !== null) return
+  warmUpTimer = setTimeout(() => {
+    warmUpTimer = null
+    warmedUp = true
+    enqueueCommandWork(() => warmCompiler())
+  }, delayMs)
+}
+
+function cancelPendingWarmUp() {
+  if (warmUpTimer === null) return
+  clearTimeout(warmUpTimer)
+  warmUpTimer = null
 }
 
 /**
@@ -542,10 +580,22 @@ async function compileAndRun({ runId, files, entryPath }) {
   // 2. Compile (or reuse: Build skips ECJ when the staged project is identical
   //    to the last successfully compiled one). The Server reports through
   //    Bridge.phaseDone; its main settling instead means the JVM died under us.
+  //    This is the ONLY phase that can take double-digit seconds on a warm
+  //    engine: a JVM that has not compiled yet has to load ECJ's classes first,
+  //    ~12s of it on CheerpJ 17 (INTEGRATION.md). It used to report nothing at
+  //    all, so the console sat on "Output will appear here…" for the whole of
+  //    it. Gated by announceAfter like every other phase, so the common case --
+  //    a warm compile, or a reuse hit that skips ECJ entirely -- stays silent.
   const compileWait = waitPhase('compile')
+  const compileGate = announceAfter({
+    type: 'progress',
+    phase: 'compile',
+    message: 'Compiling your code…',
+  })
   const compileStarted = performance.now()
   sendCommand(`run\t${runId}\t${entryPath}`)
   const compileStatus = await Promise.race([compileWait, serverExited.then(() => 'dead')])
+  compileGate.cancel()
   const compileMs = performance.now() - compileStarted
 
   if (compileStatus === 'dead') {

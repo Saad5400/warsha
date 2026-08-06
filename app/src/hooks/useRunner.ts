@@ -323,14 +323,34 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       // No "Running <entry>…" row: the status line and pill say the program is
       // running, and system text in the transcript is what students mistook
       // for their program's own output (founder ruling 2026-08-05).
-      setState((s) => ({ ...s, status: 'running', progress: null }))
+      // status becomes 'running' here so Stop is available immediately -- a
+      // runaway program must always be stoppable. `progress` is NOT cleared
+      // with it: on an engine that compiles inside run() (Java), the longest
+      // wait of the whole session is still ahead of us at this point, and
+      // clearing here is what left the console showing "Output will appear
+      // here when you run your code." for ~20s. It is cleared by the first
+      // thing that supersedes it -- output, a prompt, or the exit.
+      setState((s) => ({ ...s, status: 'running' }))
+
+      const clearProgress = () => {
+        if (token.current === mine) setState((s) => (s.progress ? { ...s, progress: null } : s))
+      }
 
       const s = await runtime.run(files, entry, {
+        onProgress: (report) => {
+          if (token.current !== mine) return
+          armStall()
+          setState((s) => ({ ...s, progress: normalizeProgress(report) }))
+        },
         onStdout: (t) => {
-          if (token.current === mine) buffer.write(t, 'out')
+          if (token.current !== mine) return
+          clearProgress()
+          buffer.write(t, 'out')
         },
         onStderr: (t) => {
-          if (token.current === mine) buffer.write(t, 'err')
+          if (token.current !== mine) return
+          clearProgress()
+          buffer.write(t, 'err')
         },
         // Only a preview runtime calls this; the shell loads the string into the
         // preview iframe. An empty string blanks it (a stopped page).
@@ -339,6 +359,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
         },
         onStdinRequest: () => {
           if (token.current !== mine) return
+          clearProgress()
           // The input row appears at the cursor and joins the prompt line, so
           // the prompt — and everything printed before it — must be on screen
           // first, not still queued behind a paced reveal.

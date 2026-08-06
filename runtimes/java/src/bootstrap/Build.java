@@ -96,9 +96,34 @@ public class Build {
         }
     }
 
-    /** Key + directory of the last successful compile in this JVM. */
+    /** Key + directory of the last successful compile. */
     private static String lastGoodKey = null;
     private static String lastGoodRunId = null;
+    private static boolean reuseRecovered = false;
+
+    /**
+     * Written next to main.txt, read back by a LATER JVM. This is what makes a
+     * page refresh survivable.
+     *
+     * The reuse cache used to live only in these statics, so it died with the
+     * worker -- and a fresh JVM has to load ECJ before it can compile anything,
+     * which on CheerpJ 17 is ~12s that no amount of tuning removes (measured;
+     * see INTEGRATION.md). Refreshing the page and pressing Run on code you did
+     * not touch therefore cost the full boot, every time.
+     *
+     * /files/ is IndexedDB and survives a reload, and gcOldRuns already leaves
+     * exactly ONE warsha-run-* directory behind, so the surviving directory IS
+     * the cache: find it, read its key, and if the project still hashes to that
+     * key the compile is skipped and ECJ is never loaded at all.
+     *
+     * Deliberately not a file of its own at /files/: writing one costs an extra
+     * IndexedDB create per compile (measured at 1.1-1.4s for 21 bytes), and a
+     * pointer that can outlive what it points at is a whole class of bug this
+     * does not have -- the key lives INSIDE the directory it describes.
+     */
+    static File projectKeyFile(String runId) {
+        return new File(runDir(runId), "key.txt");
+    }
 
     /**
      * Compiles the staged project -- unless it is byte-for-byte the project the
@@ -109,9 +134,10 @@ public class Build {
      * same content hash per file. Any edit, added file or deleted file misses
      * the cache and takes the full-compile path, which builds into a fresh
      * per-run directory exactly as before -- so a stale .class can no more
-     * resurrect here than it could when every run compiled. The cache also
-     * dies with this JVM (a kill() or System.exit replaces the worker), and is
-     * bypassed when the reused directory has vanished from /files/.
+     * resurrect here than it could when every run compiled. It is bypassed when
+     * the reused directory has vanished from /files/, and it now SURVIVES this
+     * JVM -- see projectKeyFile, which is what makes a page refresh or a Stop
+     * cost a launch rather than a whole compiler warm-up.
      *
      * `allowReuse` is false for the boot-time warm-up compile, which must
      * neither seed the cache (its synthetic source is not the student's
@@ -125,6 +151,8 @@ public class Build {
             } catch (Throwable ignored) {
                 // A hashing failure must never block a build; it only costs the reuse.
             }
+
+            if (allowReuse) recoverReuse();
 
             if (allowReuse && key != null && key.equals(lastGoodKey)
                     && lastGoodRunId != null && outDir(lastGoodRunId).isDirectory()) {
@@ -144,6 +172,13 @@ public class Build {
             if (allowReuse && code == 0 && key != null) {
                 lastGoodKey = key;
                 lastGoodRunId = runId;
+                // Inside the directory it describes, so the next JVM can adopt
+                // it -- and so it cannot outlive what it points at.
+                try {
+                    writeAll(projectKeyFile(runId), key);
+                } catch (Throwable ignored) {
+                    // Costs the next session a compile; costs this one nothing.
+                }
             }
             return new Result(code, runId);
         } catch (Throwable t) {
@@ -228,6 +263,42 @@ public class Build {
         writeAll(sourceIndexFile(runId), sourceIndex.toString());
 
         return compile(sourcePaths, out) ? 0 : 1;
+    }
+
+    /**
+     * First Run of a JVM: adopt the surviving run directory's compile as this
+     * session's reuse cache, so an unchanged project does not have to load ECJ.
+     *
+     * Deliberately forgiving -- every failure here just means a normal compile.
+     * The key it adopts is only ever TRUSTED as far as projectKey() agrees with
+     * it: buildOrReuse recomputes the hash of what is actually staged and
+     * compares, so a truncated, stale or hand-edited key.txt cannot make Warsha
+     * run the wrong classes. It can only cost a compile that was skippable.
+     */
+    private static void recoverReuse() {
+        if (reuseRecovered) return;
+        reuseRecovered = true;
+        if (lastGoodKey != null) return; // this JVM already compiled something
+
+        try {
+            File[] children = new File("/files").listFiles();
+            if (children == null) return;
+            for (File child : children) {
+                String name = child.getName();
+                if (!RUN_DIR.matcher(name).matches()) continue;
+                String runId = name.substring(RUN_PREFIX.length());
+                File key = projectKeyFile(runId);
+                if (!key.isFile() || !outDir(runId).isDirectory()) continue;
+                String stored = readAll(key).trim();
+                if (stored.isEmpty()) continue;
+                lastGoodKey = stored;
+                lastGoodRunId = runId;
+                Bridge.writeInternal("warsha-reuse: adopted " + name + " from a previous session");
+                return;
+            }
+        } catch (Throwable ignored) {
+            // Reuse is an optimisation; never let it break a build.
+        }
     }
 
     /**
