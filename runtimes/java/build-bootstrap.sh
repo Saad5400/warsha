@@ -45,17 +45,26 @@ if ! command -v "$JAVAC" >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "$here/ecj.jar" ]; then
-  echo "ecj.jar missing -- run ./fetch-compiler.sh first (Build imports ECJ's BatchCompiler)" >&2
+# Build.java imports ECJ's BatchCompiler, so javac needs ecj.jar on -cp. Look in
+# the DESTINATION first: fetch-compiler.sh takes the same argument this script
+# does and puts the jar there, so on a clean checkout (CI) that is the only copy
+# -- runtimes/java/ecj.jar exists only on a machine that has also run the
+# harness. Getting this backwards is what broke the first Java 17 deploy.
+ECJ=""
+for candidate in "$(dirname "$DEST")/ecj.jar" "$here/ecj.jar"; do
+  if [ -f "$candidate" ]; then ECJ="$candidate"; break; fi
+done
+if [ -z "$ECJ" ]; then
+  echo "ecj.jar missing -- run ./fetch-compiler.sh ${1:-} first (Build imports ECJ's BatchCompiler)" >&2
   exit 1
 fi
 
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
-echo "==> javac --release 17 -Werror  (src/bootstrap)"
+echo "==> javac --release 17 -Werror  (src/bootstrap, -cp $ECJ)"
 "$JAVAC" --release 17 -Xlint:all -Werror \
-  -cp "$here/ecj.jar" -d "$OUT" "$here"/src/bootstrap/*.java
+  -cp "$ECJ" -d "$OUT" "$here"/src/bootstrap/*.java
 
 echo "==> jar"
 "$JAR" --create --file "$DEST" -C "$OUT" .
