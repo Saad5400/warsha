@@ -394,11 +394,15 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [candidates, entryPath])
 
   // Pre-warm the Java engine while the student is still reading their code.
-  // Boot is cheap now that the compiled bootstrap persists in IndexedDB
-  // (~1s on a revisit, measured 2026-08-06), and the ECJ warm-up runs in the
-  // background behind it — so a Run pressed a few seconds after page open
-  // starts in well under a second instead of paying the whole boot inside the
-  // click. Silent on purpose: progress UI belongs to a run the student asked
+  // This is the single most valuable thing on the page for Java: a fresh JVM
+  // spends ~12s loading ECJ's classes before it can compile anything, and that
+  // cost is irreducible per JVM (measured 2026-08-06 — see
+  // runtimes/java/INTEGRATION.md). Every millisecond of it paid before the
+  // student presses Run is a millisecond they do not wait.
+  //
+  // Hence the short delay: long enough to stay out of the way of first paint,
+  // short enough that the warm-up is most of the way done by the time anyone
+  // has read their code. Silent on purpose: progress UI belongs to a run the student asked
   // for (one progress voice — founder ruling 2026-08-05), and load() is
   // idempotent so the run's own load() call simply joins this one.
   // Java only: its engine is ~1MB + the 3MB compiler jar, where Python and
@@ -412,7 +416,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           // A dead network fails the pre-warm; the student's own Run will
           // retry and is where the failure should be reported.
         })
-    }, 1500)
+    }, 600)
     return () => window.clearTimeout(timer)
   }, [hydrated, entryPath])
 

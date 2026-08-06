@@ -48,6 +48,15 @@ export interface RunIO {
    * flow back through `onStdout`/`onStderr`, so the Console stays useful.
    */
   onRender?(srcdoc: string): void
+  /**
+   * OPTIONAL. Progress from inside a run, not from the engine boot that
+   * precedes it. Java needs it: a JVM that has not compiled yet spends ~12s
+   * loading its compiler before the first line of a student's program can be
+   * produced, and with nothing reported the console shows its empty-state
+   * placeholder for the whole of it. A runtime that has nothing to say during a
+   * run simply never calls this.
+   */
+  onProgress?(report: ProgressReport): void
 }
 export interface RunSession { kill(): void; writeStdin(line: string): void }
 

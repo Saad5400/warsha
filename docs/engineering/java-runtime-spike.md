@@ -724,10 +724,15 @@ End-to-end, `tools/qa/verify-java.mjs` on the same rig:
 
 ### 11.4 Loose ends
 
-- **`ct.sym` is the next lever** if the first-compile cost needs to come down:
-  ECJ takes a zip-based path (`ClasspathJep247Jdk12`) when the requested release
-  is older than the JDK's own, which would avoid the module image entirely.
-  Untested; adds a ~7 MB asset.
+- **`ct.sym` is NOT the lever** — this was listed here as the next thing to try
+  and measurement killed it. The module image costs under a second end to end
+  (full `/modules` walk 760 ms, ECJ's `ClasspathJrt.initialize()` 790 ms, raw
+  reads ~1.4 ms per class file). The ~12 s is CheerpJ 17 loading ECJ's *own*
+  classes: identical ECJ bytes cost 3.1 s on CheerpJ 8 and 2.2 s on CheerpJ 11.
+  Trimming `ecj.jar` is out for the same reason — classes a compile never
+  touches are never loaded. See INTEGRATION.md for the full breakdown, and note
+  that the remaining lever is architectural: a compiler worker the Stop button
+  cannot kill.
 - **Java 21/25** need CheerpJ to offer them; 4.3 tops out at 17, and Leaning
   Technologies' roadmap puts Java 21 and LTS parity in 2026.
 - **Two small files would remove `Platform.java` entirely** — a `release` file
