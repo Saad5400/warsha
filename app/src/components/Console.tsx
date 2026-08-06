@@ -367,7 +367,16 @@ function LiveLine({
       data-kind={line?.kind ?? 'out'}
       data-waiting={waiting ? 'true' : 'false'}
     >
-      <span className="console-row__text console-row__text--live">
+      {/* `dir="auto"` and not the transcript's `unicode-bidi: plaintext`: this row
+          is a FLEX line, and plaintext resolves the direction of text without
+          touching the order its flex items sit in. An Arabic prompt therefore
+          printed right-to-left while the box it lives in still ran the other way
+          — `‫ادخل اسمك:‬` on the left with the field to its right, which is the
+          mirror image of how the student is reading it. `auto` takes the
+          direction from the prompt's own first strong character, so the field
+          follows the prompt in Arabic and leads it in English, and a bare `› `
+          row (no prompt yet) stays left-to-right because a marker is neutral. */}
+      <span className="console-row__text console-row__text--live" dir="auto">
         {line ? (
           line.segments.map((seg, i) => (
             <span key={i} data-seg={seg.kind}>

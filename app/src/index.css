@@ -1301,7 +1301,16 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     tab-size: 4;
-    padding-left: var(--sp-3);
+    /* The hanging indent — first line flush, wrapped continuations 12px in, so a
+       wrap reads differently from a genuine new line.
+       BOTH sides, and that is not symmetry for its own sake: `text-indent`
+       indents from the line's OWN start edge, which for an Arabic line under
+       `unicode-bidi: plaintext` below is the RIGHT. With padding on the left
+       only, every RTL line hung its 12px off the right edge of a box that had
+       no room for it — 4px past the transcript's own padding — which put a
+       horizontal scrollbar under the console and clipped the first characters
+       of every Arabic line, the end a reader starts from. */
+    padding-inline: var(--sp-3);
     text-indent: calc(-1 * var(--sp-3));
     color: var(--text-1);
     /* THE ONE DECLARATION THAT MAKES MIXED OUTPUT READABLE.
@@ -1313,11 +1322,13 @@
        `plaintext` and not `dir="auto"` on the element: the row is a single span
        that may hold several segments (stdout + stderr), and this applies the
        first-strong rule per line rather than once for the whole row.
-       Alignment deliberately does NOT follow: `text-align` still resolves
-       against the LTR container, so every line starts at the same left edge.
-       Letting Arabic rows right-align made the column jitter line to line,
-       which reads as a rendering bug in exactly the mixed output that is
-       normal here. Ordering is correctness; alignment is the column. */
+       Alignment follows too — an Arabic line sits against the right edge, an
+       English one against the left. That is the browser's behaviour under
+       plaintext (`text-align: start` resolves per line, not against the
+       container) and it is the behaviour we want: a line of Arabic output that
+       began at the left edge and ran leftward would read as broken to the
+       student who printed it. Do not "fix" it with `text-align: left` — and if
+       you ever do, keep the padding above on both sides regardless. */
     unicode-bidi: plaintext;
   }
   .console-row[data-kind='meta'] .console-row__text {
