@@ -207,6 +207,17 @@ This is the section to read twice. The behaviour differs per platform in a way t
 | `interactive-widget=resizes-content` | **Supported (Chrome 108+)** | Not supported |
 | `env(keyboard-inset-height)` | Supported (Chromium 94+) | **Not supported** |
 
+**iPhone is iPadOS plus one twist, and it is the twist that bites.** The keyboard eats
+so much of a phone screen that Safari always scrolls the visual viewport *flush to the
+bottom* of the (unshrunk) layout viewport to reveal the focused input, so
+`vv.offsetTop === innerHeight - vv.height`. Any keyboard height computed as
+`innerHeight - vv.height - vv.offsetTop` is therefore exactly **0** on iPhone: the
+keyboard is up, `data-kb` says closed, §4.3 never fires, and the shell — still anchored
+to the layout viewport's top — ends `vv.offsetTop` px *above* the keyboard with a band
+of empty page below it. Reported from an iPhone, 2026-08-06. Measure the hidden part of
+the layout viewport (`innerHeight - vv.height`) and re-anchor the shell to
+`vv.offsetTop`; never subtract the offset from the height.
+
 So `100dvh` alone gives a correct layout on Android and a **broken** one on iPad — the console input row sits underneath the keyboard, invisible, while the student types blind. `visualViewport` is the only mechanism that works on both.
 
 ### 4.2 What the frontend should do
@@ -244,10 +255,14 @@ function sync() {
   pending = 0
   const vv = window.visualViewport
   if (!vv) return
-  // Android (resizes-content): innerHeight already shrank, so kb ≈ 0.
-  // iPad: innerHeight is unchanged, so this yields the true keyboard height.
-  const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
+  // The hidden part of the layout viewport: ≈0 on Android (resizes-content
+  // already shrank innerHeight), the keyboard on iOS (which never shrinks it).
+  // Never subtract vv.offsetTop — see the iPhone note under 4.1.
+  const kb = Math.max(0, Math.round(window.innerHeight - vv.height))
   root.style.setProperty('--app-h', `${Math.round(vv.height)}px`)
+  // iOS scrolls the visual viewport up to reveal the focused input; the shell is
+  // `fixed; top: 0`, so it re-anchors to this or its bottom edge floats above the keyboard.
+  root.style.setProperty('--app-top', `${Math.max(0, Math.round(vv.offsetTop))}px`)
   root.style.setProperty('--kb-inset', `${kb}px`)
   root.dataset.kb = kb > 100 ? 'open' : 'closed'
 }
@@ -267,7 +282,7 @@ window.addEventListener('focusout', () => {
 sync()
 ```
 
-One formula covers both platforms: on Android `--app-h` shrinks and `--kb-inset` stays 0; on iPad `--app-h` stays tall and `--kb-inset` carries the keyboard. Layout consumes both.
+One formula covers every platform: `--app-h` is `visualViewport.height`, which is already the height *above* the keyboard everywhere (see 4.1's table), so the shell ends on the keyboard's top edge and nothing may subtract `--kb-inset` from it a second time. `--kb-inset` is a signal, not a length to lay out with: on Android it stays ≈0 (the layout viewport already shrank), on iOS it carries the keyboard, and only `data-kb` reads it.
 
 Threshold is `> 100px` rather than a smaller number so an attached Magic Keyboard (which shows no software keyboard) and the iPad shortcut bar alone don't trigger the compact layout.
 

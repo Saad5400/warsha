@@ -9,7 +9,7 @@
  * Publishes four things onto <html>:
  *   --app-h    the height the shell should occupy
  *   --app-top  the visual viewport's top offset (see the note by its write below)
- *   --kb-inset the software keyboard height (0 on Android / hardware keyboards)
+ *   --kb-inset the hidden part of the layout viewport (0 on Android / hardware keyboards)
  *   data-kb    "open" | "closed", for the compact layout state
  */
 export function installViewport(): () => void {
@@ -20,9 +20,11 @@ export function installViewport(): () => void {
     pending = 0
     const vv = window.visualViewport
     if (!vv) return
-    // Android (resizes-content): innerHeight already shrank, so kb ≈ 0.
-    // iPad: innerHeight is unchanged, so this yields the true keyboard height.
-    const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
+    // The hidden part of the layout viewport: ≈0 on Android (resizes-content
+    // already shrank innerHeight), the keyboard on iOS (which never shrinks it).
+    // Never subtract vv.offsetTop, as §4.2's sample does — iPhone scrolls the
+    // visual viewport flush to the layout viewport's bottom, cancelling this to 0.
+    const kb = Math.max(0, Math.round(window.innerHeight - vv.height))
     root.style.setProperty('--app-h', `${Math.round(vv.height)}px`)
     // iOS scrolls the page up under the keyboard to reveal a focused input, which
     // leaves visualViewport.offsetTop > 0. The shell is `fixed; top: 0` and sized
