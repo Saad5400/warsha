@@ -156,6 +156,132 @@ export function needsReact(files: SourceFile[]): boolean {
 }
 
 /**
+ * Svelte and Vue, served the same first-party way as React: their runtime is
+ * prebuilt on-device (tools/prebuild-{svelte,vue}.mjs → warsha-{svelte,vue}.json)
+ * and dropped into the virtual FS so the bundle stays one self-contained,
+ * inlinable chunk. What React did not need — and these do — is a *compiler*: a
+ * `.svelte`/`.vue` single-file component is transformed to JS at bundle time (see
+ * the onLoad hook below). That compiler runs here in the parent app, not in the
+ * sandboxed preview, so COEP never touches it; only the runtime is bundled into
+ * the student's output.
+ */
+interface FrameworkAssets {
+  version: string
+  files: Record<string, string>
+}
+
+/** A cached, same-origin fetch of a prebuilt runtime JSON. Mirrors the React
+ *  loader; a failure resets the cache so a later run can retry. */
+function assetLoader(url: string, label: string): () => Promise<FrameworkAssets> {
+  let cache: Promise<FrameworkAssets> | null = null
+  return () => {
+    if (!cache) {
+      cache = fetch(url)
+        .then((r) => {
+          if (!r.ok) throw new Error(`Could not load the ${label} runtime (${r.status})`)
+          return r.json() as Promise<FrameworkAssets>
+        })
+        .catch((err) => {
+          cache = null
+          throw err
+        })
+    }
+    return cache
+  }
+}
+
+const SVELTE_DIR = '.warsha-svelte'
+const VUE_DIR = '.warsha-vue'
+
+/** Bare specifier → the virtual runtime file that provides it. Merged with
+ *  REACT_SPECIFIERS in the resolver; a map entry only matters once the matching
+ *  runtime has actually been injected (so an unrelated project still errors on a
+ *  bare `import`). */
+const SVELTE_SPECIFIERS: Record<string, string> = {
+  svelte: `${SVELTE_DIR}/svelte.js`,
+  'svelte/internal/client': `${SVELTE_DIR}/internal-client.js`,
+  'svelte/internal/disclose-version': `${SVELTE_DIR}/disclose-version.js`,
+}
+const VUE_SPECIFIERS: Record<string, string> = {
+  vue: `${VUE_DIR}/vue.js`,
+}
+const FRAMEWORK_SPECIFIERS: Record<string, string> = { ...REACT_SPECIFIERS, ...SVELTE_SPECIFIERS, ...VUE_SPECIFIERS }
+
+const loadSvelteAssets = assetLoader(new URL('warsha-svelte.json', document.baseURI).href, 'Svelte')
+const loadVueAssets = assetLoader(new URL('warsha-vue.json', document.baseURI).href, 'Vue')
+
+/** The SFC compilers, lazily imported (a Vite chunk, like the esbuild glue) and
+ *  cached. They run inside the bundler's onLoad, on the main thread. */
+let svelteCompiler: Promise<typeof import('svelte/compiler')> | null = null
+function loadSvelteCompiler(): Promise<typeof import('svelte/compiler')> {
+  if (!svelteCompiler) svelteCompiler = import('svelte/compiler').catch((e) => ((svelteCompiler = null), Promise.reject(e)))
+  return svelteCompiler
+}
+let vueCompiler: Promise<typeof import('@vue/compiler-sfc')> | null = null
+function loadVueCompiler(): Promise<typeof import('@vue/compiler-sfc')> {
+  if (!vueCompiler) vueCompiler = import('@vue/compiler-sfc').catch((e) => ((vueCompiler = null), Promise.reject(e)))
+  return vueCompiler
+}
+
+/** Does this project reach for Svelte / Vue — a `.svelte`/`.vue` file, or an
+ *  import of the bare package? Same erring-toward-loading logic as needsReact. */
+export function needsSvelte(files: SourceFile[]): boolean {
+  return files.some((f) => /\.svelte$/i.test(f.path) || /(?:from|import)\s*['"]svelte(?:\/[^'"]*)?['"]/.test(f.content))
+}
+export function needsVue(files: SourceFile[]): boolean {
+  return files.some((f) => /\.vue$/i.test(f.path) || /(?:from|import)\s*['"]vue['"]/.test(f.content))
+}
+
+/** Compile one `.svelte` component to client JS. CSS is injected into the JS by
+ *  the Svelte runtime (`css: 'injected'`), so no separate stylesheet handling. */
+function compileSvelte(compiler: typeof import('svelte/compiler'), source: string, path: string): string {
+  const filename = path.split('/').pop() || path
+  return compiler.compile(source, { filename, name: 'Component', generate: 'client', css: 'injected', dev: false }).js.code
+}
+
+/** A small, stable id per file path — feeds Vue's scoped-style attribute so a
+ *  component's `[data-v-…]` CSS and its rendered DOM agree, without any RNG. */
+function scopeHash(s: string): string {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return 'warsha' + (h >>> 0).toString(36)
+}
+
+/** Compile one `.vue` single-file component: `<script setup>` with its render
+ *  function inlined, and scoped `<style>` compiled and injected at runtime via a
+ *  `<style>` element (the preview has a DOM). Returns the loader so a `lang="ts"`
+ *  script is transpiled by esbuild in the same pass. */
+function compileVue(compiler: typeof import('@vue/compiler-sfc'), source: string, path: string): { code: string; loader: 'js' | 'ts' } {
+  const filename = path.split('/').pop() || path
+  const id = scopeHash(path)
+  const scopeId = `data-v-${id}`
+  const { descriptor, errors } = compiler.parse(source, { filename })
+  if (errors.length) throw new Error(errors.map((e) => e.message).join('\n'))
+  const hasScoped = descriptor.styles.some((s) => s.scoped)
+  const lang = (descriptor.scriptSetup?.lang || descriptor.script?.lang) === 'ts' ? 'ts' : 'js'
+  const script = compiler.compileScript(descriptor, {
+    id,
+    inlineTemplate: true,
+    templateOptions: { scoped: hasScoped, compilerOptions: { scopeId: hasScoped ? scopeId : undefined } },
+  })
+  // The compiled `<script setup>` default-exports the component; name it so we can
+  // stamp `__scopeId` on it. That id is what makes Vue's renderer add the
+  // `data-v-…` attribute to this component's elements — without it, the scoped
+  // CSS (compiled to `.card[data-v-…]` below) matches nothing.
+  let code = compiler.rewriteDefault(script.content, '_sfc_main')
+  if (hasScoped) code += `\n_sfc_main.__scopeId = ${JSON.stringify(scopeId)}`
+  code += `\nexport default _sfc_main`
+  const styles = descriptor.styles.map((s) => compiler.compileStyle({ source: s.content, filename, id: scopeId, scoped: s.scoped }))
+  const styleErrors = styles.flatMap((s) => s.errors)
+  if (styleErrors.length) throw new Error(styleErrors.map((e) => String(e.message ?? e)).join('\n'))
+  const css = styles.map((s) => s.code).join('\n').trim()
+  const inject = css
+    ? `\n;(function(){try{var s=document.createElement("style");s.textContent=${JSON.stringify(css)};document.head.appendChild(s)}catch(e){}})();\n`
+    : ''
+  return { code: code + inject, loader: lang }
+}
+
+/**
  * Does this entry need the bundler, or can it run as-is? A `.ts`/`.tsx`/`.jsx`
  * always does (it must be transpiled); a plain `.js`/`.mjs` only does when it
  * actually reaches for another module — so the common "one file, some
@@ -192,7 +318,7 @@ function normalise(baseDir: string, spec: string): string {
 /** The candidate paths an extensionless import may mean, in resolution order —
  *  an exact file, then the TS/JS extensions, then an index file in a folder. */
 function candidates(base: string): string[] {
-  const exts = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.jsx', '.json']
+  const exts = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.jsx', '.svelte', '.vue', '.json']
   return [base, ...exts.map((e) => base + e), ...exts.map((e) => `${base}/index${e}`)]
 }
 
@@ -244,6 +370,22 @@ export async function bundleProject(
     }
   }
 
+  // Svelte / Vue: inject the on-device runtime the same way, and load the SFC
+  // compiler up front so the onLoad hook (below) can transform `.svelte`/`.vue`
+  // synchronously. Nothing is fetched for a project that uses neither.
+  let svelte: typeof import('svelte/compiler') | null = null
+  if (needsSvelte(files)) {
+    const [{ files: svelteFiles }, compiler] = await Promise.all([loadSvelteAssets(), loadSvelteCompiler()])
+    for (const [name, content] of Object.entries(svelteFiles)) byPath.set(`${SVELTE_DIR}/${name}`, content)
+    svelte = compiler
+  }
+  let vue: typeof import('@vue/compiler-sfc') | null = null
+  if (needsVue(files)) {
+    const [{ files: vueFiles }, compiler] = await Promise.all([loadVueAssets(), loadVueCompiler()])
+    for (const [name, content] of Object.entries(vueFiles)) byPath.set(`${VUE_DIR}/${name}`, content)
+    vue = compiler
+  }
+
   const plugin: import('esbuild-wasm').Plugin = {
     name: VFS,
     setup(build) {
@@ -253,10 +395,11 @@ export async function bundleProject(
           return { path: normalise('', args.path), namespace: VFS }
         }
         if (isExternal(args.path)) return { path: args.path, external: true }
-        // A React bare specifier maps to its on-device shim (present only when
-        // the project needs React, so a missing map entry still errors cleanly).
-        const react = REACT_SPECIFIERS[args.path]
-        if (react && byPath.has(react)) return { path: react, namespace: VFS }
+        // A framework bare specifier (react / svelte / vue and friends) maps to
+        // its on-device runtime file — present only when that framework was
+        // injected above, so a missing map entry still errors cleanly.
+        const framework = FRAMEWORK_SPECIFIERS[args.path]
+        if (framework && byPath.has(framework)) return { path: framework, namespace: VFS }
         // Anything else not relative/root is a bare specifier (an npm package) —
         // there is no node_modules on the device, so let esbuild report it.
         if (!args.path.startsWith('.') && !args.path.startsWith('/')) return null
@@ -271,6 +414,25 @@ export async function bundleProject(
       build.onLoad({ filter: /.*/, namespace: VFS }, (args) => {
         const content = byPath.get(args.path)
         if (content === undefined) return null
+        // A single-file component is source, not JS: compile it first. A compile
+        // failure is returned as a build error (with the file named) so it reads
+        // like any other build error in the Console, and the rest still reports.
+        const named = args.path.split('/').pop() || args.path
+        if (svelte && /\.svelte$/i.test(args.path)) {
+          try {
+            return { contents: compileSvelte(svelte, content, args.path), loader: 'js' }
+          } catch (err) {
+            return { errors: [{ text: `${named}: ${err instanceof Error ? err.message : String(err)}` }] }
+          }
+        }
+        if (vue && /\.vue$/i.test(args.path)) {
+          try {
+            const { code, loader } = compileVue(vue, content, args.path)
+            return { contents: code, loader }
+          } catch (err) {
+            return { errors: [{ text: `${named}: ${err instanceof Error ? err.message : String(err)}` }] }
+          }
+        }
         return { contents: content, loader: loaderFor(args.path) }
       })
     },

@@ -28,9 +28,9 @@ npm run preview   # serve dist/ on 8083
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
-| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. A `<script type="module">`/`.ts` that imports a project file is transpiled + bundled through `bundle.ts` first (a build error → Console + a red banner). A Tailwind CDN `<script>` is replaced by the first-party on-device build (`public/warsha-tailwind.js`), fetched same-origin and **inlined** — a linked `<script src>` would be cross-origin from the sandboxed preview's opaque origin and COEP would block it. A `main.tsx` importing React bundles React in first-party (via `bundle.ts`), so the preview stays self-contained. No worker; the bundler downloads once only when a page needs it. |
+| `src/runtime/web.ts` | `WebRuntime` — the `kind: 'preview'` engine for a **page** (html/css entry). Assembles the project into one sandboxed document, inlining local `<link>`/`<script>` refs and bridging its console back. A `<script type="module">`/`.ts` that imports a project file is transpiled + bundled through `bundle.ts` first (a build error → Console + a red banner). A Tailwind CDN `<script>` is replaced by the first-party on-device build (`public/warsha-tailwind.js`), fetched same-origin and **inlined** — a linked `<script src>` would be cross-origin from the sandboxed preview's opaque origin and COEP would block it. A page entry that reaches for a framework — `main.tsx` importing React, or `main.js` importing a `.vue`/`.svelte` component — bundles that framework in first-party (via `bundle.ts`), so the preview stays self-contained. No worker; the bundler downloads once only when a page needs it. |
 | `src/runtime/js.ts` | `JsRuntime` — the `kind: 'console'` engine for a **standalone script** (js/ts/mjs/tsx… entry). Runs it headless in a Web Worker (Node-like: a global, `console`, timers, `fetch`, **no DOM**), streaming `console.log`/errors as stdout/stderr and exiting when the event loop idles. Plain one-file JS runs raw (instant); TypeScript or a script that imports another file is bundled first (`bundle.ts`). JS *inside* a page is inlined by `WebRuntime` instead. |
-| `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX (`jsx: 'automatic'`) and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. When `needsReact()` fires it injects the first-party React bundle (`public/warsha-react.json`, one shared instance — see `tools/prebuild-react.mjs`) into the VFS so `react`/`react-dom/client`/`react/jsx-runtime` resolve and bundle in. Shared by `js.ts` (standalone scripts) and `web.ts` (a page's module scripts). |
+| `src/runtime/bundle.ts` | **In-browser bundler** (esbuild-wasm, ~12 MB fetched once from `public/warsha-esbuild.wasm`, cached + offline). `bundleProject()` transpiles TS/TSX/JSX (`jsx: 'automatic'`) and resolves cross-file relative imports against the in-memory `SourceFile[]` via an onResolve/onLoad virtual-fs plugin; network refs stay external. When `needsReact()` fires it injects the first-party React bundle (`public/warsha-react.json`, one shared instance — see `tools/prebuild-react.mjs`) into the VFS so `react`/`react-dom/client`/`react/jsx-runtime` resolve and bundle in. `needsSvelte()`/`needsVue()` do the same for `public/warsha-{svelte,vue}.json` (prebuilt runtimes), and additionally an `onLoad` hook compiles `.svelte`/`.vue` single-file components to JS on the fly via lazily-imported `svelte/compiler` / `@vue/compiler-sfc` (which run here in the parent, so COEP never touches them — only the runtime is bundled into the output). Shared by `js.ts` (standalone scripts) and `web.ts` (a page's module scripts). |
 | `src/runtime/fake.ts` | `FakeRuntime` — fakes download/unpack/boot/run so the shell is demoable without an engine. |
 | `src/fs/types.ts` | `ProjectStore` + `FsSnapshot`: the storage seam. |
 | `src/fs/opfs.ts` | `OpfsStore` (default) and `MemoryStore` (fallback); `createStore()` picks. |
@@ -565,9 +565,20 @@ that compile and run with piped stdin but have not been through that review. Eac
   virtual FS and the plugin resolves `react`/`react-dom`/`react-dom/client`/`react/jsx-runtime` to them, with
   `jsx: 'automatic'` on — so React ends up *bundled into* the student's output and inlined, never linked
   (same COEP/opaque-origin reason as Tailwind; also offline). Nothing is fetched for a project that never
-  touches React. Starter `web-react` (index.html + styles.css + main.tsx + App.tsx, a `useState` counter);
-  the Web tile now reads "HTML · CSS · JS · TS · React". Vue/Svelte (separate SFC compilers) are the
-  remaining kits. `JsRuntime` has no stdin yet. Local refs are
+  touches React. Starter `web-react` (index.html + styles.css + main.tsx + App.tsx, a `useState` counter).
+  **Vue and Svelte are in too** (2026-08-06): same first-party pattern, plus an SFC *compiler* React did
+  not need. Svelte's runtime is prebuilt with esbuild **code-splitting** (`tools/prebuild-svelte.mjs` →
+  `warsha-svelte.json`: `svelte` + `svelte/internal/client` + `disclose-version` share one chunk = single
+  instance, and reserved-word exports like `await` re-export natively — no hand-written shim); Vue's is one
+  self-contained `vue` entry (`prebuild-vue.mjs` → `warsha-vue.json`). At bundle time `needsSvelte()`/`needsVue()`
+  inject those into the VFS and an `onLoad` hook compiles `.svelte` (→ client JS, `css:'injected'`) and `.vue`
+  (`compileScript` inline-template + `rewriteDefault` so `__scopeId` can be stamped — that is what makes scoped
+  `[data-v-…]` CSS match — with scoped `<style>` compiled and injected at runtime). The compilers are lazy Vite
+  chunks (~800 KB each, like the esbuild glue), fetched only when a project uses that framework. Verified
+  end-to-end in the real preview: both render, scoped styles apply, and state is reactive (Svelte `$state`,
+  Vue `ref`). Starters `web-svelte` / `web-vue` (index.html + styles.css + main.js + App.{svelte,vue}); the
+  Web tile now reads "HTML · CSS · JS · TS · React · Vue · Svelte". Svelte/Vue with `lang="ts"` needs a
+  preprocess pass (not wired). `JsRuntime` has no stdin yet. Local refs are
   inlined; other network refs (a non-Tailwind CDN) are left untouched, the seam those kits build on. The
   output pane reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
   editor-adjacent preview is a follow-up.

@@ -751,6 +751,191 @@ button:hover {
 }
 `
 
+const WEB_SVELTE_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Svelte counter</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Svelte renders into this element. The markup lives in App.svelte. -->
+    <div id="app"></div>
+
+    <!-- main.js mounts your component. Warsha compiles App.svelte — and Svelte,
+         served on your device — into the page each time you press Run. -->
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
+`
+
+const WEB_SVELTE_MAIN_JS = `// The entry point. It mounts your <App> into the #app element in index.html.
+import { mount } from "svelte";
+import App from "./App.svelte";
+
+const target = document.getElementById("app");
+if (target) mount(App, { target });
+`
+
+const WEB_SVELTE_APP_SVELTE = `<script>
+  // \`$state\` makes a value reactive: when \`count\` changes, Svelte updates only
+  // the parts of the page that use it.
+  let count = $state(0);
+</script>
+
+<main class="card">
+  <h1>Hello from Svelte</h1>
+  <p>You clicked {count} time{count === 1 ? "" : "s"}.</p>
+  <button onclick={() => count++}>Click me</button>
+  <p class="hint">Change this text in <code>App.svelte</code>, then press Run.</p>
+</main>
+
+<style>
+  /* Scoped to this component — Svelte rewrites these selectors so they only
+     touch App.svelte's own markup. */
+  .card {
+    text-align: center;
+    padding: 2rem 2.5rem;
+    border-radius: 1rem;
+    background: #1e293b;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+  .card h1 {
+    margin: 0 0 0.5rem;
+    font-size: 1.5rem;
+  }
+  button {
+    margin-top: 0.5rem;
+    padding: 0.5rem 1.25rem;
+    font: inherit;
+    color: #fff;
+    background: #ff3e00;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #e63700;
+  }
+  .hint {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+</style>
+`
+
+const WEB_SVELTE_STYLES_CSS = `/* Page-level styles, inlined into the preview. The card itself is styled inside
+   App.svelte with Svelte's scoped <style>. */
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+`
+
+const WEB_VUE_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vue counter</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Vue mounts into this element. The markup lives in App.vue. -->
+    <div id="app"></div>
+
+    <!-- main.js creates the app. Warsha compiles App.vue — and Vue, served on
+         your device — into the page each time you press Run. -->
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
+`
+
+const WEB_VUE_MAIN_JS = `// The entry point. It creates the Vue app from your <App> component and mounts
+// it into the #app element in index.html.
+import { createApp } from "vue";
+import App from "./App.vue";
+
+createApp(App).mount("#app");
+`
+
+const WEB_VUE_APP_VUE = `<script setup>
+// \`ref\` makes a value reactive: when \`count.value\` changes, Vue updates the
+// parts of the template that use it. In the template you just write \`count\`.
+import { ref } from "vue";
+
+const count = ref(0);
+</script>
+
+<template>
+  <main class="card">
+    <h1>Hello from Vue</h1>
+    <p>You clicked {{ count }} time{{ count === 1 ? "" : "s" }}.</p>
+    <button @click="count++">Click me</button>
+    <p class="hint">Change this text in <code>App.vue</code>, then press Run.</p>
+  </main>
+</template>
+
+<style scoped>
+/* \`scoped\` means these styles apply only to this component's markup. */
+.card {
+  text-align: center;
+  padding: 2rem 2.5rem;
+  border-radius: 1rem;
+  background: #1e293b;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.card h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+}
+button {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  font: inherit;
+  color: #fff;
+  background: #42b883;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button:hover {
+  background: #369870;
+}
+.hint {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+</style>
+`
+
+const WEB_VUE_STYLES_CSS = `/* Page-level styles, inlined into the preview. The card itself is styled inside
+   App.vue with Vue's scoped <style>. */
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+`
+
 const CSHARP_BASICS_PROGRAM_CS = `using System;
 
 // Your first C# program. C# starts running at the top. Press Run.
@@ -1235,6 +1420,40 @@ export const templates: Template[] = [
         { path: 'styles.css', content: WEB_REACT_STYLES_CSS },
         { path: 'main.tsx', content: WEB_REACT_MAIN_TSX },
         { path: 'App.tsx', content: WEB_REACT_APP_TSX },
+      ],
+    },
+  },
+  {
+    id: 'web-svelte',
+    name: 'Svelte counter',
+    lang: 'web',
+    level: 'advanced',
+    blurb: 'A Svelte component with runes and scoped styles — compiled on your device.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_SVELTE_INDEX_HTML },
+        { path: 'styles.css', content: WEB_SVELTE_STYLES_CSS },
+        { path: 'main.js', content: WEB_SVELTE_MAIN_JS },
+        { path: 'App.svelte', content: WEB_SVELTE_APP_SVELTE },
+      ],
+    },
+  },
+  {
+    id: 'web-vue',
+    name: 'Vue counter',
+    lang: 'web',
+    level: 'advanced',
+    blurb: 'A Vue single-file component with a ref and scoped styles — compiled on your device.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'index.html', content: WEB_VUE_INDEX_HTML },
+        { path: 'styles.css', content: WEB_VUE_STYLES_CSS },
+        { path: 'main.js', content: WEB_VUE_MAIN_JS },
+        { path: 'App.vue', content: WEB_VUE_APP_VUE },
       ],
     },
   },

@@ -77,6 +77,12 @@ export function editorLangForPath(path: string): EditorLang | null {
   if (path.endsWith('.cs')) return 'csharp'
   if (path.endsWith('.c') || path.endsWith('.h')) return 'c'
   if (/\.html?$/i.test(path)) return 'html'
+  // Svelte/Vue single-file components are HTML-shaped — a template with embedded
+  // <script>/<style> blocks — so the HTML grammar (which highlights those blocks
+  // as JS/CSS) colours them properly. Their framework-specific bits ({count},
+  // {{ }}, directives) aren't specially tokenised, but the file is no longer flat
+  // white text, and this needs no extra grammar package.
+  if (/\.(svelte|vue)$/i.test(path)) return 'html'
   if (/\.css$/i.test(path)) return 'css'
   if (/\.(m?js|jsx|ts|tsx)$/i.test(path)) return 'javascript'
   return null
