@@ -8,6 +8,68 @@
  */
 
 export const PROGRAMS = {
+  // (a) The language level itself. Every construct here is a compile error on
+  // Java 8, so this scenario failing means the runtime has silently fallen back
+  // to the old engine -- or that warsha.Platform stopped being able to show ECJ
+  // the module image, which is the one genuinely fragile part of the Java 17
+  // support (see bootstrap/Platform.java).
+  'java17': {
+    label: 'Java 17 language features',
+    entry: 'app/Modern.java',
+    files: [
+      {
+        path: 'app/Modern.java',
+        content: `package app;
+
+import java.util.List;
+
+public class Modern {
+
+    record Point(int x, int y) {
+        int sum() { return x + y; }
+    }
+
+    sealed interface Shape permits Circle, Square {}
+    record Circle(double radius) implements Shape {}
+    record Square(double side) implements Shape {}
+
+    enum Day { SAT, SUN, MON }
+
+    static String describe(Shape shape) {
+        if (shape instanceof Circle c) return "circle r=" + c.radius();
+        if (shape instanceof Square s) return "square side=" + s.side();
+        return "unknown";
+    }
+
+    static String kind(Day day) {
+        return switch (day) {
+            case SAT, SUN -> "weekend";
+            case MON -> "weekday";
+        };
+    }
+
+    public static void main(String[] args) {
+        var point = new Point(3, 4);
+        System.out.println("record    : " + point + " sum=" + point.sum());
+        System.out.println("pattern   : " + describe(new Circle(2.5)));
+        System.out.println("switch    : " + kind(Day.SAT) + ", " + kind(Day.MON));
+
+        var names = List.of("Sara", "Omar", "Layla");
+        System.out.println("var+List  : " + String.join(", ", names));
+
+        String block = """
+                text blocks
+                really work""";
+        System.out.println("textblock : " + block.replace("\\n", " / "));
+
+        System.out.println("MODERN-TEST-OK " + System.getProperty("java.version"));
+    }
+}
+`,
+      },
+    ],
+  },
+
   // (b) Education's prompt-before-read criteria: a partial line with NO trailing
   // newline, immediately followed by a blocking read, three times, one of them a
   // token read (nextInt) and one built from three separate print calls.

@@ -26,21 +26,30 @@
  * boot and stays parked on the async Bridge.nextCommand native; every run is a
  * command into that loop, so ECJ loads once per session and stays JIT-warm.
  *
- * Starting Server doubles as the bootstrap-cache probe: /files/ is IndexedDB-
- * backed and persists across page loads, so the compiled warsha.* classes are
- * usually still there from an earlier session. Server checks the stamp hash
- * compiled into them (see bootstrap/Stamp.java); only a mismatch -- or classes
- * missing entirely -- pays the in-browser bootstrap compile. That compile used
- * to be the whole loading experience on EVERY page load; now it is a
- * per-deploy, per-device cost.
+ * The Warsha bootstrap classes arrive PREBUILT in warsha-boot.jar (built by
+ * build-bootstrap.sh, deployed at the site root beside ecj.jar). They used to
+ * be compiled in the browser on first visit and cached in IndexedDB behind a
+ * source hash. That is gone: on Java 17 ECJ can only see the platform classes
+ * after warsha.Platform.prepare() has run inside the same JVM invocation, and
+ * the fresh-classloader rule above means there is no invocation in which our
+ * code could have prepared anything before ECJ's own main ran. Shipping the
+ * classes also removes 5-15s from a first visit and deletes the entire stamp
+ * cache along with it.
  * =========================================================================
  */
 
 const CDN_BASE = 'https://cjrtnc.leaningtech.com/4.3/'
-const COMPILER_MAIN = 'org.eclipse.jdt.internal.compiler.batch.Main'
 
-/* Bump to invalidate every cached bootstrap: it feeds the stamp hash. */
-const STAMP_SCHEMA = 'warsha-bootstrap-v1'
+/* CheerpJ's Java runtime. 8, 11 and 17 are offered; 17 is the newest, and the
+ * only one Warsha has ever shipped other than 8. Changing this is NOT a flag
+ * flip -- the compiler cannot see the platform classes on 9+ without
+ * warsha.Platform, and warsha-boot.jar's bytecode target has to match. */
+const JAVA_VERSION = 17
+
+/* Prebuilt Warsha bootstrap. A jar, not a directory: /app/ is the web server
+ * over HTTP, which has no directory listing, so a directory classpath entry
+ * resolves nothing. See build-bootstrap.sh. */
+const DEFAULT_BOOT_JAR_PATH = '/app/warsha-boot.jar'
 
 /* Engine assets worth measuring, for a determinate progress bar.
  *
@@ -61,6 +70,10 @@ const STAMP_SCHEMA = 'warsha-bootstrap-v1'
 const MEASURED_ASSETS = [
   { name: 'cj3.wasm', bytes: 372758 },
   { name: 'cj3.js', bytes: 666055 },
+  // Per-runtime native module: each Java version has its own cj3n<version>.wasm
+  // and the loader fetches whichever `version` selects. It is the single
+  // biggest asset, so leaving it out made the bar finish at ~24% and stall.
+  { name: `cj3n${JAVA_VERSION}.wasm`, bytes: 3227431 },
 ]
 
 /* Noise CheerpJ emits on the JS console, which must never reach a student.
@@ -82,9 +95,9 @@ const post = (msg) => self.postMessage(msg)
 /* A warm start must be SILENT: the shell treats a visible progress block on
  * run #2 as evidence that caching is broken (app/ARCHITECTURE.md §2). Cached
  * assets resolve in tens of milliseconds, cheerpjInit itself came back in
- * 34-93ms warm, and a stamped bootstrap makes the Server probe the only other
- * boot work -- so announcing a phase the instant it starts would flash a bar
- * on screen for work that was already done.
+ * 34-93ms warm, and a prebuilt bootstrap makes starting the Server the only
+ * other boot work -- so announcing a phase the instant it starts would flash a
+ * bar on screen for work that was already done.
  *
  * Every phase announcement is therefore delayed and cancelled if the phase
  * finishes first. Byte-level updates are also gated on the announcement having
@@ -120,7 +133,7 @@ for (const level of ['log', 'info', 'warn', 'error']) {
 // --- state -----------------------------------------------------------------
 
 let compilerJarPath = '/app/ecj.jar'
-let bootstrapSources = null
+let bootJarPath = DEFAULT_BOOT_JAR_PATH
 let initStarted = false
 
 /** Resolves the pending Bridge.readLine(). */
@@ -226,7 +239,7 @@ self.onmessage = (event) => {
       if (initStarted) return
       initStarted = true
       compilerJarPath = message.compilerJarPath || compilerJarPath
-      bootstrapSources = message.bootstrapSources
+      bootJarPath = message.bootJarPath || bootJarPath
       boot(message.cdnBase || CDN_BASE).catch((error) => {
         post({ type: 'fatal', duringBoot: true, text: describe(error) })
       })
@@ -262,8 +275,8 @@ async function boot(cdnBase) {
   await prefetchEngine(cdnBase)
 
   // Gated like the download: cheerpjInit came back in 34-93ms on a warm cache
-  // and the Server probe of a stamped bootstrap is similarly quick, so a bar
-  // that appears and vanishes inside 100ms would read as a glitch.
+  // and starting the prebuilt Server is similarly quick, so a bar that appears
+  // and vanishes inside 100ms would read as a glitch.
   // (importScripts blocks this thread, so the timer can only fire once the
   // loader is in and we are inside cheerpjInit.)
   const bootGate = announceAfter({
@@ -277,6 +290,7 @@ async function boot(cdnBase) {
 
   await cheerpjInit({
     status: 'none',
+    version: JAVA_VERSION,
     natives: {
       Java_warsha_Bridge_readLine,
       Java_warsha_Bridge_writeOut,
@@ -289,30 +303,19 @@ async function boot(cdnBase) {
   })
   const initMs = performance.now() - started
 
-  const stamp = stampOf(cdnBase)
-  bootstrapSources = withStamp(bootstrapSources, stamp)
-
-  // Probe the persisted bootstrap by starting the Server against it.
+  // The bootstrap is prebuilt, so this either works or the deploy is broken.
   const warmStarted = performance.now()
-  let outcome = await startServer(stamp)
+  const outcome = await startServer()
   bootGate.cancel()
 
-  let warmMs = 0
   if (outcome !== 0) {
-    // Cache miss: classes absent (first visit, or a cleared IndexedDB), from
-    // other sources (a new deploy), or unlinkable (an interrupted compile).
-    // Every one of those answers the same way: compile the bootstrap, then
-    // the Server MUST start.
-    await compileBootstrap()
-    warmMs = performance.now() - warmStarted
-    outcome = await startServer(stamp)
-    if (outcome !== 0) {
-      throw new Error(
-        `the Warsha Java bootstrap failed to start after a fresh compile (code ${outcome}). ` +
-          'This is a Warsha bug, not a problem with your program.',
-      )
-    }
+    throw new Error(
+      `the Warsha Java engine failed to start (code ${outcome}). warsha-boot.jar is ` +
+        'missing, truncated, or was built against a different runtime. This is a ' +
+        'Warsha bug, not a problem with your program.',
+    )
   }
+  const warmMs = performance.now() - warmStarted
 
   post({ type: 'ready', initMs, warmMs })
 
@@ -326,19 +329,19 @@ async function boot(cdnBase) {
 }
 
 /**
- * Starts warsha.Server against whatever /files/ holds and reports how that
- * went: 0 running, 2 stamp mismatch, 3 exited without reporting (classes
- * missing or broken -- CheerpJ surfaces ClassNotFoundException as a settled
- * main, not a rejection), any other number a reported startup failure.
+ * Starts warsha.Server from the prebuilt bootstrap jar and reports how that
+ * went: 0 running, 3 exited without reporting (jar missing or broken --
+ * CheerpJ surfaces ClassNotFoundException as a settled main, not a rejection),
+ * any other number a reported startup failure.
  */
-function startServer(stamp) {
+function startServer() {
   serverLive = false
 
   // Boot-time only, so no commands are in flight: drop any waiter left over
   // from a previous attempt, or it would steal this attempt's report.
   for (const phase of Object.keys(phaseWaiters)) delete phaseWaiters[phase]
 
-  const settled = cheerpjRunMain('warsha.Server', '/files/:' + compilerJarPath, stamp).then(
+  const settled = cheerpjRunMain('warsha.Server', bootJarPath + ':' + compilerJarPath).then(
     (code) => (typeof code === 'number' ? code : 1),
     () => 1,
   )
@@ -416,114 +419,73 @@ async function prefetchEngine(cdnBase) {
   }
 }
 
-// --- the bootstrap cache stamp ----------------------------------------------
-
-/**
- * Hash of everything that determines what the compiled bootstrap IS: the
- * schema version, the compiler jar path, the engine base, and every bootstrap
- * source byte (with Stamp.java still holding its committed placeholder, so the
- * value is deterministic). FNV-1a twice with different seeds; this fingerprints
- * deploys against each other, it defends against nothing adversarial.
- */
-function stampOf(cdnBase) {
-  const parts = [STAMP_SCHEMA, compilerJarPath, cdnBase]
-  for (const name of Object.keys(bootstrapSources).sort()) {
-    parts.push(name, bootstrapSources[name])
-  }
-  const text = parts.join(' ')
-  let h1 = 0x811c9dc5
-  let h2 = 0x811c9dc5 ^ 0x5bd1e995
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i)
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0
-    h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0
-  }
-  return hex32(h1) + hex32(h2)
-}
-
-function hex32(n) {
-  return ('0000000' + n.toString(16)).slice(-8)
-}
-
-/** A copy of the bootstrap sources with the real stamp compiled into Stamp.java. */
-function withStamp(sources, stamp) {
-  const copy = {}
-  let replaced = false
-  for (const name of Object.keys(sources)) {
-    let content = sources[name]
-    if (content.indexOf('"dev-placeholder"') >= 0) {
-      content = content.replace('"dev-placeholder"', JSON.stringify(stamp))
-      replaced = true
-    }
-    copy[name] = content
-  }
-  if (!replaced) {
-    // Without the stamp the Server would refuse to start after every compile.
-    throw new Error('bootstrap sources are missing the Stamp placeholder')
-  }
-  return copy
-}
-
-// --- the bootstrap compile (cache-miss path only) ----------------------------
-
-/**
- * Compiles the Warsha bootstrap classes (Bridge, Build, Launcher, Server,
- * Stamp, Traces) into /files/warsha/, where they PERSIST: /files/ is
- * IndexedDB-backed, so the next page load starts the Server straight from
- * these classes and skips this compile entirely. Only a new deploy (the stamp
- * changes) or an evicted IndexedDB pays it again.
- *
- * ECJ is driven through its main() here, unlike student compiles: the
- * programmatic entry point lives in Build, which does not exist yet.
- */
-async function compileBootstrap() {
-  // NOT gated, unlike the download and boot phases: when this runs it always
-  // costs seconds, so there is no cache hit to stay quiet about, and staying
-  // quiet would mean seconds of dead air.
-  post({ type: 'progress', phase: 'compile', message: 'Preparing the Java compiler…' })
-
-  const paths = []
-  for (const [name, content] of Object.entries(bootstrapSources)) {
-    const path = '/str/' + name
-    addStringFile(path, content)
-    paths.push(path)
-  }
-
-  // -d /files/ (the root) because the compiler will not create its own output
-  // directory and JS cannot mkdir under /files/. Bootstrap classes therefore
-  // land in /files/warsha/, which is also why per-run directories are named
-  // warsha-run-<runId> -- Build's cleanup must never walk into /files/warsha.
-  const code = await cheerpjRunMain(
-    COMPILER_MAIN,
-    compilerJarPath,
-    ...paths,
-    '-d', '/files/',
-    '-cp', compilerJarPath, // Build imports ECJ's BatchCompiler
-    '-1.8',
-    '-g',
-    '-encoding', 'UTF-8',
-    '-proc:none',
-    '-nowarn',
-  )
-
-  // ECJ exits -1 on failure, javac exits 1: never test for === 1.
-  if (code !== 0) {
-    throw new Error(
-      `the Warsha Java bootstrap failed to compile (compiler exit ${code}). ` +
-        'This is a Warsha bug, not a problem with your program.',
-    )
-  }
-}
 
 /**
  * The background ECJ warm-up: one throwaway compile through the same resident
  * Build path a real run takes. Failures are logged and swallowed -- the worst
  * case is that the student's first compile is as slow as it always was.
+ *
+ * WHAT IT COMPILES MATTERS, and it did not used to. On Java 8 ECJ read the
+ * platform out of rt.jar and an empty class was warm-up enough. On Java 17 the
+ * platform comes out of the packed module image, and the expensive part is the
+ * FIRST touch of each platform type in a session -- measured: an empty class
+ * warmed in ~2s and still left a three-file Scanner program taking ~16s, while
+ * the same program compiled again in the same session took ~0.3s.
+ *
+ * So the warm-up references what a teaching project actually references. It
+ * makes the warm-up itself slower, which is fine: it runs in the background
+ * while the student is reading their code, and it is the only way the first Run
+ * of a session is not the slow one.
  */
+const WARM_SOURCE = `import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Scanner;
+
+public class WarshaWarm {
+    static class Item {
+        private final String name;
+        private final int count;
+        Item(String name, int count) { this.name = name; this.count = count; }
+        String name() { return name; }
+        @Override public String toString() { return String.format("%s x%d", name, count); }
+        @Override public boolean equals(Object o) {
+            return o instanceof Item && Objects.equals(name, ((Item) o).name);
+        }
+        @Override public int hashCode() { return Objects.hash(name); }
+    }
+
+    interface Described { String describe(); }
+
+    static class Named implements Described {
+        public String describe() { return "named"; }
+    }
+
+    public static void main(String[] args) throws Exception {
+        Scanner input = new Scanner(System.in);
+        List<Item> items = new ArrayList<Item>(Arrays.asList(new Item("a", 1)));
+        Map<String, Item> byName = new HashMap<String, Item>();
+        for (Item item : items) byName.put(item.name(), item);
+        StringBuilder text = new StringBuilder();
+        text.append(byName).append(Math.max(1, items.size())).append(new Named().describe());
+        double value = Double.parseDouble("1.5") + Integer.parseInt("2");
+        System.out.println(text + " " + value + " " + input.hasNextLine());
+        try {
+            throw new IllegalStateException("warm");
+        } catch (RuntimeException e) {
+            System.err.println(e.getMessage());
+        }
+    }
+}
+`
+
 async function warmCompiler() {
   if (!serverLive) return
   const runId = 'warm0'
-  addStringFile(`/str/w${runId}_0.java`, 'public class WarshaWarm { public static void main(String[] args) {} }\n')
+  addStringFile(`/str/w${runId}_0.java`, WARM_SOURCE)
   addStringFile(`/str/warsha-manifest-${runId}.tsv`, `w${runId}_0.java\tWarshaWarm.java`)
   const started = performance.now()
   const warmed = waitPhase('warm')

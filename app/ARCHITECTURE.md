@@ -514,7 +514,7 @@ that compile and run with piped stdin but have not been through that review. Eac
 ## 6. Known gaps
 
 - Five runtimes are real, verified end-to-end: `python` → `PythonRuntime` (Pyodide 314.0.3 /
-  CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.26, Java 8 only), `csharp` →
+  CPython 3.14), `java` → `JavaRuntime` (CheerpJ 4.3 + ECJ 3.46, Java 17), `csharp` →
   `CSharpRuntime` (.NET 9 wasm + Roslyn — compiles and runs student C# in a module worker;
   ~13–15 MB brotli, blocking `Console.ReadLine()` over `SharedArrayBuffer`; see
   `runtimes/csharp/INTEGRATION.md`), `web` → `WebRuntime` (a **page** — html/css — in a sandboxed
@@ -565,10 +565,13 @@ that compile and run with piped stdin but have not been through that review. Eac
   inlined; other network refs (a non-Tailwind CDN) are left untouched, the seam those kits build on. The
   output pane reuses the console panel's bottom strip, so on a phone the preview is small — a larger,
   editor-adjacent preview is a follow-up.
-- Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours). Its
-  bootstrap compile (5–20 s) is a once-per-device-per-deploy cost since 2026-08-06 — the compiled
-  bootstrap persists in IndexedDB and a resident Server keeps ECJ warm, so a revisit boots in ~1 s
-  and a re-run takes well under a second. Details in `runtimes/java/INTEGRATION.md`.
+- Java's runtime exceptions carry **no line numbers** (a CheerpJ limitation, not ours). The
+  engine moved to **Java 17** on 2026-08-06; the in-browser bootstrap compile is gone with it
+  (the bootstrap ships prebuilt in `warsha-boot.jar`), but the compiler's first compile of a
+  session now costs ~15 s against Java 8's ~2 s, because on a modular runtime every platform
+  type is read out of the packed module image on first touch. That cost runs in the background
+  right after boot, and a re-run still takes well under a second.
+  Details in `runtimes/java/INTEGRATION.md`.
 - Visual implementation of DESIGN-SPEC is deliberately **not** done — this hand-off is
   plain-but-token-correct, and the design engineer owns the styling pass.
 - Progress escalation covers 8s / 25s / 60s as console notes; the spec's separate `Cancel` /

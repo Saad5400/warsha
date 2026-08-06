@@ -1,10 +1,93 @@
 # Integrating the Java runtime into the app
 
 `runtimes/java` is the production Java engine for Warsha: CheerpJ 4.3 (a WASM
-Java 8 JVM) plus ECJ 3.26.0 as the compiler, in a **classic** Web Worker,
-implementing the app's `Runtime` contract. No server, no build step of its own —
-the app's bundler consumes the TypeScript source directly. One asset has to be
-fetched at build time (`ecj.jar`, never committed).
+**Java 17** JVM) plus ECJ 3.46.0 as the compiler, in a **classic** Web Worker,
+implementing the app's `Runtime` contract. No server; the app's bundler consumes
+the TypeScript source directly. Two assets are produced at build time and never
+committed: `ecj.jar` (fetched) and `warsha-boot.jar` (compiled — this one needs
+a JDK 17+ on the build machine, see §"2026-08-06: Java 17").
+
+## 2026-08-06: Java 17
+
+Warsha ran on Java 8 until this date, because that is CheerpJ's default and
+because "just pass `version: 17`" does not work. What it takes, and what it
+costs, in full:
+
+**CheerpJ ships a JRE, not a JDK.** There is no `jdk.compiler` in any of its
+images — `com.sun.tools.javac.Main` is absent and
+`ToolProvider.getSystemJavaCompiler()` returns `null` — which is why Warsha
+carries ECJ at all. On Java 8 that was the end of it: ECJ read the platform out
+of `rt.jar`, an ordinary zip.
+
+**On Java 9+ the platform is a packed module image, and ECJ cannot open it
+here.** Two checks fail, each in a different layer:
+
+1. `org.eclipse.jdt.internal.compiler.util.Jdk` identifies a JDK by reading
+   `<java.home>/release`. CheerpJ has no `release` file → ECJ reports
+   `invalid location for system libraries: /lt/17` before compiling a line.
+2. The JDK's *own* `JrtFileSystemProvider` demands `<java.home>/lib/jrt-fs.jar`
+   whenever handed a `java.home` other than the running JVM's — exactly what
+   ECJ hands it. CheerpJ has no `jrt-fs.jar` → `IOException: /lt/17/lib/jrt-fs.jar
+   not exist`.
+
+`/lt/` is read-only, so neither file can be supplied where it is wanted. The
+running JVM's own image, however, opens with no `jrt-fs.jar` at all
+(`FileSystems.getFileSystem("jrt:/")` → 50 modules, ~20 000 classes). So
+[`bootstrap/Platform.java`](src/bootstrap/Platform.java) builds a `java.home`
+under `/files/` containing only a `release` file, points ECJ at it with
+`--system`, and pre-seeds `JRTUtil.JRT_FILE_SYSTEMS` for that path with the
+running image — so the provider call that wants `jrt-fs.jar` is never made.
+Stock, unmodified ECJ then compiles at `-17`.
+
+**The bootstrap had to stop being compiled in the browser.** `Platform.prepare()`
+must run inside the same JVM invocation as the compile, and every
+`cheerpjRunMain` gets a fresh classloader — so there was no invocation left in
+which our code could prepare anything before ECJ's own `main` ran. The
+`warsha.*` classes therefore ship prebuilt in `warsha-boot.jar`
+([`build-bootstrap.sh`](build-bootstrap.sh), `javac --release 17 -Werror`), and
+the whole IndexedDB stamp cache that existed to avoid that compile is deleted
+along with it. A **jar**, not a directory of `.class` files: `/app/` is the web
+server over HTTP, HTTP has no directory listing, and a directory classpath entry
+resolves nothing (measured: `ClassNotFoundException` for a class that was
+definitely being served).
+
+**What it costs and what it buys.** Same rig, same QA suite, Java 8 → Java 17:
+
+| `tools/qa/verify-java.mjs` | Java 8 | Java 17 |
+|---|---|---|
+| Cold first visit: Run → prompt | 16.1 s | 24.0 s |
+| Warm reload → Run | 7.5 s | 21.8 s |
+| Run after Stop/kill | 3.8 s | 17.8 s |
+| **Second run, same session** | **0.1 s** | **0.1 s** |
+| Compile error round-trip | — | 1.8 s |
+
+Execution throughput is *better* on 17 (collections roughly 1.7× faster,
+strings faster, arithmetic level) and the engine download is smaller (13.6 MB
+against Java 8's 18.7 MB). The regression is entirely the **first compile of a
+session**: on a modular runtime every platform type is read out of the packed
+image on first touch, which cost ~15 s here against Java 8's ~2 s. It is paid
+once per JVM, so repeat runs are unchanged.
+
+That cost is pushed into the background warm-up, which is why `WARM_SOURCE` in
+`jvm.worker.js` is no longer an empty class — it references `Scanner`, the
+collections, `String.format`, boxing and an exception, because warming an empty
+class left a three-file Scanner program still paying the full ~16 s. Warming a
+representative source moves it: after the warm-up completes, a student's first
+compile is ~2.5 s.
+
+**If this ever needs revisiting:** the identified next lever is `ct.sym`. ECJ
+takes a different, zip-based path (`ClasspathJep247Jdk12`) when the requested
+release is older than the JDK's own, so shipping a `ct.sym` and declaring a
+higher version in the fake `release` file would avoid the module image entirely.
+Untested, and it adds a ~7 MB asset.
+
+**Pins that are now load-bearing.** ECJ 3.46.0 is pinned by sha256 in
+`fetch-compiler.sh` because `JRT_FILE_SYSTEMS` is a private static field that
+exists in the 3.4x series and not earlier (3.33 has no such field);
+`Platform.prepare()` throws a named error rather than degrading if it is gone.
+`build-bootstrap.sh` needs a JDK 17+ (the Dockerfile installs
+`default-jdk-headless`), and `warsha-boot.jar`'s bytecode target must match
+CheerpJ's runtime version.
 
 ## 2026-08-06: the resident Server + persistent bootstrap cache
 
@@ -26,22 +109,20 @@ findings drove it, all measured on 2026-08-05/06 (Chrome 150 headless/Linux,
    through yet another fresh main.
 
 What changed (`jvm.worker.js`, `bootstrap/Server.java`, `Build.java`,
-`Launcher.java`, `Stamp.java`):
+`Launcher.java`, `Stamp.java`) — note the bootstrap cache described here was
+**removed on the same day** by the Java 17 work above; the resident Server and
+the compile-reuse cache are still current:
 
 - **One resident main, `warsha.Server`**, started once per worker, parks on the
   async `Bridge.nextCommand` native and handles every run as a command:
   `Build.buildOrReuse` → `Launcher.launch` (a fresh `URLClassLoader` over the
   run's `out/`, so runs still can never see each other's classes). ECJ loads
   once per session and stays JIT-warm.
-- **Starting Server IS the bootstrap-cache probe.** The compiled `warsha.*`
-  classes persist in `/files/warsha/` with a stamp hash **compiled into them**
-  (`Stamp.java`; the worker splices the hash of the exact bootstrap sources +
-  jar path + engine base over a committed placeholder before compiling). Server
-  force-loads the whole bootstrap and compares `Stamp.VALUE` to the hash the
-  worker passed; classes missing, unlinkable or from other sources → recompile.
-  A stamp *file* was rejected: it could survive an interrupted compile and
-  vouch for classes it does not describe; a constant can only exist compiled,
-  next to the classes it was compiled with.
+- ~~**Starting Server IS the bootstrap-cache probe.**~~ **Superseded.** The
+  bootstrap is no longer compiled in the browser at all, so there is nothing to
+  cache and no stamp: `warsha-boot.jar` ships prebuilt and Server starts from
+  it. `Stamp.java` is deleted. See the Java 17 section for why the in-browser
+  compile could not survive the move.
 - **Unchanged sources skip ECJ entirely**: `Build.buildOrReuse` hashes the
   staged project (entry + every path + content, order-normalized) and relaunches
   the previous run's output when it matches the last successful compile of this
@@ -80,7 +161,7 @@ Cache correctness: the stamp changes with any bootstrap source byte, the jar
 path or the CDN base (`STAMP_SCHEMA` bumps it by hand if ever needed), so a
 deploy invalidates cleanly; an interrupted cache write fails Server's
 force-load-and-check and recompiles; `validate.sh` still compiles the same
-sources offline with `javac --release 8 -Werror`.
+sources offline with `javac --release 17 -Werror`.
 
 ```
 runtimes/java/
@@ -88,10 +169,10 @@ runtimes/java/
   src/javaRuntime.ts        JavaRuntime (implements Runtime)
   src/types.ts              mirror of app/src/runtime/types.ts
   src/jvm.worker.js         the CheerpJ worker (plain JS, and CLASSIC -- see §2)
-  src/bootstrap/*.java      Bridge / Build / Launcher / Server / Stamp / Traces, run inside the JVM
-  src/bootstrap.generated.ts  GENERATED from the above, committed
+  src/bootstrap/*.java      Bridge / Build / Launcher / Platform / Server / Traces, run inside the JVM
   fetch-compiler.sh         downloads + sha256-verifies ecj.jar
-  validate.sh               offline gate: compiles the bootstrap, 42 self-tests
+  build-bootstrap.sh        compiles the bootstrap into warsha-boot.jar (needs a JDK)
+  validate.sh               offline gate: compiles the bootstrap, self-tests
   serve.mjs                 harness server, HTTP Range (and optional COOP/COEP)
   harness/                  standalone test page, see "Running the harness"
 ```
@@ -213,7 +294,7 @@ it.
 
 ## 3. ecj.jar — where it comes from and where it must land
 
-`fetch-compiler.sh [dest]` downloads ECJ 3.26.0 from Maven Central and verifies
+`fetch-compiler.sh [dest]` downloads ECJ 3.46.0 from Maven Central and verifies
 its sha256 (`ac0ba587…f5a2db5`, 3,133,846 bytes — re-verified against the file in
 this directory), deleting the file and failing on mismatch. **It must run at
 build time**, in CI and in local dev setup; `*.jar` is gitignored repo-wide and
@@ -570,13 +651,12 @@ forwarded to the optional `onInternalLog` callback instead. The harness asserts
 both that the noise occurs and that it stays out of the output, so the protection
 cannot silently rot.
 
-**Java 8 only.** CheerpJ's runtime reports `1.8.0`, so `var` (Java 10+), records,
-switch expressions, text blocks and `List.of` are **compile errors** — confirmed
-by compiling `var name = "…";`, which fails with `var cannot be resolved to a
-type` at the right line in the student's own file. Course content must stay within
-Java 8. ECJ 3.26.0 is pinned because it is the last release whose own class files
-are Java 8; moving to `cheerpjInit({version: 11})` would need a newer ECJ and
-full re-testing.
+**Java 17.** CheerpJ's runtime reports `17.0.19-internal`. `var`, records,
+sealed types, `instanceof` pattern matching, switch expressions, text blocks and
+`List.of` all compile and run — asserted by the harness's `java17` scenario and
+proven in-app. Pattern matching *in switch* is Java 21 and is correctly rejected.
+ECJ 3.46.0 is pinned by sha256 because `Platform.java` depends on an internal of
+the 3.4x series; see the Java 17 section at the top.
 
 **Each run gets a fresh output directory.** `/files/` is IndexedDB-backed and
 persists across sessions, so a stale `.class` could otherwise make a broken
@@ -609,16 +689,17 @@ constraint than Python has.
 bootstrap in-browser — since 2026-08-06, once per device per deploy, cached in
 `/files/warsha/` thereafter.** The original reasons to compile in-browser on
 *every* `load()` were: (a) `*.jar` is gitignored repo-wide, so a prebuilt jar
-would need either an exception or a JDK in the build pipeline, and a static-site
-CI has no JDK (still true, still why there is no jar); (b) the bootstrap compile
+would need either an exception or a JDK in the build pipeline — **this is the
+one that gave way**: Java 17 made the in-browser compile impossible, so the
+Dockerfile now installs a JDK and `build-bootstrap.sh` produces
+`warsha-boot.jar` (still gitignored, built rather than committed); (b) the
+bootstrap compile
 "doubles as the compiler warm-up" — **falsified**: each `cheerpjRunMain` gets a
 fresh classloader, so the warmed ECJ was thrown away before any student compile
 ever ran; (c) an IndexedDB class cache with a version stamp is a stale-stamp
-hazard — answered by compiling the stamp INTO the classes (`Stamp.java`) and
-having Server force-load-and-verify at start, so the stamp cannot outlive or
-misdescribe the classes it vouches for. See "2026-08-06" at the top.
-`validate.sh` still compiles the same sources offline with `javac --release 8
--Werror` so mistakes are caught before the browser.
+hazard — moot now that there is no class cache at all. See "2026-08-06" at the
+top. `validate.sh` still compiles the same sources offline with
+`javac --release 17 -Werror` so mistakes are caught before the browser.
 
 **§9.2 said stage sources into package-shaped directories. This module preserves
 the student's own directory layout instead.** The problem being solved is the
@@ -690,11 +771,13 @@ The harness self-test last showed 51/51, on Chrome 150 headless/Linux during the
 Other checks worth keeping:
 
 ```
-./validate.sh          # compiles the bootstrap with javac --release 8 -Werror + 28 self-tests
-npm run check          # node --check on the worker, generated-file freshness, bootstrap compile
+./fetch-compiler.sh    # ecj.jar (needed by the two below)
+./build-bootstrap.sh   # warsha-boot.jar -- needs a JDK 17+
+./validate.sh          # compiles the bootstrap with javac --release 17 -Werror + self-tests
+npm run check          # node --check on the worker, generated-file freshness
 npm run typecheck      # tsc -p tsconfig.json
 ```
 
-`npm run check` fails if `src/bootstrap.generated.ts` is stale — the `.java` files
-under `src/bootstrap/` are the source of truth and the generated `.ts` is
-committed so the app needs no build step.
+The `.java` files under `src/bootstrap/` are the source of truth; they are
+compiled into `warsha-boot.jar` at build time, so a change to them needs
+`./build-bootstrap.sh` re-run before the harness or the app will pick it up.

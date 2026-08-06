@@ -38,7 +38,7 @@ export interface Language {
  * it. This list is the one place that grows as engines land. */
 export const languages: Language[] = [
   { id: 'python', label: 'Python', status: 'ready', version: 'Python 3.14', mark: 'Py' },
-  { id: 'java', label: 'Java', status: 'ready', version: 'Java 8', mark: 'J' },
+  { id: 'java', label: 'Java', status: 'ready', version: 'Java 17', mark: 'J' },
   // One tile for the browser stack. HTML, CSS, JavaScript and TypeScript are a
   // single "language" here on purpose (the request): a web project mixes them in
   // one preview, and a standalone .js/.ts runs headless like Node — so splitting

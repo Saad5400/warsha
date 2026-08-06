@@ -25,7 +25,7 @@ Last reviewed: 2026-08-02.
 | [CodeMirror 6](https://codemirror.net/) | 6.x | [MIT](https://github.com/codemirror/dev/blob/main/LICENSE) | Code editor (editing, syntax highlighting, search) | **Bundled** via npm into our JS build | Redistributed — MIT notice must be preserved |
 | [fflate](https://github.com/101arrowz/fflate) | 0.8.x | [MIT](https://github.com/101arrowz/fflate/blob/master/LICENSE) | Zip/unzip for project import and export | **Bundled** via npm into our JS build | Redistributed — MIT notice must be preserved |
 | [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) | 0.1.x | [MIT](https://github.com/gzuidhof/coi-serviceworker/blob/master/LICENSE) | Injects COOP/COEP headers via a service worker so cross-origin isolation (and therefore `SharedArrayBuffer`) works on static hosts like GitHub Pages | **Bundled** — copied into our static output, **modified**: Warsha added an offline caching layer around it (the COOP/COEP transform is unchanged). MIT permits modification | Redistributed — MIT notice preserved; modification noted in the file header |
-| [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj) (`org.eclipse.jdt:ecj`, Eclipse Foundation) | 3.26.0 | [EPL-2.0](https://www.eclipse.org/legal/epl-2.0/) | Java compiler: compiles student Java source, running unmodified inside the CheerpJ JVM | **Bundled** — fetched from Maven Central at build time and served as a static asset | Redistributed — see the EPL-2.0 obligations below |
+| [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj) (`org.eclipse.jdt:ecj`, Eclipse Foundation) | 3.46.0 | [EPL-2.0](https://www.eclipse.org/legal/epl-2.0/) | Java compiler: compiles student Java source, running unmodified inside the CheerpJ JVM | **Bundled** — fetched from Maven Central at build time and served as a static asset | Redistributed — see the EPL-2.0 obligations below |
 | [React](https://react.dev/) | 19.x | MIT | UI layer | **Bundled** via npm into our JS build | Redistributed — MIT notice must be preserved |
 | [Tailwind CSS](https://tailwindcss.com/) | 4.x | MIT | Styling; compiles to CSS at build time | **Bundled** (generated CSS) | Redistributed — MIT notice must be preserved |
 | [Devicon](https://github.com/devicons/devicon) — `java-original` icon | commit [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96) (2021-05-15), file unchanged since | [MIT](https://github.com/devicons/devicon/blob/master/LICENSE) | Java language badge glyph (file badges, welcome cards, the OG image's Java tab) | **Bundled** — SVG path data vendored inline into `LangIcons.tsx` and `og-image.html` | Redistributed — MIT notice recorded below; see also the trademark note under "Language icons" |
@@ -149,12 +149,15 @@ sourced carefully:
   the [Eclipse Compiler for Java (`ecj`)](https://mvnrepository.com/artifact/org.eclipse.jdt.core.compiler/ecj),
   licensed EPL-2.0, which is a standalone redistributable batch compiler.
 
-**What Warsha chose: ECJ 3.26.0, EPL-2.0.** It is in the table above as a bundled
+**What Warsha chose: ECJ 3.46.0, EPL-2.0.** It is in the table above as a bundled
 component. Three details matter:
 
-- **Why 3.26.0 specifically.** It is the last ECJ release whose own class files are Java 8
-  bytecode (major version 52). Every later release is Java 11 or newer and cannot run on
-  CheerpJ's Java 8 JVM. This pin is a runtime constraint, not a preference.
+- **Why 3.46.0 specifically, and why it is pinned hard.** CheerpJ's Java 17 image has no
+  `release` file and no `lib/jrt-fs.jar`, so ECJ cannot open the platform module image the
+  normal way; `runtimes/java/src/bootstrap/Platform.java` works around that by seeding
+  `JRTUtil.JRT_FILE_SYSTEMS`, a private static field present in ECJ's 3.4x series but not
+  in earlier ones (3.33 has no such field). The pin is a runtime constraint, not a
+  preference, and moving it means re-running the Java QA suite.
 - **It is never committed.** `*.jar` is gitignored repo-wide.
   [`runtimes/java/fetch-compiler.sh`](../../runtimes/java/fetch-compiler.sh) fetches it
   from Maven Central at build time and verifies its SHA-256 against a pinned digest; that
@@ -162,7 +165,7 @@ component. Three details matter:
 - **EPL-2.0 obligations we must keep meeting.** Preserve the license notice (the jar's own
   `about.html` travels with it, and [`NOTICE`](../../NOTICE) carries the attribution);
   state that the file is unmodified ECJ, which it is; and point to the corresponding
-  source, published as `ecj-3.26.0-sources.jar` at the same Maven coordinates. EPL-2.0 is
+  source, published as `ecj-3.46.0-sources.jar` at the same Maven coordinates. EPL-2.0 is
   file-level copyleft over ECJ's own files only — shipping it unmodified alongside our
   Apache-2.0 code imposes nothing on Warsha's code.
 

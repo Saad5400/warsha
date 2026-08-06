@@ -103,8 +103,8 @@ export const COPY = {
   // ---- status bar (LAYOUT-VSCODE §3) ----
   // The version is part of the label because it is the answer to the question a
   // student actually has ("which Java is this?") and because both engines are
-  // pinned: CheerpJ is Java 8 only, Pyodide is CPython 3.14 (ARCHITECTURE §6).
-  langJava: 'Java 8',
+  // pinned: CheerpJ runs Java 17, Pyodide is CPython 3.14 (ARCHITECTURE §6).
+  langJava: 'Java 17',
   langPython: 'Python 3.14',
   langPlain: 'Plain text',
   /** Nothing is open, so there is no language to name. */

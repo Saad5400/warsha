@@ -91,11 +91,13 @@ static files.
 | **Files** | OPFS, the browser's own private file system, plus [fflate](https://github.com/101arrowz/fflate) for zip import/export |
 | **UI** | React 19 and Tailwind CSS 4, bundled by Vite |
 
-**Java is Java 8.** CheerpJ's runtime is a Java 8 JVM, so Warsha pins ECJ to 3.26.0 — the
-last release whose own class files are Java 8 bytecode and can therefore run on it. Newer
-language features (`var`, records, switch expressions, text blocks) are not available.
-That is a limitation of the runtime, not a choice; it is unlikely to bite an introductory
-course, but check it against your syllabus before adopting Warsha. The compiler jar is
+**Java is Java 17.** `var`, records, sealed types, pattern matching, switch expressions
+and text blocks all work. Getting there took more than a version flag: CheerpJ ships a JRE
+with no compiler in it, and on a modular runtime ECJ cannot find the platform classes by
+itself, so `runtimes/java/src/bootstrap/Platform.java` shows them to it and the Warsha
+bootstrap ships prebuilt as `warsha-boot.jar`. One cost is worth knowing before you adopt
+Warsha: the first Run of a session pays a background compiler warm-up (~15 s on a modest
+laptop) that Java 8 did not; every run after it is well under a second. The compiler jar is
 fetched from Maven Central and checksum-verified at
 build time by [`runtimes/java/fetch-compiler.sh`](runtimes/java/fetch-compiler.sh); it is
 never committed, because `*.jar` is gitignored repo-wide for licensing reasons.

@@ -24,7 +24,7 @@ export interface StatusBarProps {
   onGotoLine?(): void
 }
 
-/** "Java 8" / "Python 3.14" for the two real engines, honest for everything else. */
+/** "Java 17" / "Python 3.14" for the two real engines, honest for everything else. */
 function languageLabel(path: string | null): string {
   if (!path) return COPY.langNone
   const lang = langForPath(path)

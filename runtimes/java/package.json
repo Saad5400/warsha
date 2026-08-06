@@ -3,14 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "CheerpJ + ECJ backed Java runtime for Warsha, implementing the app's Runtime contract",
+  "description": "CheerpJ (Java 17) + ECJ backed Java runtime for Warsha, implementing the app's Runtime contract",
   "main": "src/index.ts",
   "scripts": {
-    "check": "node --check src/jvm.worker.js && node build.mjs --check && node check-bootstrap.mjs",
+    "check": "node --check src/jvm.worker.js && node build.mjs --check",
     "typecheck": "tsc -p tsconfig.json",
     "compiler": "./fetch-compiler.sh",
     "build:harness": "node build.mjs",
-    "harness": "node build.mjs && node serve.mjs 8085"
+    "harness": "node build.mjs && node serve.mjs 8085",
+    "bootstrap": "./build-bootstrap.sh"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",

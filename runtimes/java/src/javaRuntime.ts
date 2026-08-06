@@ -1,4 +1,3 @@
-import { BOOTSTRAP_SOURCES } from './bootstrap.generated'
 import type { ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
 
 type FromWorker =
@@ -29,6 +28,12 @@ export interface JavaRuntimeOptions {
    * A site served from a sub-path needs that prefix included here.
    */
   compilerJarPath?: string
+  /**
+   * Where CheerpJ can read warsha-boot.jar (the prebuilt Warsha bootstrap), in
+   * ITS filesystem. Same rules as `compilerJarPath`: `/app/` is the web server
+   * root. Built by runtimes/java/build-bootstrap.sh.
+   */
+  bootJarPath?: string
   /** CheerpJ loader directory. Pinned to 4.3; overriding it is untested. */
   cdnBase?: string
   /** Receives CheerpJ's console chatter (incl. its JIT-failure noise) for debugging. */
@@ -56,18 +61,19 @@ interface Active {
  * replacement, so a subsequent `run()` works (paying the engine re-warm, see
  * INTEGRATION.md).
  *
- * Java 8 only: CheerpJ's runtime reports 1.8.0, so `var`, records and switch
- * expressions are compile errors. That is a property of the engine, not a
- * setting we chose.
+ * Java 17: `var`, records, sealed types, pattern matching, switch expressions
+ * and text blocks all work. Getting a compiler to see the platform classes on
+ * a modular runtime takes real work under CheerpJ -- see bootstrap/Platform.java.
  */
 export class JavaRuntime implements Runtime {
   readonly id = 'java' as const
 
-  /** Language level students get. Fixed by CheerpJ's Java 8 runtime. */
-  readonly javaVersion = '1.8'
+  /** Language level students get. Fixed by CheerpJ's Java 17 runtime. */
+  readonly javaVersion = '17'
 
   private readonly workerUrl: string
   private readonly compilerJarPath: string
+  private readonly bootJarPath: string
   private readonly cdnBase: string | undefined
   private readonly onInternalLog: JavaRuntimeOptions['onInternalLog']
 
@@ -100,6 +106,7 @@ export class JavaRuntime implements Runtime {
   constructor(options: JavaRuntimeOptions = {}) {
     this.workerUrl = String(options.workerUrl ?? DEFAULT_WORKER_URL)
     this.compilerJarPath = options.compilerJarPath ?? '/app/ecj.jar'
+    this.bootJarPath = options.bootJarPath ?? '/app/warsha-boot.jar'
     this.cdnBase = options.cdnBase
     this.onInternalLog = options.onInternalLog
   }
@@ -222,8 +229,8 @@ export class JavaRuntime implements Runtime {
     worker.postMessage({
       type: 'init',
       compilerJarPath: this.compilerJarPath,
+      bootJarPath: this.bootJarPath,
       cdnBase: this.cdnBase,
-      bootstrapSources: BOOTSTRAP_SOURCES,
     })
     return promise
   }
