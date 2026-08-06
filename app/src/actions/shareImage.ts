@@ -60,6 +60,19 @@ async function buildCard(path: string, source: string): Promise<{ wrap: HTMLDivE
   // never on `wrap`, which is the part that actually matters: `wrap`'s own
   // opacity is exactly what must NOT be what gets rasterised.
   const wrap = el('div', 'fixed left-0 top-0 opacity-0 pointer-events-none')
+  // THE CARD IS ENGLISH LTR IN EVERY LANGUAGE. It is built inside the live
+  // document, so in an Arabic session it would otherwise inherit
+  // `<html dir="rtl">` and every flex row below would reverse: the line numbers
+  // would sit to the right of the code they number, the traffic-light dots and
+  // the filename would swap ends, and the `warsha` mark would move to the left.
+  // The card is a picture of code, and code is left-to-right — same rule as the
+  // editor it is a picture of (editor/setup.ts).
+  //
+  // Set here, before freezeComputedStyles() below, so `direction` is frozen as
+  // ltr along with everything else the capture reads.
+  wrap.dir = 'ltr'
+  wrap.style.direction = 'ltr'
+  wrap.style.textAlign = 'left'
   const style = document.createElement('style')
   style.textContent = highlightCss(oneDarkHighlightStyle)
   wrap.appendChild(style)

@@ -76,6 +76,11 @@ function addPage(set: PageSet): void {
     background: '#FFFFFF',
     color: INK,
     fontFamily: SANS,
+    // Restated per page, not only on the staging wrapper: each page is
+    // rasterised on its own, and html-to-image clones the node it is given —
+    // so the page has to carry the direction itself. See `wrap` below.
+    direction: 'ltr',
+    textAlign: 'left',
   })
   const content = el('div', {
     boxSizing: 'border-box',
@@ -316,7 +321,17 @@ export async function shareProjectAsPdf(
     top: '0',
     opacity: '0',
     pointerEvents: 'none',
+    // THE DOCUMENT IS ENGLISH LTR IN EVERY LANGUAGE. These pages are built
+    // inside the live document, so in an Arabic session they would otherwise
+    // inherit `<html dir="rtl">` and every flex row here would reverse: line
+    // numbers to the right of their code, the Warsha mark and the date swapped
+    // in the header, the page number swapped in the footer. A submission is a
+    // listing of code, and the code is left-to-right whatever language the
+    // student reads the app in — same rule as the editor (editor/setup.ts).
+    direction: 'ltr',
+    textAlign: 'left',
   })
+  wrap.dir = 'ltr'
   const style = document.createElement('style')
   style.textContent = highlightCss(printHighlightStyle)
   wrap.appendChild(style)
@@ -326,7 +341,12 @@ export async function shareProjectAsPdf(
     const set: PageSet = { wrap, pages: [], content: document.createElement('div'), full: false }
     addPage(set)
 
-    const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+    // Pinned to English, like every other word this document prints ("3 files ·
+    // 120 lines of code", "Page 1 of 4"). The browser's own locale would set an
+    // Arabic student's cover date in Arabic month names and Arabic-Indic digits
+    // — one Arabic line in an otherwise English submission, which reads as a
+    // bug rather than a translation.
+    const date = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
     place(set, buildHeader(projectName, files, date))
 
     let truncated = false
