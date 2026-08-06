@@ -13,11 +13,12 @@
  * the token's comment says what happens when that changes), VS Code's 22px
  * under the DENSITY block.
  *
- * `breadcrumbs` / aria-label="Breadcrumbs" are QA contract handles.
+ * `breadcrumbs` / aria-label={COPY.a11yBreadcrumbs} are QA contract handles.
  */
 import { Fragment } from 'react'
 import { FileBadge } from './FileBadge'
 import { IconChevronRight } from './ui/Icons'
+import { COPY } from '../copy'
 
 export function Breadcrumbs({ path }: { path: string | null }) {
   if (path === null) return null
@@ -28,7 +29,7 @@ export function Breadcrumbs({ path }: { path: string | null }) {
 
   return (
     <nav
-      aria-label="Breadcrumbs"
+      aria-label={COPY.a11yBreadcrumbs}
       className={
         'breadcrumbs flex items-center h-bar-crumbs flex-none overflow-hidden ' +
         'px-2 gap-0.5 select-none bg-surface-1 text-[13px] text-text-2'
@@ -45,7 +46,7 @@ export function Breadcrumbs({ path }: { path: string | null }) {
           <span className="min-w-[2ch] shrink-[3] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">
             {seg}
           </span>
-          <IconChevronRight size={16} className="flex-none" aria-hidden="true" />
+          <IconChevronRight size={16} className="flex-none rtl:-scale-x-100" aria-hidden="true" />
         </Fragment>
       ))}
       <span className="flex min-w-0 items-center gap-1 whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">

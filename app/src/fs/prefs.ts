@@ -1,8 +1,17 @@
 /** Small UI state that isn't project content. localStorage is plenty. */
+import type { Locale } from '../i18n/locale'
+
 const KEY = 'warsha.prefs.v1'
 
 export interface Prefs {
   fontSize: number
+  /**
+   * UI language. `null` — the default — means "follow the browser", so an
+   * Arabic phone gets Arabic without anyone finding a setting. A stored value
+   * is an explicit choice from the language switch and always wins, including
+   * when it agrees with the browser: the student said it, not the browser.
+   */
+  locale: Locale | null
   /** Whole-UI zoom (View > Zoom In/Out, the Manage gear's View-scale slider).
    *  0.7–1.3 in 0.05 steps, 1 = untouched. Rendered as CSS `zoom` on #root.
    *  Deliberately separate from `fontSize`, which sizes the editor type only. */
@@ -32,6 +41,7 @@ export interface Prefs {
 const defaultFontSize = () => 14
 
 const defaults: Omit<Prefs, 'fontSize'> = {
+  locale: null,
   uiScale: 1,
   consoleHeight: 220,
   consoleCollapsed: false,

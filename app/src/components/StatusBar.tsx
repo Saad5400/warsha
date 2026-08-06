@@ -64,7 +64,7 @@ const GROUP = 'status-bar__group flex h-full items-center min-w-0'
  * its natural size. "Spaces: 4" and the font stepper hide below 480px instead
  * (see their max-[479px]:hidden) — both are conveniences with other homes. */
 const GROUP_LEAD = ' flex-1'
-const GROUP_END = 'status-bar__group--end ml-auto flex-none overflow-hidden pr-[env(safe-area-inset-right)]'
+const GROUP_END = 'status-bar__group--end ms-auto flex-none overflow-hidden pr-[env(safe-area-inset-right)]'
 
 /* One VSCode status item: full bar height, 4px a side, centred content. */
 const ITEM = 'status-bar__item flex h-full items-center gap-1 px-1 min-w-0 whitespace-nowrap'
@@ -124,10 +124,10 @@ export function StatusBar({
   onGotoLine,
 }: StatusBarProps) {
   return (
-    <footer className={BAR} aria-label="Status bar">
+    <footer className={BAR} aria-label={COPY.a11yStatusBar}>
       <div className={GROUP + GROUP_LEAD}>
         <StatusPill status={status} exitCode={exitCode} variant="bar" />
-        <span className={ITEM} title={entryPath ? `Run starts ${entryPath}` : COPY.noEntry}>
+        <span className={ITEM} title={entryPath ? COPY.statusBarRunStarts(entryPath) : COPY.noEntry}>
           {/* max-w caps a marathon path on wide screens; min-w-0 lets the
               narrow ones squeeze it to an ellipsis before anything on the
               right loses a pixel. */}
@@ -146,7 +146,7 @@ export function StatusBar({
             <button
               type="button"
               className={STATUS_ITEM + ' tabular-nums'}
-              title="Go to line"
+              title={COPY.a11yGoToLine}
               onClick={() => onGotoLine?.()}
             >
               {COPY.cursorAt(cursor.line, cursor.col)}
@@ -160,14 +160,14 @@ export function StatusBar({
             constant. It becomes a button the day indentation is configurable. */}
         {/* Hidden below 480px: a constant nobody edits is the first passenger
             off a narrow bar (VSCode hides low-priority items the same way). */}
-        {activePath ? <span className={ITEM + ' flex-none max-[479px]:hidden'}>Spaces: 4</span> : null}
+        {activePath ? <span className={ITEM + ' flex-none max-[479px]:hidden'}>{COPY.statusBarIndent}</span> : null}
         <span className={ITEM + ' flex-none'}>{languageLabel(activePath)}</span>
         <span className={STEPPER}>
           <button
             type="button"
             className={STEP_BTN}
-            aria-label="Smaller text"
-            title="Smaller text"
+            aria-label={COPY.a11ySmallerText}
+            title={COPY.a11ySmallerText}
             disabled={fontSize <= 11}
             onClick={() => onFontSize(Math.max(11, fontSize - 1))}
           >
@@ -179,8 +179,8 @@ export function StatusBar({
           <button
             type="button"
             className={STEP_BTN}
-            aria-label="Bigger text"
-            title="Bigger text"
+            aria-label={COPY.a11yBiggerText}
+            title={COPY.a11yBiggerText}
             disabled={fontSize >= 26}
             onClick={() => onFontSize(Math.min(26, fontSize + 1))}
           >

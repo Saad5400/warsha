@@ -1,4 +1,5 @@
 import type { RunStatus } from '../hooks/useRunner'
+import { COPY } from '../copy'
 
 /**
  * Spec §7.3. Red and green are the two colours a colour-blind student is most
@@ -46,15 +47,26 @@ const BAR =
  * pill does not grow. */
 const GLYPH = 'grid place-items-center flex-none w-3 text-micro leading-none'
 
-const pills: Record<RunStatus, { label: string; glyph: string }> = {
-  idle: { label: 'Ready', glyph: '○' },
-  preparing: { label: 'Preparing', glyph: 'dot' },
-  running: { label: 'Running', glyph: 'dot' },
-  waiting: { label: 'Waiting for you', glyph: '▸' },
-  ok: { label: 'Finished', glyph: '✓' },
-  failed: { label: 'Stopped early', glyph: '✕' },
-  stopped: { label: 'Stopped by you', glyph: '■' },
+const GLYPHS: Record<RunStatus, string> = {
+  idle: '○',
+  preparing: 'dot',
+  running: 'dot',
+  waiting: '▸',
+  ok: '✓',
+  failed: '✕',
+  stopped: '■',
 }
+
+const pillLabel = (status: RunStatus): string =>
+  ({
+    idle: COPY.pillReady,
+    preparing: COPY.pillPreparing,
+    running: COPY.pillRunning,
+    waiting: COPY.pillWaiting,
+    ok: COPY.pillFinished,
+    failed: COPY.pillFailed,
+    stopped: COPY.pillStopped,
+  })[status]
 
 export function StatusPill({
   status,
@@ -77,7 +89,8 @@ export function StatusPill({
    */
   variant?: 'pill' | 'bar'
 }) {
-  const pill = pills[status]
+  const label = pillLabel(status)
+  const glyph = GLYPHS[status]
   const detail = status === 'failed' && exitCode !== null ? ` · exit ${exitCode}` : null
   return (
     // aria-label carries the exit code even when the visual suffix is dropped, so
@@ -87,19 +100,19 @@ export function StatusPill({
     <span
       data-state={status}
       className={variant === 'pill' ? 'pill ' + PILL : BAR}
-      aria-label={detail ? pill.label + detail : undefined}
+      aria-label={detail ? label + detail : undefined}
     >
       {/* The one continuous animation in the app: a 1.4s pulse on a 6px dot,
           static under prefers-reduced-motion, where the word carries it. */}
       <span aria-hidden="true" className={GLYPH}>
-        {pill.glyph === 'dot' ? (
+        {glyph === 'dot' ? (
           <span className="size-[6px] rounded-pill bg-current animate-dot-pulse motion-reduce:animate-none" />
         ) : (
-          pill.glyph
+          glyph
         )}
       </span>
       <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-        {pill.label}
+        {label}
         {/* The exit code is the first thing that goes when the console header
             runs out of room on a phone — the transcript states it in full a few
             pixels below, so nothing is actually lost. The status bar never gets

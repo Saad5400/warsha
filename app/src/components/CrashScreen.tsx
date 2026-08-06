@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from './ui/Button'
+import { COPY } from '../copy'
 
 /**
  * The last line of defence.
@@ -41,15 +42,14 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
     return (
       <div className="scroller fixed inset-0 bg-surface-0" data-crash="true">
         <div className="mx-auto flex w-full max-w-[30rem] flex-col gap-4 p-5">
-          <h1 className="text-dlg-title font-semibold text-text-1">Warsha stopped working</h1>
+          <h1 className="text-dlg-title font-semibold text-text-1">{COPY.crashTitle}</h1>
           <div className="note note--danger">
             <p className="note__text">
-              Something in Warsha broke. Your files are still saved on this device — reloading the page should bring
-              them back.
+              {COPY.crashBody}
             </p>
           </div>
           <Button variant="primary" large onClick={() => window.location.reload()}>
-            Reload Warsha
+            {COPY.crashReload}
           </Button>
           <Button
             variant="ghost"
@@ -66,10 +66,10 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
               window.location.reload()
             }}
           >
-            Reload and forget my layout
+            {COPY.crashForgetLayout}
           </Button>
           <details>
-            <summary className="text-meta text-text-3">What went wrong</summary>
+            <summary className="text-meta text-text-3">{COPY.crashWhatWentWrong}</summary>
             <pre className="console-failure__detail">{String(error.stack || error.message || error)}</pre>
           </details>
         </div>

@@ -50,6 +50,14 @@ WORKDIR /repo
 COPY app/package.json app/package-lock.json ./app/
 RUN cd app && npm ci
 
+# The deployed origin, baked into canonical / og:url / og:image / twitter:image
+# and into the generated robots.txt + sitemap.xml (app/ARCHITECTURE.md §7).
+# Unset is fine and is the normal case: vite.config.ts defaults to production,
+# so a plain build is always shippable. Set this build arg only when deploying
+# to a different hostname — a preview environment, a fork, a rename.
+ARG WARSHA_ORIGIN
+ENV WARSHA_ORIGIN=${WARSHA_ORIGIN}
+
 # Bring in the rest of the monorepo (runtimes/, docs/, app/src, ...) then build.
 # `npm run build` runs the prebuild `assets` step, which now finds ../runtimes
 # and ../../docs because the context is the repo root.

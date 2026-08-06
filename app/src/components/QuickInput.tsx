@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fuzzyMatch, toRanges } from '../ui/fuzzy'
+import { COPY } from '../copy'
 
 /**
  * The quick input (VS Code's Ctrl+P family): one floating widget, four jobs,
@@ -24,8 +25,8 @@ import { fuzzyMatch, toRanges } from '../ui/fuzzy'
  * ever opens from a keyboard chord, so a hardware keyboard is a precondition
  * of seeing it at all.
  *
- * QA handles: section[aria-label="Quick open"], the input by
- * aria-label="Search files by name". The input is a combobox over a listbox,
+ * QA handles: section[aria-label={COPY.a11yQuickOpen}], the input by
+ * aria-label={COPY.a11ySearchFilesByName}. The input is a combobox over a listbox,
  * with aria-activedescendant carrying the roving selection so focus never
  * leaves the field — which is also why any press inside the panel that is not
  * on the input itself is pointerdown-prevented rather than allowed to blur it
@@ -102,7 +103,7 @@ const INPUT =
  * same bit; hover is the quiet --list-hover-bg and only on unselected rows so
  * the two fills never fight. */
 const ROW =
-  'group flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left ' +
+  'group flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-start ' +
   'min-h-[22px] text-[13px] ' +
   'aria-selected:bg-(--list-active-sel-bg) aria-selected:text-(--list-active-sel-fg) ' +
   'aria-[selected=false]:hover:bg-(--list-hover-bg)'
@@ -133,7 +134,7 @@ function chordChips(chord: string): { caps: string[]; plus: boolean } {
 /** The chip run for a whole hint — chord groups separated by a wider gap. */
 function KeyHint({ hint }: { hint: string }) {
   return (
-    <span aria-hidden="true" className="ml-auto flex flex-none items-center gap-1.5">
+    <span aria-hidden="true" className="ms-auto flex flex-none items-center gap-1.5">
       {hint
         .split(' ')
         .filter(Boolean)
@@ -340,12 +341,12 @@ export function QuickInput({
 
   const placeholder =
     routed === 'files'
-      ? 'Search files by name (append : to go to a line, > to run a command)'
+      ? COPY.quickFilesPlaceholder
       : routed === 'commands'
-        ? 'Type the name of a command to run'
+        ? COPY.quickCommandsPlaceholder
         : routed === 'goto'
-          ? 'Type a line number to go to'
-          : 'Search recent projects by name'
+          ? COPY.quickLinePlaceholder
+          : COPY.quickProjectsPlaceholder
 
   // What the empty list says. Goto is a prompt rather than a failure — VS
   // Code's "Type a line number between 1 and N" — and knows about the caret
@@ -353,15 +354,15 @@ export function QuickInput({
   const emptyText =
     routed === 'goto'
       ? lineCount == null
-        ? 'Open a file first, then type a line number.'
-        : `Type a line number between 1 and ${lineCount} to go to${currentLine != null ? ` (now at line ${currentLine})` : ''}.`
-      : 'No matching results'
+        ? COPY.quickOpenFileFirst
+        : COPY.quickLineRange(lineCount, currentLine ?? null)
+      : COPY.quickNoResults
 
   const rowId = (i: number) => `${listId}-row-${i}`
 
   return (
     <section
-      aria-label="Quick open"
+      aria-label={COPY.a11yQuickOpen}
       className={PANEL}
       // Any press inside the panel that is not on the input itself would blur
       // the field and dismiss the widget under the student's finger; keeping
@@ -381,7 +382,7 @@ export function QuickInput({
         aria-controls={listId}
         aria-activedescendant={rows.length > 0 ? rowId(selected) : undefined}
         aria-autocomplete="list"
-        aria-label="Search files by name"
+        aria-label={COPY.a11ySearchFilesByName}
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
@@ -405,7 +406,7 @@ export function QuickInput({
           ref={listRef}
           id={listId}
           role="listbox"
-          aria-label="Quick open results"
+          aria-label={COPY.a11yQuickOpenResults}
           className="scroller mt-1 max-h-[338px] overflow-y-auto"
         >
           {rows.map((row, i) => (

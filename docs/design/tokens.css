@@ -249,8 +249,15 @@
                                                carried by the underline       */
 
   /* ---- type ------------------------------------------------------------- */
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-             "Noto Sans Arabic", Arial, sans-serif;
+  /* Readex Pro draws Latin and Arabic to one skeleton and one set of metrics,
+   * which is the whole reason it is here: the UI is bilingual and the two
+   * scripts have to sit on the same baseline at the same apparent size. The
+   * @font-face block lives in app/src/index.css (v1 shipped no webfont; that
+   * note explains the reversal and the byte budget). Everything after it is the
+   * unchanged v1 fallback stack — it is what paints the first frame under
+   * `font-display: swap`, and what a student sees if the font 404s. */
+  --font-ui: "Readex Pro Variable", system-ui, -apple-system, "Segoe UI", Roboto,
+             "Helvetica Neue", "Noto Sans Arabic", Arial, sans-serif;
   /* ui-monospace resolves to SF Mono on iPadOS (WebKit) and is IGNORED by
    * Chromium, which falls through to Droid Sans Mono on Android. "Roboto Mono"
    * is opportunistic — not guaranteed addressable across OEM builds. */

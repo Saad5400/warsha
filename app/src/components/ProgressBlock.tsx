@@ -9,12 +9,13 @@ import { COPY } from '../copy'
  * exactly what read as three competing progress reports. The `phase` field is
  * the engine's message, distilled; these four labels are the entire loading
  * vocabulary. */
-const phaseLabel: Record<LoadProgress['phase'], string> = {
-  download: 'Downloading the language',
-  unpack: 'Unpacking',
-  boot: 'Starting up',
-  compile: 'Compiling your code',
-}
+const phaseLabel = (phase: LoadProgress['phase']): string =>
+  ({
+    download: COPY.phaseDownloading,
+    unpack: COPY.phaseUnpacking,
+    boot: COPY.phaseStarting,
+    compile: COPY.phaseCompiling,
+  })[phase]
 
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
@@ -25,7 +26,7 @@ const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
  * accent rule and tinted fill keep it unmistakably Warsha's, never the
  * program's. */
 const BLOCK =
-  'progress-block mb-2 px-3 pt-1 pb-2 border-l-[3px] border-l-accent ' +
+  'progress-block mb-2 px-3 pt-1 pb-2 border-s-[3px] border-s-accent ' +
   'bg-[color-mix(in_srgb,var(--accent-soft)_45%,transparent)]'
 
 /* The numbers change every tick; without tabular figures the whole line
@@ -75,7 +76,7 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
 
   return (
     <div data-phase={phase} className={BLOCK}>
-      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel[phase]}</p>
+      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel(phase)}</p>
 
       <div className="mt-2 flex items-center gap-2">
         <div className={TRACK}>

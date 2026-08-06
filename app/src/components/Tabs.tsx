@@ -6,6 +6,7 @@ import { RunControl, type RunControlState } from './RunControl'
 import { IconButton } from './ui/Button'
 import { IconClose, IconMore } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
+import { COPY } from '../copy'
 
 export interface TabsProps {
   project: Project
@@ -166,16 +167,16 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
   const menuItems = (path: string): MenuItem[] => {
     const { name } = splitPath(path)
     return [
-      { label: `Close ${name}`, icon: <IconClose />, onSelect: () => onClose(path) },
+      { label: COPY.tabsClose(name), icon: <IconClose />, onSelect: () => onClose(path) },
       {
-        label: 'Close others',
+        label: COPY.tabsCloseOthers,
         disabled: tabs.length < 2,
         onSelect: () => {
           for (const t of tabs) if (t !== path) onClose(t)
         },
       },
       {
-        label: 'Close all',
+        label: COPY.tabsCloseAll,
         onSelect: () => {
           for (const t of [...tabs]) onClose(t)
         },
@@ -201,7 +202,7 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
         {runControl ? <RunControl run={runControl} placement="tabs" /> : null}
         {moreItems?.length ? (
           <IconButton
-            label="More"
+            label={COPY.tabsMore}
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
               setActionsAnchor({ x: r.right, y: r.bottom + 4, fromRight: true })
@@ -211,7 +212,7 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
           </IconButton>
         ) : null}
         {actionsAnchor && moreItems ? (
-          <Menu anchor={actionsAnchor} items={moreItems} label="More actions" onClose={() => setActionsAnchor(null)} />
+          <Menu anchor={actionsAnchor} items={moreItems} label={COPY.a11yMoreActions} onClose={() => setActionsAnchor(null)} />
         ) : null}
       </div>
     ) : null
@@ -228,7 +229,7 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
           the fades mark the SCROLLER's edges, not the whole bar's — the
           trailing group must never sit under a fade. */}
       <div className="relative min-w-0 flex-1">
-        <div ref={stripRef} role="tablist" aria-label="Open files" className={STRIP + ' select-none'}>
+        <div ref={stripRef} role="tablist" aria-label={COPY.a11yOpenFiles} className={STRIP + ' select-none'}>
           {tabs.map((path) => {
             const { name } = splitPath(path)
             const active = path === activePath
@@ -252,13 +253,13 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
         {overflow.start ? (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 w-5 bg-linear-to-r from-surface-2 to-transparent"
+            className="pointer-events-none absolute inset-y-0 start-0 w-5 bg-linear-to-r rtl:bg-linear-to-l from-surface-2 to-transparent"
           />
         ) : null}
         {overflow.end ? (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 right-0 w-5 bg-linear-to-l from-surface-2 to-transparent"
+            className="pointer-events-none absolute inset-y-0 end-0 w-5 bg-linear-to-l rtl:bg-linear-to-r from-surface-2 to-transparent"
           />
         ) : null}
       </div>
@@ -350,7 +351,7 @@ function Tab({
           Only desk plays VS Code's hide-until-hover etiquette (REVEAL). */}
       <button
         type="button"
-        aria-label={dirty ? `Close ${name} (unsaved)` : `Close ${name}`}
+        aria-label={dirty ? COPY.tabsCloseUnsaved(name) : COPY.tabsClose(name)}
         className={TAB_CLOSE + (active || dirty ? '' : TAB_CLOSE_REVEAL)}
         onClick={(e) => {
           e.stopPropagation()

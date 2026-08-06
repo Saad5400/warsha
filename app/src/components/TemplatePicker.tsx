@@ -34,11 +34,23 @@ export interface TemplatePickerProps {
 }
 
 const LEVEL_ORDER: TemplateLevel[] = ['beginner', 'intermediate', 'advanced']
-const LEVEL_LABEL: Record<TemplateLevel, string> = {
-  beginner: COPY.levelBeginner,
-  intermediate: COPY.levelIntermediate,
-  advanced: COPY.levelAdvanced,
-}
+/**
+ * A FUNCTION, not a constant — and the difference is a bug we shipped.
+ *
+ * As a module-scope object this read `COPY` at IMPORT time. ES modules all
+ * evaluate before the importing module's body runs, so this ran before
+ * main.tsx called `initLocale()` — while the active locale was still the `'en'`
+ * the store is initialised to. The result was three headings frozen in English
+ * inside an otherwise fully Arabic picker, on every load, including /ar/.
+ *
+ * Every `COPY` read has to happen during render. See the note in copy.ts.
+ */
+const levelLabel = (level: TemplateLevel): string =>
+  ({
+    beginner: COPY.levelBeginner,
+    intermediate: COPY.levelIntermediate,
+    advanced: COPY.levelAdvanced,
+  })[level]
 
 export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProps) {
   const [langId, setLangId] = useState<string | null>(null)
@@ -69,7 +81,7 @@ export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProp
           </Button>
         )}
         <Button variant="ghost" large onClick={onCancel}>
-          Cancel
+          {COPY.dlgCancel}
         </Button>
       </div>
     </Modal>
@@ -147,7 +159,7 @@ function LangMark({ language, dimmed }: { language: Language; dimmed?: boolean }
 }
 
 const READY_TILE =
-  'group flex items-center gap-2.5 min-h-touch p-2.5 text-left border border-border-control rounded-lg ' +
+  'group flex items-center gap-2.5 min-h-touch p-2.5 text-start border border-border-control rounded-lg ' +
   'bg-surface-3 cursor-pointer touch-manipulation transition-[background-color,border-color,transform] ' +
   'duration-(--dur-fast) ease-standard hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
 
@@ -163,14 +175,14 @@ function ReadyTile({ language, onChoose }: { language: Language; onChoose(): voi
       </span>
       <IconChevronRight
         size={16}
-        className="flex-none text-text-3 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
+        className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
       />
     </button>
   )
 }
 
 const SOON_TILE =
-  'flex items-center gap-2.5 min-h-touch p-2.5 text-left border border-border-subtle rounded-lg ' +
+  'flex items-center gap-2.5 min-h-touch p-2.5 text-start border border-border-subtle rounded-lg ' +
   'bg-surface-2 opacity-60 cursor-not-allowed select-none'
 
 function SoonTile({ language }: { language: Language }) {
@@ -213,8 +225,8 @@ function TemplateStep({
   return (
     <div>
       <div className="mb-3 flex items-center gap-1.5">
-        <Button variant="ghost" onClick={onBack} className="gap-1 -ml-1">
-          <IconChevronRight size={16} className="rotate-180" />
+        <Button variant="ghost" onClick={onBack} className="gap-1 -ms-1">
+          <IconChevronRight size={16} className="rotate-180 rtl:-scale-x-100" />
           {COPY.pickerBack}
         </Button>
       </div>
@@ -226,7 +238,7 @@ function TemplateStep({
         {byLevel.map((group) => (
           <section key={group.level}>
             <h3 className="mb-1.5 text-micro font-semibold uppercase tracking-[0.06em] text-text-3">
-              {LEVEL_LABEL[group.level]}
+              {levelLabel(group.level)}
             </h3>
             <div className="grid gap-2 min-[560px]:grid-cols-2">
               {group.items.map((t) => (
@@ -241,7 +253,7 @@ function TemplateStep({
 }
 
 const TEMPLATE_CARD =
-  'template-card group grid grid-rows-[auto_1fr_auto] gap-1.5 min-h-[84px] p-3 text-left border border-border-control ' +
+  'template-card group grid grid-rows-[auto_1fr_auto] gap-1.5 min-h-[84px] p-3 text-start border border-border-control ' +
   'rounded-lg bg-surface-3 cursor-pointer touch-manipulation transition-[background-color,border-color,transform] ' +
   'duration-(--dur-fast) ease-standard hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
 
@@ -252,13 +264,13 @@ function TemplateCard({ template, onPick }: { template: Template; onPick(): void
         <span aria-hidden="true" className={badgeClass('sm', template.lang === 'java' ? 'java' : 'py')}>
           <LangIcon lang={template.lang} size={18} />
         </span>
-        <span className="min-w-0 flex-1 text-btn leading-[1.25] font-semibold text-text-1">{template.name}</span>
+        <span className="min-w-0 flex-1 text-btn leading-[1.25] font-semibold text-text-1">{COPY.templates[template.id]?.name ?? template.name}</span>
         <IconArrowRight
           size={16}
-          className="flex-none text-text-3 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
+          className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
         />
       </span>
-      <span className="text-meta leading-normal text-text-2">{template.blurb}</span>
+      <span className="text-meta leading-normal text-text-2">{COPY.templates[template.id]?.blurb ?? template.blurb}</span>
       <span className="text-micro leading-[1.4] tabular-nums text-text-3">
         {COPY.templateManifest(template.snapshot.files.length, template.entry)}
       </span>

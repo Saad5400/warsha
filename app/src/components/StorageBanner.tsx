@@ -21,8 +21,8 @@ export interface StorageBannerProps {
 /* `storage-banner` carries no styling — tools/qa reads it with [data-notice]. */
 const BANNER =
   'storage-banner flex shrink-0 items-start gap-2 px-panel py-2 border-b border-b-border-subtle ' +
-  'border-l-[3px] border-l-warn bg-surface-2 ' +
-  'data-[tone=danger]:border-l-danger data-[tone=danger]:bg-danger-soft'
+  'border-s-[3px] border-s-warn bg-surface-2 ' +
+  'data-[tone=danger]:border-s-danger data-[tone=danger]:bg-danger-soft'
 
 const BANNER_BTN =
   'inline-flex shrink-0 items-center justify-center min-h-touch rounded-sm font-ui text-meta text-text-2 ' +
@@ -143,7 +143,7 @@ export function StorageBanner({
         <button
           type="button"
           onClick={() => setDismissed((cur) => [...cur, notice.id])}
-          aria-label="Dismiss"
+          aria-label={COPY.a11yDismiss}
           className={BANNER_BTN + ' w-touch'}
         >
           ✕

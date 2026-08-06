@@ -19,8 +19,13 @@ export interface Capability {
   ok: boolean
   /** 'fatal' — the IDE cannot work. 'warn' — degraded, still usable. */
   severity: 'fatal' | 'warn'
-  /** Plain-English, student-facing. No jargon, no error codes. */
-  message: string
+  /**
+   * No message here on purpose. A check is a boolean and runs at boot, which
+   * may be before a locale is resolved; the student-facing sentence for each
+   * `id` lives in the i18n bundles and is looked up at render time by
+   * `capabilityMessage()` in CapabilityScreens.tsx. Adding a check means adding
+   * a case there and a string in en.ts / ar.ts.
+   */
 }
 
 export interface CapabilityReport {
@@ -65,28 +70,21 @@ export function checkCapabilities(): CapabilityReport {
       id: 'wasm',
       ok: hasWasm(),
       severity: 'fatal',
-      message:
-        'This browser cannot run WebAssembly, which Warsha needs to run Java and Python. Warsha will not work here.',
     },
     {
       id: 'workers',
       ok: hasWorkers(),
       severity: 'fatal',
-      message: 'This browser cannot run background tasks, which Warsha needs to run your code.',
     },
     {
       id: 'opfs',
       ok: hasOpfs(),
       severity: 'warn',
-      message:
-        'This browser cannot save files on your device, so your work will be lost when you close the tab. Export a .zip before you leave.',
     },
     {
       id: 'isolation',
       ok: hasIsolation(),
       severity: 'warn',
-      message:
-        'Java/Python interactive input may not work in this browser yet. Try reloading the page once; if a program still will not accept typed input, use Chrome on Android or on a computer.',
     },
   ]
 
@@ -101,9 +99,3 @@ export function checkCapabilities(): CapabilityReport {
   }
 }
 
-/** What still works when a hard requirement is missing — shown on the fatal screen. */
-export const stillWorks = [
-  'Reading and writing code in the editor',
-  'Creating, renaming and deleting files',
-  'Exporting your project as a .zip',
-]

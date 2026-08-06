@@ -5,12 +5,21 @@
 // Sources (edit these, never the PNGs this script writes):
 //   docs/design/mark.svg                       clean-silhouette tier, #tile + #glyph
 //   docs/design/brand-v3/mark-glitch-dark.png  the founder's actual mark (glitch texture)
-//   docs/design/og-image.html                  the 1200x630 social card
-//   docs/design/fonts/*.woff2                  subset faces, inlined into the card at render
+//   docs/design/og-image*.html                 the 1200x630 social cards, one per locale
+//   docs/design/fonts/*.woff2                  subset faces, inlined into the cards at render
 //
 // Artifacts (all written to app/public/, all committed):
 //   favicon.svg  favicon.ico  apple-touch-icon.png
-//   icon-192.png  icon-512.png  icon-maskable-512.png  og-image.png
+//   icon-192.png  icon-512.png  icon-maskable-512.png
+//   og-image.png  og-image-<locale>.png
+//
+// SOCIAL CARDS ARE DISCOVERED, NOT LISTED. Every docs/design/og-image*.html
+// renders to app/public/<same basename>.png, so adding a locale is adding one
+// file — no edit here. og-image.html is English; og-image-ar.html is the RTL
+// Arabic card. They are separate documents rather than one templated source on
+// purpose: an RTL card is not a mirrored LTR card (the shells mirror, the code
+// and console panes deliberately do NOT — see the note in og-image-ar.html),
+// and a template able to express that is harder to read than two files.
 //
 // BRAND V3 TWO-TIER SPLIT. The founder's real mark is a glitched raster —
 // scan-line noise over two bracket jaws and a centred pill — and that texture
@@ -90,7 +99,20 @@ function buildIco(entries) {
 }
 
 /** Inline every subset face as base64. A headless render has no network, and a
- *  font that silently fails to load changes every metric in the layout. */
+ *  font that silently fails to load changes every metric in the layout — which
+ *  is also why the Arabic card may not lean on system-ui the way the app does:
+ *  the app resolves a real Arabic face on every target device (see the note in
+ *  i18n/locale.ts), but a build box is not a target device, and "whatever
+ *  Chromium happened to find" is not a reproducible artifact.
+ *
+ *  `arabic-*` is Readex Pro (OFL), and it is deliberately NOT one of the faces
+ *  i18n/locale.ts names. That is not a contradiction of the app's no-webfont
+ *  rule — it is the reason the rule can hold. The app ships no font because
+ *  every byte lands on a student's data plan (DESIGN-SPEC §3.1); this card is
+ *  a PNG rendered once at build time, so the typeface costs a reader nothing
+ *  and may be chosen for how it reads rather than for what a device happens to
+ *  have. Readex Pro was drawn for Arabic/Latin pairing, which is the whole job
+ *  on a card that says «اكتب كود Java و Python» in one line. */
 function fontCss() {
   const dir = path.join(design, 'fonts');
 
@@ -167,26 +189,41 @@ written.push(`favicon.ico (${icoSizes.join(', ')})`);
 
 await iconPage.close();
 
-// ---- Open Graph card ------------------------------------------------------
+// ---- Open Graph cards, one per locale ---------------------------------------
 
 const OG = { width: 1200, height: 630 };
-const source = path.join(design, 'og-image.html');
-const staged = path.join(design, '.render-og-image.html');
+const css = fontCss();
 
-fs.writeFileSync(staged, fs.readFileSync(source, 'utf8').replace('__FONT_CSS__', fontCss()));
+// Sorted so the English card renders first and the log reads in a stable order
+// whatever the filesystem hands back.
+const cards = fs
+  .readdirSync(design)
+  .filter((f) => /^og-image.*\.html$/.test(f))
+  .sort();
+
+if (cards.length === 0) {
+  throw new Error('docs/design has no og-image*.html — the social cards are discovered from that glob, so an empty match means the source was moved or renamed, not that there are no cards.');
+}
 
 const ogPage = await browser.newPage({ viewport: OG, deviceScaleFactor: 2 });
 
-try {
-  await ogPage.goto(`file://${staged}`, { waitUntil: 'load' });
-  await ogPage.evaluate(() => document.fonts.ready);
+for (const card of cards) {
+  const staged = path.join(design, `.render-${card}`);
+  const png = card.replace(/\.html$/, '.png');
 
-  // Layout at 1200x630, rasterise at 2x, then `scale: 'css'` downsamples back —
-  // exactly the declared dimensions, and noticeably crisper than a 1x capture.
-  await ogPage.screenshot({ path: path.join(out, 'og-image.png'), type: 'png', scale: 'css' });
-  written.push(`og-image.png (${OG.width}x${OG.height})`);
-} finally {
-  fs.rmSync(staged, { force: true });
+  fs.writeFileSync(staged, fs.readFileSync(path.join(design, card), 'utf8').replace('__FONT_CSS__', css));
+
+  try {
+    await ogPage.goto(`file://${staged}`, { waitUntil: 'load' });
+    await ogPage.evaluate(() => document.fonts.ready);
+
+    // Layout at 1200x630, rasterise at 2x, then `scale: 'css'` downsamples back —
+    // exactly the declared dimensions, and noticeably crisper than a 1x capture.
+    await ogPage.screenshot({ path: path.join(out, png), type: 'png', scale: 'css' });
+    written.push(`${png} (${OG.width}x${OG.height})`);
+  } finally {
+    fs.rmSync(staged, { force: true });
+  }
 }
 
 await browser.close();

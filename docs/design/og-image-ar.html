@@ -8,101 +8,66 @@
 <meta charset="utf-8" />
 
 <!--
-  Source for app/public/og-image.png (1200x630).
+  Source for app/public/og-image-ar.png (1200x630) — the ARABIC card.
   Regenerate with:  node tools/brand/build-brand-assets.mjs
+  (which renders every docs/design/og-image*.html; adding a locale is adding a
+  file, not editing that script.)
 
-  Edit this file, never the PNG. __FONT_CSS__ is replaced at render time with
-  base64 @font-face rules built from docs/design/fonts/*.woff2 — a headless
-  render has no network, and a font that silently fails to load changes every
-  metric in this layout.
+  READ og-image.html FIRST. This file is that file, plus one appended RTL block
+  at the end of <style> and the interface strings swapped for Arabic. Every
+  other rule, every token value, every pixel and the whole figure are shared and
+  deliberately byte-identical, so a change to the shell is made once, there, and
+  copied here — never diverged. If the two files stop looking like each other in
+  a diff, that is the bug.
 
-  The figure is made out of Warsha's own surfaces, using the real token values
-  and the real starter code: both screens are content/templates/java-oop, and
-  the console shows the transcript that program actually produces (verified by
-  running it — `Sara` is a typed answer to its Scanner prompt, echoed in --info
-  italic exactly as buffer.echo renders it, and `Finished. (exit code 0)` is
-  COPY.runOk verbatim). Nothing here is invented, so nothing can drift from
-  being true.
+  ---- WHERE THE ARABIC COMES FROM ------------------------------------------
 
-  BRAND V3 / THEME V5: black/white glitch aesthetic, no amber anywhere. Every
-  value below is copied from docs/design/tokens.css (v5, the monochrome restore
-  on v4's structure) — this file's own "made out of Warsha's own surfaces" rule
-  means it tracks that file, not the other way round; re-copy them here if
-  tokens.css ever moves. The top-left mark is the brand-v3 clean-silhouette
-  glyph (docs/design/logo.svg, same geometry, single colour — see the note atop
-  docs/design/mark.svg for why this tier stays vector rather than using the
-  glitch PNGs).
+  Not from me. Every interface string below is `app/src/i18n/ar.ts` verbatim —
+  menu titles (menuFile/Edit/View/Run/Help), «المستكشف» (explorerTitle),
+  «الطرفية» (viewConsole), «انتهى. (exit code 0)» (runOk), «انتهى»
+  (pillFinished), «سطر 1، عمود 1» (cursorAt), «مسافات: 4» (statusBarIndent) —
+  so the card cannot drift from what the app actually says. The three chips and
+  the headline are the only written-here copy; they are in that bundle's voice
+  and follow its rule, and the pitch sentence they compress is aboutBody:
+  «ورشة للكود — ... تعمل بالكامل داخل متصفّحك. ملفاتك تبقى على هذا الجهاز.»
 
-  ---- WHAT THIS PASS CHANGED ------------------------------------------------
+  THE RULE, from i18n/locale.ts: the interface is translated, the domain is not.
+  So Java, Python, CPython, `exit code`, `main.py`, `app/Main.java` and every
+  filename stay English and untranslated, inline, exactly as the bundle writes
+  them. Western digits everywhere — never Arabic-Indic — because a line number
+  and an exit code are read next to code, and code has one numeral system.
 
-  1. The figure was two floating code panes, which is what the app looked like
-     before THEME-V4 / LAYOUT-VSCODE's parity waves. It is now the app on two
-     devices — the product's own claim ("it works on the phone you already
-     have") shown rather than asserted.
-  2. The large glitch-mark watermark behind the panes is gone (founder ruling,
-     2026-08-06). docs/design/brand-v3/mark-glitch-*.png are still the source
-     for the icon tier in build-brand-assets.mjs; nothing on this card uses
-     them any more.
+  ---- WHAT MIRRORS, AND WHAT DELIBERATELY DOES NOT -------------------------
 
-  ---- THE TWO SCREENS -------------------------------------------------------
+  The chrome mirrors: the activity rail moves to the right edge, the Explorer
+  sits inboard of it, the status bar's two groups swap ends, every 1px seam that
+  was drawn on an element's right edge moves to its left, and the active tab's
+  and selected row's accent rails flip with them.
 
-  Both are the shell as it stands after the parity waves, and both are laid out
-  at a REAL viewport width, then scaled to fit (see "why zoom" below):
+  The editor and the console do NOT. `direction: ltr` is pinned on both, because
+  i18n/locale.ts draws that line explicitly: code, program output and the editor
+  are not part of "the interface" in either locale. The gutter stays on the
+  left, the code reads the way the compiler wrote it, and the program's own
+  output — `=== Warsha starter ===`, `Layla, age 34` — is the program's, not
+  Warsha's, so it is not translated at all. The one Arabic line inside that
+  pane is the transcript's meta row, which IS interface (COPY.runOk).
 
-    .shell--pad   900 x 661 — a tablet in landscape. 900px is the ">= 900px"
-                  breakpoint exactly, so this is the wide layout: activity
-                  rail, the Explorer with its tree, tab strip, breadcrumbs,
-                  console, status bar. Coarse pointer, so it takes the TOUCH
-                  density (40px bars, 36px tree rows, 22px code rows, per-row
-                  ... actions and an always-visible tab close) rather than the
-                  desk retune in DENSITY.md, whose media is >=900px AND hover
-                  AND fine pointer.
-    .shell--phone 390 x 844 — a phone, running the OTHER starter
-                  (content/templates/python-starter) so the two screens carry
-                  the two languages the headline claims. Same one shell,
-                  narrower: the sidebar is a drawer (so the rail's Explorer
-                  slot reads inactive), the window title drops its " — Warsha"
-                  suffix below 480px, code wraps instead of scrolling, and the
-                  status bar sheds `Spaces: 4` and the font stepper. Every one
-                  of those is a real breakpoint, not a drawing decision. Its
-                  transcript is that program's real output too — `Circle: area
-                  = 12.57` and `Total area = 24.57` are what helpers/shapes.py
-                  computes, not numbers chosen to look plausible.
+  ---- UNVERIFIED, AND HOW TO VERIFY ----------------------------------------
 
-  Component provenance, common to both:
+  Every OTHER pixel on this card was checked against a screenshot of the running
+  app. This one could not be: the Arabic UI was still mid-refactor when the card
+  was drawn (copy.ts had no `count` export, so the app did not boot), which
+  means the mirroring above is drawn from the rules in i18n/locale.ts rather
+  than from the thing itself. Once the app boots in Arabic, verify with:
 
-    - title bar 40px: the menu bar collapses to a single hamburger at these
-      widths, then the centred `file — project — Warsha` window title, then the
-      two layout toggles (TopBar.tsx / MenuBar.tsx)
-    - activity rail 48px, VS Code's own codicons (ActivityBar.tsx); the active
-      slot takes --ab-fg (#DFDFE2), never pure white
-    - the active tab's 1px rule is on TOP and is white (--tab-accent-top)
-    - language marks are BARE 16px glyphs in their Seti brand ink, not the old
-      soft-tinted rounded plates: FileBadge renders LangIcons' FileIcon
-      (java #e76f00, py #519aba). The --warn-soft / --info-soft badge fills the
-      previous revision of this file used are gone with them.
-    - console header is VS Code's panel title: an 11px caps CONSOLE tab with a
-      1px --panel-tab-active underline, the entry label and the toolbar glyphs
-      trailing (RunBar.tsx)
-    - status bar 24px: StatusPill's `bar` variant leading (`✓ Finished` takes
-      NO fill — only preparing/running/waiting get the green remote block, and
-      only `failed` shows an exit code — see StatusPill.tsx)
-    - Run has ONE home, the tab strip's trailing corner, play in --success
-      (RunControl.tsx)
+      npm --prefix app run dev
+      # then load http://localhost:8083/?lang=ar at 900x661 and 390x844,
+      # coarse pointer, and diff against this card element by element.
 
-  ---- WHY ZOOM --------------------------------------------------------------
-
-  Each .shell is written at its real viewport size and scaled by `zoom` — the
-  app's own mechanism, not a fudge: View > Zoom writes --ui-scale and index.css
-  applies it as `#root { zoom: ... }`. So every length inside a .shell is the
-  literal token value (40px bars, 36px tree rows, 24px status bar, 14px code,
-  13px UI, 12px status) rather than a hand-tuned approximation of one, and the
-  only number tuned for this canvas is the zoom itself. Change the zoom and the
-  frame it sits in, never the numbers inside.
-
-  The device shells are deliberately plain: a uniform bezel, a rounded screen,
-  no notch, camera or button. A share card should read "this runs on a tablet
-  and a phone", not imitate one manufacturer's hardware.
+  Two specifics to check first, because they are the two most likely to be
+  wrong: whether the window title's app suffix is «ورشة» or stays `Warsha`
+  (TopBar.tsx still holds that one as a literal), and whether the breadcrumbs
+  keep the LTR path treatment used here.
   -->
 
 <style>
@@ -487,6 +452,92 @@
   .statusbar .right i { display: grid; place-items: center; width: 20px; height: 20px; }
 
   .sprite { position: absolute; width: 0; height: 0; }
+
+  /* ======================================================================
+     RTL — the only block that differs from og-image.html. Everything above
+     this line is shared with the English card and must stay identical.
+     ====================================================================== */
+
+  body {
+    direction: rtl;
+    /* Inter's subset is Latin-only, so Latin runs (Java, Python, CPython, every
+       filename) take Inter and Arabic falls through to 'arabic' — Readex Pro,
+       drawn for exactly this pairing. Order matters: 'arabic' first would hand
+       the Latin to whatever Latin coverage that face happens to carry, and the
+       card would stop matching the English one mid-word. See the note in
+       build-brand-assets.mjs for why a card may pick a face when the app may
+       not. */
+    font-family: 'inter', 'arabic', system-ui, sans-serif;
+  }
+
+  /* Arabic never takes tracking. letter-spacing inserts a gap between letters
+     that are supposed to join, so a negative or positive value does not tighten
+     Arabic — it breaks the cursive outright. The Latin runs on this card are
+     short labels where the loss of Inter's tracking is invisible. */
+  h1, .chip, .lockup span, .titlebar, .pane-hdr, .proj, .caps, .statusbar, .crumbs {
+    letter-spacing: normal;
+  }
+  /* Noto Sans Arabic sets taller than Inter and carries marks above and below;
+     1.12 clipped them. 40px rather than 45: the Arabic headline is a longer
+     string than the English one and has to hold its line break in a narrower
+     column. */
+  h1 { font-size: 40px; line-height: 1.4; }
+
+  /* The copy mirrors to the right and the devices to the left — but the PHONE
+     does not simply mirror with them.
+     The canvas leaves ~672px for the device cluster and the tablet alone is
+     592, so the two MUST overlap; the only real choice is which edge of the
+     tablet gets covered. In the English card that is its right edge, the
+     cheapest thing on screen to lose: code running off the end, the console's
+     toolbar, the status bar's trailing group. Mirroring the shell moves the
+     expensive things there — the tablet's left edge is now where every line of
+     code STARTS, and its gutter with it. So the phone crosses to the tablet's
+     other side and covers the activity rail and the Explorer instead: the same
+     "cover the cheapest edge" rule, which under RTL simply lands elsewhere.
+     The x-positions are not free-hand. The phone's left edge sits exactly on
+     the seam where the editor ends and the Explorer begins (frame 70 + bezel 16
+     + main 900-48-240 = 612 logical x 0.6222 = 381 -> 467), and it is scaled up
+     to 0.50 so its right edge clears the tablet's outer bezel. Anything in
+     between leaves a sliver of tree rows peeking past the phone, which reads as
+     a rendering fault rather than as depth. Move one, recompute the other.
+     This is why the two cards are two files and not one mirrored template. */
+  .copy  { left: auto; right: 64px; width: 400px; }
+  .pad   { left: auto; right: 538px; }
+  .phone { left: auto; right: 516px; top: 150px; }
+  .shell--phone { zoom: 0.50; }
+  .phone .screen { width: 195px; height: 422px; }
+  .wtitle { left: 90px; right: 60px; }
+
+  /* Every 1px seam drawn on an element's right edge is now on its left, and
+     the two accent rails (activity bar's active slot, the selected tree row)
+     flip with them. */
+  .rail,
+  .sidebar,
+  .tab { box-shadow: inset 1px 0 0 0 var(--border-subtle); }
+  .tab--on {
+    box-shadow: inset 0 1px 0 0 var(--tab-accent-top), inset 1px 0 0 0 var(--border-subtle);
+  }
+  .rail .on { box-shadow: inset -2px 0 0 0 var(--accent); }
+  .row--on  { box-shadow: inset -2px 0 0 0 var(--accent); }
+
+  /* margin-left:auto pushes to the wrong end once the writing mode flips. */
+  .toggles,
+  .tab-actions,
+  .console__tools,
+  .statusbar .right,
+  .pane-hdr .acts,
+  .proj .acts,
+  .row .dots { margin-left: 0; margin-inline-start: auto; }
+
+  /* THE EXCEPTION, and it is the one that matters: code, program output and
+     the editor are not "the interface" (i18n/locale.ts), so they stay LTR in
+     both locales — gutter on the left, code as the compiler wrote it. The
+     breadcrumbs join them: a path is read left to right in either language, so
+     the trail keeps its direction and only its alignment moves to the start
+     edge. */
+  .editor,
+  .out { direction: ltr; }
+  .crumbs { direction: ltr; justify-content: flex-end; }
 </style>
 
 <!-- Every glyph the two shells draw, defined once. The language marks are
@@ -536,7 +587,7 @@
     <div class="shell shell--pad">
       <div class="titlebar">
         <i class="btn"><svg width="20" height="20"><use href="#ico-menu"/></svg></i>
-        <div class="wtitle">Main.java — Java (OOP starter) — Warsha</div>
+        <div class="wtitle"><bdi>Main.java</bdi> — <bdi>Java (OOP starter)</bdi> — <bdi>ورشة</bdi></div>
         <div class="toggles">
           <i class="btn"><svg width="16" height="16"><use href="#ico-lay-sidebar"/></svg></i>
           <i class="btn"><svg width="16" height="16"><use href="#ico-lay-panel"/></svg></i>
@@ -553,11 +604,11 @@
 
         <div class="sidebar">
           <div class="pane-hdr">
-            <span class="t">Explorer</span>
+            <span class="t">المستكشف</span>
             <span class="acts"><i><svg width="20" height="20"><use href="#ico-more"/></svg></i></span>
           </div>
           <div class="proj">
-            Java (OOP starter)
+            <bdi>Java (OOP starter)</bdi>
             <span class="acts">
               <i><svg width="20" height="20"><use href="#ico-plus"/></svg></i>
               <i><svg width="20" height="20"><use href="#ico-folder-plus"/></svg></i>
@@ -634,9 +685,9 @@
           <div class="console">
             <div class="grab"><span></span></div>
             <div class="console__hdr">
-              <div class="caps"><span>Console</span></div>
+              <div class="caps"><span>الطرفية</span></div>
               <div class="console__tools">
-                <span class="entry">app/Main.java</span>
+                <span class="entry"><bdi>app/Main.java</bdi></span>
                 <i><svg width="20" height="20"><use href="#ico-copy"/></svg></i>
                 <i><svg width="20" height="20"><use href="#ico-clear"/></svg></i>
                 <i><svg width="20" height="20"><use href="#ico-chev-u"/></svg></i>
@@ -649,18 +700,18 @@
               <div>Omar, age 20, studies Computer Science</div>
               <div>Your name: <span class="echo">Sara</span></div>
               <div>Hello, Sara! Now open models/Person.java.</div>
-              <div class="meta">Finished. (exit code 0)</div>
+              <div class="meta">انتهى. (exit code 0)</div>
             </div>
           </div>
         </div>
       </div>
 
       <div class="statusbar">
-        <div class="item remote">✓ Finished</div>
-        <div class="item">app/Main.java</div>
+        <div class="item remote">✓ انتهى</div>
+        <div class="item"><bdi>app/Main.java</bdi></div>
         <div class="right">
-          <div class="item">Ln 1, Col 1</div>
-          <div class="item">Spaces: 4</div>
+          <div class="item">سطر 1، عمود 1</div>
+          <div class="item">مسافات: 4</div>
           <div class="item">Java 17</div>
           <div class="item">
             <i><svg width="16" height="16"><use href="#ico-a-minus"/></svg></i>
@@ -681,7 +732,7 @@
         <i class="btn"><svg width="20" height="20"><use href="#ico-menu"/></svg></i>
         <!-- Below 480px the title drops its app suffix: the student's file
              matters, the brand does not (TopBar.tsx). -->
-        <div class="wtitle">main.py — Python (OOP starter)</div>
+        <div class="wtitle"><bdi>main.py</bdi> — <bdi>Python (OOP starter)</bdi></div>
         <div class="toggles">
           <i class="btn"><svg width="16" height="16"><use href="#ico-lay-sidebar"/></svg></i>
           <i class="btn"><svg width="16" height="16"><use href="#ico-lay-panel"/></svg></i>
@@ -736,9 +787,9 @@
           <div class="console">
             <div class="grab"><span></span></div>
             <div class="console__hdr">
-              <div class="caps"><span>Console</span></div>
+              <div class="caps"><span>الطرفية</span></div>
               <div class="console__tools">
-                <span class="entry">main.py</span>
+                <span class="entry"><bdi>main.py</bdi></span>
                 <i><svg width="20" height="20"><use href="#ico-copy"/></svg></i>
                 <i><svg width="20" height="20"><use href="#ico-clear"/></svg></i>
                 <i><svg width="20" height="20"><use href="#ico-chev-u"/></svg></i>
@@ -752,7 +803,7 @@
               <div>Total area = 24.57</div>
               <div>Your name: <span class="echo">Sara</span></div>
               <div>Hello, Sara! Now open helpers/shapes.py and add a Square.</div>
-              <div class="meta">Finished. (exit code 0)</div>
+              <div class="meta">انتهى. (exit code 0)</div>
             </div>
           </div>
         </div>
@@ -760,10 +811,10 @@
 
       <!-- 390px sheds `Spaces: 4` and the font stepper; the rest stays. -->
       <div class="statusbar">
-        <div class="item remote">✓ Finished</div>
-        <div class="item">main.py</div>
+        <div class="item remote">✓ انتهى</div>
+        <div class="item"><bdi>main.py</bdi></div>
         <div class="right">
-          <div class="item">Ln 1, Col 1</div>
+          <div class="item">سطر 1، عمود 1</div>
           <div class="item">Python 3.14</div>
         </div>
       </div>
@@ -780,13 +831,13 @@
             stroke="#FAFAFA" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"/>
       <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#FAFAFA"/>
     </svg>
-    <span>Warsha</span>
+    <span>ورشة</span>
   </div>
   <div class="rule"></div>
-  <h1>Code Java &amp; Python<br />in your browser.</h1>
+  <h1>اكتب كود Java و Python<br />داخل متصفّحك.</h1>
   <div class="chips">
-    <div class="chip">No install, no account</div>
-    <div class="chip">Real CPython &amp; a Java compiler</div>
-    <div class="chip">Your files stay on the device</div>
+    <div class="chip">بلا تثبيت، وبلا حساب</div>
+    <div class="chip">CPython حقيقي ومترجم Java</div>
+    <div class="chip">ملفاتك تبقى على هذا الجهاز</div>
   </div>
 </div>

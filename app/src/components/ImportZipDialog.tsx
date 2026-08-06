@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react'
-import { COPY, count } from '../copy'
+import { COPY } from '../copy'
 import type { FsSnapshot } from '../fs/types'
 import { importZip, ZipImportError, type ZipImportResult } from '../zip'
 import { Button } from './ui/Button'
@@ -97,7 +97,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
               matters on a phone, so it is never the small print. */}
           <p className="text-meta text-text-3">{COPY.importDropHint}</p>
           <Button variant="ghost" onClick={() => inputRef.current?.click()} disabled={reading}>
-            {reading ? 'Reading…' : 'Choose a .zip'}
+            {reading ? COPY.importReading : COPY.importChooseZip}
           </Button>
           <input
             ref={inputRef}
@@ -118,8 +118,7 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
               ✓
             </span>
             <span>
-              <span className="font-code">{picked.name}</span> — {count(picked.result.snapshot.files.length, 'file')}{' '}
-              ready to import.
+              <span className="font-code">{picked.name}</span> — {COPY.importPicked(picked.result.snapshot.files.length)}
               {/* Named, not silent: a project that arrives missing the one file
                   the exercise needed is worse than an import that did not
                   happen, because nothing says so. */}
@@ -141,17 +140,17 @@ export function ImportZipDialog({ currentFileCount, onCancel, onImport }: Import
         ) : null}
 
         {replaces ? (
-          <div className="mt-4 note border-l-warn">
+          <div className="mt-4 note border-s-warn">
             <p className="note__text">{COPY.importReplaces(currentFileCount)}</p>
           </div>
         ) : null}
 
         <div className="dlg-actions">
           <Button variant="ghost" large onClick={onCancel}>
-            Cancel
+            {COPY.dlgCancel}
           </Button>
           <Button variant={replaces ? 'danger' : 'primary'} large type="submit" disabled={!picked}>
-            {replaces ? 'Replace files' : 'Import'}
+            {replaces ? COPY.importReplaceFiles : COPY.importAction}
           </Button>
         </div>
       </form>

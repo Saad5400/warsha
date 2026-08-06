@@ -12,13 +12,13 @@ import { COPY } from '../copy'
  * Height rides --bar-console: 44px on touch, VS Code's 35px under DENSITY.
  * No bottom hairline at any density: VS Code draws no rule under a panel
  * title — the panel's own 1px top seam is its one boundary.
- * `hand-left` mirrors the row so the toolbar lands on a left-hander's thumb
+ * `run-mirrored` mirrors the row so the toolbar lands on a left-hander's thumb
  * side (spec §5.3). At ≤460px only decoration goes: the inter-control gap
  * tightens, which is what keeps the collapse control on screen at 360px. */
 /* `console-header` carries no styling — tools/qa reads it. */
 const HEADER =
   'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
-  'hand-left:flex-row-reverse ' +
+  'run-mirrored:flex-row-reverse ' +
   'pl-[max(var(--sp-2),env(safe-area-inset-left))] pr-[max(var(--sp-2),env(safe-area-inset-right))]'
 
 /* VS Code's toolbar-icon hover — --toolbar-hover-bg, the ONE token shared with
@@ -140,9 +140,9 @@ export function RunBar(props: RunBarProps) {
         <select
           value={entry ?? ''}
           onChange={(e) => props.onEntryChange(e.target.value)}
-          aria-label="File to run"
-          title="Choose which file Run starts"
-          className="field min-w-0 appearance-none truncate pr-7 pl-2 bg-transparent border-transparent font-ui text-[13px] text-text-2"
+          aria-label={COPY.a11yFileToRun}
+          title={COPY.a11yFileToRunHint}
+          className="field min-w-0 appearance-none truncate pe-7 ps-2 bg-transparent border-transparent font-ui text-[13px] text-text-2"
         >
           {candidates.map((c) => (
             <option key={c} value={c}>
@@ -152,7 +152,7 @@ export function RunBar(props: RunBarProps) {
         </select>
         <IconChevronDown
           size={16}
-          className="pointer-events-none absolute right-2 text-text-3"
+          className="pointer-events-none absolute end-2 text-text-3"
         />
       </div>
     ) : entry ? (
@@ -175,7 +175,7 @@ export function RunBar(props: RunBarProps) {
       {previewActive ? (
         consoleOpen && view ? <ViewToggle view={view} onView={props.onView} /> : null
       ) : (
-        <div role="tablist" aria-label="Output view" className="flex min-w-0 shrink items-stretch self-stretch">
+        <div role="tablist" aria-label={COPY.a11yOutputView} className="flex min-w-0 shrink items-stretch self-stretch">
           <button
             type="button"
             role="tab"
@@ -199,7 +199,7 @@ export function RunBar(props: RunBarProps) {
         <StatusPill status={status} exitCode={exitCode} />
       </span>
 
-      <div className="ml-auto flex min-w-0 items-center gap-2 max-[460px]:gap-1">
+      <div className="ms-auto flex min-w-0 items-center gap-2 max-[460px]:gap-1">
         {/* The entry picker — VS Code's panel controls corner. */}
         {entryPicker}
         {/* Transcript actions only while there is a transcript on screen. */}
@@ -233,7 +233,7 @@ export function RunBar(props: RunBarProps) {
             // contract names both, and the collapse control below owns the
             // frozen "Hide output"/"Show output" pair; this button must never
             // answer to either of those.
-            label={props.maximized ? 'Restore output' : 'Maximize output'}
+            label={props.maximized ? COPY.outputRestore : COPY.outputMaximize}
             onClick={props.onToggleMaximize}
             className={TOOLBAR_HOVER + ' max-[379px]:hidden'}
           >
@@ -242,7 +242,7 @@ export function RunBar(props: RunBarProps) {
         ) : null}
 
         <IconButton
-          label={consoleOpen ? 'Hide output' : 'Show output'}
+          label={consoleOpen ? COPY.outputHide : COPY.outputShow}
           aria-expanded={consoleOpen}
           onClick={props.onToggleConsole}
           className={TOOLBAR_HOVER}
@@ -279,7 +279,7 @@ function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputVie
     )
   }
   return (
-    <div role="tablist" aria-label="Output view" className="flex min-w-0 shrink items-stretch self-stretch gap-1">
+    <div role="tablist" aria-label={COPY.a11yOutputView} className="flex min-w-0 shrink items-stretch self-stretch gap-1">
       {segment('preview', COPY.viewPreview)}
       {segment('console', COPY.viewConsole)}
     </div>

@@ -114,11 +114,11 @@ export function Editor({
               where the software keyboard goes (spec §7.5). */}
           <div className={EMPTY_PANE}>
             <IconFileLines size={32} className="text-[32px] leading-none text-text-3" />
-            <p className="empty__title max-w-[32ch] text-btn leading-[1.3] font-semibold text-text-2">No file open</p>
+            <p className="empty__title max-w-[32ch] text-btn leading-[1.3] font-semibold text-text-2">{COPY.editorNoFile}</p>
             <p className="max-w-[32ch] text-row leading-[1.55] text-text-3">{COPY.editorEmpty}</p>
             {onBrowseFiles ? (
               <Button variant="ghost" onClick={onBrowseFiles}>
-                Browse files
+                {COPY.editorBrowseFiles}
               </Button>
             ) : null}
           </div>

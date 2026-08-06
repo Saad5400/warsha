@@ -36,12 +36,25 @@ if (typeof window === 'undefined') {
     const SHELL = [
         './',
         './index.html',
+        // The per-locale entry points (app/ARCHITECTURE.md §7). Precached so a
+        // student who installed from an /ar/ link still opens offline on the
+        // document they bookmarked. They do not exist under `vite dev`, where
+        // only the build emits them — cache.add's per-URL .catch below covers
+        // that without failing the whole install.
+        './ar/',
+        './en/',
         './manifest.webmanifest',
         './favicon.svg',
         './favicon.ico',
         './apple-touch-icon.png',
         './icon-192.png',
         './icon-512.png',
+        // Both UI font subsets, not just the one this visit needs: the shell
+        // has to be complete offline in either language, and a student who
+        // switches to Arabic on a plane would otherwise fall back to a system
+        // face mid-session.
+        './fonts/readex-pro-latin-wght-normal.woff2',
+        './fonts/readex-pro-arabic-wght-normal.woff2',
         ...PRECACHE,
     ];
 
@@ -175,15 +188,29 @@ if (typeof window === 'undefined') {
         // network at all.
         if (r.mode === "navigate") {
             event.respondWith((async () => {
+                // Keyed by the path actually navigated to, NOT by a fixed
+                // "./index.html". While `/` was the only document that
+                // distinction did not exist; with the per-locale entry points
+                // (/ar/, /en/ — app/ARCHITECTURE.md §7) it does, and caching
+                // every navigation under the one key would hand the Arabic
+                // document to a later offline navigation to `/`.
+                const path = new URL(request.url).pathname;
                 try {
                     const net = await fetch(request);
                     if (net && net.status === 200) {
                         const cache = await caches.open(SHELL_CACHE);
-                        cache.put("./index.html", net.clone()).catch(() => {});
+                        cache.put(path, net.clone()).catch(() => {});
                     }
                     return isolate(net);
                 } catch (err) {
-                    const cached = (await caches.match("./index.html")) || (await caches.match("./"));
+                    // Own path first, then the root shell. The fallbacks still
+                    // boot a working app either way — locale.ts reads the live
+                    // location, not the served document — so the worst case of
+                    // landing on the root copy is a <head> nobody reads offline.
+                    const cached =
+                        (await caches.match(path)) ||
+                        (await caches.match("./index.html")) ||
+                        (await caches.match("./"));
                     if (cached) return isolate(cached);
                     throw err;
                 }

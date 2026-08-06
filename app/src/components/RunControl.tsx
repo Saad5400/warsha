@@ -81,14 +81,22 @@ export function RunControl({
       // contract-level test selector (ARCHITECTURE §4), and during `preparing`
       // the visible label reads "Preparing…" while the control's action is still
       // Stop — so the nuance goes in the tooltip, where nothing depends on it.
-      aria-label={placement === 'console' ? (busy ? 'Stop' : 'Run') : busy ? `Stop ${what}` : `Run ${what}`}
+      aria-label={
+        placement === 'console'
+          ? busy
+            ? COPY.stopAction
+            : COPY.runAction
+          : busy
+            ? COPY.stopWhat(what)
+            : COPY.runWhat(what)
+      }
       title={
         preparing
-          ? `Stop getting the language ready (${shortcut})`
+          ? COPY.runTipStopPreparing(shortcut)
           : busy
-            ? `Stop the program (${shortcut})`
+            ? COPY.runTipStop(shortcut)
             : canRun
-              ? `Run ${what} (${shortcut})`
+              ? COPY.runTipRun(what, shortcut)
               : COPY.noEntry
       }
       // Founder ruling (P1): Run/Stop's height drops from h-11 (44px) to h-10
@@ -122,7 +130,7 @@ export function RunControl({
       ) : (
         <IconPlay />
       )}
-      {iconOnly ? null : preparing ? 'Preparing…' : busy ? 'Stop' : 'Run'}
+      {iconOnly ? null : preparing ? COPY.runPreparing : busy ? COPY.stopAction : COPY.runAction}
     </Button>
   )
 }

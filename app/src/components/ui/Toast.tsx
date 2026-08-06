@@ -2,6 +2,7 @@ import { cva, cx } from 'class-variance-authority'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useKeyboardOpen, useMedia } from '../../hooks/useMedia'
 import { IconButton } from './Button'
+import { COPY } from '../../copy'
 import { IconClose } from './Icons'
 
 export type ToastKind = 'info' | 'success' | 'error'
@@ -139,7 +140,7 @@ const toast = cva(
     // `data-kind` on the row (ARCHITECTURE §4).
     'toast',
     'pointer-events-auto flex min-h-touch w-full max-w-[min(32rem,90vw)] items-center gap-2',
-    'rounded-md border py-2 pr-1 pl-4 text-meta leading-normal shadow-raised',
+    'rounded-md border py-2 pe-1 ps-4 text-meta leading-normal shadow-raised',
     'animate-toast-in data-[leaving=true]:pointer-events-none data-[leaving=true]:animate-toast-out',
     // A toast under a finger follows it with nothing in the way — in particular
     // without the enter animation still overriding its inline transform.
@@ -235,7 +236,7 @@ function Toast({
         {GLYPH[item.kind]}
       </span>
       <p className="min-w-0 flex-1">{item.message}</p>
-      <IconButton label="Dismiss" onClick={close} className="text-current">
+      <IconButton label={COPY.a11yDismiss} onClick={close} className="text-current">
         <IconClose size={16} />
       </IconButton>
     </div>

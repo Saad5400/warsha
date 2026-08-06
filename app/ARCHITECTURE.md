@@ -10,6 +10,8 @@ npm install
 npm run dev       # localhost:8083
 npm run build     # tsc --noEmit && vite build  →  dist/ (fully static, deploy anywhere)
 npm run preview   # serve dist/ on 8083
+
+WARSHA_ORIGIN=https://example.org npm run build   # deploying to a new origin — see §7
 ```
 
 ---
@@ -596,3 +598,58 @@ that compile and run with piped stdin but have not been through that review. Eac
 - No multi-file find, no drag-and-drop in the tree, no git. (In-editor find/replace exists —
   `@codemirror/search`, styled as VS Code's top-right widget.)
 - `content/exercises/` is not surfaced in the UI yet.
+
+---
+
+## 7. Deploy metadata: origin, robots, sitemap
+
+The app is relative everywhere (`base: './'`) except four tags that cannot be: `<link rel=canonical>`,
+`og:url`, `og:image`, `twitter:image`. A social scraper does not resolve a relative image URL against
+the page it fetched — it drops the card — so index.html has to name its own origin.
+
+That origin is owned by **one** thing: the `warsha:site-origin` plugin in `vite.config.ts`. It
+substitutes the `__WARSHA_ORIGIN__` token in index.html (in dev *and* build) and emits `dist/robots.txt`
+and `dist/sitemap.xml` with the same value. Default `https://warsha.sb.sa`; override with the
+`WARSHA_ORIGIN` env var, which the root `Dockerfile` accepts as a build arg.
+
+**Do not write a literal origin into index.html again.** It used to hold the placeholder
+`https://warsha.example` behind a "DEPLOY STEP: replace this" comment. Nobody replaced it, and for as
+long as that was live every link preview on every platform was blank, because `warsha.example` is
+IANA-reserved and resolves to nothing. The generated-with-a-production-default design means a forgotten
+env var yields a *correct* build rather than a placeholder one.
+
+Robots and sitemap are generated rather than committed for the same reason — both must spell the
+origin, and a second hand-maintained copy is a second thing to forget. Their previous absence was its
+own bug: with neither file on disk, nginx's SPA catch-all answered `/robots.txt` and `/sitemap.xml` with
+`200 text/html`. `deploy/nginx.conf` now pins both to `try_files $uri =404` so a build that stops
+emitting them fails loudly instead of serving a React shell to a crawler.
+
+**Three indexable URLs: `/`, `/en/`, `/ar/`.** The rendered DOM is IDE chrome ("Run", "New file",
+"Console"), so the `<title>`, the meta description and the `SoftwareApplication` JSON-LD block are the
+entire indexable surface of each — which is exactly why there has to be more than one of them. The
+interface is bilingual (`src/i18n`); with a single URL a crawler sees one `<html lang>`, one title and
+one description, and half of what Warsha ships is unreachable from an Arabic query.
+
+`warsha:locale-entries` (also in `vite.config.ts`) emits `dist/en/index.html` and `dist/ar/index.html`
+in `closeBundle`, by rewriting the *built* `dist/index.html` rather than re-templating a second copy of
+the head — that is what stops the three pages drifting apart. Per copy it swaps `lang`/`dir`, title,
+description, the og/twitter pair, `og:locale`(+`:alternate`), the self-canonical, the JSON-LD
+(`url`/`name`/`description`/`inLanguage`, parsed and re-serialised, not regexed), and rewrites `="./`
+to `="../`. The hreflang cluster is authored once in `index.html` and inherited verbatim, because it is
+identical on all three pages by design — hreflang is only honoured when reciprocal, and a page missing
+its own entry drops out of the set.
+
+**They are entry points, not landing pages.** `/ar/` boots the same app from the same hashed bundle one
+directory up (`base: './'` is what makes a path rewrite sufficient), and `src/i18n/locale.ts`'s
+`fromPath()` reads the prefix to open in that language. No script is injected into the generated copy;
+reading `location.pathname` also means `vite dev` gets the same behaviour free through its history
+fallback. The prefix ranks with `?lang=` — above the stored preference, below nothing — and like
+`?lang=` it is **not persisted**: a link that names a language describes the visit, not a new standing
+choice, so a student who has explicitly picked English still has that choice waiting at `/`.
+
+Two consequences worth knowing. The service worker keys cached navigations by their own pathname
+(`public/coi-serviceworker.js`); it used to key every one under `./index.html`, which would now hand the
+Arabic document to a later offline navigation to `/`. And the manifest is deliberately *not* per-locale
+— `../manifest.webmanifest` with `id`/`start_url` of `./` keeps one PWA identity, so installing from
+`/ar/` installs Warsha, not a second Arabic app, and the installed copy resolves its language the normal
+way.

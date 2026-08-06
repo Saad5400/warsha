@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { splitPath } from '../fs/project'
 import { IconButton } from './ui/Button'
 import { MenuBar, type MenuBarMenu } from './MenuBar'
+import { COPY } from '../copy'
 
 /* The title bar. `top-bar` carries no styling — tools/qa reads it unscoped.
  *
@@ -138,12 +139,12 @@ export function TopBar({ menus, title, projectName, dirty, onToggleSidebar, onTo
         </span>
       </span>
 
-      <div className="ml-auto flex items-center gap-2 pl-2">
+      <div className="ms-auto flex items-center gap-2 ps-2">
         {installSlot}
-        <IconButton label="Toggle Primary Side Bar" className={TOGGLE} onClick={onToggleSidebar}>
+        <IconButton label={COPY.a11yToggleSidebar} className={TOGGLE} onClick={onToggleSidebar}>
           {IconLayoutSidebar}
         </IconButton>
-        <IconButton label="Toggle Panel" className={TOGGLE} onClick={onTogglePanel}>
+        <IconButton label={COPY.a11yTogglePanel} className={TOGGLE} onClick={onTogglePanel}>
           {IconLayoutPanel}
         </IconButton>
       </div>

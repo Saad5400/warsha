@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useMedia } from '../hooks/useMedia'
 import { IconButton } from './ui/Button'
 import { IconMenu } from './ui/Icons'
-import { TriggerMenu, type MenuItem } from './ui/Menu'
+import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
+import { COPY } from '../copy'
 
 /** One top-level menu: its title and its dropdown. Built by App, which owns
  *  every action the rows call. */
@@ -14,12 +15,6 @@ export interface MenuBarMenu {
 /** Below this width five titles no longer fit beside the centred window title,
  *  so the bar collapses to VS Code's single ☰ trigger. */
 const COLLAPSE = '(min-width: 1050px)'
-
-/** Side flyouts need a pointer that can hover and aim — on anything else
- *  (phones) the collapsed ☰ menu navigates submenus IN PLACE instead
- *  (TriggerMenu drillIn), because a flyout beside an already-near-full-width
- *  panel has nowhere to go but off-screen. */
-const CAN_FLYOUT = '(hover: hover) and (pointer: fine)'
 
 /* A title: 13px --titlebar-fg, ~8px inline padding, full bar height, with the
  * hover/open fill VS Code gives it (--toolbar-hover-bg — the ONE token that is
@@ -51,7 +46,7 @@ const TITLE_BTN =
  */
 export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
   const wide = useMedia(COLLAPSE)
-  const canFlyout = useMedia(CAN_FLYOUT)
+  const drillIn = useDrillIn()
   const [openMenu, setOpenMenu] = useState<number | null>(null)
   const [focusIdx, setFocusIdx] = useState(0)
   const [appMenuOpen, setAppMenuOpen] = useState(false)
@@ -76,7 +71,9 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
   }, [anyOpen, menus.length])
 
   // Below 1050px: one ☰ trigger whose dropdown lists the titles as submenus.
-  // "Application Menu" is an aria contract (tools/qa opens it by that label).
+  // The accessible name is an aria contract (tools/qa opens the menu by it).
+  // It is translated like every other label, so the suites pin English with
+  // ?lang=en — see the note on fromUrl() in i18n/locale.ts.
   // The kb class: below 900px the title bar compacts to 40px while the
   // software keyboard is up, and this button compacts with it (--touch-kb).
   if (!wide) {
@@ -85,11 +82,11 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
         open={appMenuOpen}
         onOpenChange={setAppMenuOpen}
         items={menus.map((m) => ({ label: m.label, items: m.items }))}
-        label="Application Menu"
+        label={COPY.a11yAppMenu}
         plain
-        drillIn={!canFlyout}
+        drillIn={drillIn}
         trigger={
-          <IconButton label="Application Menu" className="max-[899px]:kb-open:size-touch-kb">
+          <IconButton label={COPY.a11yAppMenu} className="max-[899px]:kb-open:size-touch-kb">
             <IconMenu />
           </IconButton>
         }
@@ -113,7 +110,7 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
   }
 
   return (
-    <div role="menubar" aria-label="Application Menu" className="flex h-full items-stretch">
+    <div role="menubar" aria-label={COPY.a11yAppMenu} className="flex h-full items-stretch">
       {menus.map((m, i) => (
         <TriggerMenu
           key={m.label}

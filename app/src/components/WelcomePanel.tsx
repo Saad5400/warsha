@@ -19,7 +19,7 @@ const EDITOR_PANE = 'editor-pane relative flex-1 min-w-0 min-h-editor-min overfl
  * contract selector tools/qa reads (the picker's cards are `.template-card`;
  * this first-run start card is distinct). */
 const CARD =
-  'start-card group grid grid-rows-[auto_1fr_auto] gap-2 min-h-[88px] p-4 text-left border border-border-control ' +
+  'start-card group grid grid-rows-[auto_1fr_auto] gap-2 min-h-[88px] p-4 text-start border border-border-control ' +
   'rounded-lg bg-surface-3 cursor-pointer touch-manipulation ' +
   'transition-[background-color,border-color,transform] duration-(--dur-fast) ease-standard ' +
   'hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
@@ -64,7 +64,7 @@ export function WelcomePanel({ onNewFile, onNewProject, onImportZip, recent, onO
     <div className={EDITOR_PANE}>
       {/* In-flow, never a full-page gate: as an absolute z-30 layer this panel
           painted OVER the explorer drawer (z-20) and its scrim on a phone. */}
-      <div className="scroller relative z-0 h-full bg-surface-1" role="region" aria-label="Start a project">
+      <div className="scroller relative z-0 h-full bg-surface-1" role="region" aria-label={COPY.welcomeStartProject}>
         {/* Vertically centred in the pane (founder ruling 2026-08-05): the
             column takes the pane's full height and centres, so an empty project
             greets the student mid-canvas instead of top-anchored under the tab
@@ -93,7 +93,7 @@ export function WelcomePanel({ onNewFile, onNewProject, onImportZip, recent, onO
             }
             title={COPY.welcomeNewProject}
             blurb={COPY.welcomeNewProjectBlurb}
-            manifest={`${readyLanguages.length} languages ready · more soon`}
+            manifest={COPY.welcomeLanguagesReady(readyLanguages.length)}
             onPick={onNewProject}
           />
 
@@ -109,17 +109,17 @@ export function WelcomePanel({ onNewFile, onNewProject, onImportZip, recent, onO
           {/* VS Code's welcome "Recent" list. Link-styled rows (the `.link`
               recipe), because these GO somewhere rather than make something —
               the two cards above stay the only card-shaped choices. */}
-          <section aria-label="Recent" className="flex flex-col items-start gap-1">
-            <h2 className="m-0 text-btn leading-[1.3] font-semibold text-text-1">Recent</h2>
+          <section aria-label={COPY.welcomeRecent} className="flex flex-col items-start gap-1">
+            <h2 className="m-0 text-btn leading-[1.3] font-semibold text-text-1">{COPY.welcomeRecent}</h2>
             {recent.length === 0 ? (
-              <p className="m-0 text-meta leading-normal text-text-3">Projects you create appear here.</p>
+              <p className="m-0 text-meta leading-normal text-text-3">{COPY.welcomeRecentEmpty}</p>
             ) : (
               recent.map((p) => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => onOpenProject(p.id)}
-                  className="link border-0 bg-transparent p-0 text-left text-meta leading-[1.8]"
+                  className="link border-0 bg-transparent p-0 text-start text-meta leading-[1.8]"
                 >
                   {p.name}
                 </button>

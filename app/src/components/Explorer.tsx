@@ -14,6 +14,7 @@ import {
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
 import { formatKeys } from '../ui/keys'
 import { useTreeDnd, type DndNode } from '../hooks/useTreeDnd'
+import { COPY } from '../copy'
 
 export interface ExplorerProps {
   project: Project
@@ -56,7 +57,7 @@ export interface ExplorerProps {
  * hook the desk hover-reveal reads (index.css): VS Code hides the ⋯ view
  * action at rest, but only where a hover exists to reveal it. */
 const HEADER =
-  'explorer-head flex h-bar-side shrink-0 items-center gap-2 pl-3 pr-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
+  'explorer-head flex h-bar-side shrink-0 items-center gap-2 ps-3 pe-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 
 /* Spec §3.2 section label. `panel-label` carries no styling — tools/qa reads it.
  * Title-case at 12px/600 (VS Code's sidebar title), not the old small-caps. */
@@ -70,7 +71,7 @@ const PANEL_LABEL = 'panel-label text-[12px] leading-none font-semibold text-tex
  * reveal). Keeps `sidebar-project-row` because tools/qa finds the project row
  * by it. */
 const PANE_HEADER =
-  'sidebar-project-row flex h-row-tree flex-none items-center pr-1 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
+  'sidebar-project-row flex h-row-tree flex-none items-center pe-1 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 
 /* The pane header's actions. IconButton, boxed to `--pane-action` (inline
  * style — the size-icon-btn class would win a class-order fight): the full
@@ -206,14 +207,14 @@ export function Explorer(props: ExplorerProps) {
     return [
       ...(isDir
         ? [
-            { label: 'New file…', icon: <IconPlus />, onSelect: () => startDraft(node.path, 'file') },
-            { label: 'New folder…', icon: <IconFolderPlus />, onSelect: () => startDraft(node.path, 'dir') },
+            { label: COPY.explorerNewFile, icon: <IconPlus />, onSelect: () => startDraft(node.path, 'file') },
+            { label: COPY.explorerNewFolder, icon: <IconFolderPlus />, onSelect: () => startDraft(node.path, 'dir') },
           ]
-        : [{ label: 'Open', icon: <IconFiles />, onSelect: () => props.onOpenFile(node.path) }]),
+        : [{ label: COPY.explorerOpen, icon: <IconFiles />, onSelect: () => props.onOpenFile(node.path) }]),
       // The hint goes through formatKeys like every other shortcut label, even
       // though F2 formats to itself — one formatter, no hand-written variants.
-      { label: 'Rename…', hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
-      { label: 'Delete', danger: true, onSelect: () => props.onDelete(node.path, isDir) },
+      { label: COPY.explorerRename, hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
+      { label: COPY.explorerDelete, danger: true, onSelect: () => props.onDelete(node.path, isDir) },
     ]
   }
 
@@ -224,10 +225,10 @@ export function Explorer(props: ExplorerProps) {
       {/* The divider is an inset shadow, not `border-b`: with border-box a 1px
           border comes out of the bar's own 44px, leaving 43px for the 44px icon
           buttons inside it — the exact defect the BARS recipe exists to prevent,
-          and it was here. pl-3 matches the title bar's leading padding, so the
+          and it was here. ps-3 matches the title bar's leading padding, so the
           logo mark above and this label start on one vertical grid line. */}
       <div className={HEADER}>
-        <span className={PANEL_LABEL}>Explorer</span>
+        <span className={PANEL_LABEL}>{COPY.explorerTitle}</span>
         {/* One lone ⋯ (VS Code's "Views and More Actions" slot) at every size:
             hover-revealed at desk, always visible on touch (`.explorer-head` in
             index.css). The tree actions themselves live on the pane header
@@ -236,8 +237,8 @@ export function Explorer(props: ExplorerProps) {
             40px control on touch needs. Never labelled "More" — that exact
             name is the tab strip's, and actions-check clicks it unscoped. */}
         <IconButton
-          label="More actions"
-          className="ml-auto"
+          label={COPY.a11yMoreActions}
+          className="ms-auto"
           onClick={(e) => {
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
             setViewMenu({ x: r.right, y: r.bottom + 4, fromRight: true })
@@ -256,19 +257,19 @@ export function Explorer(props: ExplorerProps) {
             toggle: one project means one section, and a twistie that blanks
             the whole tree is a foot-gun, not a feature (founder ruling
             2026-08-05). */}
-        <span className="flex h-full min-w-0 flex-1 items-center gap-1 pl-2">
+        <span className="flex h-full min-w-0 flex-1 items-center gap-1 ps-2">
           <span className="truncate text-[11px] font-bold text-text-1">{props.projectName ?? ''}</span>
         </span>
         <div className="flex items-center">
-          <IconButton label="New file" className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => startDraft('', 'file')}>
+          <IconButton label={COPY.welcomeNewFile} className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => startDraft('', 'file')}>
             <IconPlus />
           </IconButton>
-          <IconButton label="New folder" className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => startDraft('', 'dir')}>
+          <IconButton label={COPY.explorerNewFolderAction} className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => startDraft('', 'dir')}>
             <IconFolderPlus />
           </IconButton>
           {hasFolders ? (
             <IconButton
-              label="Collapse folders"
+              label={COPY.explorerCollapse}
               className={PANE_ACTION}
               style={PANE_ACTION_SIZE}
               onClick={() => setCollapsed(allFolders(tree))}
@@ -288,7 +289,7 @@ export function Explorer(props: ExplorerProps) {
           (rows.length === 0 ? ' flex flex-col justify-center' : '')
         }
         role="tree"
-        aria-label="Project files"
+        aria-label={COPY.a11yProjectFiles}
         // Hooks for the drag: `data-tree-root` marks the root drop zone, and
         // `data-drop-root` lights the whole panel when a drop would land here.
         data-tree-root=""
@@ -300,10 +301,8 @@ export function Explorer(props: ExplorerProps) {
         {rows.length === 0 ? (
           <div className="empty">
             <IconFolderOpen size={32} className="empty__glyph" />
-            <p className="empty__title">No files yet</p>
-            <p className="empty__body">
-              Create a file to start. A name ending in .py or .java is all Warsha needs to know how to run it.
-            </p>
+            <p className="empty__title">{COPY.explorerEmpty}</p>
+            <p className="empty__body">{COPY.explorerEmptyBody}</p>
             {/* Starter first, and filled (founder ruling 2026-08-05): the
                 starter is the primary way in wherever an empty project offers
                 one, and "New file" is the quiet second for the student who
@@ -313,11 +312,11 @@ export function Explorer(props: ExplorerProps) {
             <div className="flex w-full flex-col gap-2">
               {props.onShowStarters ? (
                 <Button variant="primary" onClick={props.onShowStarters}>
-                  Show starters
+                  {COPY.explorerShowStarters}
                 </Button>
               ) : null}
               <Button variant="ghost" onClick={() => startDraft('', 'file')}>
-                New file
+                {COPY.welcomeNewFile}
               </Button>
             </div>
           </div>
@@ -325,7 +324,7 @@ export function Explorer(props: ExplorerProps) {
           rows.map((row) => {
             if (row.kind === 'draft') {
               return (
-                <div key={row.key} className="relative flex min-h-row-tree items-center gap-2 pr-1" style={rowPadding(row.depth)}>
+                <div key={row.key} className="relative flex min-h-row-tree items-center gap-2 pe-1" style={rowPadding(row.depth)}>
                   <Guides depth={row.depth} />
                   <span aria-hidden="true" className="tree-row__chevron">
                     {row.makes === 'dir' ? <IconFolderPlus size={20} /> : <IconPlus size={20} />}
@@ -333,7 +332,7 @@ export function Explorer(props: ExplorerProps) {
                   <NameInput
                     initial=""
                     placeholder={row.makes === 'dir' ? 'models' : 'main.py'}
-                    label={row.makes === 'dir' ? 'New folder name' : 'New file name'}
+                    label={row.makes === 'dir' ? COPY.explorerNewFolderPlaceholder : COPY.explorerNewFilePlaceholder}
                     onCommit={commitDraft}
                     onCancel={() => setDraft(null)}
                   />
@@ -390,13 +389,13 @@ export function Explorer(props: ExplorerProps) {
         <Menu
           anchor={viewMenu}
           items={[
-            { label: 'New file…', icon: <IconPlus />, onSelect: () => startDraft('', 'file') },
-            { label: 'New folder…', icon: <IconFolderPlus />, onSelect: () => startDraft('', 'dir') },
+            { label: COPY.explorerNewFile, icon: <IconPlus />, onSelect: () => startDraft('', 'file') },
+            { label: COPY.explorerNewFolder, icon: <IconFolderPlus />, onSelect: () => startDraft('', 'dir') },
             ...(hasFolders
-              ? [{ label: 'Collapse folders', icon: <IconChevronUp />, startsGroup: true, onSelect: () => setCollapsed(allFolders(tree)) }]
+              ? [{ label: COPY.explorerCollapse, icon: <IconChevronUp />, startsGroup: true, onSelect: () => setCollapsed(allFolders(tree)) }]
               : []),
           ]}
-          label="Explorer actions"
+          label={COPY.explorerActionsMenu}
           onClose={() => setViewMenu(null)}
         />
       ) : null}
@@ -585,7 +584,7 @@ function Row({
           className={
             // desk:transition-none: VS Code's twistie snaps; the rotate class
             // itself stays at both densities (tools/qa asserts the rotation).
-            'tree-row__chevron shrink-0 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
+            'tree-row__chevron shrink-0 rtl:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
             (open ? ' rotate-90' : '')
           }
         >
@@ -608,10 +607,10 @@ function Row({
         <span className={'tree-row__label' + (isDir ? ' tree-row__label--dir' : '')}>{node.name}</span>
       )}
 
-      {dirty && !renaming ? <span aria-label="Unsaved changes" className="dot-dirty" /> : null}
+      {dirty && !renaming ? <span aria-label={COPY.a11yUnsavedChanges} className="dot-dirty" /> : null}
 
       <IconButton
-        label={`Actions for ${node.name}`}
+        label={COPY.explorerRowActions(node.name)}
         // after:content-none: tree rows stack with no gap between them
         // (Explorer's HEADER comment applies the same logic) — IconButton's
         // ≥44px hit-area pseudo needs clear space to expand into or it steals

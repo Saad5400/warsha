@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { COPY } from '../copy'
 
 /** Matches the console's own floor (spec §4.3 rule 4) and leaves the editor its 96px. */
 const MIN_H = 144
@@ -37,7 +38,7 @@ export function ConsoleDivider({ height, onHeight }: { height: number; onHeight(
   return (
     <div
       role="separator"
-      aria-label="Resize output"
+      aria-label={COPY.a11yResizeOutput}
       aria-orientation="horizontal"
       aria-valuenow={Math.round(height)}
       tabIndex={0}

@@ -5,9 +5,16 @@ import { App } from './App'
 import { CrashScreen } from './components/CrashScreen'
 import { ToastProvider } from './components/ui/Toast'
 import { DialogProvider } from './components/ui/DialogProvider'
+import { initLocale } from './i18n/locale'
 
 const host = document.getElementById('root')
 if (!host) throw new Error('missing #root')
+
+// Before the first render, so `<html dir>` is already right when the shell
+// paints. Resolving it inside React would show one LTR frame and then flip —
+// on a phone that reads as a layout bug, and it is the first thing the student
+// sees.
+initLocale()
 
 /**
  * A promise nobody awaited is the one failure mode a `try/catch` cannot reach

@@ -108,9 +108,9 @@ function runSearch(files: SourceFile[], query: string, matchCase: boolean, whole
 }
 
 /* The view header — the Explorer's HEADER anatomy (same divider-as-shadow, same
- * pl-3 grid line), so the two views read as faces of one sidebar. `panel-label`
+ * ps-3 grid line), so the two views read as faces of one sidebar. `panel-label`
  * is the QA hook spacing.mjs measures on whichever view is up. */
-const HEADER = 'flex h-bar-side shrink-0 items-center gap-2 pl-3 pr-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
+const HEADER = 'flex h-bar-side shrink-0 items-center gap-2 ps-3 pe-2 shadow-[inset_0_-1px_0_0_var(--border-subtle)]'
 const PANEL_LABEL = 'panel-label text-[12px] leading-none font-semibold text-text-1'
 
 /* A file group row — the tree-row treatment in utility form (this is not the
@@ -118,7 +118,7 @@ const PANEL_LABEL = 'panel-label text-[12px] leading-none font-semibold text-tex
  * border). Full-width, --row-tree tall (36px touch / 22px desk — the tree's own
  * documented target compromise), list-hover fill. */
 const FILE_ROW =
-  'flex w-full min-h-row-tree cursor-pointer select-none items-center gap-2 desk:gap-1.5 pl-2 pr-2 text-left ' +
+  'flex w-full min-h-row-tree cursor-pointer select-none items-center gap-2 desk:gap-1.5 ps-2 pe-2 text-start ' +
   'touch-manipulation transition-colors duration-(--dur-fast) ease-standard ' +
   'hover:bg-list-hover active:bg-surface-4 focus-visible:outline-offset-[-1px]'
 
@@ -126,7 +126,7 @@ const FILE_ROW =
  * inactive-selection fill (focus is in the editor by then) plus brighter ink —
  * compound, never fill alone. */
 const MATCH_ROW =
-  'flex w-full min-h-row-tree cursor-pointer select-none items-center pr-2 pl-[calc(var(--sp-2)+24px)] text-left ' +
+  'flex w-full min-h-row-tree cursor-pointer select-none items-center pe-2 ps-[calc(var(--sp-2)+24px)] text-start ' +
   'touch-manipulation transition-colors duration-(--dur-fast) ease-standard ' +
   'text-row text-text-2 hover:bg-list-hover active:bg-surface-4 focus-visible:outline-offset-[-1px] ' +
   'data-[state=active]:bg-list-inactive-sel data-[state=active]:text-text-1'
@@ -186,17 +186,17 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
   return (
     <div className="flex h-full min-h-0 select-none flex-col bg-surface-2">
       <div className={HEADER}>
-        <span className={PANEL_LABEL}>Search</span>
+        <span className={PANEL_LABEL}>{COPY.a11ySearch}</span>
       </div>
 
       {/* The query field: a --input-bg box carrying the input and the two
           filter toggles, VS Code's search-box anatomy. The input keeps the
           global focus ring (never outline-none), pulled inside its own box. */}
       <div className="flex flex-none items-center p-2">
-        <div className="flex min-h-touch min-w-0 flex-1 items-center gap-1 rounded-sm border border-(--input-border) bg-input pr-1">
+        <div className="flex min-h-touch min-w-0 flex-1 items-center gap-1 rounded-sm border border-(--input-border) bg-input pe-1">
           <input
             ref={inputRef}
-            aria-label="Search"
+            aria-label={COPY.a11ySearch}
             placeholder={COPY.searchPlaceholder}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -228,7 +228,7 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
         </div>
       </div>
 
-      <div className="scroller min-h-0 flex-1 pb-2" aria-label="Search results">
+      <div className="scroller min-h-0 flex-1 pb-2" aria-label={COPY.a11ySearchResults}>
         {!query || !result ? (
           <p className="px-3 py-1 text-row leading-normal text-text-3">{COPY.searchHint}</p>
         ) : result.total === 0 ? (
@@ -262,7 +262,7 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
                     <span
                       aria-hidden="true"
                       className={
-                        'grid size-4 flex-none place-items-center text-text-1 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
+                        'grid size-4 flex-none place-items-center text-text-1 rtl:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
                         (open ? ' rotate-90' : '')
                       }
                     >

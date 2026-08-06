@@ -349,7 +349,7 @@ export function Console({
           role="log"
           aria-live="polite"
           aria-atomic="false"
-          aria-label="Program output"
+          aria-label={COPY.a11yProgramOutput}
           // A scrollable region has to be reachable without a mouse — and it is
           // also what gives Ctrl+L somewhere to be pressed: a click on a
           // non-focusable div leaves focus on <body>, where the panel's keydown
@@ -476,7 +476,7 @@ function LiveLine({
           // Enter the element is still here to hold focus, but it must not invite
           // a line nobody asked for.
           placeholder={waiting ? COPY.stdinWaitingPlaceholder : ''}
-          aria-label="Program input"
+          aria-label={COPY.a11yProgramInput}
           autoCapitalize="off"
           autoCorrect="off"
           autoComplete="off"
@@ -593,7 +593,7 @@ function FailureBlock({
           </button>
         ) : null}
         {onDismiss ? (
-          <button type="button" onClick={onDismiss} aria-label="Dismiss" className="console-earlier">
+          <button type="button" onClick={onDismiss} aria-label={COPY.a11yDismiss} className="console-earlier">
             ✕
           </button>
         ) : null}

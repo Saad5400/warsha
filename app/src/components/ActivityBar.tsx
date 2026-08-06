@@ -1,6 +1,7 @@
 import { useState, type SVGProps } from 'react'
 import { IconFilesStack } from './ui/Icons'
-import { TriggerMenu, type MenuItem } from './ui/Menu'
+import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
+import { COPY } from '../copy'
 
 /* The rail itself. It starts in row 2, under the full-width title bar (the
  * title bar spans both columns), so the two stack instead of meeting at a
@@ -93,14 +94,19 @@ export function ActivityBar({
   manageItems,
 }: ActivityBarProps) {
   const [manageOpen, setManageOpen] = useState(false)
+  // The gear holds a submenu now (Language), and this rail is on screen at
+  // every width — so it needs the same in-place navigation the menu bar's ☰
+  // uses on a phone. Without it the flyout opens beside a panel that already
+  // reaches the edge and the rows land off-screen.
+  const drillIn = useDrillIn()
 
   return (
-    <nav className={RAIL} aria-label="Activity bar">
+    <nav className={RAIL} aria-label={COPY.a11yActivityBar}>
       <button
         type="button"
         className={SLOT}
-        aria-label="Explorer"
-        title="Explorer"
+        aria-label={COPY.a11yExplorer}
+        title={COPY.a11yExplorer}
         aria-pressed={activeView === 'explorer'}
         data-state={activeView === 'explorer' ? 'active' : 'inactive'}
         onClick={onShowExplorer}
@@ -114,8 +120,8 @@ export function ActivityBar({
       <button
         type="button"
         className={SLOT}
-        aria-label="Search"
-        title="Search"
+        aria-label={COPY.a11ySearch}
+        title={COPY.a11ySearch}
         aria-pressed={activeView === 'search'}
         data-state={activeView === 'search' ? 'active' : 'inactive'}
         onClick={onShowSearch}
@@ -131,10 +137,11 @@ export function ActivityBar({
         open={manageOpen}
         onOpenChange={setManageOpen}
         items={manageItems}
-        label="Manage"
+        label={COPY.a11yManage}
         plain
+        drillIn={drillIn}
         trigger={
-          <button type="button" className={SLOT} aria-label="Manage" title="Manage" data-state="inactive">
+          <button type="button" className={SLOT} aria-label={COPY.a11yManage} title={COPY.a11yManage} data-state="inactive">
             <IconManage size={24} />
           </button>
         }

@@ -162,7 +162,29 @@ const syntaxColors = HighlightStyle.define(
  */
 const chromeTheme = EditorView.theme(
   {
-    '&.cm-editor': { backgroundColor: 'var(--code-bg)', color: 'var(--text-1)' },
+    '&.cm-editor': {
+      backgroundColor: 'var(--code-bg)',
+      color: 'var(--text-1)',
+      // CODE IS LTR IN EVERY LANGUAGE, and this is the pin that keeps it so.
+      //
+      // With Arabic selected the app sets `<html dir="rtl">`, and CodeMirror
+      // reads its direction from the computed style — so without this the whole
+      // editor flips: the gutter jumps to the right, line 1 starts at the right
+      // margin, and `if (x) {` renders with its brace on the wrong side. No
+      // language Warsha runs is written right-to-left, and the student's
+      // textbook, their teacher's slides and every stack trace they will ever
+      // read agree.
+      //
+      // Arabic INSIDE the code still renders correctly: this fixes the
+      // paragraph direction of each line, and the bidi algorithm still shapes
+      // and orders an Arabic run within a string literal — `print("مرحبا")`
+      // looks right, the line around it does not move.
+      direction: 'ltr',
+      // Belt and braces: `direction` sets the flow, but an inherited
+      // `text-align: right` from an RTL ancestor would still push short lines
+      // across the canvas.
+      textAlign: 'left',
+    },
     '&.cm-editor .cm-scroller': { fontFamily: 'var(--font-code)' },
     '&.cm-editor .cm-content': {
       // iOS text-selection handles are large; without this the leading handle

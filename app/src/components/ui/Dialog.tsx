@@ -1,6 +1,7 @@
 import * as RDialog from '@radix-ui/react-dialog'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button } from './Button'
+import { COPY } from '../../copy'
 
 /**
  * Radix Dialog underneath, a real `<dialog>` element on top.
@@ -277,10 +278,10 @@ function PromptDialog({ request, open }: { request: PromptRequest; open: boolean
         ) : null}
         <div className={ACTIONS}>
           <Button variant="ghost" large onClick={() => request.resolve(null)}>
-            Cancel
+            {COPY.dlgCancel}
           </Button>
           <Button variant="primary" large type="submit">
-            {request.okLabel ?? 'OK'}
+            {request.okLabel ?? COPY.dlgOk}
           </Button>
         </div>
       </form>
@@ -309,7 +310,7 @@ function ConfirmDialog({ request, open }: { request: ConfirmRequest; open: boole
       {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
       <div className={ACTIONS}>
         <Button ref={cancelRef} variant="ghost" large onClick={() => request.resolve(false)}>
-          Cancel
+          {COPY.dlgCancel}
         </Button>
         <Button
           ref={okRef}
@@ -318,7 +319,7 @@ function ConfirmDialog({ request, open }: { request: ConfirmRequest; open: boole
           type={danger ? 'button' : 'submit'}
           onClick={() => request.resolve(true)}
         >
-          {request.okLabel ?? 'OK'}
+          {request.okLabel ?? COPY.dlgOk}
         </Button>
       </div>
     </>
@@ -374,7 +375,7 @@ function AlertDialog({ request, open }: { request: AlertRequest; open: boolean }
         {request.message ? <div className={MESSAGE}>{request.message}</div> : null}
         <div className={ACTIONS}>
           <Button ref={okRef} variant="primary" large type="submit">
-            {request.okLabel ?? 'OK'}
+            {request.okLabel ?? COPY.dlgOk}
           </Button>
         </div>
       </form>

@@ -49,7 +49,9 @@ import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import type { MenuItem } from './components/ui/Menu'
 import { IconFileLines, IconFiles, IconFolderOpen, IconLink, IconShare, IconWand } from './components/ui/Icons'
-import { COPY, count } from './copy'
+import { COPY } from './copy'
+import { DirectionProvider } from '@radix-ui/react-direction'
+import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
 import pkg from '../package.json'
 
 /** The one structural adjustment small screens keep (founder ruling: ONE
@@ -93,10 +95,10 @@ const SHELL =
   // measured in UNZOOMED viewport px by ui/viewport.ts, and inside a zoomed
   // subtree a px length renders multiplied by the zoom — without the division
   // a 0.8 scale left the bottom fifth of the viewport blank, and 1.3 pushed
-  // the status bar off-screen. (Viewport UNITS need no such correction — the
-  // spec divides them by the effective zoom already — so the 100dvh fallback
-  // over-corrects for the one pre-hydration frame where --ui-scale is also
-  // still unset/1, i.e. never in practice.)
+  // the status bar off-screen. The 100dvh fallback wants the same division for
+  // a different reason: a viewport unit inside the zoom resolves against the
+  // raw viewport and THEN paints scaled (measured — see the view scale block
+  // in index.css), so undivided it would be a scaled 720px, not 720px.
   'app-shell fixed inset-0 h-[calc(var(--app-h,100dvh)/var(--ui-scale,1))] pb-[env(safe-area-inset-bottom)] overflow-hidden grid ' +
   'grid-cols-[auto_minmax(0,1fr)] grid-rows-[var(--bar-title)_minmax(0,1fr)_auto] ' +
   // Keyboard-open compaction (spec §4.3 rule 3) is a PHONE behaviour and stays
@@ -119,10 +121,39 @@ function slug(name: string | undefined): string {
 export function App() {
   const report = useMemo(() => checkCapabilities(), [])
   useEffect(() => installViewport(), [])
+  // The whole propagation mechanism for a language switch: every string in the
+  // tree is read off `COPY` during render, so re-rendering from the root is
+  // what swaps the language. Subscribed HERE rather than in `Ide` so the fatal
+  // capability screen — which is all a student on the wrong browser ever sees —
+  // is translated too.
+  const locale = useLocale()
   // A missing hard requirement is a dead end, and saying so beats a spinner
   // that never finishes.
-  if (report.level === 'fatal') return <CapabilityFatalScreen report={report} />
-  return <Ide report={report} />
+  const body = report.level === 'fatal' ? <CapabilityFatalScreen report={report} /> : <Ide report={report} />
+
+  /**
+   * RADIX DOES NOT READ `<html dir>`, AND EVERY MENU IN THE APP IS RADIX.
+   *
+   * Its primitives default to `dir="ltr"` and only take a direction from an
+   * explicit prop or from this provider — the DOM attribute is invisible to
+   * them. Three things go wrong without it, all of them in the portalled panel
+   * rather than in the page, which is why the rest of the RTL work looked
+   * finished while the menus were still English-handed:
+   *
+   *   - the panel lays out LTR, so an Arabic label sits on the left with its
+   *     shortcut hint stranded on the right;
+   *   - `SubTrigger` puts its submenu on the LTR trailing side, so a flyout
+   *     that should open leftward opens right and walks off a 390px screen —
+   *     the language switch was unreachable on a phone, which is the device
+   *     this app exists for;
+   *   - ArrowLeft/ArrowRight stay swapped, so a keyboard user opens a submenu
+   *     with the key that visually closes it.
+   *
+   * Sits at the root so every Menu, ContextMenu, Dialog and Tooltip below
+   * inherits it, and re-renders with `locale` so a language switch moves the
+   * menus with everything else.
+   */
+  return <DirectionProvider dir={dirOf(locale)}>{body}</DirectionProvider>
 }
 
 function Ide({ report }: { report: CapabilityReport }) {
@@ -247,7 +278,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   const shareAdopted = useRef(false)
 
   const shareBrokenNotice = useCallback(
-    () => notify('That share link arrived damaged or cut short — ask for a fresh one.', 'error'),
+    () => notify(COPY.noteShareBroken, 'error'),
     [notify],
   )
 
@@ -261,7 +292,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       const leaving = tabs
       const result = await adoptShared(shared.name, shared.snapshot)
       if (!result) {
-        notify('Warsha could not save the shared project to this device.', 'error')
+        notify(COPY.noteShareSaveFailed, 'error')
         return false
       }
       // Re-point the workspace only when the link landed somewhere else. When
@@ -283,8 +314,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       }
       notify(
         result.created
-          ? `“${result.meta.name}” ready — ${count(shared.snapshot.files.length, 'file')}.`
-          : `You already have this project, unchanged — opened “${result.meta.name}”.`,
+          ? COPY.noteProjectReady(result.meta.name, shared.snapshot.files.length)
+          : COPY.noteShareDuplicate(result.meta.name),
         'success',
       )
       return true
@@ -434,7 +465,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   // on the first letter of every phone search.
   useEffect(() => {
     if (!(keyboardOpen && narrow)) return
-    const aside = document.querySelector('aside[aria-label="Files"]')
+    const aside = document.querySelector('aside[aria-label={COPY.a11yFiles}]')
     if (aside && aside.contains(document.activeElement)) return
     setDrawerOpen(false)
   }, [keyboardOpen, narrow])
@@ -528,27 +559,27 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [activePath, revision])
 
   const validName = (name: string): string | null => {
-    if (!name) return 'That name is empty.'
-    if (name.startsWith('/') || name.endsWith('/')) return 'A name cannot start or end with "/".'
-    if (name.split('/').some((s) => s === '' || s === '.' || s === '..')) return 'That path is not valid.'
-    if (/[\\:*?"<>|]/.test(name)) return 'That name uses a character files cannot have.'
+    if (!name) return COPY.nameEmpty
+    if (name.startsWith('/') || name.endsWith('/')) return COPY.nameSlashEnds
+    if (name.split('/').some((s) => s === '' || s === '.' || s === '..')) return COPY.namePathInvalid
+    if (/[\\:*?"<>|]/.test(name)) return COPY.nameBadCharacter
     // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001f\u007f]/.test(name)) return 'That name uses a character files cannot have.'
+    if (/[\u0000-\u001f\u007f]/.test(name)) return COPY.nameBadCharacter
     // OPFS itself has no documented limit, but the filesystems underneath it cap
     // a name at 255 bytes and reject the write, which surfaced as a save that
     // silently never happened.
-    if (new TextEncoder().encode(name).length > 240) return 'That name is too long.'
+    if (new TextEncoder().encode(name).length > 240) return COPY.nameTooLong
     // ".java" is a valid file name and an invalid Java file: the class name would
     // be empty, so `public class  {` never compiles, and CheerpJ requires the
     // public class to match the file name. Caught here rather than as a compiler
     // error the student cannot connect to what they typed. Same for ".py", whose
     // module name would be empty.
     const leaf = name.split('/').pop() ?? ''
-    if (/^\.(java|py)$/i.test(leaf)) return `Give the file a name before the "${leaf}".`
-    if (leaf.startsWith('.') && leaf.slice(1).includes('.')) return 'A name cannot start with a dot.'
+    if (/^\.(java|py)$/i.test(leaf)) return COPY.nameNeedsStem(leaf)
+    if (leaf.startsWith('.') && leaf.slice(1).includes('.')) return COPY.nameDotStart
     // Trailing dots and spaces are silently stripped by some filesystems, so
     // "Main.java " and "Main.java" become the same file and one of them is lost.
-    if (/[ .]$/.test(leaf)) return 'A name cannot end with a space or a dot.'
+    if (/[ .]$/.test(leaf)) return COPY.nameDotEnd
     return null
   }
 
@@ -556,7 +587,7 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  student is already looking at rather than by a toast after it closes. */
   const nameTaken = (dir: string, name: string): string | null => {
     const path = dir ? `${dir}/${name}` : name
-    return project.has(path) || project.hasDir(path) ? `There is already a “${name}” here.` : null
+    return project.has(path) || project.hasDir(path) ? COPY.nameTaken(name) : null
   }
 
   const starterContent = (path: string): string => {
@@ -576,17 +607,17 @@ function Ide({ report }: { report: CapabilityReport }) {
     const name =
       presetName ??
       (await dialogs.prompt({
-        title: 'New file',
-        label: dir ? `Inside ${dir}/` : 'In the project root',
-        placeholder: 'Main.java',
-        okLabel: 'Create',
+        title: COPY.dlgNewFileTitle,
+        label: dir ? COPY.dlgInside(dir) : COPY.dlgInRoot,
+        placeholder: COPY.dlgFilePlaceholder,
+        okLabel: COPY.dlgCreate,
         validate: (v) => validName(v) ?? nameTaken(dir, v),
       }))
     if (!name) return
     const problem = validName(name)
     if (problem) return notify(problem, 'error')
     const path = dir ? `${dir}/${name}` : name
-    if (project.has(path)) return notify(`${path} already exists.`, 'error')
+    if (project.has(path)) return notify(COPY.pathExists(path), 'error')
     try {
       // Same startup race as `replaceProject` — the explorer's New file is also
       // reachable before the store is attached.
@@ -606,10 +637,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     const name =
       presetName ??
       (await dialogs.prompt({
-        title: 'New folder',
-        label: dir ? `Inside ${dir}/` : 'In the project root',
-        placeholder: 'models',
-        okLabel: 'Create',
+        title: COPY.dlgNewFolderTitle,
+        label: dir ? COPY.dlgInside(dir) : COPY.dlgInRoot,
+        placeholder: COPY.dlgFolderPlaceholder,
+        okLabel: COPY.dlgCreate,
         validate: (v) => validName(v) ?? nameTaken(dir, v),
       }))
     if (!name) return
@@ -627,9 +658,9 @@ function Ide({ report }: { report: CapabilityReport }) {
     const next =
       presetName ??
       (await dialogs.prompt({
-        title: isDir ? 'Rename folder' : 'Rename file',
+        title: isDir ? COPY.dlgRenameFolderTitle : COPY.dlgRenameFileTitle,
         value: name,
-        okLabel: 'Rename',
+        okLabel: COPY.dlgRename,
         validate: (v) => validName(v) ?? (v === name ? null : nameTaken(dir, v)),
       }))
     if (!next || next === name) return
@@ -665,11 +696,9 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const deleteEntry = async (path: string, isDir: boolean) => {
     const ok = await dialogs.confirm({
-      title: isDir ? 'Delete this folder?' : 'Delete this file?',
-      message: isDir
-        ? `${path} and everything inside it will be removed. This cannot be undone.`
-        : `${path} will be removed. This cannot be undone.`,
-      okLabel: 'Delete',
+      title: isDir ? COPY.dlgDeleteFolderTitle : COPY.dlgDeleteFileTitle,
+      message: isDir ? COPY.dlgDeleteFolderBody(path) : COPY.dlgDeleteFileBody(path),
+      okLabel: COPY.dlgDelete,
       danger: true,
     })
     if (!ok) return
@@ -703,18 +732,18 @@ function Ide({ report }: { report: CapabilityReport }) {
     try {
       const formatted = await formatFile(path, source)
       if (formatted === source) {
-        notify('Already formatted.')
+        notify(COPY.noteAlreadyFormatted)
         return
       }
       editorRef.current?.applyEdit(formatted)
-      notify('Formatted.')
+      notify(COPY.noteFormatted)
     } catch (e) {
       // Booting Python just to format a file would be a silent 11 MB download
       // behind a menu click, so it never happens (see PythonNotLoadedError) —
       // the fix is to run the file once, which the student was already about
       // to do anyway.
-      if (e instanceof PythonNotLoadedError) notify('Run this file once to load Python, then Format will work.')
-      else notify('Could not format this file.', 'error')
+      if (e instanceof PythonNotLoadedError) notify(COPY.noteFormatNeedsPython)
+      else notify(COPY.noteFormatFailed, 'error')
     }
   }, [activePath, project, notify])
 
@@ -727,10 +756,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     const source = project.read(path) ?? ''
     try {
       const result = await shareFileAsImage(path, source)
-      if (result === 'copied') notify('Image copied — paste it anywhere.', 'success')
-      else if (result === 'downloaded') notify('Image downloaded.')
+      if (result === 'copied') notify(COPY.noteImageCopied, 'success')
+      else if (result === 'downloaded') notify(COPY.noteImageDownloaded)
     } catch {
-      notify('Could not create an image of this file.', 'error')
+      notify(COPY.noteImageFailed, 'error')
     }
   }, [activePath, project, notify])
 
@@ -741,9 +770,9 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  finding as deliver.ts), and on a desktop "copy the link" is the whole
    *  ask anyway. */
   const shareLink = useCallback(async () => {
-    const url = buildShareUrl(currentProject?.name ?? 'Shared project', entryPath, project.snapshot())
+    const url = buildShareUrl(currentProject?.name ?? COPY.defaultSharedName, entryPath, project.snapshot())
     if (!url) {
-      notify('This project is too big to fit in a link — Export as .zip instead.', 'error')
+      notify(COPY.noteLinkTooBig, 'error')
       return
     }
     if (prefersShareSheet() && navigator.canShare?.({ url })) {
@@ -758,9 +787,9 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
     try {
       await navigator.clipboard.writeText(url)
-      notify('Link copied — opening it recreates this project.', 'success')
+      notify(COPY.noteLinkCopied, 'success')
     } catch {
-      notify('Warsha could not copy the link.', 'error')
+      notify(COPY.noteLinkCopyFailed, 'error')
     }
   }, [currentProject, entryPath, project, notify])
 
@@ -768,15 +797,15 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  handing work in. See actions/sharePdf.ts. */
   const sharePdf = useCallback(async () => {
     if (project.isEmpty()) return
-    const name = currentProject?.name ?? 'Warsha project'
+    const name = currentProject?.name ?? COPY.defaultProjectName
     // Rasterising a few pages takes seconds, and a click that answers with
     // seconds of nothing reads as a dead row.
-    notify('Making the PDF…')
+    notify(COPY.notePdfMaking)
     try {
       const result = await shareProjectAsPdf(name, project.snapshot(), `${slug(name) || 'warsha-project'}.pdf`)
-      if (result === 'downloaded') notify('PDF downloaded.')
+      if (result === 'downloaded') notify(COPY.notePdfDownloaded)
     } catch {
-      notify('Could not create the PDF.', 'error')
+      notify(COPY.notePdfFailed, 'error')
     }
   }, [project, currentProject, notify])
 
@@ -812,7 +841,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (project.paths().length === 0) return true
     return dialogs.confirm({
       title,
-      message: `${what} removes the ${count(project.paths().length, 'file')} now in Warsha. Export a .zip first if you want to keep them.`,
+      message: COPY.dlgReplaceBody(what, project.paths().length),
       okLabel,
       danger: true,
     })
@@ -833,7 +862,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     // avoid. Either way the student ends up with a named project they can switch
     // back to, which is the point.
     if (project.isEmpty()) {
-      await replaceProject(t.snapshot, t.entry, `${t.name} ready — ${count(t.snapshot.files.length, 'file')}.`)
+      await replaceProject(t.snapshot, t.entry, COPY.noteTemplateReady(t.name, t.snapshot.files.length))
       if (currentProject) await renameProject(currentProject.id, uniqueProjectName(t.name))
       return
     }
@@ -857,8 +886,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const startEmpty = async () => {
-    if (!(await confirmReplace('Empty this project?', 'Emptying this project', 'Empty it'))) return
-    await replaceProject({ files: [], dirs: [] }, null, 'Project emptied.')
+    if (!(await confirmReplace(COPY.dlgEmptyTitle, COPY.dlgEmptyWhat, COPY.dlgEmptyOk))) return
+    await replaceProject({ files: [], dirs: [] }, null, COPY.noteProjectEmptied)
   }
 
   const onZipImported = async (snapshot: FsSnapshot, fileName: string) => {
@@ -899,7 +928,7 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const projectNameTaken = (name: string, exceptId?: string): string | null =>
     projects.some((p) => p.id !== exceptId && p.name.trim() === name.trim())
-      ? 'You already have a project with that name.'
+      ? COPY.noteProjectNameTaken
       : null
 
   const switchToProject = async (id: string) => {
@@ -913,22 +942,20 @@ function Ide({ report }: { report: CapabilityReport }) {
   const newProject = async (template?: Template) => {
     const suggested = template ? template.name : nextProjectName(projects)
     const name = await dialogs.prompt({
-      title: template ? `New project from “${template.name}”` : 'New project',
-      label: 'Project name',
+      title: template ? COPY.dlgNewProjectFrom(template.name) : COPY.dlgNewProjectTitle,
+      label: COPY.dlgProjectName,
       value: suggested,
-      okLabel: 'Create',
-      validate: (v) => (v.trim() ? projectNameTaken(v) : 'Give the project a name.'),
+      okLabel: COPY.dlgCreate,
+      validate: (v) => (v.trim() ? projectNameTaken(v) : COPY.dlgProjectNameRequired),
     })
     if (!name) return
     stopIfRunning()
     const leaving = tabs
     const meta = await createProject(name, template?.snapshot)
-    if (!meta) return notify('Warsha could not create that project.', 'error')
+    if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
     adoptProject(leaving)
     notify(
-      template
-        ? `“${meta.name}” ready — ${count(template.snapshot.files.length, 'file')}.`
-        : `“${meta.name}” ready.`,
+      template ? COPY.noteProjectReady(meta.name, template.snapshot.files.length) : COPY.noteProjectReadyBare(meta.name),
       'success',
     )
   }
@@ -936,11 +963,11 @@ function Ide({ report }: { report: CapabilityReport }) {
   const renameCurrentProject = async () => {
     if (!currentProject) return
     const name = await dialogs.prompt({
-      title: 'Rename project',
-      label: 'Project name',
+      title: COPY.dlgRenameProjectTitle,
+      label: COPY.dlgProjectName,
       value: currentProject.name,
-      okLabel: 'Rename',
-      validate: (v) => (v.trim() ? projectNameTaken(v, currentProject.id) : 'Give the project a name.'),
+      okLabel: COPY.dlgRename,
+      validate: (v) => (v.trim() ? projectNameTaken(v, currentProject.id) : COPY.dlgProjectNameRequired),
     })
     if (!name || name === currentProject.name) return
     await renameProject(currentProject.id, name)
@@ -950,11 +977,9 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!currentProject) return
     const files = project.paths().length
     const ok = await dialogs.confirm({
-      title: `Delete “${currentProject.name}”?`,
-      message: `${
-        files ? `The ${count(files, 'file')} in it will be removed. ` : ''
-      }This cannot be undone. Export a .zip first if you want to keep them.`,
-      okLabel: 'Delete',
+      title: COPY.dlgDeleteProjectTitle(currentProject.name),
+      message: COPY.dlgDeleteProjectBody(files),
+      okLabel: COPY.dlgDelete,
       danger: true,
     })
     if (!ok) return
@@ -965,7 +990,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     // most recent one, or a fresh empty project if that was the only one.
     await deleteProject(currentProject.id)
     adoptProject(leaving)
-    notify(`“${gone}” deleted.`)
+    notify(COPY.noteProjectDeleted(gone))
   }
 
   // ---- keyboard shortcuts ----
@@ -1102,9 +1127,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   useEffect(() => {
     if (!migration) return
     if (migration.kind === 'migrated') {
-      notify(`Your ${count(migration.files, 'file')} are now in a project you can name and switch between.`)
+      notify(COPY.noteMigrated(migration.files))
     } else if (migration.kind === 'migration-kept-original') {
-      notify('Warsha could not finish moving your files into a project, so it left them exactly where they were.', 'error')
+      notify(COPY.noteMigrationKept, 'error')
     }
   }, [migration, notify])
 
@@ -1131,12 +1156,23 @@ function Ide({ report }: { report: CapabilityReport }) {
         // you can switch to, an open one for the project you are in. A blank slot
         // on some rows and not others left the column ragged.
         icon: isOpen ? <IconFolderOpen size={18} /> : <IconFiles size={18} />,
-        hint: isOpen ? 'Open' : undefined,
+        hint: isOpen ? COPY.menuProjectOpenHint : undefined,
         disabled: isOpen,
         onSelect: () => void switchToProject(p.id),
       }
     })
   })()
+
+  // One row per language, each written IN that language — a switch that names
+  // «العربية» in English is unreadable to exactly the person who needs it.
+  // Same shape as projectRows: the active one is marked and unselectable.
+  const languageRows: MenuItem[] = LOCALES.map((l) => ({
+    id: `locale:${l}`,
+    label: LOCALE_NAMES[l],
+    hint: l === locale() ? '✓' : undefined,
+    disabled: l === locale(),
+    onSelect: () => setLocale(l),
+  }))
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
   /** ONE sidebar toggle behind every entry point (title-bar toggle, View menu,
@@ -1199,14 +1235,11 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  nothing. The version is the package's own, inlined at build time. */
   const showAbout = () =>
     void dialogs.alert({
-      title: 'Warsha',
+      title: COPY.aboutTitle,
       message: (
         <>
-          <p>
-            A workshop for code — Java, Python, C# and the web, running entirely in your browser. Your files live on
-            this device.
-          </p>
-          <p className="mt-2 text-text-3">Version {pkg.version}</p>
+          <p>{COPY.aboutBody}</p>
+          <p className="mt-2 text-text-3">{COPY.aboutVersion(pkg.version)}</p>
         </>
       ),
     })
@@ -1224,7 +1257,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     // Escape — this row is the fallback for a stray focus), then the drawer.
     {
       id: 'quickInput.close',
-      title: 'Close Quick Input',
+      title: COPY.cmdCloseQuickInput,
       keys: ['Escape'],
       inPalette: false,
       enabled: () => quickPick !== null,
@@ -1232,31 +1265,31 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'drawer.close',
-      title: 'Close File Drawer',
+      title: COPY.cmdCloseDrawer,
       keys: ['Escape'],
       inPalette: false,
       enabled: () => narrow && drawerOpen,
       run: () => setDrawerOpen(false),
     },
-    { id: 'file.newFile', title: 'File: New File…', run: () => void newFile('') },
-    { id: 'file.saveAll', title: 'File: Save All', keys: ['Mod+S'], run: saveAllQuiet },
+    { id: 'file.newFile', title: COPY.cmdFileNewFile, run: () => void newFile('') },
+    { id: 'file.saveAll', title: COPY.cmdFileSaveAll, keys: ['Mod+S'], run: saveAllQuiet },
     {
       id: 'file.format',
-      title: 'File: Format Document',
+      title: COPY.cmdFileFormat,
       keys: ['Shift+Alt+F'],
       enabled: () => canFormat(activePath),
       run: () => void formatActiveFile(),
     },
     {
       id: 'file.share',
-      title: 'File: Share as Image…',
+      title: COPY.cmdFileShareImage,
       enabled: () => activePath !== null,
       run: () => void shareActiveFile(),
     },
-    { id: 'file.import', title: 'File: Import .zip…', run: () => setImportOpen(true) },
+    { id: 'file.import', title: COPY.cmdFileImport, run: () => setImportOpen(true) },
     {
       id: 'file.closeEditor',
-      title: 'File: Close Editor',
+      title: COPY.cmdFileCloseEditor,
       keys: ['Mod+W'],
       enabled: () => activePath !== null,
       run: () => {
@@ -1265,7 +1298,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'edit.find',
-      title: 'Edit: Find',
+      title: COPY.cmdEditFind,
       // In the editor CodeMirror's own searchKeymap claims Mod+F first (and
       // preventDefaults, so the guard skips this); this binding is for when
       // focus is elsewhere — VS Code web captures ⌘F everywhere too.
@@ -1277,20 +1310,20 @@ function Ide({ report }: { report: CapabilityReport }) {
       id: 'search.findInFiles',
       // VS Code's own binding. The sidebar's Search view, not the editor's
       // find panel — the same distinction VS Code draws for the same chord.
-      title: 'Search: Find in Files',
+      title: COPY.cmdSearchInFiles,
       keys: ['Mod+Shift+F'],
       run: openSearchView,
     },
     {
       id: 'view.toggleSidebar',
-      title: 'View: Toggle Primary Side Bar',
+      title: COPY.cmdViewToggleSideBar,
       keys: ['Mod+B'],
       skipWhenTyping: true,
       run: toggleExplorer,
     },
     {
       id: 'view.togglePanel',
-      title: 'View: Toggle Panel',
+      title: COPY.cmdViewTogglePanel,
       // Ctrl+` binds by physical position (keys.ts matches e.code Backquote),
       // exactly as VS Code does, and Ctrl is literal on the Mac too. Plain
       // backquote is typing and is never intercepted. preventDefault (the
@@ -1300,7 +1333,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'view.focusExplorer',
-      title: 'View: Focus Explorer',
+      title: COPY.cmdViewFocusExplorer,
       keys: ['Mod+Shift+E'],
       run: () => {
         setSideView('explorer')
@@ -1318,7 +1351,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'view.nextEditor',
-      title: 'View: Next Editor',
+      title: COPY.cmdViewNextEditor,
       keys: ['Ctrl+PageDown'],
       enabled: () => tabs.length > 1,
       run: () => {
@@ -1328,7 +1361,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'view.previousEditor',
-      title: 'View: Previous Editor',
+      title: COPY.cmdViewPrevEditor,
       keys: ['Ctrl+PageUp'],
       enabled: () => tabs.length > 1,
       run: () => {
@@ -1336,17 +1369,22 @@ function Ide({ report }: { report: CapabilityReport }) {
         setActivePath(tabs[(i - 1 + tabs.length) % tabs.length])
       },
     },
-    { id: 'view.biggerText', title: 'View: Bigger Text', run: () => setFontSize((s) => Math.min(26, s + 1)) },
-    { id: 'view.smallerText', title: 'View: Smaller Text', run: () => setFontSize((s) => Math.max(11, s - 1)) },
+    { id: 'view.biggerText', title: COPY.cmdViewBiggerText, run: () => setFontSize((s) => Math.min(26, s + 1)) },
+    { id: 'view.smallerText', title: COPY.cmdViewSmallerText, run: () => setFontSize((s) => Math.max(11, s - 1)) },
     // Whole-shell zoom — a different pref from the text size above (which is
     // editor type only). VS Code's own bindings; the dispatcher's
     // preventDefault is what keeps Ctrl+=/− from ALSO zooming the browser.
-    { id: 'view.zoomIn', title: 'View: Zoom In', keys: ['Mod+='], run: () => changeScale(+SCALE_STEP) },
-    { id: 'view.zoomOut', title: 'View: Zoom Out', keys: ['Mod+-'], run: () => changeScale(-SCALE_STEP) },
-    { id: 'view.resetZoom', title: 'View: Reset Zoom', keys: ['Mod+0'], run: () => setUiScale(1) },
+    { id: 'view.zoomIn', title: COPY.cmdViewZoomIn, keys: ['Mod+='], run: () => changeScale(+SCALE_STEP) },
+    { id: 'view.zoomOut', title: COPY.cmdViewZoomOut, keys: ['Mod+-'], run: () => changeScale(-SCALE_STEP) },
+    { id: 'view.resetZoom', title: COPY.cmdViewResetZoom, keys: ['Mod+0'], run: () => setUiScale(1) },
+    {
+      id: 'view.language',
+      title: COPY.cmdViewLanguage,
+      run: () => setLocale(locale() === 'ar' ? 'en' : 'ar'),
+    },
     {
       id: 'view.commandPalette',
-      title: 'View: Command Palette…',
+      title: COPY.cmdViewPalette,
       // F1 is the always-works fallback: Firefox reserves Ctrl+Shift+P
       // uncancellably, the same reason VS Code web answers to both.
       keys: ['Mod+Shift+P', 'F1'],
@@ -1354,7 +1392,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'run.run',
-      title: 'Run: Run File',
+      title: COPY.cmdRunFile,
       // F5 and Ctrl+F5 both run (the dispatcher's preventDefault is what
       // cancels the browser reload they normally mean); Mod+Enter is the
       // historic binding the console's idle line still quotes. While a run is
@@ -1372,15 +1410,15 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'run.stop',
-      title: 'Run: Stop',
+      title: COPY.cmdRunStop,
       keys: ['Shift+F5'],
       enabled: () => runnerRef.current.busy,
       run: () => runnerRef.current.stop(),
     },
-    { id: 'go.file', title: 'Go: Go to File…', keys: ['Mod+P'], run: () => setQuickPick('files') },
+    { id: 'go.file', title: COPY.cmdGoToFile, keys: ['Mod+P'], run: () => setQuickPick('files') },
     {
       id: 'go.line',
-      title: 'Go: Go to Line/Column…',
+      title: COPY.cmdGoToLine,
       // Literal Ctrl — VS Code keeps ⌃G on the Mac (⌘G is find-next).
       keys: ['Ctrl+G'],
       enabled: () => activePath !== null,
@@ -1388,7 +1426,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       id: 'projects.openRecent',
-      title: 'Projects: Open Recent…',
+      title: COPY.cmdProjectsOpenRecent,
       // Ctrl+R is literal on the Mac too (VS Code's own spelling — ⌘R belongs
       // to the browser reload, which the preventDefault here blocks on
       // Windows/Linux). With no other project the picker would be an empty
@@ -1397,21 +1435,21 @@ function Ide({ report }: { report: CapabilityReport }) {
       enabled: () => projects.length > 1,
       run: () => setQuickPick('recent'),
     },
-    { id: 'projects.new', title: 'Projects: New Project…', run: () => setPickerOpen(true) },
+    { id: 'projects.new', title: COPY.cmdProjectsNew, run: () => setPickerOpen(true) },
     {
       id: 'projects.rename',
-      title: 'Projects: Rename Project…',
+      title: COPY.cmdProjectsRename,
       enabled: () => Boolean(currentProject),
       run: () => void renameCurrentProject(),
     },
-    { id: 'projects.export', title: 'Projects: Export as .zip', enabled: () => !empty, run: exportProject },
-    { id: 'projects.shareLink', title: 'Projects: Share as Link', enabled: () => !empty, run: () => void shareLink() },
-    { id: 'projects.sharePdf', title: 'Projects: Share as PDF', enabled: () => !empty, run: () => void sharePdf() },
+    { id: 'projects.export', title: COPY.cmdProjectsExport, enabled: () => !empty, run: exportProject },
+    { id: 'projects.shareLink', title: COPY.cmdProjectsShareLink, enabled: () => !empty, run: () => void shareLink() },
+    { id: 'projects.sharePdf', title: COPY.cmdProjectsSharePdf, enabled: () => !empty, run: () => void sharePdf() },
     // Danger last, the same rule every menu in the app follows.
-    { id: 'projects.empty', title: 'Projects: Empty Project…', enabled: () => !empty, run: () => void startEmpty() },
+    { id: 'projects.empty', title: COPY.cmdProjectsEmpty, enabled: () => !empty, run: () => void startEmpty() },
     {
       id: 'projects.delete',
-      title: 'Projects: Delete Project…',
+      title: COPY.cmdProjectsDelete,
       enabled: () => Boolean(currentProject),
       run: () => void deleteCurrentProject(),
     },
@@ -1442,36 +1480,36 @@ function Ide({ report }: { report: CapabilityReport }) {
   // behind a divider (Menu enforces that) and never near Save.
   const menuBarMenus: MenuBarMenu[] = [
     {
-      label: 'File',
+      label: COPY.menuFile,
       items: [
-        { label: 'New File…', onSelect: () => void newFile('') },
+        { label: COPY.menuNewFile, onSelect: () => void newFile('') },
         // One row, whatever the language list grows to: it opens the picker,
         // where language and starter are chosen (languages.ts, TemplatePicker).
-        { label: 'New Project…', onSelect: () => setPickerOpen(true) },
+        { label: COPY.menuNewProject, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher (global dedupe #6): most recent
         // first, the open one marked and unselectable — projectRows exactly.
-        { label: 'Open Recent', items: projectRows },
-        { label: 'Import .zip…', startsGroup: true, onSelect: () => setImportOpen(true) },
-        { label: 'Export as .zip', disabled: empty, onSelect: exportProject },
-        { label: 'Share as link…', disabled: empty, onSelect: () => void shareLink() },
-        { label: 'Share as PDF…', disabled: empty, onSelect: () => void sharePdf() },
-        { label: 'Save All', hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
+        { label: COPY.menuOpenRecent, items: projectRows },
+        { label: COPY.menuImportZip, startsGroup: true, onSelect: () => setImportOpen(true) },
+        { label: COPY.menuExportZip, disabled: empty, onSelect: exportProject },
+        { label: COPY.menuShareLink, disabled: empty, onSelect: () => void shareLink() },
+        { label: COPY.menuSharePdf, disabled: empty, onSelect: () => void sharePdf() },
+        { label: COPY.menuSaveAll, hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
         {
-          label: 'Rename Project…',
+          label: COPY.menuRenameProject,
           startsGroup: true,
           disabled: !currentProject,
           onSelect: () => void renameCurrentProject(),
         },
-        { label: 'Empty Project…', danger: true, disabled: empty, onSelect: () => void startEmpty() },
-        { label: 'Delete Project…', danger: true, disabled: !currentProject, onSelect: () => void deleteCurrentProject() },
+        { label: COPY.menuEmptyProject, danger: true, disabled: empty, onSelect: () => void startEmpty() },
+        { label: COPY.menuDeleteProject, danger: true, disabled: !currentProject, onSelect: () => void deleteCurrentProject() },
       ],
     },
     {
-      label: 'Edit',
+      label: COPY.menuEdit,
       items: [
-        { label: 'Undo', hint: formatKeys('Mod+Z'), disabled: !activePath, onSelect: () => editorCommand(undo) },
+        { label: COPY.menuUndo, hint: formatKeys('Mod+Z'), disabled: !activePath, onSelect: () => editorCommand(undo) },
         {
-          label: 'Redo',
+          label: COPY.menuRedo,
           // CodeMirror's own bindings: ⇧⌘Z on the Mac, Ctrl+Y (Windows
           // muscle memory, which CM also maps) elsewhere.
           hint: formatKeys(isMacLike ? 'Shift+Mod+Z' : 'Ctrl+Y'),
@@ -1479,49 +1517,50 @@ function Ide({ report }: { report: CapabilityReport }) {
           onSelect: () => editorCommand(redo),
         },
         {
-          label: 'Find…',
+          label: COPY.menuFind,
           hint: formatKeys('Mod+F'),
           startsGroup: true,
           disabled: !activePath,
           onSelect: () => editorCommand(openSearchPanel),
         },
         // The sidebar's cross-file search — VS Code's Edit > Find in Files.
-        { label: 'Find in Files…', hint: formatKeys('Mod+Shift+F'), onSelect: openSearchView },
+        { label: COPY.menuFindInFiles, hint: formatKeys('Mod+Shift+F'), onSelect: openSearchView },
       ],
     },
     {
-      label: 'View',
+      label: COPY.menuView,
       items: [
-        { label: 'Toggle Explorer', hint: formatKeys('Mod+B'), onSelect: toggleExplorer },
-        { label: 'Toggle Console', hint: formatKeys('Mod+J'), onSelect: () => setConsoleOpen((v) => !v) },
-        { label: 'Bigger Text', startsGroup: true, onSelect: () => setFontSize((s) => Math.min(26, s + 1)) },
-        { label: 'Smaller Text', onSelect: () => setFontSize((s) => Math.max(11, s - 1)) },
+        { label: COPY.menuToggleExplorer, hint: formatKeys('Mod+B'), onSelect: toggleExplorer },
+        { label: COPY.menuToggleConsole, hint: formatKeys('Mod+J'), onSelect: () => setConsoleOpen((v) => !v) },
+        { label: COPY.menuBiggerText, startsGroup: true, onSelect: () => setFontSize((s) => Math.min(26, s + 1)) },
+        { label: COPY.menuSmallerText, onSelect: () => setFontSize((s) => Math.max(11, s - 1)) },
         // Editor type above, whole shell below — two prefs, two groups.
-        { label: 'Zoom In', hint: formatKeys('Mod+='), startsGroup: true, onSelect: () => changeScale(+SCALE_STEP) },
-        { label: 'Zoom Out', hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
-        { label: 'Reset Zoom', hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
+        { label: COPY.menuZoomIn, hint: formatKeys('Mod+='), startsGroup: true, onSelect: () => changeScale(+SCALE_STEP) },
+        { label: COPY.menuZoomOut, hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
+        { label: COPY.menuResetZoom, hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
         {
           // Handedness (html[data-hand]) mirrors the console header's Run side.
           // Relocated from the retired touch "⋯" menu; it matters most on touch
           // but is one preference, so it has one home.
-          label: hand === 'right' ? 'Run Button on Left' : 'Run Button on Right',
+          label: hand === 'right' ? COPY.menuRunOnLeft : COPY.menuRunOnRight,
           startsGroup: true,
           onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
         },
+        { label: COPY.menuLanguage, items: languageRows },
       ],
     },
     {
-      label: 'Run',
+      label: COPY.menuRun,
       items: [
         {
-          label: runControl.entry ? `Run ${runControl.entry}` : 'Run',
+          label: runControl.entry ? COPY.menuRunEntry(runControl.entry) : COPY.menuRun,
           hint: formatKeys('F5'),
           disabled: runControl.busy || !runControl.canRun,
           onSelect: runControl.onRun,
         },
-        { label: 'Stop', hint: formatKeys('Shift+F5'), disabled: !runControl.busy, onSelect: runControl.onStop },
+        { label: COPY.menuStop, hint: formatKeys('Shift+F5'), disabled: !runControl.busy, onSelect: runControl.onStop },
         {
-          label: 'Format File',
+          label: COPY.menuFormatFile,
           hint: formatKeys('Shift+Alt+F'),
           startsGroup: true,
           disabled: !canFormat(activePath),
@@ -1530,15 +1569,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       ],
     },
     {
-      label: 'Help',
-      items: [{ label: 'About Warsha', onSelect: showAbout }],
+      label: COPY.menuHelp,
+      items: [{ label: COPY.menuAbout, onSelect: showAbout }],
     },
   ]
 
   // The rail's gear (ActivityBar) — VS Code keeps the app-scoped odds and ends
   // behind its own gear, and every row here is an action that already exists.
   const manageItems: MenuItem[] = [
-    { label: 'Command Palette…', hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
+    { label: COPY.menuCommandPalette, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
     {
       // The View-scale slider — a CONTROL row, not a command: `render` rows
       // are not Radix Items (Menu.tsx), so dragging the thumb never
@@ -1546,7 +1585,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       // as View > Zoom In/Out; the editor A−/A+ stepper is the other pref
       // (editor type) and stays out of this row.
       id: 'view-scale',
-      label: 'View scale',
+      label: COPY.menuViewScale,
       startsGroup: true,
       render: (
         <div
@@ -1557,10 +1596,10 @@ function Ide({ report }: { report: CapabilityReport }) {
             if (/^(Arrow(Left|Right|Up|Down)|Home|End|Page(Up|Down))$/.test(e.key)) e.stopPropagation()
           }}
         >
-          <span className="flex-none text-row text-text-1 desk:text-[13px]">View scale</span>
+          <span className="flex-none text-row text-text-1 desk:text-[13px]">{COPY.menuViewScale}</span>
           <input
             type="range"
-            aria-label="View scale"
+            aria-label={COPY.a11yViewScale}
             min={SCALE_MIN}
             max={SCALE_MAX}
             step={SCALE_STEP}
@@ -1570,13 +1609,14 @@ function Ide({ report }: { report: CapabilityReport }) {
             // 44px hit band on touch (the track paints centred regardless).
             className="min-h-touch min-w-0 flex-1 cursor-pointer accent-(--accent) desk:min-h-0"
           />
-          <span className="w-[4ch] flex-none text-right text-micro tabular-nums text-text-2 desk:text-[13px]">
+          <span className="w-[4ch] flex-none text-end text-micro tabular-nums text-text-2 desk:text-[13px]">
             {Math.round(uiScale * 100)}%
           </span>
         </div>
       ),
     },
-    { label: 'About Warsha', startsGroup: true, onSelect: showAbout },
+    { label: COPY.menuLanguage, items: languageRows, startsGroup: true },
+    { label: COPY.menuAbout, startsGroup: true, onSelect: showAbout },
   ]
 
   // The tab-strip "⋯" (every size, with the trailing group) carries what is
@@ -1587,26 +1627,26 @@ function Ide({ report }: { report: CapabilityReport }) {
   // "Share as image…" is a QA-clicked string.
   const deskMoreItems: MenuItem[] = [
     {
-      label: 'Format file',
+      label: COPY.menuFormatFileRow,
       icon: <IconWand size={18} />,
       hint: formatKeys('Shift+Alt+F'),
       disabled: !canFormat(activePath),
       onSelect: () => void formatActiveFile(),
     },
     {
-      label: 'Share as image…',
+      label: COPY.menuShareImage,
       icon: <IconShare size={18} />,
       disabled: !activePath,
       onSelect: () => void shareActiveFile(),
     },
     {
-      label: 'Share project as link…',
+      label: COPY.menuShareProjectLink,
       icon: <IconLink size={18} />,
       disabled: empty,
       onSelect: () => void shareLink(),
     },
     {
-      label: 'Share project as PDF…',
+      label: COPY.menuShareProjectPdf,
       icon: <IconFileLines size={18} />,
       disabled: empty,
       onSelect: () => void sharePdf(),
@@ -1657,17 +1697,17 @@ function Ide({ report }: { report: CapabilityReport }) {
             aria-label stays "Files" at all times: it is the QA suites' handle
             for this aside, and the files are what both views operate on. */}
         <aside
-          aria-label="Files"
+          aria-label={COPY.a11yFiles}
           aria-hidden={!explorerVisible}
           data-state={explorerVisible ? 'open' : 'closed'}
           data-view={sideView}
           className={
-            'z-20 shrink-0 border-r border-border-subtle ' +
+            'z-20 shrink-0 border-e border-border-subtle ' +
             (narrow
               ? // `.drawer` owns the transform and the --dur transition: the
                 // utility form of both compiled to invalid CSS under Tailwind v4,
                 // so the drawer used to snap open with no animation at all.
-                'drawer absolute inset-y-0 left-0 w-drawer shadow-raised'
+                'drawer absolute inset-y-0 start-0 w-drawer shadow-raised'
               : explorerDocked
                 ? 'w-explorer'
                 : 'hidden')
@@ -1795,7 +1835,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           ) : null}
 
           <section
-            aria-label="Console"
+            aria-label={COPY.a11yConsole}
             data-state={runner.status}
             // `.console-panel` carries the fill, the top divider, the stdin floor
             // and the accent rule that marks a running process. The min-height
@@ -1837,7 +1877,12 @@ function Ide({ report }: { report: CapabilityReport }) {
                   consoleRestoreHeight.current = consoleHeight
                   // Over-ask on purpose; the panel's flex-shrink + the editor's
                   // min-height floor decide what "maximized" actually is.
-                  setConsoleHeight(window.innerHeight)
+                  // Divided by the view scale because innerHeight is unzoomed
+                  // viewport px while the height is a px length inside the
+                  // zoomed #root — at 0.7 the raw value is only 70% of the
+                  // shell and stopped over-asking, so "maximize" left a third
+                  // of the editor showing.
+                  setConsoleHeight(window.innerHeight / uiScale)
                   setConsoleMaximized(true)
                 }
               }}

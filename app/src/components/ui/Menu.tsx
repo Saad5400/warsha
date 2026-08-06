@@ -3,6 +3,55 @@ import * as RMenu from '@radix-ui/react-dropdown-menu'
 import { cva, cx } from 'class-variance-authority'
 import { Fragment, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { IconChevronRight } from './Icons'
+import { useMedia } from '../../hooks/useMedia'
+import { COPY } from '../../copy'
+import { dirOf, locale } from '../../i18n/locale'
+
+/** A side flyout needs a pointer that can hover and aim at it. */
+const CAN_FLYOUT = '(hover: hover) and (pointer: fine)'
+
+/** …and it needs the room to appear BESIDE its parent: a ~280px panel, its
+ *  ~200px child, and the trigger they hang off. Below this the two cannot sit
+ *  side by side however good the pointer is. */
+const FLYOUT_ROOM = '(min-width: 700px)'
+
+/**
+ * Whether a trigger menu must navigate submenus IN PLACE instead of flying
+ * them out — VS Code's mobile-web pattern, and the answer to a submenu with
+ * nowhere to go.
+ *
+ * BOTH conditions matter, and only checking the pointer is what left the
+ * language switch unreachable. A phone fails the pointer test and drills, but a
+ * 390px window with a mouse — a laptop, a devtools viewport, the environment
+ * this is tested in — passes it, flew the submenu out to `left: -108px`, and
+ * put the rows off the edge of the screen. Room is the condition that actually
+ * describes the failure; the pointer test stays because a coarse pointer cannot
+ * aim across a flyout's diagonal even when the room exists.
+ *
+ * Lives here rather than in MenuBar because it is a fact about `TriggerMenu`:
+ * every menu that can hold a submenu needs it, which now includes the activity
+ * bar's Manage gear.
+ */
+export function useDrillIn(): boolean {
+  const canFlyout = useMedia(CAN_FLYOUT)
+  const hasRoom = useMedia(FLYOUT_ROOM)
+  return !canFlyout || !hasRoom
+}
+
+/**
+ * The reading direction, handed to every Radix root in this file explicitly.
+ *
+ * Radix does not look at `<html dir>`. It resolves direction from a `dir` prop
+ * or from `DirectionProvider`'s React context — and the provider at the App
+ * root is not enough on its own here, because Vite pre-bundles
+ * `@radix-ui/react-direction` into more than one optimized chunk, so the
+ * provider and the menu can end up holding two different context objects. The
+ * prop is not subject to that: it is read straight off the module.
+ *
+ * Called during render (never hoisted to a module constant) so a language
+ * switch, which re-renders the tree, moves the menus with it.
+ */
+const menuDir = () => dirOf(locale())
 
 export interface MenuItem {
   /** Reconciliation key. Give one whenever the label can repeat — project names
@@ -96,7 +145,7 @@ const PANEL = cx(
  */
 const row = cva(
   cx(
-    'group/item flex min-h-touch w-full cursor-pointer items-center gap-3 rounded-sm px-3 text-left text-row',
+    'group/item flex min-h-touch w-full cursor-pointer items-center gap-3 rounded-sm px-3 text-start text-row',
     'desk:min-h-[26px] desk:text-[13px]',
     'touch-manipulation transition-colors duration-(--dur-fast) ease-standard',
     'disabled:cursor-not-allowed disabled:bg-transparent disabled:text-text-disabled',
@@ -131,13 +180,16 @@ const ICON = cx(
 )
 const LABEL = 'min-w-0 flex-1 truncate'
 const HINT = cx(
-  'ml-4 flex-none text-micro tabular-nums text-text-3 group-disabled/item:text-text-disabled!',
+  'ms-4 flex-none text-micro tabular-nums text-text-3 group-disabled/item:text-text-disabled!',
   'desk:ml-auto desk:text-[13px] desk:text-text-2',
   'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
 /** Submenu marker — same trailing slot as HINT, but a glyph. */
 const SUB_HINT = cx(
-  'ml-auto flex-none text-text-3',
+  // `rtl:-scale-x-100`: this glyph is a direction, not an ornament. Radix flies
+  // the child panel out on the trailing side, so in Arabic it opens to the LEFT
+  // and a right-pointing chevron promises the opposite of what happens.
+  'ms-auto flex-none text-text-3 rtl:-scale-x-100',
   'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
 const SEPARATOR = 'm-2 border-t border-border-subtle desk:border-(--menu-sep)'
@@ -336,6 +388,7 @@ export function Menu({
 
   return (
     <RMenu.Root
+      dir={menuDir()}
       open={open}
       onOpenChange={(next) => {
         if (!next) close()
@@ -461,6 +514,7 @@ export function TriggerMenu({
 
   return (
     <RMenu.Root
+      dir={menuDir()}
       open={open}
       onOpenChange={(next) => {
         if (!next) setPath([])
@@ -502,7 +556,13 @@ export function TriggerMenu({
               >
                 <button type="button" data-menu-back className={row({ tone: 'normal' })}>
                   {plain ? null : <span aria-hidden="true" className={ICON} />}
-                  <span className={LABEL}>‹ Back</span>
+                  {/* The chevron is its own element so `rtl:-scale-x-100` can
+                      turn it around: "back" is the direction you came from,
+                      which in Arabic is the other way. A "‹" baked into the
+                      string would point into the panel instead of out of it. */}
+                  <span className={LABEL}>
+                    <span aria-hidden="true" className="inline-block rtl:-scale-x-100">‹</span> {COPY.menuBack}
+                  </span>
                 </button>
               </RMenu.Item>
               <RMenu.Separator className={SEPARATOR} />
@@ -538,7 +598,7 @@ function levelOf(items: MenuItem[], path: string[]): MenuItem[] {
  */
 export function ContextMenu({ items, label, children }: { items: MenuItem[]; label: string; children: ReactNode }) {
   return (
-    <RContextMenu.Root modal={false}>
+    <RContextMenu.Root dir={menuDir()} modal={false}>
       <RContextMenu.Trigger asChild>{children}</RContextMenu.Trigger>
       <RContextMenu.Portal>
         <RContextMenu.Content
