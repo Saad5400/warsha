@@ -12,6 +12,9 @@ public/ecj.jar
 # The C# engine bundle (dotnet _framework + module worker), built + staged by
 # runtimes/csharp/build.sh. Large build product, never a source of truth.
 public/warsha-dotnet/
+# The C worker, a verbatim copy of runtimes/clang/src/clang.worker.js (same
+# arrangement as the Java worker above — the source lives with its runtime).
+public/warsha-clang.worker.js
 # The esbuild bundler wasm, a verbatim copy of node_modules/esbuild-wasm/
 # esbuild.wasm (used to transpile/bundle TypeScript and cross-file JS/TS modules
 # in the browser). ~12 MB build product, never a source of truth.
@@ -26,3 +29,14 @@ public/warsha-tailwind.js
 # instance, exposed as bare-specifier shims). Inlined into the preview like the
 # Tailwind build, for the same COEP reason. ~196 KB build product, not a source.
 public/warsha-react.json
+# Svelte 5 and Vue 3 runtimes bundled first-party for the Web preview, built by
+# tools/prebuild-svelte.mjs / prebuild-vue.mjs from the installed packages. The
+# .svelte/.vue compilers run in the bundler; only the runtime is staged here and
+# bundled into the student's output (single instance). Build products, not sources.
+public/warsha-svelte.json
+public/warsha-vue.json
+
+# The two Readex Pro subsets (Latin + Arabic, variable weight), staged from
+# @fontsource-variable/readex-pro by `npm run assets`. Verbatim copies of the
+# installed package's files — build products, never a source of truth.
+public/fonts/
