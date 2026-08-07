@@ -499,6 +499,18 @@ const chromeTheme = EditorView.theme(
     '&.cm-editor .cm-tooltip.cm-completionInfo:has(.cm-docs)': {
       maxWidth: 'min(420px, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
     },
+    // On a phone the popup is nearly viewport-wide, so CodeMirror finds no room to
+    // set the info panel beside the option list and falls back to its `-narrow`
+    // placement: 30px in from the list's own edge — i.e. painted directly ON TOP
+    // of the options (the reported overlap). Better to drop it there: every row
+    // already carries its one-line gloss in `.cm-completionDetail`, and the full
+    // docs card is a long-press away (the bottom docs dock). The side panel stays
+    // untouched at desk, where there is room for it and this narrow case never
+    // triggers unless the editor pane itself is squeezed thinner than the popup.
+    '&.cm-editor .cm-tooltip.cm-completionInfo.cm-completionInfo-left-narrow, &.cm-editor .cm-tooltip.cm-completionInfo.cm-completionInfo-right-narrow':
+      {
+        display: 'none',
+      },
     // ---- Docs card (hover / long-press / Ctrl+K Ctrl+I — editor/hoverDocs.ts).
     // One card DOM (`.cm-docs`, built in completions.ts), two hosts: the hover
     // tooltip below and the completion info panel above. VS Code's hover-widget

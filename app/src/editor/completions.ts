@@ -37,9 +37,12 @@ export type CompletionLang = 'java' | 'python'
  *      rest of the project. Keywords and dictionary names are dropped so the
  *      documented completion always represents them.
  *
- * On top of that, ranking reads the situation: mid-expression (after `=`, `(`, a
- * comma or an operator) the declaration-only keywords and statement snippets are
- * withheld, the way VS Code won't offer `class` inside `int x = …`.
+ * On top of that, ranking reads the situation: statement snippets and
+ * declaration-only keywords show only at the start of a statement. Mid-expression
+ * (after `=`, `(`, a comma or an operator) they are withheld, the way VS Code
+ * won't offer `class` inside `int x = …` — and so are they while you name a
+ * variable after its type (`Scanner sc…`), where `scanner` would otherwise
+ * outrank the name and paste `Scanner …` a second time.
  *
  * None of this is semantic analysis — types are guessed from the text (see
  * members.ts) and "how likely you want it" is proximity, not scope resolution.
@@ -593,30 +596,46 @@ function proximityBonus(dist: number): number {
   return dist <= 40 ? 10 : dist <= 200 ? 7 : dist <= 600 ? 4 : dist <= 2000 ? 2 : 0
 }
 
-/** Is the caret inside an expression (after `=`, `(`, a comma or an operator)?
- *  Only the confident cases flip; everything else stays "statement position", so
- *  the full keyword/snippet set still shows and nothing wanted is ever hidden. */
-function inExpression(state: EditorState, wordFrom: number): boolean {
+/**
+ * Is the caret where a fresh statement can begin? That is the only place a
+ * statement snippet (`sout`, `scanner`, `fori`) or a declaration-only keyword
+ * (`class`, `public`) belongs, so everywhere else they are withheld. Two "else"
+ * cases matter:
+ *   - mid-expression, after `=` `(` `,` `[` or an operator — the way VS Code
+ *     won't offer `class` inside `int x = …`; and
+ *   - right after a type, while you are naming a variable (`Scanner sc|`), where
+ *     the `scanner` snippet would otherwise outrank the name you are typing and
+ *     paste a *second* `Scanner …` on top of the one you already wrote.
+ *
+ * Conservative on purpose: only an empty line-so-far (indentation trimmed) or a
+ * hard statement boundary — `{` `}` `;` — counts as a start. Anything else before
+ * the word, an identifier or an operator alike, holds the statement set back, so
+ * it shows exactly where a statement can open and nowhere it would shadow a name.
+ */
+function atStatementStart(state: EditorState, wordFrom: number): boolean {
   const line = state.doc.lineAt(wordFrom)
   const pre = state.sliceDoc(line.from, wordFrom).replace(/\s+$/, '')
-  return pre !== '' && '=(,[+-*/%<>!&|?~^'.includes(pre[pre.length - 1])
+  return pre === '' || '{};'.includes(pre[pre.length - 1])
 }
 
-const suppressedInExpression = (lang: CompletionLang, o: Completion): boolean =>
+const statementOnly = (lang: CompletionLang, o: Completion): boolean =>
   o.type === 'snippet' || (o.type === 'keyword' && STATEMENT_ONLY[lang].has(o.label))
 
 /** Snippets, keywords and the API dictionary. Fires from the first character,
  *  since an abbreviation only pays off before you finish typing it. Steps aside in
- *  a `.` context, and drops declaration-only keywords / snippets mid-expression. */
+ *  a `.` context, and — unless you asked explicitly — drops statement snippets and
+ *  declaration keywords anywhere but the start of a statement, so they never shadow
+ *  the variable name you are typing after a type. */
 function staticSource(lang: CompletionLang): CompletionSource {
   const all = staticOptions(lang)
   const full = completeFromList(all)
-  const expr = completeFromList(all.filter((o) => !suppressedInExpression(lang, o)))
+  const rest = completeFromList(all.filter((o) => !statementOnly(lang, o)))
   return (ctx: CompletionContext) => {
     if (memberContext(ctx.state, ctx.pos)) return null
     const before = ctx.matchBefore(WORD_BEFORE)
     if (!ctx.explicit && !before) return null
-    return inExpression(ctx.state, before ? before.from : ctx.pos) ? expr(ctx) : full(ctx)
+    const wordFrom = before ? before.from : ctx.pos
+    return !ctx.explicit && !atStatementStart(ctx.state, wordFrom) ? rest(ctx) : full(ctx)
   }
 }
 
