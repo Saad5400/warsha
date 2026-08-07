@@ -290,6 +290,24 @@ export const AR: Bundle = {
   editorNoFile: 'لا ملف مفتوح',
   editorBrowseFiles: 'تصفّح الملفات',
 
+  // ---- static analysis / diagnostics (editor/lint.ts) ----
+  lintSyntax: 'هنا شيء غير مكتمل أو في غير موضعه، فتعذّرت قراءة هذا الجزء بعد.',
+  lintJavaStringEquals: `${iso('==')} يتحقّق من كون النصّين هما الكائن نفسه، وهذا نادرًا ما يكون مقصودك. استخدم ${iso('.equals()')} لمقارنة ما يقولانه.`,
+  lintJsLooseEquals: `${iso('==')} يحوّل الطرفين قبل المقارنة، وقد يفاجئك ذلك. ${iso('===')} يقارن القيمة والنوع معًا.`,
+  lintPyPrint2: `في بايثون 3، ${iso('print')} دالة، فما تطبعه يوضع داخل ${iso('print( )')}. مكتوبًا هكذا لن يعمل السطر.`,
+  lintPyEqNone: `تحقّق من ${iso('None')} بـ${iso('is')} لا ${iso('==')}. هذا هو السؤال الذي تقصده هنا فعلًا.`,
+  lintFixEquals: `استخدم ${iso('.equals()')}`,
+  lintFixStrictEquals: (op) => `استخدم ${iso(op)}`,
+  lintFixIsNone: (keyword) => `استخدم ${iso(keyword)}`,
+  lintFixPrintCall: `أعد كتابتها بالشكل ${iso('print( )')}`,
+  statusBarProblems: (errors, warnings) => {
+    const parts: string[] = []
+    if (errors) parts.push(arCount(errors, 'خطأ واحد', 'خطآن', 'أخطاء', 'خطأً'))
+    if (warnings) parts.push(arCount(warnings, 'تحذير واحد', 'تحذيران', 'تحذيرات', 'تحذيرًا'))
+    return parts.join('، ')
+  },
+  a11yProblems: 'عرض المشاكل',
+
   // ---- the two "this went badly" screens ----
   capabilityTitle: 'ورشة لا تعمل في هذا المتصفّح',
   capabilityStillDo: 'ما يمكنك فعله هنا',

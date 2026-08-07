@@ -31,6 +31,8 @@ export interface EditorProps {
   projectWords?: readonly string[]
   /** Caret position for the status bar, 1-based. Fires only when it moves. */
   onCursor?(line: number, col: number): void
+  /** Error/warning tally for the status bar's problems item. Fires only when it changes. */
+  onDiagnostics?(counts: { errors: number; warnings: number }): void
 }
 
 /**
@@ -47,12 +49,13 @@ export function Editor({
   onBrowseFiles,
   projectWords,
   onCursor,
+  onDiagnostics,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<EditorController | null>(null)
   // Refs, not deps: CodeMirror's view must not rebuild when a prop identity changes.
-  const handlers = useRef({ onChange, onSave, projectWords, onCursor })
-  handlers.current = { onChange, onSave, projectWords, onCursor }
+  const handlers = useRef({ onChange, onSave, projectWords, onCursor, onDiagnostics })
+  handlers.current = { onChange, onSave, projectWords, onCursor, onDiagnostics }
 
   useEffect(() => {
     const host = hostRef.current
@@ -63,6 +66,7 @@ export function Editor({
       onSave: () => handlers.current.onSave(),
       projectWords: () => handlers.current.projectWords ?? [],
       onCursor: (line, col) => handlers.current.onCursor?.(line, col),
+      onDiagnostics: (counts) => handlers.current.onDiagnostics?.(counts),
     })
     controllerRef.current = controller
     onController(controller)

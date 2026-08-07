@@ -277,6 +277,37 @@ export const EN = {
   editorNoFile: 'No file open',
   editorBrowseFiles: 'Browse files',
 
+  // ---- static analysis / diagnostics (editor/lint.ts) ----
+  // Tone as everywhere: name what the code does, then what to do; blame nobody,
+  // no "Error:"/"Invalid". Code tokens (==, .equals(), print) stay literal —
+  // the sentence carries the meaning around them.
+  /** The grammar could not parse this span. */
+  lintSyntax: "Something here is unfinished or out of place, so this part can't be read yet.",
+  /** Java `a == "b"` — compiles, but compares identity, not the text. */
+  lintJavaStringEquals:
+    '== checks whether two pieces of text are the very same object, which they usually are not. Use .equals() to compare what they say.',
+  /** JavaScript `==` / `!=`. */
+  lintJsLooseEquals:
+    '== converts the two sides before comparing, which can surprise you. === compares the value and the type together.',
+  /** Python 2 `print "x"` — a SyntaxError in Python 3. */
+  lintPyPrint2:
+    "In Python 3, print is a function, so what you print goes inside print( ). Written this way the line won't run.",
+  /** Python `x == None`. */
+  lintPyEqNone: 'Check for None with is, not ==. That is the question you actually mean here.',
+  /** Fix labels — short, they sit on a button. */
+  lintFixEquals: 'Use .equals()',
+  lintFixStrictEquals: (op: string) => `Use ${op}`,
+  lintFixIsNone: (keyword: string) => `Use ${keyword}`,
+  lintFixPrintCall: 'Rewrite as print( )',
+  /** The status bar's problems item and its accessible name. */
+  statusBarProblems: (errors: number, warnings: number) => {
+    const parts: string[] = []
+    if (errors) parts.push(count(errors, 'error'))
+    if (warnings) parts.push(count(warnings, 'warning'))
+    return parts.join(', ')
+  },
+  a11yProblems: 'Show problems',
+
   // ---- the two "this went badly" screens ----
   capabilityTitle: 'Warsha cannot run in this browser',
   capabilityStillDo: 'What you can still do here',
