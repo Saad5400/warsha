@@ -57,6 +57,10 @@ export const JAVA_SNIPPETS: readonly Completion[] = [
   snip('method', 'public ${void} ${name}(${}) {\n\t\n}', 'a method'),
   snip('scanner', 'Scanner ${sc} = new Scanner(System.in);', 'read what the user types'),
   snip('try', 'try {\n\t${}\n} catch (${Exception} e) {\n\tSystem.out.println(e.getMessage());\n}', 'try / catch'),
+  snip('var', 'var ${name} = ${value};', 'let Java work out the type'),
+  snip('record', 'record ${Name}(${int field}) {}', 'a short data-holding class'),
+  snip('switch', 'switch (${value}) {\n\tcase ${label} -> ${};\n\tdefault -> ${};\n}', 'match a value, arrow form'),
+  snip('text', '"""\n${}\n"""', 'a multi-line text block'),
 ]
 
 export const PYTHON_SNIPPETS: readonly Completion[] = [
@@ -77,7 +81,8 @@ export const PYTHON_SNIPPETS: readonly Completion[] = [
 const KEYWORDS: Record<CompletionLang, readonly string[]> = {
   java: `abstract assert boolean break byte case catch char class continue default do double else enum extends
 final finally float for if implements import instanceof int interface long new package private protected public
-return short static super switch this throw throws try void while true false null`.split(/\s+/),
+return short static super switch this throw throws try void while true false null
+var record sealed permits yield`.split(/\s+/),
   python: `and as assert async await break class continue def del elif else except False finally for from global
 if import in is lambda None nonlocal not or pass raise return True try while with yield`.split(/\s+/),
 }
@@ -145,6 +150,35 @@ const JAVA_API: readonly (readonly [string, string])[] = [
   ['LinkedList', 'a list good at adding and removing from the ends'],
   ['Collections', 'helpers for working with lists'],
   ['Collections.sort', 'put a list in order'],
+  // Modern Java (9–17): the idioms a Java 17 course actually reaches for.
+  ['List.of', 'a fixed list of these items'],
+  ['Map.of', 'a fixed map of these key/value pairs'],
+  ['Set.of', 'a fixed set of these items'],
+  ['Optional', 'a value that might be missing'],
+  ['Optional.of', 'wrap a value that is definitely there'],
+  ['Optional.ofNullable', 'wrap a value that might be null'],
+  ['Optional.empty', 'an Optional holding nothing'],
+  ['isPresent', 'is there a value inside?'],
+  ['orElse', 'the value, or this fallback'],
+  ['ifPresent', 'do something only if there is a value'],
+  ['stream', 'start a pipeline over the items'],
+  ['map', 'transform every item'],
+  ['filter', 'keep only the items that pass a test'],
+  ['collect', 'gather the pipeline back into a collection'],
+  ['forEach', 'do something with each item'],
+  ['reduce', 'combine every item into one'],
+  ['count', 'how many items'],
+  ['sorted', 'the items in order'],
+  ['toList', 'gather the pipeline into a list'],
+  ['Collectors', 'ready-made ways to gather a stream'],
+  ['Collectors.toList', 'gather into a list'],
+  ['Collectors.joining', 'glue the pieces into one String'],
+  ['Collectors.groupingBy', 'group items by a key'],
+  ['isBlank', 'is it empty or only spaces?'],
+  ['strip', 'remove spaces at both ends'],
+  ['repeat', 'the text repeated n times'],
+  ['lines', 'split the text into its lines'],
+  ['formatted', 'fill in the blanks, like printf'],
 ]
 
 const PYTHON_API: readonly (readonly [string, string])[] = [
@@ -286,6 +320,36 @@ export const JAVA_DOCS: Record<string, BuiltinDoc> = {
   'Arrays.sort': d('Arrays.sort(array)', 'Puts the array in order, smallest first. Changes the array itself.'),
   'Arrays.toString': d('Arrays.toString(array) → String', 'The whole array as readable text, like [1, 2, 3] — printing an array directly shows gibberish.'),
   'Collections.sort': d('Collections.sort(list)', 'Puts the list in order, smallest first. Changes the list itself.'),
+  // Modern Java (9–17).
+  var: d('var name = value;', 'Lets Java work out the type from the value on the right, so you do not write it twice. Local variables only — the type is still fixed once set.', 'var names = new ArrayList<String>();'),
+  'List.of': d('List.of(a, b, c) → List', 'A ready-made list of exactly these items — quick to write and safe to read, but fixed: you cannot add to it or remove from it.', 'var days = List.of("Sat", "Sun");'),
+  'Map.of': d('Map.of(k1, v1, k2, v2) → Map', 'A ready-made map of these key/value pairs. Fixed — good for a lookup table you will not change.'),
+  'Set.of': d('Set.of(a, b, c) → Set', 'A ready-made set of these items, with no repeats. Fixed.'),
+  Optional: d('Optional<Type>', 'A box that either holds a value or is empty — a clear way to say "there might be nothing here" instead of returning null.'),
+  'Optional.of': d('Optional.of(value) → Optional', 'Wraps a value that is definitely there. Throws if you hand it null — use ofNullable when null is possible.'),
+  'Optional.ofNullable': d('Optional.ofNullable(value) → Optional', 'Wraps a value that might be null: you get an empty Optional back instead of a crash.'),
+  'Optional.empty': d('Optional.empty() → Optional', 'An Optional with nothing inside.'),
+  isPresent: d('opt.isPresent() → boolean', 'True when the Optional holds a value.'),
+  orElse: d('opt.orElse(fallback)', 'The value inside — or the fallback you give, when it is empty.'),
+  ifPresent: d('opt.ifPresent(value -> …)', 'Runs your code with the value, but only if there is one.'),
+  stream: d('list.stream() → Stream', 'Starts a pipeline over the items. Chain map, filter and collect onto it, then gather the result at the end.', 'names.stream().filter(n -> n.length() > 3).toList();'),
+  map: d('stream.map(x -> …) → Stream', 'Transforms every item into something new, keeping the same count.', '.map(n -> n.toUpperCase())'),
+  filter: d('stream.filter(x -> …) → Stream', 'Keeps only the items for which your test is true; drops the rest.', '.filter(n -> n > 0)'),
+  collect: d('stream.collect(Collectors.toList())', 'Gathers a pipeline back into a real collection at the end.'),
+  forEach: d('list.forEach(x -> …)', 'Does something with each item in turn — a shorter for-each loop.'),
+  reduce: d('stream.reduce(start, (a, b) -> …)', 'Folds every item into a single value, like adding them all up.'),
+  count: d('stream.count() → long', 'How many items made it to the end of the pipeline.'),
+  sorted: d('stream.sorted() → Stream', 'The items in order. Pass a Comparator for a custom order.'),
+  toList: d('stream.toList() → List', 'Gathers the pipeline straight into a fixed List (Java 16+).'),
+  Collectors: d('Collectors', 'Ready-made recipes for the end of a stream — collect(Collectors.toList()), joining, groupingBy.'),
+  'Collectors.toList': d('Collectors.toList()', 'Gathers a stream into a List. Handed to collect(…).'),
+  'Collectors.joining': d('Collectors.joining(", ")', 'Glues a stream of texts into one String, with your separator between them.'),
+  'Collectors.groupingBy': d('Collectors.groupingBy(x -> key)', 'Sorts items into a Map of lists, keyed by whatever you return.'),
+  isBlank: d('text.isBlank() → boolean', 'True when the text is empty or only spaces (Java 11+).'),
+  strip: d('text.strip() → String', 'A copy with the spaces trimmed off both ends — the Unicode-aware trim (Java 11+).'),
+  repeat: d('text.repeat(n) → String', 'The text joined to itself n times: "ab".repeat(3) is "ababab" (Java 11+).'),
+  lines: d('text.lines() → Stream', 'Splits the text into its lines, as a stream (Java 11+).'),
+  formatted: d('text.formatted(values…) → String', 'Fills the blanks in the text, like printf: "Hi %s".formatted(name) (Java 15+).'),
 }
 
 export const PYTHON_DOCS: Record<string, BuiltinDoc> = {
@@ -406,9 +470,11 @@ const docInfo = (lang: CompletionLang, label: string): Pick<Completion, 'info'> 
   return entry ? { info: () => renderDocCard(entry) } : {}
 }
 
-/** A dictionary class that needs an import gets one attached to its completion, in the same edit. */
+/** A dictionary class that needs an import gets one attached to its completion, in the same edit.
+ *  A qualified static call (`List.of`, `Collectors.toList`) imports its leading class too. */
 const javaApiCompletion = (label: string, detail: string, type: string): Completion => {
-  const fqcn = !label.includes('.') ? JAVA_IMPORTS[label] : undefined
+  const owner = label.includes('.') ? label.slice(0, label.lastIndexOf('.')) : label
+  const fqcn = JAVA_IMPORTS[owner]
   if (!fqcn) return { label, detail, type, boost: 10, ...docInfo('java', label) }
   return {
     label,

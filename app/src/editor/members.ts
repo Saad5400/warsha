@@ -44,6 +44,11 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('indexOf', 'int, (String) — where this appears, or -1'),
     method('replace', 'String, (CharSequence, CharSequence) — swap one piece for another'),
     method('isEmpty', 'boolean — is it empty?'),
+    method('isBlank', 'boolean — empty or only spaces? (Java 11+)'),
+    method('strip', 'String — remove spaces at both ends (Java 11+)'),
+    method('repeat', 'String, (int) — the text repeated n times (Java 11+)'),
+    method('lines', 'Stream<String> — split into lines (Java 11+)'),
+    method('formatted', 'String, (args…) — fill in the blanks, like printf (Java 15+)'),
     method('compareTo', 'int, (String) — alphabetical order'),
     method('startsWith', 'boolean, (String) — does it start with this?'),
     method('endsWith', 'boolean, (String) — does it end with this?'),
@@ -60,6 +65,8 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('contains', 'boolean, (Object) — is this in the list?'),
     method('indexOf', 'int, (Object) — where an item is'),
     method('clear', 'void — remove everything'),
+    method('forEach', 'void, (action) — do something with each item'),
+    method('stream', 'Stream<E> — start a pipeline over the items'),
   ],
   HashMap: [
     method('put', 'V, (K, V) — store a value under a key'),
@@ -108,6 +115,62 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('deleteCharAt', 'StringBuilder, (int) — remove one character'),
     method('charAt', 'char, (int) — the character at a position'),
     method('setCharAt', 'void, (int, char) — replace one character'),
+  ],
+  // Modern Java (9–17). These are the static-factory holders, so `List.` /
+  // `Optional.` / `Collectors.` offer what a Java 17 course actually types.
+  List: [
+    method('of', 'List<E>, (E...) — a fixed list of these items'),
+    method('copyOf', 'List<E>, (Collection) — a fixed copy of another collection'),
+  ],
+  Map: [
+    method('of', 'Map<K,V>, (k, v, …) — a fixed map of these pairs'),
+    method('copyOf', 'Map<K,V>, (Map) — a fixed copy of another map'),
+    method('entry', 'Entry<K,V>, (k, v) — one key/value pair'),
+  ],
+  Set: [
+    method('of', 'Set<E>, (E...) — a fixed set of these items, no repeats'),
+    method('copyOf', 'Set<E>, (Collection) — a fixed copy, no repeats'),
+  ],
+  Optional: [
+    method('of', 'Optional<T>, (T) — wrap a value that is definitely there'),
+    method('ofNullable', 'Optional<T>, (T) — wrap a value that might be null'),
+    method('empty', 'Optional<T> — an Optional holding nothing'),
+    method('isPresent', 'boolean — is there a value?'),
+    method('isEmpty', 'boolean — is it empty?'),
+    method('get', 'T — the value (throws if empty)'),
+    method('orElse', 'T, (T) — the value, or this fallback'),
+    method('ifPresent', 'void, (action) — run code only if there is a value'),
+    method('map', 'Optional<U>, (fn) — transform the value if present'),
+  ],
+  Stream: [
+    method('of', 'Stream<T>, (T...) — a stream of these items'),
+  ],
+  Collectors: [
+    method('toList', 'Collector — gather into a list'),
+    method('toSet', 'Collector — gather into a set, no repeats'),
+    method('joining', 'Collector, (sep) — glue the pieces into one String'),
+    method('groupingBy', 'Collector, (fn) — group items by a key'),
+    method('counting', 'Collector — count the items in each group'),
+  ],
+  Collections: [
+    method('sort', 'void, (List) — put a list in order'),
+    method('reverse', 'void, (List) — flip a list back to front'),
+    method('shuffle', 'void, (List) — mix a list randomly'),
+    method('max', 'T, (Collection) — the largest item'),
+    method('min', 'T, (Collection) — the smallest item'),
+    method('emptyList', 'List<T> — a fixed empty list'),
+  ],
+  Integer: [
+    method('parseInt', 'int, (String) — text as a whole number'),
+    method('valueOf', 'Integer, (String) — text as an Integer'),
+    method('toString', 'String, (int) — a number as text'),
+    { label: 'MAX_VALUE', type: 'constant', detail: 'the largest int', boost: 30 },
+    { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest int', boost: 30 },
+  ],
+  Double: [
+    method('parseDouble', 'double, (String) — text as a decimal number'),
+    method('valueOf', 'Double, (String) — text as a Double'),
+    method('toString', 'String, (double) — a decimal as text'),
   ],
 }
 
@@ -191,8 +254,14 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const JAVA_CONSTRUCTIBLE = ['Scanner', 'ArrayList', 'HashMap', 'Random', 'StringBuilder'] as const
 
+/** Types you call statically (`List.of`, `Optional.of`, `Math.abs`) — the class
+ *  name itself is the receiver, no `new` and no variable to infer. */
+const JAVA_STATIC_HOLDERS = new Set([
+  'Math', 'Arrays', 'Collections', 'List', 'Map', 'Set', 'Optional', 'Collectors', 'Stream', 'Integer', 'Double',
+])
+
 function inferJavaType(doc: string, name: string): string | null {
-  if (name === 'Math' || name === 'Arrays') return name
+  if (JAVA_STATIC_HOLDERS.has(name)) return name
   const esc = escapeRe(name)
   for (const type of JAVA_CONSTRUCTIBLE) {
     if (new RegExp(`\\b${type}\\b(?:<[^>]*>)?\\s+${esc}\\s*=\\s*new\\s+${type}\\b`).test(doc)) return type

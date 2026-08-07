@@ -101,6 +101,35 @@ await accept('ArrayList')
 lines = await docLines()
 check('import statement completes to "import java.util.ArrayList;"', lines[0] === 'import java.util.ArrayList;', lines[0])
 
+console.log('\n--- Java: modern Java 17 completions (var, streams, Optional)')
+await type('public class Demo {\n  public static void main(String[] args) {\n    va')
+labels = await popupLabels()
+check('"va" offers the var keyword', labels.includes('var'), JSON.stringify(labels.slice(0, 8)))
+await page.keyboard.press('Escape')
+
+await type('public class Demo {\n  void go() {\n    Optional.')
+labels = await popupLabels()
+check('Optional. offers of / ofNullable', labels.includes('of') && labels.includes('ofNullable'), JSON.stringify(labels.slice(0, 8)))
+await page.keyboard.press('Escape')
+
+await type('public class Demo {\n  void go() {\n    String w = "hi";\n    w.')
+labels = await popupLabels()
+check('a String var offers the modern methods (strip, repeat, isBlank)', labels.includes('strip') && labels.includes('repeat') && labels.includes('isBlank'), JSON.stringify(labels.slice(0, 10)))
+await page.keyboard.press('Escape')
+
+await type('import java.util.stream.Collec')
+labels = await popupLabels()
+check('"import java.util.stream.Collec" offers Collectors', labels.includes('Collectors'), JSON.stringify(labels))
+await page.keyboard.press('Escape')
+
+await type('public class Demo {\n  void go() {\n    Collec')
+labels = await popupLabels()
+check('"Collec" offers Collectors', labels.includes('Collectors'), JSON.stringify(labels.slice(0, 8)))
+await accept('Collectors')
+lines = await docLines()
+check('accepting Collectors auto-imports java.util.stream.Collectors', lines[0] === 'import java.util.stream.Collectors;', JSON.stringify(lines.slice(0, 3)))
+await page.screenshot({ path: join(SHOTS, 'completions-java-modern.png') })
+
 /* ================================================================ Python ================================================================ */
 
 await newFile('demo.py')

@@ -45,6 +45,9 @@ export const JAVA_IMPORTS: Record<string, string> = {
   Iterator: 'java.util.Iterator',
   NoSuchElementException: 'java.util.NoSuchElementException',
   InputMismatchException: 'java.util.InputMismatchException',
+  Stream: 'java.util.stream.Stream',
+  IntStream: 'java.util.stream.IntStream',
+  Collectors: 'java.util.stream.Collectors',
   BufferedReader: 'java.io.BufferedReader',
   InputStreamReader: 'java.io.InputStreamReader',
   IOException: 'java.io.IOException',
@@ -62,14 +65,16 @@ const JAVA_LANG_CLASSES = [
   'Comparable', 'Iterable',
 ]
 
+/** Exact package, not prefix: `java.util` must not swallow `java.util.stream.*`. */
 const byPackage = (pkg: string) =>
-  Object.entries(JAVA_IMPORTS).filter(([, fqcn]) => fqcn.startsWith(`${pkg}.`)).map(([cls]) => cls).sort()
+  Object.entries(JAVA_IMPORTS).filter(([, fqcn]) => fqcn.slice(0, fqcn.lastIndexOf('.')) === pkg).map(([cls]) => cls).sort()
 
-/** package → its classes, curriculum scope only (java.util, java.io, java.lang). */
+/** package → its classes, curriculum scope only (java.util, java.io, java.lang, java.util.stream). */
 const JAVA_PACKAGES: Record<string, readonly string[]> = {
   'java.util': byPackage('java.util'),
   'java.io': byPackage('java.io'),
   'java.lang': JAVA_LANG_CLASSES,
+  'java.util.stream': byPackage('java.util.stream'),
 }
 
 export const PYTHON_STDLIB_MODULES: readonly (readonly [string, string])[] = [
@@ -198,19 +203,22 @@ function javaImportSource(ctx: CompletionContext): CompletionResult | null {
   const partial = m[2] ?? ''
   const from = ctx.pos - partial.length
   const segments = prefix ? prefix.slice(0, -1).split('.') : []
+  const path = segments.join('.')
 
   let options: Completion[]
   if (segments.length === 0) {
     options = [{ label: 'java', type: 'namespace', boost: 20, apply: namespaceApply }]
-  } else if (segments.length === 1 && segments[0] === 'java') {
+  } else if (path === 'java') {
     options = ['util', 'io', 'lang'].map((seg) => ({ label: seg, type: 'namespace', boost: 20, apply: namespaceApply }))
-  } else if (segments.length === 2 && segments[0] === 'java' && JAVA_PACKAGES[`java.${segments[1]}`]) {
-    options = JAVA_PACKAGES[`java.${segments[1]}`].map((cls) => ({
+  } else if (JAVA_PACKAGES[path]) {
+    options = JAVA_PACKAGES[path].map((cls) => ({
       label: cls,
       type: 'class',
       boost: 20,
       apply: classImportApply,
     }))
+    // java.util also holds the java.util.stream sub-package (Stream, Collectors…).
+    if (path === 'java.util') options.push({ label: 'stream', type: 'namespace', boost: 10, apply: namespaceApply })
   } else {
     return null
   }
