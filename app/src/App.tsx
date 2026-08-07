@@ -50,7 +50,45 @@ import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import { GenerateMenu } from './components/GenerateMenu'
 import { Menu, type MenuAnchor, type MenuItem } from './components/ui/Menu'
-import { IconFileLines, IconFiles, IconFolderOpen, IconGenerate, IconLink, IconMore, IconShare, IconWand } from './components/ui/Icons'
+import {
+  IconClear,
+  IconClipboard,
+  IconClock,
+  IconCommand,
+  IconCopy,
+  IconExport,
+  IconFileLines,
+  IconFilePlus,
+  IconFiles,
+  IconFolderOpen,
+  IconFolderPlus,
+  IconGenerate,
+  IconGlobe,
+  IconImport,
+  IconInfo,
+  IconLightbulb,
+  IconLink,
+  IconMore,
+  IconPencil,
+  IconPlay,
+  IconRedo,
+  IconSave,
+  IconScissors,
+  IconSearch,
+  IconSelectAll,
+  IconShare,
+  IconStop,
+  IconSwap,
+  IconTerminal,
+  IconTextBigger,
+  IconTextSmaller,
+  IconTrash,
+  IconUndo,
+  IconWand,
+  IconZoomIn,
+  IconZoomOut,
+  IconZoomReset,
+} from './components/ui/Icons'
 import { COPY } from './copy'
 import { DirectionProvider } from '@radix-ui/react-direction'
 import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
@@ -1046,6 +1084,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   const languageRows: MenuItem[] = LOCALES.map((l) => ({
     id: `locale:${l}`,
     label: LOCALE_NAMES[l],
+    // Every row carries the same globe so the column never reads as ragged; the ✓ hint marks the active one.
+    icon: <IconGlobe size={18} />,
     hint: l === locale() ? '✓' : undefined,
     disabled: l === locale(),
     onSelect: () => setLocale(l),
@@ -1144,18 +1184,20 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (word)
       rows.push({
         label: COPY.menuExplain(word),
+        icon: <IconLightbulb size={18} />,
         hint: touch ? undefined : formatKeys('Mod+K Mod+I'),
         onSelect: () => explainWord(pos, touch),
       })
     if (!touch)
       rows.push(
-        { label: COPY.menuCut, hint: formatKeys('Mod+X'), onSelect: () => clipboardCommand('cut') },
-        { label: COPY.menuCopy, hint: formatKeys('Mod+C'), onSelect: () => clipboardCommand('copy') },
-        { label: COPY.menuPaste, hint: formatKeys('Mod+V'), onSelect: clipboardPaste },
+        { label: COPY.menuCut, icon: <IconScissors size={18} />, hint: formatKeys('Mod+X'), onSelect: () => clipboardCommand('cut') },
+        { label: COPY.menuCopy, icon: <IconCopy size={18} />, hint: formatKeys('Mod+C'), onSelect: () => clipboardCommand('copy') },
+        { label: COPY.menuPaste, icon: <IconClipboard size={18} />, hint: formatKeys('Mod+V'), onSelect: clipboardPaste },
       )
     rows.push(
       {
         label: COPY.menuFormatFile,
+        icon: <IconWand size={18} />,
         hint: touch ? undefined : formatKeys('Shift+Alt+F'),
         startsGroup: true,
         disabled: !canFormat(activePath),
@@ -1163,18 +1205,21 @@ function Ide({ report }: { report: CapabilityReport }) {
       },
       {
         label: COPY.menuGenerate,
+        icon: <IconGenerate size={18} />,
         hint: touch ? undefined : formatKeys(isMacLike ? 'Ctrl+Alt+Enter' : 'Alt+Insert'),
         disabled: !canGenerate(activePath),
         onSelect: () => void openGenerate(),
       },
       {
         label: COPY.menuFind,
+        icon: <IconSearch size={18} />,
         hint: touch ? undefined : formatKeys('Mod+F'),
         disabled: !activePath,
         onSelect: () => editorCommand(openSearchPanel),
       },
       {
         label: COPY.menuSelectAll,
+        icon: <IconSelectAll size={18} />,
         hint: touch ? undefined : formatKeys('Mod+A'),
         startsGroup: true,
         disabled: !activePath,
@@ -1182,6 +1227,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       },
       {
         label: COPY.menuCommandPalette,
+        icon: <IconCommand size={18} />,
         hint: touch ? undefined : formatKeys('Mod+Shift+P'),
         onSelect: () => setQuickPick('commands'),
       },
@@ -1202,7 +1248,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     // Paste/Explain act where it landed; inside it, keep the selection to act on.
     const sel = view.state.selection.main
     if (pos < sel.from || pos > sel.to) view.dispatch({ selection: { anchor: pos } })
-    setEditorActionsMenu({ anchor: { x: e.clientX, y: e.clientY }, items: editorActionRows(view, pos, false), plain: true })
+    setEditorActionsMenu({ anchor: { x: e.clientX, y: e.clientY }, items: editorActionRows(view, pos, false) })
   }
 
   /** The touch actions button — opens the Menu (touch mode) anchored to the
@@ -1464,32 +1510,34 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       label: COPY.menuFile,
       items: [
-        { label: COPY.menuNewFile, onSelect: () => void newFile('') },
+        { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, onSelect: () => void newFile('') },
         // Opens the picker regardless of list size; language and starter are chosen there.
-        { label: COPY.menuNewProject, onSelect: () => setPickerOpen(true) },
+        { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
-        { label: COPY.menuOpenRecent, items: projectRows },
-        { label: COPY.menuImportZip, startsGroup: true, onSelect: () => setImportOpen(true) },
-        { label: COPY.menuExportZip, disabled: empty, onSelect: exportProject },
-        { label: COPY.menuShareLink, disabled: empty, onSelect: () => void shareLink() },
-        { label: COPY.menuSharePdf, disabled: empty, onSelect: () => void sharePdf() },
-        { label: COPY.menuSaveAll, hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
+        { label: COPY.menuOpenRecent, icon: <IconClock size={18} />, items: projectRows },
+        { label: COPY.menuImportZip, icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
+        { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
+        { label: COPY.menuShareLink, icon: <IconLink size={18} />, disabled: empty, onSelect: () => void shareLink() },
+        { label: COPY.menuSharePdf, icon: <IconFileLines size={18} />, disabled: empty, onSelect: () => void sharePdf() },
+        { label: COPY.menuSaveAll, icon: <IconSave size={18} />, hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
         {
           label: COPY.menuRenameProject,
+          icon: <IconPencil size={18} />,
           startsGroup: true,
           disabled: !currentProject,
           onSelect: () => void renameCurrentProject(),
         },
-        { label: COPY.menuEmptyProject, danger: true, disabled: empty, onSelect: () => void startEmpty() },
-        { label: COPY.menuDeleteProject, danger: true, disabled: !currentProject, onSelect: () => void deleteCurrentProject() },
+        { label: COPY.menuEmptyProject, icon: <IconClear size={18} />, danger: true, disabled: empty, onSelect: () => void startEmpty() },
+        { label: COPY.menuDeleteProject, icon: <IconTrash size={18} />, danger: true, disabled: !currentProject, onSelect: () => void deleteCurrentProject() },
       ],
     },
     {
       label: COPY.menuEdit,
       items: [
-        { label: COPY.menuUndo, hint: formatKeys('Mod+Z'), disabled: !activePath, onSelect: () => editorCommand(undo) },
+        { label: COPY.menuUndo, icon: <IconUndo size={18} />, hint: formatKeys('Mod+Z'), disabled: !activePath, onSelect: () => editorCommand(undo) },
         {
           label: COPY.menuRedo,
+          icon: <IconRedo size={18} />,
           // CodeMirror's own bindings: ⇧⌘Z on the Mac, Ctrl+Y (Windows
           // muscle memory, which CM also maps) elsewhere.
           hint: formatKeys(isMacLike ? 'Shift+Mod+Z' : 'Ctrl+Y'),
@@ -1498,34 +1546,36 @@ function Ide({ report }: { report: CapabilityReport }) {
         },
         {
           label: COPY.menuFind,
+          icon: <IconSearch size={18} />,
           hint: formatKeys('Mod+F'),
           startsGroup: true,
           disabled: !activePath,
           onSelect: () => editorCommand(openSearchPanel),
         },
         // The sidebar's cross-file search — VS Code's Edit > Find in Files.
-        { label: COPY.menuFindInFiles, hint: formatKeys('Mod+Shift+F'), onSelect: openSearchView },
+        { label: COPY.menuFindInFiles, icon: <IconSearch size={18} />, hint: formatKeys('Mod+Shift+F'), onSelect: openSearchView },
       ],
     },
     {
       label: COPY.menuView,
       items: [
-        { label: COPY.menuToggleExplorer, hint: formatKeys('Mod+B'), onSelect: toggleExplorer },
-        { label: COPY.menuToggleConsole, hint: formatKeys('Mod+J'), onSelect: () => setConsoleOpen((v) => !v) },
-        { label: COPY.menuBiggerText, startsGroup: true, onSelect: () => setFontSize((s) => Math.min(26, s + 1)) },
-        { label: COPY.menuSmallerText, onSelect: () => setFontSize((s) => Math.max(11, s - 1)) },
+        { label: COPY.menuToggleExplorer, icon: <IconFiles size={18} />, hint: formatKeys('Mod+B'), onSelect: toggleExplorer },
+        { label: COPY.menuToggleConsole, icon: <IconTerminal size={18} />, hint: formatKeys('Mod+J'), onSelect: () => setConsoleOpen((v) => !v) },
+        { label: COPY.menuBiggerText, icon: <IconTextBigger size={18} />, startsGroup: true, onSelect: () => setFontSize((s) => Math.min(26, s + 1)) },
+        { label: COPY.menuSmallerText, icon: <IconTextSmaller size={18} />, onSelect: () => setFontSize((s) => Math.max(11, s - 1)) },
         // Editor type above, whole shell below — two prefs, two groups.
-        { label: COPY.menuZoomIn, hint: formatKeys('Mod+='), startsGroup: true, onSelect: () => changeScale(+SCALE_STEP) },
-        { label: COPY.menuZoomOut, hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
-        { label: COPY.menuResetZoom, hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
+        { label: COPY.menuZoomIn, icon: <IconZoomIn size={18} />, hint: formatKeys('Mod+='), startsGroup: true, onSelect: () => changeScale(+SCALE_STEP) },
+        { label: COPY.menuZoomOut, icon: <IconZoomOut size={18} />, hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
+        { label: COPY.menuResetZoom, icon: <IconZoomReset size={18} />, hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
         {
           // Handedness (html[data-hand]) mirrors the console header's Run side — one
           // preference, one home, even though it matters most on touch.
           label: hand === 'right' ? COPY.menuRunOnLeft : COPY.menuRunOnRight,
+          icon: <IconSwap size={18} />,
           startsGroup: true,
           onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
         },
-        { label: COPY.menuLanguage, items: languageRows },
+        { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows },
       ],
     },
     {
@@ -1533,13 +1583,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       items: [
         {
           label: runControl.entry ? COPY.menuRunEntry(runControl.entry) : COPY.menuRun,
+          icon: <IconPlay size={18} />,
           hint: formatKeys('F5'),
           disabled: runControl.busy || !runControl.canRun,
           onSelect: runControl.onRun,
         },
-        { label: COPY.menuStop, hint: formatKeys('Shift+F5'), disabled: !runControl.busy, onSelect: runControl.onStop },
+        { label: COPY.menuStop, icon: <IconStop size={18} />, hint: formatKeys('Shift+F5'), disabled: !runControl.busy, onSelect: runControl.onStop },
         {
           label: COPY.menuFormatFile,
+          icon: <IconWand size={18} />,
           hint: formatKeys('Shift+Alt+F'),
           startsGroup: true,
           disabled: !canFormat(activePath),
@@ -1547,6 +1599,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         },
         {
           label: COPY.menuGenerate,
+          icon: <IconGenerate size={18} />,
           // ⌥Insert names a key Macs lack — show them the reachable alias.
           hint: formatKeys(isMacLike ? 'Ctrl+Alt+Enter' : 'Alt+Insert'),
           disabled: !canGenerate(activePath),
@@ -1556,13 +1609,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     {
       label: COPY.menuHelp,
-      items: [{ label: COPY.menuAbout, onSelect: showAbout }],
+      items: [{ label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout }],
     },
   ]
 
   // VS Code keeps the app-scoped odds and ends behind the rail's own gear; every row here is an action that already exists.
   const manageItems: MenuItem[] = [
-    { label: COPY.menuCommandPalette, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
+    { label: COPY.menuCommandPalette, icon: <IconCommand size={18} />, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
     {
       // Control row, not a command: `render` rows aren't Radix Items, so dragging the thumb never
       // closes the menu. Same pref as View > Zoom In/Out (not the editor's separate text-size stepper).
@@ -1577,6 +1630,10 @@ function Ide({ report }: { report: CapabilityReport }) {
             if (/^(Arrow(Left|Right|Up|Down)|Home|End|Page(Up|Down))$/.test(e.key)) e.stopPropagation()
           }}
         >
+          {/* Leading glyph matches the icon column of the sibling rows so the label lines up with them. */}
+          <span aria-hidden="true" className="grid size-[20px] flex-none place-items-center text-text-3">
+            <IconZoomIn size={18} />
+          </span>
           <span className="flex-none text-row text-text-1 desk:text-[13px]">{COPY.menuViewScale}</span>
           <input
             type="range"
@@ -1595,8 +1652,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         </div>
       ),
     },
-    { label: COPY.menuLanguage, items: languageRows, startsGroup: true },
-    { label: COPY.menuAbout, startsGroup: true, onSelect: showAbout },
+    { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows, startsGroup: true },
+    { label: COPY.menuAbout, icon: <IconInfo size={18} />, startsGroup: true, onSelect: showAbout },
   ]
 
   // Tab-strip "⋯": file rows first, then the share family (image/link/PDF) grouped as
@@ -1966,8 +2023,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         />
       ) : null}
 
-      {/* The editor's right-click menu (desktop) and touch actions button — one
-          shared Menu; `plain` drops the icon gutter for the right-click menu. */}
+      {/* The editor's right-click menu (desktop) and touch actions button share one
+          Menu; every row carries a leading icon, so the gutter stays (never `plain`). */}
       {editorActionsMenu ? (
         <Menu
           anchor={editorActionsMenu.anchor}

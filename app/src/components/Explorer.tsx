@@ -6,11 +6,14 @@ import { Button, IconButton } from './ui/Button'
 import {
   IconChevronRight,
   IconChevronUp,
+  IconCopy,
   IconFiles,
   IconFolderOpen,
   IconFolderPlus,
   IconMore,
+  IconPencil,
   IconPlus,
+  IconTrash,
 } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
 import { formatKeys } from '../ui/keys'
@@ -233,12 +236,12 @@ export function Explorer(props: ExplorerProps) {
         : [{ label: COPY.explorerOpen, icon: <IconFiles />, onSelect: () => props.onOpenFile(node.path) }]),
       // The hint goes through formatKeys like every other shortcut label, even
       // though F2 formats to itself — one formatter, no hand-written variants.
-      { label: COPY.explorerRename, hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
+      { label: COPY.explorerRename, icon: <IconPencil />, hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
       // The node's full path to the clipboard — VS Code's own "Copy Path", its
       // own group above Delete. Fire-and-forget (`void`): the explorer owns no
       // toast surface, and a path copy is not a moment that needs one.
-      { label: COPY.explorerCopyPath, startsGroup: true, onSelect: () => void navigator.clipboard.writeText(node.path) },
-      { label: COPY.explorerDelete, danger: true, onSelect: () => props.onDelete(node.path, isDir) },
+      { label: COPY.explorerCopyPath, icon: <IconCopy />, startsGroup: true, onSelect: () => void navigator.clipboard.writeText(node.path) },
+      { label: COPY.explorerDelete, icon: <IconTrash />, danger: true, onSelect: () => props.onDelete(node.path, isDir) },
     ]
   }
 

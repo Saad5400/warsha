@@ -217,3 +217,204 @@ export const IconLink = (p: IconProps) => (
     <path d="M10.5 13.75l-1.5 1.5a2.83 2.83 0 0 1-4-4l1.5-1.5" />
   </Icon>
 )
+
+/* ---- menu-row glyphs, so File/Edit/View/Run and the context menus carry a
+       leading icon on every row. Same 20px grid, same 1.6px stroke. --------- */
+
+/** "New File" — the file sheet with a plus. */
+export const IconFilePlus = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 3.25h6.5L15 6.75v10A1 1 0 0 1 14 17.75H6a1 1 0 0 1-1-1V4.25a1 1 0 0 1 1-1Z" />
+    <path d="M11.25 3.5v3.25h3.5" />
+    <path d="M10 10.5v3.5M8.25 12.25h3.5" />
+  </Icon>
+)
+
+/** "Open Recent" — a clock, the universal "recent/history" glyph. */
+export const IconClock = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="10" cy="10" r="6.25" />
+    <path d="M10 6.25V10l2.75 1.75" />
+  </Icon>
+)
+
+/** "Import .zip" — an archive box with an arrow dropping in. */
+export const IconImport = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8.5h12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8.5Z" />
+    <path d="M8.5 11h3" />
+    <path d="M10 2.75v4M8 4.75 10 6.75l2-2" />
+  </Icon>
+)
+
+/** "Export as .zip" — the same archive box, arrow lifting out. */
+export const IconExport = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8.5h12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8.5Z" />
+    <path d="M8.5 11h3" />
+    <path d="M10 6.75v-4M8 4.75 10 2.75l2 2" />
+  </Icon>
+)
+
+/** "Save All" — a floppy disk, the write-to-disk glyph. */
+export const IconSave = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 4.75A1.25 1.25 0 0 1 5.75 3.5h7.1L16.5 7.15v8.1A1.25 1.25 0 0 1 15.25 16.5H5.75A1.25 1.25 0 0 1 4.5 15.25V4.75Z" />
+    <path d="M7.25 3.5v3.25h5V3.5" />
+    <path d="M7.25 16.5v-4.25h6.5v4.25" />
+  </Icon>
+)
+
+/** "Rename" — a pencil. */
+export const IconPencil = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M13.25 3.75 16.25 6.75 7.5 15.5 4 16.25 4.75 12.75 13.25 3.75Z" />
+    <path d="M11.5 5.5 14.5 8.5" />
+  </Icon>
+)
+
+/** "Delete" — a trash can. */
+export const IconTrash = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 6h11" />
+    <path d="M6.25 6V4.75a1 1 0 0 1 1-1h5.5a1 1 0 0 1 1 1V6" />
+    <path d="M5.75 6l.7 9.25a1 1 0 0 0 1 .95h5.1a1 1 0 0 0 1-.95L14.25 6" />
+    <path d="M8.5 8.75v5M11.5 8.75v5" />
+  </Icon>
+)
+
+/** "Undo" — an arrow curving back to the left. */
+export const IconUndo = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7.25 6 4.5 8.75l2.75 2.75" />
+    <path d="M4.5 8.75h7.25a3.5 3.5 0 0 1 0 7H8.5" />
+  </Icon>
+)
+
+/** "Redo" — Undo mirrored. */
+export const IconRedo = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12.75 6 15.5 8.75l-2.75 2.75" />
+    <path d="M15.5 8.75H8.25a3.5 3.5 0 0 0 0 7h3.25" />
+  </Icon>
+)
+
+/** "Find" — a magnifier. */
+export const IconSearch = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="8.75" cy="8.75" r="4.75" />
+    <path d="M12.5 12.5 16 16" />
+  </Icon>
+)
+
+/** "Toggle Console" — a terminal with a prompt caret. */
+export const IconTerminal = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3.25" y="4.25" width="13.5" height="11.5" rx="1.25" />
+    <path d="M6.25 8l2.25 2-2.25 2M10.25 12.25h3.5" />
+  </Icon>
+)
+
+/** "Zoom In" — a magnifier with a plus. */
+export const IconZoomIn = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="8.75" cy="8.75" r="4.75" />
+    <path d="M12.5 12.5 16 16" />
+    <path d="M8.75 6.75v4M6.75 8.75h4" />
+  </Icon>
+)
+
+/** "Zoom Out" — a magnifier with a minus. */
+export const IconZoomOut = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="8.75" cy="8.75" r="4.75" />
+    <path d="M12.5 12.5 16 16" />
+    <path d="M6.75 8.75h4" />
+  </Icon>
+)
+
+/** "Reset Zoom" — the magnifier back to its default focus (a centred dot). */
+export const IconZoomReset = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="8.75" cy="8.75" r="4.75" />
+    <path d="M12.5 12.5 16 16" />
+    <circle cx="8.75" cy="8.75" r="1.15" fill="currentColor" stroke="none" />
+  </Icon>
+)
+
+/** "Run Button on Left/Right" — two arrows swapping sides. */
+export const IconSwap = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 7.75h11M12.75 5l2.75 2.75-2.75 2.75" />
+    <path d="M15.5 12.25h-11M7.25 9.5 4.5 12.25l2.75 2.75" />
+  </Icon>
+)
+
+/** "Language" — a globe. */
+export const IconGlobe = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="10" cy="10" r="6.25" />
+    <path d="M3.75 10h12.5" />
+    <path d="M10 3.75c1.9 2 2.9 4 2.9 6.25s-1 4.25-2.9 6.25c-1.9-2-2.9-4-2.9-6.25s1-4.25 2.9-6.25Z" />
+  </Icon>
+)
+
+/** "About" — the info circle. */
+export const IconInfo = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="10" cy="10" r="6.5" />
+    <path d="M10 9.5v3.75M10 6.75h.01" />
+  </Icon>
+)
+
+/** "Command Palette" — the ⌘ loop. */
+export const IconCommand = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 8h4v4H8z" />
+    <path d="M8 8V6.25a1.75 1.75 0 1 0-1.75 1.75H8" />
+    <path d="M12 8h1.75A1.75 1.75 0 1 0 12 6.25V8" />
+    <path d="M12 12v1.75A1.75 1.75 0 1 0 13.75 12H12" />
+    <path d="M8 12H6.25A1.75 1.75 0 1 0 8 13.75V12" />
+  </Icon>
+)
+
+/** "Copy path" — the two-sheets copy glyph. */
+export const IconCopy = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="7.25" y="7.25" width="8.75" height="8.75" rx="1.4" />
+    <path d="M12.75 7.25V5.25A1.5 1.5 0 0 0 11.25 3.75h-6.5A1.5 1.5 0 0 0 3.25 5.25v6.5A1.5 1.5 0 0 0 4.75 13.25h2" />
+  </Icon>
+)
+
+/** "Cut" — scissors. */
+export const IconScissors = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="6.25" r="1.75" />
+    <circle cx="6" cy="13.75" r="1.75" />
+    <path d="M7.5 7.25 15.5 14M7.5 12.75 15.5 6" />
+  </Icon>
+)
+
+/** "Paste" — a clipboard. */
+export const IconClipboard = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6.5 4.5H5.25A1.25 1.25 0 0 0 4 5.75v9.5A1.25 1.25 0 0 0 5.25 16.5h9.5A1.25 1.25 0 0 0 16 15.25v-9.5A1.25 1.25 0 0 0 14.75 4.5H13.5" />
+    <rect x="7.25" y="3.25" width="5.5" height="2.75" rx="0.9" />
+  </Icon>
+)
+
+/** "Select All" — a dashed marquee with a check. */
+export const IconSelectAll = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 6.5v-1a1.5 1.5 0 0 1 1.5-1.5h1M13 4h1.5A1.5 1.5 0 0 1 16 5.5v1M16 13.5v1a1.5 1.5 0 0 1-1.5 1.5H13M7 16H5.5A1.5 1.5 0 0 1 4 14.5v-1" />
+    <path d="M7.75 10 9.5 11.75 12.5 8.25" />
+  </Icon>
+)
+
+/** "Explain" — a lightbulb, the "here's what this means" glyph. */
+export const IconLightbulb = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6.5 8.75a3.5 3.5 0 1 1 6.4 1.95c-.55.8-1.15 1.35-1.3 2.3H8.4c-.15-.95-.75-1.5-1.3-2.3A3.47 3.47 0 0 1 6.5 8.75Z" />
+    <path d="M8.25 15.25h3.5M8.75 13h2.5" />
+  </Icon>
+)

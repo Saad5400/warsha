@@ -124,6 +124,7 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
       { label: COPY.tabsClose(name), icon: <IconClose />, onSelect: () => onClose(path) },
       {
         label: COPY.tabsCloseOthers,
+        icon: <IconClose />,
         disabled: tabs.length < 2,
         onSelect: () => {
           for (const t of tabs) if (t !== path) onClose(t)
@@ -131,6 +132,7 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
       },
       {
         label: COPY.tabsCloseAll,
+        icon: <IconClose />,
         onSelect: () => {
           for (const t of [...tabs]) onClose(t)
         },
