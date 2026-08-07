@@ -7,8 +7,9 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
+import type { EditorState } from '@codemirror/state'
 import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
-import { memberSource } from './members'
+import { memberContext, memberSource } from './members'
 
 /** Narrower than `LangId` — web files get highlighting but no curated
  *  dictionary, so `completionSources` takes this type and `null` for the rest. */
@@ -17,7 +18,7 @@ export type CompletionLang = 'java' | 'python'
 /**
  * Completions and snippets — the "where is the IntelliSense?" layer.
  *
- * Three sources per language, ranked so the most useful thing is on top:
+ * Four sources per language, each contributing to one ranked popup:
  *
  *   1. **Snippets** (`boost: 60`) — `sout`, `psvm`, `fori`. Deliberately the same
  *      abbreviations IntelliJ and VS Code use, because a student who has seen a
@@ -25,12 +26,24 @@ export type CompletionLang = 'java' | 'python'
  *      is worth more than any name we could invent.
  *   2. **Keywords + a small beginner API dictionary** (`boost: 20` / `10`) — the
  *      names from the first four weeks of a course, each with a plain-English
- *      `detail`. This is a hand-written list, not semantic analysis: it does not
- *      know the type of `sc`, so it offers `nextLine` wherever a word is being
- *      typed. Real type-aware completion is v0.2.
- *   3. **Identifiers already in the project** (`boost: 0`) — every word in the
- *      open file plus every word in every other file, so `studentName` completes
- *      after you have typed it once, anywhere.
+ *      `detail`. Still a hand-written list, not a language server.
+ *   3. **Members after a dot** (members.ts) — `sc.` offers Scanner's methods, and
+ *      ranks them by the type the line seems to want (`int n = sc.` floats
+ *      `nextInt`). A `.` context is *exclusive*: the other three sources step
+ *      aside so no `class` or `sout` shows up after a dot.
+ *   4. **Identifiers already in the file / project** — every word you have
+ *      written, ranked by how likely you want it *here*: near the caret beats far
+ *      away, a name declared in this file beats a bare word, this file beats the
+ *      rest of the project. Keywords and dictionary names are dropped so the
+ *      documented completion always represents them.
+ *
+ * On top of that, ranking reads the situation: mid-expression (after `=`, `(`, a
+ * comma or an operator) the declaration-only keywords and statement snippets are
+ * withheld, the way VS Code won't offer `class` inside `int x = …`.
+ *
+ * None of this is semantic analysis — types are guessed from the text (see
+ * members.ts) and "how likely you want it" is proximity, not scope resolution.
+ * Wrong in the ways every heuristic here is wrong; right for a first-year course.
  *
  * Snippet templates use `${name}` for a tab stop and a leading tab per level;
  * CodeMirror expands each tab to the editor's `indentUnit` and re-indents to the
@@ -513,39 +526,154 @@ const staticOptions = (lang: CompletionLang): Completion[] => {
   ]
 }
 
-/** Snippets, keywords and the API dictionary. Fires from the first character,
- *  since an abbreviation only pays off if it appears before you finish typing it. */
-function staticSource(lang: CompletionLang): CompletionSource {
-  const inner = completeFromList(staticOptions(lang))
-  return (ctx: CompletionContext) => {
-    if (!ctx.explicit && !ctx.matchBefore(WORD_BEFORE)) return null
-    return inner(ctx)
-  }
-}
+/* ------------------------------------------------- what the situation wants */
 
 const IDENT = /[A-Za-z_$][\w$]*/g
 
-/** Every identifier in the project, so a name typed once anywhere completes everywhere. */
-function identifierSource(projectWords: () => readonly string[]): CompletionSource {
+/** Names the dictionary already owns (keywords + the bare API names). We never
+ *  surface these as bare identifiers, so the documented, higher-ranked completion
+ *  always stands for them — a scanned `println` must not shadow the real one. */
+const RESERVED: Record<CompletionLang, ReadonlySet<string>> = {
+  java: reservedFor('java'),
+  python: reservedFor('python'),
+}
+function reservedFor(lang: CompletionLang): Set<string> {
+  const s = new Set<string>(KEYWORDS[lang])
+  for (const [label] of lang === 'java' ? JAVA_API : PYTHON_API) s.add(label.slice(label.lastIndexOf('.') + 1))
+  if (lang === 'python') for (const [label] of PYTHON_MODULE_API) s.add(label)
+  return s
+}
+
+/** Keywords that only ever open a statement — never valid where a value goes, so
+ *  they (and every statement snippet) are withheld mid-expression. */
+const STATEMENT_ONLY: Record<CompletionLang, ReadonlySet<string>> = {
+  java: new Set(
+    'class interface enum extends implements permits sealed package import public private protected abstract static final void'.split(
+      ' ',
+    ),
+  ),
+  python: new Set('def class import from pass global nonlocal del elif except finally as with assert raise async await'.split(' ')),
+}
+
+type IdentRole = 'variable' | 'function' | 'class'
+
+/** Best-effort "this name was declared here", for the icon and a small ranking
+ *  nudge. Reads text before the caret; a false positive only ever nudges ranking. */
+function declaredNames(lang: CompletionLang, doc: string): Map<string, IdentRole> {
+  const out = new Map<string, IdentRole>()
+  const add = (name: string, role: IdentRole) => {
+    if (name && !out.has(name)) out.set(name, role)
+  }
+  if (lang === 'java') {
+    const T = '(?:int|long|short|byte|double|float|boolean|char|String|var|[A-Z][A-Za-z0-9_$]*)'
+    for (const m of doc.matchAll(/\b(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'class')
+    // `Type name` in a declaration / parameter / for-each (the name is followed by = ; , ) or :).
+    for (const m of doc.matchAll(new RegExp(`\\b${T}(?:<[^<>;{}()]*>)?(?:\\[\\])?\\s+([a-z_$][\\w$]*)\\s*(?=[=;,):])`, 'g')))
+      add(m[1], 'variable')
+    // `returnType name(` — a method declaration (a preceding type rules out a bare call).
+    for (const m of doc.matchAll(new RegExp(`\\b${T}(?:<[^<>;{}()]*>)?(?:\\[\\])?\\s+([A-Za-z_$][\\w$]*)\\s*\\(`, 'g')))
+      if (!out.has(m[1])) add(m[1], 'function')
+  } else {
+    for (const m of doc.matchAll(/\bdef\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'function')
+    for (const m of doc.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'class')
+    for (const m of doc.matchAll(/^[ \t]*([A-Za-z_$][\w$]*)\s*(?:[-+*/%|&^@]|\/\/|\*\*|>>|<<)?=(?!=)/gm)) add(m[1], 'variable')
+    for (const m of doc.matchAll(/\bfor\s+([A-Za-z_$][\w$]*)\s+in\b/g)) add(m[1], 'variable')
+    for (const m of doc.matchAll(/\bdef\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)/g))
+      for (const p of m[1].split(',')) {
+        const n = p.trim().split(/[:=]/)[0].trim()
+        if (n && n !== 'self' && /^[A-Za-z_$][\w$]*$/.test(n)) add(n, 'variable')
+      }
+  }
+  return out
+}
+
+/** Nearer the caret is likelier what you want. Distance is in characters, so it
+ *  needs no line math; a name only seen after the caret gets nothing. */
+function proximityBonus(dist: number): number {
+  return dist <= 40 ? 10 : dist <= 200 ? 7 : dist <= 600 ? 4 : dist <= 2000 ? 2 : 0
+}
+
+/** Is the caret inside an expression (after `=`, `(`, a comma or an operator)?
+ *  Only the confident cases flip; everything else stays "statement position", so
+ *  the full keyword/snippet set still shows and nothing wanted is ever hidden. */
+function inExpression(state: EditorState, wordFrom: number): boolean {
+  const line = state.doc.lineAt(wordFrom)
+  const pre = state.sliceDoc(line.from, wordFrom).replace(/\s+$/, '')
+  return pre !== '' && '=(,[+-*/%<>!&|?~^'.includes(pre[pre.length - 1])
+}
+
+const suppressedInExpression = (lang: CompletionLang, o: Completion): boolean =>
+  o.type === 'snippet' || (o.type === 'keyword' && STATEMENT_ONLY[lang].has(o.label))
+
+/** Snippets, keywords and the API dictionary. Fires from the first character,
+ *  since an abbreviation only pays off before you finish typing it. Steps aside in
+ *  a `.` context, and drops declaration-only keywords / snippets mid-expression. */
+function staticSource(lang: CompletionLang): CompletionSource {
+  const all = staticOptions(lang)
+  const full = completeFromList(all)
+  const expr = completeFromList(all.filter((o) => !suppressedInExpression(lang, o)))
+  return (ctx: CompletionContext) => {
+    if (memberContext(ctx.state, ctx.pos)) return null
+    const before = ctx.matchBefore(WORD_BEFORE)
+    if (!ctx.explicit && !before) return null
+    return inExpression(ctx.state, before ? before.from : ctx.pos) ? expr(ctx) : full(ctx)
+  }
+}
+
+/**
+ * Every identifier you have written, ranked by how likely you want it *here*:
+ * nearer the caret beats farther, a name declared in this file beats a bare word,
+ * this file beats the rest of the project. Doubles as the member source's fallback
+ * when a receiver's type can't be guessed.
+ */
+function makeIdentifierCollector(
+  lang: CompletionLang | null,
+  projectWords: () => readonly string[],
+): (ctx: CompletionContext) => CompletionResult | null {
+  const reserved = lang ? RESERVED[lang] : null
   return (ctx: CompletionContext): CompletionResult | null => {
     const before = ctx.matchBefore(WORD_BEFORE)
     if (!before || (before.to === before.from && !ctx.explicit)) return null
     if (!ctx.explicit && before.to - before.from < MIN_IDENT_CHARS) return null
 
-    const seen = new Set<string>()
+    const cursor = before.from
     const doc = ctx.state.doc.sliceString(0)
+    const declared = lang ? declaredNames(lang, doc.slice(0, cursor)) : null
+
+    // name -> nearest distance (chars) of an occurrence *before* the caret; a name
+    // only seen after the caret lands at Infinity — offered, but no proximity.
+    const nearest = new Map<string, number>()
     let m: RegExpExecArray | null
     IDENT.lastIndex = 0
-    while ((m = IDENT.exec(doc))) if (m[0].length > 2) seen.add(m[0])
-    for (const w of projectWords()) seen.add(w)
-    // The half-typed word itself is never a useful suggestion.
-    seen.delete(before.text)
-
-    return {
-      from: before.from,
-      options: [...seen].map((label) => ({ label, type: 'variable' })),
-      validFor: /^[\w$]*$/,
+    while ((m = IDENT.exec(doc))) {
+      const w = m[0]
+      if (w.length <= 2) continue
+      if (m.index < cursor) {
+        const d = cursor - m.index
+        const prev = nearest.get(w)
+        if (prev === undefined || d < prev) nearest.set(w, d)
+      } else if (!nearest.has(w)) {
+        nearest.set(w, Infinity)
+      }
     }
+    // The half-typed word itself is never a useful suggestion.
+    nearest.delete(before.text)
+
+    const options: Completion[] = []
+    for (const [w, dist] of nearest) {
+      if (reserved?.has(w)) continue
+      const role: IdentRole = declared?.get(w) ?? (/^[A-Z]/.test(w) ? 'class' : 'variable')
+      const boost = Math.min(4 + (declared?.has(w) ? 8 : 0) + proximityBonus(dist), 24)
+      options.push({ label: w, type: role, boost })
+    }
+    // The rest of the project: a faint, flat boost, and only names not already local.
+    for (const w of projectWords()) {
+      if (w.length <= 2 || w === before.text || nearest.has(w) || reserved?.has(w)) continue
+      nearest.set(w, 0) // mark seen so a word shared by two files isn't offered twice
+      options.push({ label: w, type: /^[A-Z]/.test(w) ? 'class' : 'variable', boost: 1 })
+    }
+
+    return { from: before.from, options, validFor: /^[\w$]*$/ }
   }
 }
 
@@ -563,12 +691,15 @@ export function wordsInSource(text: string): string[] {
 const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComment', 'BlockComment']
 
 export function completionSources(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
-  const ident = ifNotIn(NOT_IN, identifierSource(projectWords))
+  const collect = makeIdentifierCollector(lang, projectWords)
+  // In a `.` context the member source owns the popup; the plain identifier source
+  // stands down (the member source itself calls `collect` as its own fallback).
+  const ident = ifNotIn(NOT_IN, (ctx: CompletionContext) =>
+    lang && memberContext(ctx.state, ctx.pos) ? null : collect(ctx),
+  )
   if (!lang) return [ident]
   return [
-    // Member completion first: `sc.` should outrank a same-named project
-    // identifier; import sources are line-anchored, so order vs. them doesn't matter.
-    ifNotIn(NOT_IN, memberSource(lang)),
+    ifNotIn(NOT_IN, memberSource(lang, collect)),
     ifNotIn(NOT_IN, importStatementSource(lang)),
     ifNotIn(NOT_IN, staticSource(lang)),
     ident,

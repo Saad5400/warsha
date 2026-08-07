@@ -6,6 +6,7 @@ import { RunControl, type RunControlState } from './RunControl'
 import { IconButton } from './ui/Button'
 import { IconClose, IconMore } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
+import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 import { COPY } from '../copy'
 
 export interface TabsProps {
@@ -23,8 +24,6 @@ export interface TabsProps {
    */
   moreItems?: MenuItem[]
 }
-
-const LONG_PRESS_MS = 500
 
 // Bottom divider is an inset shadow, not a border (a border would eat into the 44px touch
 // height). Scrollbar hidden (10px out of 44px isn't affordable) — an edge fade substitutes.
@@ -280,7 +279,8 @@ function Tab({
       }}
       onTouchMove={(e) => {
         const t = e.touches[0]
-        if (Math.abs(t.clientX - start.current.x) > 10 || Math.abs(t.clientY - start.current.y) > 10) cancel()
+        if (Math.abs(t.clientX - start.current.x) > LONG_PRESS_SLOP || Math.abs(t.clientY - start.current.y) > LONG_PRESS_SLOP)
+          cancel()
       }}
       onTouchEnd={cancel}
       onTouchCancel={cancel}

@@ -172,6 +172,15 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('valueOf', 'Double, (String) — text as a Double'),
     method('toString', 'String, (double) — a decimal as text'),
   ],
+  // What `System.out.` / `System.err.` offer — a student writing them out in
+  // full still gets the print family, not just word-based guesses.
+  PrintStream: [
+    method('println', 'void, (value) — print a line'),
+    method('print', 'void, (value) — print with no line break'),
+    method('printf', 'void, (format, args…) — print with a format'),
+    method('format', 'PrintStream, (format, args…) — print with a format'),
+    method('flush', 'void — push everything out now'),
+  ],
 }
 
 export const PYTHON_MEMBERS: Record<string, readonly Completion[]> = {
@@ -262,6 +271,9 @@ const JAVA_STATIC_HOLDERS = new Set([
 
 function inferJavaType(doc: string, name: string): string | null {
   if (JAVA_STATIC_HOLDERS.has(name)) return name
+  // `System.out.` / `System.err.` — the receiver name is `out`/`err`, and the
+  // text right before the dot proves which. `doc` is everything up to the dot.
+  if ((name === 'out' || name === 'err') && new RegExp(`\\bSystem\\.${name}$`).test(doc)) return 'PrintStream'
   const esc = escapeRe(name)
   for (const type of JAVA_CONSTRUCTIBLE) {
     if (new RegExp(`\\b${type}\\b(?:<[^>]*>)?\\s+${esc}\\s*=\\s*new\\s+${type}\\b`).test(doc)) return type
@@ -310,19 +322,101 @@ const RECEIVER = /([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)?$/
 /** Identifiers longer than this cannot be receivers worth resolving; bounds the look-back slice. */
 const LOOKBACK = 80
 
-export function memberSource(lang: LangId): CompletionSource {
+export interface Receiver {
+  /** The identifier before the dot — the thing whose members we want. */
+  name: string
+  /** What has been typed after the dot so far. */
+  partial: string
+  /** Where the member name starts — the completion's replace range. */
+  from: number
+  /** The position of the dot itself. */
+  dotPos: number
+}
+
+/**
+ * Is the caret sitting right after `receiver.`? Returns the pieces if so, else
+ * `null`. Import / package lines are excluded — `import java.util.` is a path,
+ * not a member access, and belongs to the import-statement source. Shared so
+ * the other completion sources can step aside and leave a `.` context to the
+ * member source alone (no `sout` or `class` after a dot).
+ */
+export function memberContext(state: EditorState, pos: number): Receiver | null {
+  const line = state.doc.lineAt(pos)
+  if (/^\s*(?:import|from|package)\b/.test(state.sliceDoc(line.from, pos))) return null
+  const text = state.sliceDoc(Math.max(0, pos - LOOKBACK), pos)
+  const m = RECEIVER.exec(text)
+  if (!m) return null
+  const partial = m[2] ?? ''
+  return { name: m[1], partial, from: pos - partial.length, dotPos: pos - partial.length - 1 }
+}
+
+/* --------------------------------------------- rank a member list by what fits */
+
+/** A rough "what type is wanted right where this call sits" — enough to float the
+ *  obvious member to the top, never a real type checker. Java only. */
+type Expected = 'int' | 'double' | 'String' | 'boolean' | 'char' | null
+
+/** The return type a member advertises: the leading token of its `detail`, before
+ *  the first comma or em dash. `null` when it does not lead with one (Python
+ *  members, constants, generics like `Set<Map.Entry<…>>`). */
+function returnType(detail: string | undefined): string | null {
+  if (!detail) return null
+  const tok = detail.split('—')[0].split(',')[0].trim().replace(/<.*>$/, '')
+  return /^[A-Za-z_$][\w$]*$/.test(tok) ? tok : null
+}
+
+/** What type does the code seem to want, just left of the receiver? */
+function expectedTypeBefore(state: EditorState, receiverStart: number): Expected {
+  const line = state.doc.lineAt(receiverStart)
+  const pre = state.sliceDoc(line.from, receiverStart).replace(/\s+$/, '')
+  const assignOf = (t: string) => new RegExp(`\\b(?:${t})\\s+[A-Za-z_$][\\w$]*\\s*=$`).test(pre)
+  if (assignOf('int|long|short|byte')) return 'int'
+  if (assignOf('double|float')) return 'double'
+  if (assignOf('String')) return 'String'
+  if (assignOf('boolean')) return 'boolean'
+  if (assignOf('char')) return 'char'
+  // A condition: `if (`, `while (`, or right after a boolean operator.
+  if (/(?:\bif|\bwhile)\s*\($/.test(pre) || /(?:&&|\|\||!)$/.test(pre)) return 'boolean'
+  return null
+}
+
+function matchesExpected(expected: Expected, ret: string | null): boolean {
+  if (!expected || !ret) return false
+  switch (expected) {
+    case 'int': return ['int', 'long', 'short', 'byte', 'Integer'].includes(ret)
+    case 'double': return ['double', 'float', 'int', 'long', 'Double', 'Integer'].includes(ret)
+    case 'String': return ret === 'String'
+    case 'boolean': return ret === 'boolean' || ret === 'Boolean'
+    case 'char': return ret === 'char'
+  }
+}
+
+/** Members whose return type fits what's wanted float up (+15); when a value is
+ *  wanted, `void` members sink (−8). Untouched when nothing is expected, and the
+ *  shared constant objects are only cloned for the members that actually move. */
+function rankByExpected(members: readonly Completion[], expected: Expected): Completion[] {
+  if (!expected) return [...members]
+  return members.map((m) => {
+    const base = m.boost ?? 0
+    const ret = returnType(m.detail)
+    const boost = matchesExpected(expected, ret) ? base + 15 : ret === 'void' ? base - 8 : base
+    return boost === base ? m : { ...m, boost }
+  })
+}
+
+/** When the receiver's type is a mystery, this stands in — plain identifiers from
+ *  the file, so a `.` after an unknown variable still offers *something* useful. */
+export type MemberFallback = (ctx: CompletionContext) => CompletionResult | null
+
+export function memberSource(lang: LangId, fallback?: MemberFallback): CompletionSource {
   return (ctx: CompletionContext): CompletionResult | null => {
-    const text = ctx.state.sliceDoc(Math.max(0, ctx.pos - LOOKBACK), ctx.pos)
-    const m = RECEIVER.exec(text)
-    if (!m) return null
-    const name = m[1]
-    const partial = m[2] ?? ''
-    const dotPos = ctx.pos - partial.length - 1
-    const from = ctx.pos - partial.length
-    const typeKey = resolveReceiverType(lang, ctx.state, name, dotPos)
-    if (!typeKey) return null
-    const members = (lang === 'java' ? JAVA_MEMBERS : PYTHON_MEMBERS)[typeKey]
-    if (!members) return null
-    return { from, options: [...members], validFor: /^[\w$]*$/ }
+    const rc = memberContext(ctx.state, ctx.pos)
+    if (!rc) return null
+    const typeKey = resolveReceiverType(lang, ctx.state, rc.name, rc.dotPos)
+    const members = typeKey ? (lang === 'java' ? JAVA_MEMBERS : PYTHON_MEMBERS)[typeKey] : undefined
+    if (!members) return fallback ? fallback(ctx) : null
+    const options =
+      lang === 'java' ? rankByExpected(members, expectedTypeBefore(ctx.state, rc.dotPos - rc.name.length)) : [...members]
+    return { from: rc.from, options, validFor: /^[\w$]*$/ }
   }
 }

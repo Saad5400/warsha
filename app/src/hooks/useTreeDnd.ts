@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { splitPath } from '../fs/project'
+import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 
 /** One draggable tree entry — the minimum the drag needs to know about a node. */
 export interface DndNode {
@@ -21,9 +22,12 @@ export interface DndNode {
  * or back into its current folder is a no-op.
  */
 
-const TOUCH_HOLD_MS = 360 // press-and-hold before a touch lifts into a drag
-const MOVE_THRESHOLD = 6 // px a mouse travels before a press becomes a drag
-const SCROLL_SLOP = 10 // finger travel before the hold is read as a scroll
+// One feel across the app (ui/longPress.ts): hold, mouse-drag threshold and
+// scroll slop all align to 500ms / 8px. The three roles stay distinct — only
+// the numbers were unified (were 360ms, 6px, 10px).
+const TOUCH_HOLD_MS = LONG_PRESS_MS // press-and-hold before a touch lifts into a drag
+const MOVE_THRESHOLD = LONG_PRESS_SLOP // px a mouse travels before a press becomes a drag
+const SCROLL_SLOP = LONG_PRESS_SLOP // finger travel before the hold is read as a scroll
 const HOVER_EXPAND_MS = 640 // hover a collapsed folder this long and it opens
 const EDGE_BAND = 52 // auto-scroll when the pointer is this close to an edge
 const EDGE_SPEED = 14 // px per frame at the very edge

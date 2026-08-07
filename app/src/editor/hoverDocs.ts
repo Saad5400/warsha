@@ -1,12 +1,14 @@
-import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   closeHoverTooltips,
   EditorView,
   hasHoverTooltips,
   hoverTooltip,
   keymap,
+  showPanel,
   showTooltip,
   ViewPlugin,
+  type PanelConstructor,
   type Tooltip,
   type TooltipView,
 } from '@codemirror/view'
@@ -212,14 +214,41 @@ function cardView(hit: DocsHit): TooltipView {
   return { dom }
 }
 
+/**
+ * The completion language in force. Set by `hoverDocs(lang)` and reconfigured
+ * per file with it, so the context-menu / touch-actions layer (App.tsx) can
+ * resolve "is the caret on a documented identifier?" and trigger the same card
+ * from a view alone — see `documentedWordAt` / `explainAt` below. Absent (→
+ * null) for files without a built-in dictionary.
+ */
+const docsLang = Facet.define<CompletionLang | null, CompletionLang | null>({
+  combine: (values) => (values.length ? values[values.length - 1] : null),
+})
+
 /* --------------------------------- manual card (keyboard + long-press) */
 
-const setDocsTooltip = StateEffect.define<Tooltip | null>()
+/**
+ * One card, two presentations. The desktop chord and mouse hover show it as a
+ * tooltip pinned ABOVE the word (VS Code's hover widget). A touch long-press
+ * would land it in the same place the OS selection bar sits — right above the
+ * word — so on touch the SAME content docks as a bottom strip instead, clear of
+ * that bar's path. `docked` picks which; both are driven off this one field, so
+ * dismissal (typing, caret leaving the word, tap/scroll/Escape) is shared.
+ */
+interface ManualDocs {
+  pos: number
+  end: number
+  tooltip: Tooltip
+  panel: PanelConstructor
+  docked: boolean
+}
 
-const docsTooltipField = StateField.define<Tooltip | null>({
+const setDocsCard = StateEffect.define<ManualDocs | null>()
+
+const manualDocsField = StateField.define<ManualDocs | null>({
   create: () => null,
   update(value, tr) {
-    for (const e of tr.effects) if (e.is(setDocsTooltip)) value = e.value
+    for (const e of tr.effects) if (e.is(setDocsCard)) value = e.value
     if (!value) return null
     // Typing replaces the word; the card about the old word goes with it.
     if (tr.docChanged) return null
@@ -227,24 +256,33 @@ const docsTooltipField = StateField.define<Tooltip | null>({
     // long-press's own word-selection lands ON the word, so it survives.
     if (tr.selection) {
       const head = tr.state.selection.main.head
-      if (head < value.pos || head > (value.end ?? value.pos)) return null
+      if (head < value.pos || head > value.end) return null
     }
     return value
   },
-  provide: (f) => showTooltip.from(f),
+  // Stable tooltip/panel refs live in the field so neither is rebuilt on every
+  // unrelated update — the getter just selects one by `docked`.
+  provide: (f) => [
+    showTooltip.from(f, (v) => (v && !v.docked ? v.tooltip : null)),
+    showPanel.from(f, (v) => (v && v.docked ? v.panel : null)),
+  ],
 })
 
-function showDocsAt(view: EditorView, pos: number, lang: CompletionLang | null): boolean {
+function showDocsAt(view: EditorView, pos: number, lang: CompletionLang | null, docked: boolean): boolean {
   const hit = docsAt(view, pos, lang)
   if (!hit) return false
+  const tooltip: Tooltip = { pos: hit.from, end: hit.to, above: true, create: () => cardView(hit) }
+  const panel: PanelConstructor = () => {
+    // Same card DOM as the tooltip, in a docked wrapper the chromeTheme styles
+    // as a bottom strip (editor/setup.ts); CM adds the `.cm-panel` class.
+    const dom = document.createElement('div')
+    dom.className = 'cm-docs-dock'
+    dom.appendChild(renderDocCard(hit.entry, { boldLead: hit.user }))
+    return { dom, top: false }
+  }
   view.dispatch({
     effects: [
-      setDocsTooltip.of({
-        pos: hit.from,
-        end: hit.to,
-        above: true,
-        create: () => cardView(hit),
-      }),
+      setDocsCard.of({ pos: hit.from, end: hit.to, tooltip, panel, docked }),
       // Never two cards: the manual one replaces any mouse-hover card.
       closeHoverTooltips,
     ],
@@ -254,9 +292,9 @@ function showDocsAt(view: EditorView, pos: number, lang: CompletionLang | null):
 
 /** Dismiss BOTH faces of the card — the manual one and the mouse-hover one. */
 function hideDocs(view: EditorView): boolean {
-  const manual = view.state.field(docsTooltipField, false)
+  const manual = view.state.field(manualDocsField, false)
   if (!manual && !hasHoverTooltips(view.state)) return false
-  view.dispatch({ effects: [setDocsTooltip.of(null), closeHoverTooltips] })
+  view.dispatch({ effects: [setDocsCard.of(null), closeHoverTooltips] })
   return true
 }
 
@@ -293,7 +331,7 @@ function touchDocs(lang: CompletionLang | null): Extension {
     const down = (e: PointerEvent) => {
       // A tap anywhere in the code dismisses a standing card (taps on the
       // card itself land outside contentDOM and never reach this handler).
-      if (view.state.field(docsTooltipField, false)) hideDocs(view)
+      if (view.state.field(manualDocsField, false)) hideDocs(view)
       if (e.pointerType !== 'touch') return
       lastTouchAt = Date.now()
       startX = e.clientX
@@ -302,7 +340,9 @@ function touchDocs(lang: CompletionLang | null): Extension {
       timer = window.setTimeout(() => {
         timer = -1
         const pos = view.posAtCoords({ x: startX, y: startY })
-        if (pos != null) showDocsAt(view, pos, lang)
+        // Docked: a bottom strip, out of the OS selection bar's path (which sits
+        // above the word the long-press is selecting).
+        if (pos != null) showDocsAt(view, pos, lang, true)
       }, PRESS_MS)
     }
     const move = (e: PointerEvent) => {
@@ -311,7 +351,7 @@ function touchDocs(lang: CompletionLang | null): Extension {
     const scroll = () => cancel()
     // Taps that never enter the editor (tab strip, console) must dismiss too.
     const downAnywhere = (e: PointerEvent) => {
-      if (!view.state.field(docsTooltipField, false)) return
+      if (!view.state.field(manualDocsField, false)) return
       const t = e.target
       if (t instanceof Node && (view.dom.contains(t) || (t instanceof Element && t.closest('.cm-tooltip')))) return
       hideDocs(view)
@@ -357,7 +397,8 @@ function showHoverChord(lang: CompletionLang | null): Extension {
         const key = e.key.toLowerCase()
         if (armedAt && Date.now() - armedAt < CHORD_MS && mod && key === 'i') {
           armedAt = 0
-          return showDocsAt(view, view.state.selection.main.head, lang)
+          // Keyboard chord is a desktop gesture — the tooltip above the word.
+          return showDocsAt(view, view.state.selection.main.head, lang, false)
         }
         armedAt = mod && !e.altKey && !e.shiftKey && key === 'k' ? Date.now() : 0
         return false
@@ -376,13 +417,14 @@ function showHoverChord(lang: CompletionLang | null): Extension {
 export function hoverDocs(lang: CompletionLang | null): Extension {
   if (!lang) return []
   return [
-    docsTooltipField,
+    docsLang.of(lang),
+    manualDocsField,
     hoverTooltip(
       (view, pos) => {
         // Not while a touch is fresh (synthesized mouse events — see
         // lastTouchAt) and not on top of a manual card already showing.
         if (Date.now() - lastTouchAt < TOUCH_QUIET_MS) return null
-        if (view.state.field(docsTooltipField, false)) return null
+        if (view.state.field(manualDocsField, false)) return null
         const hit = docsAt(view, pos, lang)
         if (!hit) return null
         return { pos: hit.from, end: hit.to, above: true, create: () => cardView(hit) }
@@ -393,4 +435,30 @@ export function hoverDocs(lang: CompletionLang | null): Extension {
     showHoverChord(lang),
     keymap.of([{ key: 'Escape', run: hideDocs }]),
   ]
+}
+
+/* -------------------------------------------- resolution for the action menus */
+
+/**
+ * The documented identifier under `pos`, or null — the same resolution the
+ * hover card uses, exposed so the editor's action menus (the right-click menu
+ * and the touch actions button in App.tsx) can offer "Explain '<word>'" only
+ * when there is something to explain. Language comes from the `docsLang` facet,
+ * so callers need nothing but a view and a position.
+ */
+export function documentedWordAt(view: EditorView, pos: number): string | null {
+  const lang = view.state.facet(docsLang)
+  // No dictionary → no docs feature on this file → no "Explain" row to offer.
+  if (!lang) return null
+  const hit = docsAt(view, pos, lang)
+  return hit ? view.state.sliceDoc(hit.from, hit.to) : null
+}
+
+/**
+ * Show the docs card for the word at `pos` — the "Explain" action behind those
+ * same menus. `docked` picks the presentation: the tooltip above the word
+ * (right-click / desktop) or the bottom strip (the touch button).
+ */
+export function explainAt(view: EditorView, pos: number, docked: boolean): boolean {
+  return showDocsAt(view, pos, view.state.facet(docsLang), docked)
 }

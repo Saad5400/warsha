@@ -11,8 +11,10 @@ import type { ConsoleBuffer, ConsoleLine, ConsoleSnapshot } from '../console/buf
 import type { LoadProgress } from '../runtime/types'
 import type { RunFailure, RunStatus } from '../hooks/useRunner'
 import { afterViewportSettles } from '../ui/viewport'
+import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 import { ProgressBlock } from './ProgressBlock'
 import { IconChevronDown } from './ui/Icons'
+import { Menu, type MenuAnchor } from './ui/Menu'
 import { COPY } from '../copy'
 
 export interface ConsoleProps {
@@ -28,10 +30,20 @@ export interface ConsoleProps {
   bindStdinFocus(fn: (() => void) | null): void
   onSubmitStdin(line: string): 'sent' | 'queued' | 'ignored'
   onNotify(message: string, kind?: 'info' | 'error'): void
+  /** Run/Stop for the transcript menu. Optional: the rows only appear once the
+   *  shell passes them, so the menu stays honest if either is ever unavailable. */
+  onRun?(): void
+  onStop?(): void
 }
 
 /** Sticking to the bottom stops this far from it, so late output cannot yank a reader away. */
 const STICK_SLACK_PX = 40
+
+/** Touch has no right-click, so a press-and-hold opens the transcript menu —
+ *  on the app-wide long-press feel (see ui/longPress). */
+const MENU_HOLD_MS = LONG_PRESS_MS
+/** Finger travel that reads a hold as a scroll instead, cancelling the menu. */
+const MENU_HOLD_SLOP = LONG_PRESS_SLOP
 
 /**
  * Trailing lines kept in the DOM. The buffer caps at 5,000, but reconciling that many
@@ -74,6 +86,8 @@ export function Console({
   bindStdinFocus,
   onSubmitStdin,
   onNotify,
+  onRun,
+  onStop,
 }: ConsoleProps) {
   const snapshot = useSyncExternalStore(buffer.subscribe, buffer.getSnapshot)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -90,6 +104,10 @@ export function Console({
   /** Id of the last line the reader had seen when they scrolled up; null = stuck to the bottom. */
   const [pausedAt, setPausedAt] = useState<number | null>(null)
   const [showAll, setShowAll] = useState(false)
+  // The transcript's right-click / long-press menu, opened at a point. `selection`
+  // is the text under the cursor captured at open time — opening the menu can
+  // collapse the live selection, so Copy must remember what it was copying.
+  const [menu, setMenu] = useState<{ anchor: MenuAnchor; selection: string } | null>(null)
   /** True for LIVE_GRACE_MS after Enter — see the constant. */
   const [grace, setGrace] = useState(false)
   const waiting = status === 'waiting'
@@ -210,22 +228,78 @@ export function Console({
     buffer.clear()
   }
 
-  // Right-click copies the selection outright (like a terminal); with nothing selected the
-  // native menu opens as usual. Touch long-press selection is the platform's own, untouched.
-  const onContextMenu = (e: React.MouseEvent) => {
-    const text = window.getSelection()?.toString() ?? ''
+  const copyText = (text: string) => {
     if (!text) return
-    e.preventDefault()
     void navigator.clipboard.writeText(text).then(
       () => onNotify(COPY.copyOutputDone),
       () => onNotify(COPY.copyOutputFailed, 'error'),
     )
   }
 
+  // Selects the whole transcript in the DOM, the way a terminal's Select All does —
+  // the reader can then drag-adjust or Copy it. Only rendered rows exist to select;
+  // "show earlier" brings the rest into the DOM first, as it does for reading.
+  const selectAllTranscript = () => {
+    const el = scrollerRef.current
+    const sel = window.getSelection()
+    if (!el || !sel) return
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+
+  // Right-click (desktop) opens the transcript menu at the point, replacing the
+  // native one. The selection under the cursor is captured now — Copy reads it
+  // from the menu, since opening the menu can clear the live selection.
+  const openMenu = (x: number, y: number) => {
+    setMenu({ anchor: { x, y }, selection: window.getSelection()?.toString() ?? '' })
+  }
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    openMenu(e.clientX, e.clientY)
+  }
+
+  // Touch's stand-in for the right-click: a press-and-hold opens the same menu.
+  // A finger that travels is a scroll and cancels it; the hold that fired swallows
+  // the trailing click, or a tap on the transcript would also focus the stdin input.
+  const holdTimer = useRef<number | undefined>(undefined)
+  const holdStart = useRef<{ x: number; y: number } | null>(null)
+  const suppressClick = useRef(false)
+  const clearHold = () => {
+    if (holdTimer.current) window.clearTimeout(holdTimer.current)
+    holdTimer.current = undefined
+    holdStart.current = null
+  }
+  useEffect(() => () => clearHold(), [])
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') return
+    if ((e.target as HTMLElement | null)?.closest('button, input, select, a')) return
+    clearHold()
+    suppressClick.current = false
+    const x = e.clientX
+    const y = e.clientY
+    holdStart.current = { x, y }
+    holdTimer.current = window.setTimeout(() => {
+      suppressClick.current = true
+      openMenu(x, y)
+    }, MENU_HOLD_MS)
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    const s = holdStart.current
+    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > MENU_HOLD_SLOP) clearHold()
+  }
+
   // Touch: tapping the console means "type here", unless selecting text or tapping a control.
   // Uses `click`, not `pointerup`: the focusable transcript (needed for Ctrl+L) steals focus
   // on the mousedown between them, undoing an earlier focus attempt.
   const onClick = (e: React.MouseEvent) => {
+    // The click that trails a menu-opening long-press must not also focus the input.
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
     if (!live) return
     const target = e.target as HTMLElement | null
     if (target?.closest('button, input, select, a')) return
@@ -274,6 +348,10 @@ export function Console({
           ref={scrollerRef}
           onScroll={onScroll}
           onContextMenu={onContextMenu}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={clearHold}
+          onPointerCancel={clearHold}
           className="scroller console-transcript"
           role="log"
           aria-live="polite"
@@ -336,6 +414,30 @@ export function Console({
           </button>
         ) : null}
       </div>
+
+      {/* Right-click / long-press menu, opened at the point (see openMenu). Run and
+          Stop only appear when the shell passed their handlers; Copy is gated on a
+          captured selection; Copy All / Clear read the live buffer. */}
+      {menu ? (
+        <Menu
+          anchor={menu.anchor}
+          items={[
+            ...(onRun ? [{ label: COPY.runAction, onSelect: onRun }] : []),
+            ...(onStop ? [{ label: COPY.stopAction, disabled: !busy, onSelect: onStop }] : []),
+            {
+              label: COPY.copySelection,
+              startsGroup: true,
+              disabled: !menu.selection,
+              onSelect: () => copyText(menu.selection),
+            },
+            { label: COPY.copyOutput, onSelect: () => copyText(buffer.toText()) },
+            { label: COPY.genSelectAll, onSelect: selectAllTranscript },
+            { label: COPY.clearOutput, startsGroup: true, onSelect: () => buffer.clear() },
+          ]}
+          label={COPY.consoleActionsMenu}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
     </div>
   )
 }

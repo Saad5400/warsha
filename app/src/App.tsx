@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { undo, redo } from '@codemirror/commands'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { undo, redo, selectAll } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { EditorView } from '@codemirror/view'
 import { checkCapabilities, type CapabilityReport } from './capabilities'
@@ -19,7 +19,7 @@ import { installViewport } from './ui/viewport'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
-import { setProjectDocsSource } from './editor/hoverDocs'
+import { documentedWordAt, explainAt, setProjectDocsSource } from './editor/hoverDocs'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
@@ -49,8 +49,8 @@ import { TemplatePicker } from './components/TemplatePicker'
 import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import { GenerateMenu } from './components/GenerateMenu'
-import type { MenuAnchor, MenuItem } from './components/ui/Menu'
-import { IconFileLines, IconFiles, IconFolderOpen, IconGenerate, IconLink, IconShare, IconWand } from './components/ui/Icons'
+import { Menu, type MenuAnchor, type MenuItem } from './components/ui/Menu'
+import { IconFileLines, IconFiles, IconFolderOpen, IconGenerate, IconLink, IconMore, IconShare, IconWand } from './components/ui/Icons'
 import { COPY } from './copy'
 import { DirectionProvider } from '@radix-ui/react-direction'
 import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
@@ -137,6 +137,12 @@ function Ide({ report }: { report: CapabilityReport }) {
   const buffer = bufferRef.current
 
   const editorRef = useRef<EditorController | null>(null)
+  // The editor's touch actions button, anchored to editor chrome (never the
+  // caret) so the native selection bar can't cover it.
+  const fabRef = useRef<HTMLButtonElement>(null)
+  // Which pointer opened the last context menu: a touch long-press must fall
+  // through to the native selection callout, not our desktop right-click menu.
+  const lastPointerType = useRef<string>('mouse')
 
   const initial = useMemo(() => prefs(), [])
   const [hydrated, setHydrated] = useState(false)
@@ -165,6 +171,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   // The "Generate…" surface — anchor is the caret's viewport point, analysis the
   // parsed class it reads from. Null while closed.
   const [genMenu, setGenMenu] = useState<{ anchor: MenuAnchor; analysis: GenAnalysis } | null>(null)
+  // The editor's right-click menu (desktop) and its touch actions button share
+  // one Menu render; `plain` drops the icon gutter for the right-click menu.
+  const [editorActionsMenu, setEditorActionsMenu] = useState<{ anchor: MenuAnchor; items: MenuItem[]; plain?: boolean } | null>(null)
   // Which QuickInput face is up: commands (Ctrl+Shift+P), files (Ctrl+P), goto (Ctrl+G), recent (Ctrl+R).
   const [quickPick, setQuickPick] = useState<QuickInputMode | null>(null)
   // Null until a file is open — a caret position for nothing on screen would be a lie.
@@ -1089,6 +1098,126 @@ function Ide({ report }: { report: CapabilityReport }) {
     command(view)
   }
 
+  /** The live editor view, or null — reached through the DOM, same as
+   *  `editorCommand` (setup.ts is a separate package this overhaul). */
+  const getEditorView = (): EditorView | null => {
+    const dom = document.querySelector('.cm-editor')
+    return dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null
+  }
+
+  /** "Explain '<word>'" — the docs card for the word at `pos`. `docked` is true
+   *  from the touch button (bottom strip), false from right-click (tooltip). */
+  const explainWord = (pos: number, docked: boolean) => {
+    const view = getEditorView()
+    if (!view) return
+    view.focus()
+    explainAt(view, pos, docked)
+  }
+
+  // Clipboard rows for the desktop right-click menu. execCommand acts on the
+  // focused editor's live selection; paste reads the clipboard — all run inside
+  // the menu-select user gesture, so the browser permits them.
+  const clipboardCommand = (kind: 'cut' | 'copy') => {
+    const view = getEditorView()
+    if (!view) return
+    view.focus()
+    document.execCommand(kind)
+  }
+  const clipboardPaste = () => {
+    const view = getEditorView()
+    if (!view) return
+    view.focus()
+    void navigator.clipboard
+      .readText()
+      .then((text) => view.dispatch(view.state.replaceSelection(text)))
+      .catch(() => {
+        /* clipboard blocked — the keyboard's own Paste still works */
+      })
+  }
+
+  /** Editor jobs shared by the right-click menu and the touch button. `touch`
+   *  drops the clipboard rows (the OS bar owns them) and the keyboard hints, and
+   *  docks Explain as a strip. Guards reuse the same canFormat/canGenerate. */
+  const editorActionRows = (view: EditorView, pos: number, touch: boolean): MenuItem[] => {
+    const word = documentedWordAt(view, pos)
+    const rows: MenuItem[] = []
+    if (word)
+      rows.push({
+        label: COPY.menuExplain(word),
+        hint: touch ? undefined : formatKeys('Mod+K Mod+I'),
+        onSelect: () => explainWord(pos, touch),
+      })
+    if (!touch)
+      rows.push(
+        { label: COPY.menuCut, hint: formatKeys('Mod+X'), onSelect: () => clipboardCommand('cut') },
+        { label: COPY.menuCopy, hint: formatKeys('Mod+C'), onSelect: () => clipboardCommand('copy') },
+        { label: COPY.menuPaste, hint: formatKeys('Mod+V'), onSelect: clipboardPaste },
+      )
+    rows.push(
+      {
+        label: COPY.menuFormatFile,
+        hint: touch ? undefined : formatKeys('Shift+Alt+F'),
+        startsGroup: true,
+        disabled: !canFormat(activePath),
+        onSelect: () => void formatActiveFile(),
+      },
+      {
+        label: COPY.menuGenerate,
+        hint: touch ? undefined : formatKeys(isMacLike ? 'Ctrl+Alt+Enter' : 'Alt+Insert'),
+        disabled: !canGenerate(activePath),
+        onSelect: () => void openGenerate(),
+      },
+      {
+        label: COPY.menuFind,
+        hint: touch ? undefined : formatKeys('Mod+F'),
+        disabled: !activePath,
+        onSelect: () => editorCommand(openSearchPanel),
+      },
+      {
+        label: COPY.menuSelectAll,
+        hint: touch ? undefined : formatKeys('Mod+A'),
+        startsGroup: true,
+        disabled: !activePath,
+        onSelect: () => editorCommand(selectAll),
+      },
+      {
+        label: COPY.menuCommandPalette,
+        hint: touch ? undefined : formatKeys('Mod+Shift+P'),
+        onSelect: () => setQuickPick('commands'),
+      },
+    )
+    return rows
+  }
+
+  /** Right-click in the editor (desktop). A touch long-press is left to the OS
+   *  callout (lastPointerType), and inputs/find keep their native menu. */
+  const onEditorContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (lastPointerType.current === 'touch' || !activePath) return
+    if ((e.target as HTMLElement).closest('.cm-panels, input, textarea')) return
+    const view = getEditorView()
+    if (!view) return
+    e.preventDefault()
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head
+    // VS Code parity: a click outside the selection moves the caret there so
+    // Paste/Explain act where it landed; inside it, keep the selection to act on.
+    const sel = view.state.selection.main
+    if (pos < sel.from || pos > sel.to) view.dispatch({ selection: { anchor: pos } })
+    setEditorActionsMenu({ anchor: { x: e.clientX, y: e.clientY }, items: editorActionRows(view, pos, false), plain: true })
+  }
+
+  /** The touch actions button — opens the Menu (touch mode) anchored to the
+   *  button, never the caret, so the native selection bar can't cover it. */
+  const openEditorTouchActions = () => {
+    const btn = fabRef.current
+    const view = getEditorView()
+    if (!btn || !view) return
+    const r = btn.getBoundingClientRect()
+    setEditorActionsMenu({
+      anchor: { x: r.right, y: r.top, fromRight: true },
+      items: editorActionRows(view, view.state.selection.main.head, true),
+    })
+  }
+
   /** A real alert (one OK), not the old confirm whose Cancel did nothing. Version is inlined at build time. */
   const showAbout = () =>
     void dialogs.alert({
@@ -1630,20 +1759,58 @@ function Ide({ report }: { report: CapabilityReport }) {
               {/* Breadcrumbs sit on the editor surface so the active tab reads into the code. */}
               <Breadcrumbs path={activePath} />
 
-              <Editor
-                path={activePath}
-                content={activeContent}
-                fontSize={fontSize}
-                onChange={(p, c) => project.setContent(p, c)}
-                onSave={saveAllQuiet}
-                onController={(c) => {
-                  editorRef.current = c
+              {/* Relative host so the touch actions button docks to the editor's
+                  bottom-inline-end corner, and right-click opens the editor menu.
+                  onPointerDownCapture records the pointer kind so a touch long-press
+                  (which also fires contextmenu) is left to the OS callout. */}
+              <div
+                // Carries the editor's 96px floor (spec §4.3) now that it, not
+                // Editor, is the flex item <main> sizes.
+                className="relative flex min-h-editor-min min-w-0 flex-1 flex-col"
+                onPointerDownCapture={(e) => {
+                  lastPointerType.current = e.pointerType
                 }}
-                // Only offered behind a drawer — docked, the files are already visible.
-                onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
-                projectWords={projectWords}
-                onCursor={(line, col) => setCursor({ line, col })}
-              />
+                onContextMenu={onEditorContextMenu}
+              >
+                <Editor
+                  path={activePath}
+                  content={activeContent}
+                  fontSize={fontSize}
+                  onChange={(p, c) => project.setContent(p, c)}
+                  onSave={saveAllQuiet}
+                  onController={(c) => {
+                    editorRef.current = c
+                  }}
+                  // Only offered behind a drawer — docked, the files are already visible.
+                  onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
+                  projectWords={projectWords}
+                  onCursor={(line, col) => setCursor({ line, col })}
+                />
+                {/* Touch only (desk:hidden) — the desktop editor has the right-click
+                    menu. Quiet at rest, semi-transparent, above the home indicator. */}
+                {activePath ? (
+                  <button
+                    ref={fabRef}
+                    type="button"
+                    aria-label={COPY.a11yMoreActions}
+                    onClick={openEditorTouchActions}
+                    className={
+                      'cm-actions-fab desk:hidden absolute z-10 inline-grid place-items-center size-icon-btn ' +
+                      'rounded-full text-[20px] leading-none text-text-2 shadow-raised ' +
+                      'border border-border-subtle bg-[color-mix(in_srgb,var(--surface-3)_82%,transparent)] ' +
+                      'after:absolute after:-inset-1 after:content-[""] ' +
+                      'touch-manipulation cursor-pointer transition-[background-color,color] duration-(--dur-fast) ease-standard ' +
+                      'active:bg-surface-4 active:text-text-1'
+                    }
+                    style={{
+                      insetInlineEnd: 'calc(env(safe-area-inset-right) + var(--sp-3))',
+                      bottom: `calc(env(safe-area-inset-bottom) + var(--sp-3)${keyboardOpen ? ' + var(--sp-2)' : ''})`,
+                    }}
+                  >
+                    <IconMore />
+                  </button>
+                ) : null}
+              </div>
             </>
           )}
 
@@ -1719,6 +1886,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // its own block with a retry button instead.
                 failure={runner.failure}
                 onRetry={runControl.onRun}
+                onRun={runControl.onRun}
+                onStop={runControl.onStop}
                 onDismissFailure={runner.clearFailure}
                 bindStdinFocus={runner.bindStdinFocus}
                 onSubmitStdin={runner.submitStdin}
@@ -1794,6 +1963,18 @@ function Ide({ report }: { report: CapabilityReport }) {
           onExists={() => notify(COPY.noteGenerateExists)}
           onError={() => notify(COPY.noteGenerateFailed, 'error')}
           onClose={() => setGenMenu(null)}
+        />
+      ) : null}
+
+      {/* The editor's right-click menu (desktop) and touch actions button — one
+          shared Menu; `plain` drops the icon gutter for the right-click menu. */}
+      {editorActionsMenu ? (
+        <Menu
+          anchor={editorActionsMenu.anchor}
+          items={editorActionsMenu.items}
+          label={COPY.a11yMoreActions}
+          plain={editorActionsMenu.plain}
+          onClose={() => setEditorActionsMenu(null)}
         />
       ) : null}
     </div>

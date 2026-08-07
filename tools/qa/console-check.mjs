@@ -253,7 +253,9 @@ if (await copyBtn.count()) {
   else fail('copy button confirms on itself', String(label))
 } else fail('copy-all-output button exists in the console header')
 
-// Right-click copies just the selection (terminal-style) — Copy-all is for the whole transcript.
+// Right-click opens the transcript's context menu — coherent with the rest of the
+// app (tree, tabs, editor). Its Copy row copies just the selection; Copy output
+// (checked above) is for the whole transcript.
 const selRow = page.locator('.console-row__text', { hasText: 'Warsha console check' }).first()
 await page.evaluate(() => {
   const el = [...document.querySelectorAll('.console-row__text')].find((e) => /Warsha console check/.test(e.textContent))
@@ -265,11 +267,16 @@ await page.evaluate(() => {
 })
 await page.evaluate(() => navigator.clipboard.writeText('(nothing copied)'))
 await selRow.click({ button: 'right' })
-await page.waitForTimeout(400)
-const selClip = await page.evaluate(() => navigator.clipboard.readText())
-if (/Warsha console check/.test(selClip) && !/ValueError/.test(selClip))
-  pass('right-click copies just the selection', JSON.stringify(selClip.trim()))
-else fail('right-click copies the selection', JSON.stringify(selClip.slice(0, 80)))
+const transcriptMenu = page.getByRole('menu')
+if (await transcriptMenu.isVisible().catch(() => false)) {
+  pass('right-click opens the transcript menu')
+  await transcriptMenu.getByRole('menuitem', { name: 'Copy', exact: true }).click()
+  await page.waitForTimeout(300)
+  const selClip = await page.evaluate(() => navigator.clipboard.readText())
+  if (/Warsha console check/.test(selClip) && !/ValueError/.test(selClip))
+    pass('the menu’s Copy copies just the selection', JSON.stringify(selClip.trim()))
+  else fail('menu Copy copies the selection', JSON.stringify(selClip.slice(0, 80)))
+} else fail('right-click opens the transcript menu', '(no menu appeared)')
 // Selection must be visibly styled (not the browser default). Dev (`vite
 // --port`) serves the source's nested CSS as-is, so Chrome's selectorText
 // keeps the literal `&` — needs ancestry tracking. Prod (`vite build`)

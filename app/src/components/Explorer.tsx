@@ -14,6 +14,7 @@ import {
 } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
 import { formatKeys } from '../ui/keys'
+import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 import { useTreeDnd, type DndNode } from '../hooks/useTreeDnd'
 import { COPY } from '../copy'
 
@@ -84,6 +85,14 @@ const PANE_HEADER =
 const PANE_ACTION = 'after:content-none'
 const PANE_ACTION_SIZE = { width: 'var(--pane-action)', height: 'var(--pane-action)' } as const
 
+/* Touch has no right-click, so a press-and-hold on the tree's blank area opens
+ * the view menu — the same New File / New Folder / Collapse the header ⋯ and
+ * desktop right-click carry. Mirrors the row long-press in useTreeDnd on the
+ * app-wide long-press feel (see ui/longPress): rest LONG_PRESS_MS, and a finger
+ * that travels past LONG_PRESS_SLOP is a scroll, not a hold. */
+const EMPTY_HOLD_MS = LONG_PRESS_MS
+const EMPTY_HOLD_SLOP = LONG_PRESS_SLOP
+
 /** One visual row: a real node, or a name being typed. */
 type VisualRow =
   | { kind: 'node'; node: TreeNode; depth: number }
@@ -106,6 +115,16 @@ export function Explorer(props: ExplorerProps) {
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; node: TreeNode } | null>(null)
   const [viewMenu, setViewMenu] = useState<MenuAnchor | null>(null)
   const treeRef = useRef<HTMLDivElement>(null)
+  // A pending empty-area long-press (touch): its timer and the point it started
+  // from, so a travelling finger can cancel it before it opens the view menu.
+  const emptyHold = useRef<{ timer: number; x: number; y: number } | null>(null)
+
+  const clearEmptyHold = () => {
+    if (emptyHold.current) clearTimeout(emptyHold.current.timer)
+    emptyHold.current = null
+  }
+  // A press-and-hold that outlives its element (unmount mid-hold) must not fire.
+  useEffect(() => () => clearEmptyHold(), [])
 
   const toggle = (path: string) =>
     setCollapsed((cur) => {
@@ -215,6 +234,10 @@ export function Explorer(props: ExplorerProps) {
       // The hint goes through formatKeys like every other shortcut label, even
       // though F2 formats to itself — one formatter, no hand-written variants.
       { label: COPY.explorerRename, hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
+      // The node's full path to the clipboard — VS Code's own "Copy Path", its
+      // own group above Delete. Fire-and-forget (`void`): the explorer owns no
+      // toast surface, and a path copy is not a moment that needs one.
+      { label: COPY.explorerCopyPath, startsGroup: true, onSelect: () => void navigator.clipboard.writeText(node.path) },
       { label: COPY.explorerDelete, danger: true, onSelect: () => props.onDelete(node.path, isDir) },
     ]
   }
@@ -298,6 +321,39 @@ export function Explorer(props: ExplorerProps) {
         // While a drag is live the tree owns the pointer; native scroll must not
         // fight the captured drag (auto-scroll near the edges replaces it).
         data-dnd-active={dnd.dragging ? 'true' : undefined}
+        // Right-click the blank tree (or an empty project's empty state) — not a
+        // row — to open the view menu. A row owns its own context menu (see Row),
+        // and its target is inside a treeitem, so the empty-space menu stands down.
+        onContextMenu={(e) => {
+          if ((e.target as HTMLElement).closest('[role="treeitem"]')) return
+          e.preventDefault()
+          setViewMenu({ x: e.clientX, y: e.clientY })
+        }}
+        // Touch's stand-in for that right-click: a press-and-hold on the blank
+        // area. Presses on a row (or its controls) belong to the row's own
+        // drag/long-press through useTreeDnd, so those are left alone; a
+        // travelling finger is a scroll and cancels the hold.
+        onPointerDown={(e) => {
+          if (e.pointerType === 'mouse') return
+          if ((e.target as HTMLElement).closest('[role="treeitem"], button, input, a')) return
+          clearEmptyHold()
+          const x = e.clientX
+          const y = e.clientY
+          emptyHold.current = {
+            x,
+            y,
+            timer: window.setTimeout(() => {
+              emptyHold.current = null
+              setViewMenu({ x, y })
+            }, EMPTY_HOLD_MS),
+          }
+        }}
+        onPointerMove={(e) => {
+          const h = emptyHold.current
+          if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > EMPTY_HOLD_SLOP) clearEmptyHold()
+        }}
+        onPointerUp={clearEmptyHold}
+        onPointerCancel={clearEmptyHold}
       >
         {rows.length === 0 ? (
           <div className="empty">

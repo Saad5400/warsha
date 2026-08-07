@@ -114,9 +114,12 @@
   --code-active-line: #1D1D20;              /* touch fill only — desk uses the
                                                bordered treatment (below)     */
   --code-active-line-border: #26262B;
-  --code-selection: #35353B;                /* v3's cool neutral; text-1 on
-                                               it: 11.67                      */
-  --code-selection-inactive: #2B2B31;       /* selection while unfocused      */
+  --code-selection: #264F78;                /* VS Code Dark+ selection blue —
+                                               clearly visible on the near-black
+                                               canvas (was ~1.5:1 grey); text-1
+                                               on it: ~8.1                     */
+  --code-selection-inactive: #3A3D41;       /* Dark+ inactive-selection grey;
+                                               text-1 on it: ~10.6            */
   --code-selection-match: rgba(250, 250, 250, 0.12);
   --code-search-match: #423C2E;             /* warm-neutral on purpose — kept
                                                distinguishable from the cool
@@ -240,7 +243,7 @@
   --ansi-bright-magenta: #D670D6;
   --ansi-bright-cyan: #29B8DB;
   --ansi-bright-white: #E5E5E5;
-  --terminal-sel: #35353B;                  /* == --code-selection            */
+  --terminal-sel: #35353B;                  /* terminal selection fill (grey) */
 
   /* ---- misc --------------------------------------------------------------- */
   --progress: var(--accent);

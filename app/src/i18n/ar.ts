@@ -119,6 +119,7 @@ export const AR: Bundle = {
   // ---- console ----
   consoleEmpty: 'شغّل كودك وستظهر مخرجاته هنا.',
   consoleCleared: 'مُسحت المخرجات.',
+  consoleActionsMenu: 'إجراءات وحدة التحكم',
 
   // ---- preview surface ----
   previewTitle: 'المعاينة',
@@ -136,6 +137,7 @@ export const AR: Bundle = {
   copyOutputDone: 'نُسخت',
   copyOutputFailed: 'لم ينجح النسخ — حدّد النص وانسخه بنفسك.',
   clearOutput: 'مسح المخرجات',
+  copySelection: 'نسخ',
   // "999+" is dropped, not translated — a `+` glued to a number in an RTL
   // badge renders on the wrong side, and the words already say it.
   newLines: (n) =>
@@ -274,6 +276,7 @@ export const AR: Bundle = {
   explorerOpen: 'فتح',
   explorerRename: 'إعادة تسمية…',
   explorerDelete: 'حذف',
+  explorerCopyPath: 'نسخ المسار',
   explorerCollapse: 'طيّ المجلّدات',
   explorerNewFilePlaceholder: 'اسم الملف الجديد',
   explorerNewFolderPlaceholder: 'اسم المجلّد الجديد',
@@ -475,6 +478,11 @@ export const AR: Bundle = {
   menuStop: 'إيقاف',
   menuFormatFile: 'تنسيق الملف',
   menuGenerate: 'توليد…',
+  menuCut: 'قص',
+  menuCopy: 'نسخ',
+  menuPaste: 'لصق',
+  menuSelectAll: 'تحديد الكل',
+  menuExplain: (word) => `شرح «${iso(word)}»`,
   menuHelp: 'مساعدة',
   menuAbout: 'عن ورشة',
   menuCommandPalette: 'لوحة الأوامر…',

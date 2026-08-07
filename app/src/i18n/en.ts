@@ -65,6 +65,7 @@ export const EN = {
   // ---- console (§8) ----
   consoleEmpty: 'Output will appear here when you run your code.',
   consoleCleared: 'Cleared.',
+  consoleActionsMenu: 'Console actions',
 
   // ---- preview surface (web projects) ----
   // The iframe that renders a web project. `console.log` and errors still land in
@@ -91,6 +92,7 @@ export const EN = {
   copyOutputDone: 'Copied',
   copyOutputFailed: 'Could not copy — select the text instead.',
   clearOutput: 'Clear output',
+  copySelection: 'Copy',
   newLines: (n: number) => `${n > 999 ? '999+' : n} new line${n === 1 ? '' : 's'}`,
   jumpToLatest: 'Jump to latest',
   showEarlier: (n: number) => `Show ${n.toLocaleString('en')} earlier lines`,
@@ -259,6 +261,7 @@ export const EN = {
   explorerOpen: 'Open',
   explorerRename: 'Rename…',
   explorerDelete: 'Delete',
+  explorerCopyPath: 'Copy path',
   explorerCollapse: 'Collapse folders',
   explorerNewFilePlaceholder: 'New file name',
   explorerNewFolderPlaceholder: 'New folder name',
@@ -473,6 +476,11 @@ export const EN = {
   menuStop: 'Stop',
   menuFormatFile: 'Format File',
   menuGenerate: 'Generate…',
+  menuCut: 'Cut',
+  menuCopy: 'Copy',
+  menuPaste: 'Paste',
+  menuSelectAll: 'Select All',
+  menuExplain: (word: string) => `Explain '${word}'`,
   menuHelp: 'Help',
   menuAbout: 'About Warsha',
   menuCommandPalette: 'Command Palette…',

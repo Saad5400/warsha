@@ -538,6 +538,22 @@ const chromeTheme = EditorView.theme(
       whiteSpace: 'pre-wrap',
       overflowWrap: 'break-word',
     },
+    // A touch long-press docks the SAME docs card (editor/hoverDocs.ts) as a
+    // bottom strip rather than a tooltip above the word — on touch the OS
+    // selection bar owns the space above the word. A CodeMirror bottom panel:
+    // full-width, out of that bar's path, tall content scrolling within itself,
+    // and clear of the home indicator. `.cm-panel` is CM's own class; the panel
+    // hosts the unchanged `.cm-docs` styled above.
+    '&.cm-editor .cm-panels-bottom': { borderTop: 'none' },
+    '&.cm-editor .cm-panel.cm-docs-dock': {
+      backgroundColor: 'var(--code-widget-bg)',
+      borderTop: '1px solid var(--border-widget)',
+      boxShadow: 'var(--shadow-raised)',
+      padding: 'var(--sp-2) var(--sp-3)',
+      paddingBottom: 'max(var(--sp-2), env(safe-area-inset-bottom))',
+      maxHeight: '45%',
+      overflowY: 'auto',
+    },
     // ---- Desktop (fine-pointer) metrics: VS Code's own editor chrome. Touch
     // keeps every rule above untouched — these rules only override. Gated by
     // the `.cm-desk` root class (an editorAttributes facet in `extensions()`,
