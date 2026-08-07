@@ -65,7 +65,6 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
         onOpenChange={setAppMenuOpen}
         items={menus.map((m) => ({ label: m.label, items: m.items }))}
         label={COPY.a11yAppMenu}
-        plain
         drillIn={drillIn}
         trigger={
           <IconButton label={COPY.a11yAppMenu} className="max-[899px]:kb-open:size-touch-kb">
@@ -104,7 +103,6 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
           }}
           items={m.items}
           label={`${m.label} menu`}
-          plain
           trigger={
             <button
               type="button"

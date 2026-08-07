@@ -90,7 +90,6 @@ export function ActivityBar({
         onOpenChange={setManageOpen}
         items={manageItems}
         label={COPY.a11yManage}
-        plain
         drillIn={drillIn}
         trigger={
           <button type="button" className={SLOT} aria-label={COPY.a11yManage} title={COPY.a11yManage} data-state="inactive">
