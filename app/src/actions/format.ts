@@ -44,7 +44,10 @@ function loadJavaFormatter() {
   return javaFormatterPromise
 }
 
-async function formatJava(source: string): Promise<string> {
+/** Exported for `actions/generate.ts`, which builds a new source string (fields
+ *  spliced into the class) and leans on this same tabWidth-4 pass to lay it out
+ *  canonically — the generator writes rough Java, prettier makes it idiomatic. */
+export async function formatJava(source: string): Promise<string> {
   const { format, javaPlugin } = await loadJavaFormatter()
   return format(source, {
     parser: 'java',

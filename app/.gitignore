@@ -19,6 +19,11 @@ public/warsha-clang.worker.js
 # esbuild.wasm (used to transpile/bundle TypeScript and cross-file JS/TS modules
 # in the browser). ~12 MB build product, never a source of truth.
 public/warsha-esbuild.wasm
+# The tree-sitter Java grammar wasm, a verbatim copy of prettier-plugin-java's
+# bundled orchard grammar — staged here because the package's exports field hides
+# its dist/ from Vite. Read by "Generate…" (actions/generate.ts). ~448 KB build
+# product, never a source of truth.
+public/warsha-tree-sitter-java.wasm
 # The on-device Tailwind build, a verbatim copy of node_modules/@tailwindcss/
 # browser/dist/index.global.js — injected into the preview so Tailwind utilities
 # work offline and under COEP (a cross-origin CDN <script> would be blocked).

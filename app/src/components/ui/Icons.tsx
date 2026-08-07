@@ -172,6 +172,23 @@ export const IconWand = (p: IconProps) => (
   </Icon>
 )
 
+/** "Generate…" — a `{ }` block with a plus, for the action that writes code
+ *  into the current class. Sits beside Format's wand in the same chrome. */
+export const IconGenerate = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7.5 4.5C6 4.5 6 6 6 7.5 6 9 5 10 4 10c1 0 2 1 2 2.5 0 1.5 0 3 1.5 3" />
+    <path d="M12.5 4.5c1.5 0 1.5 1.5 1.5 3 0 1.5 1 2.5 2 2.5-1 0-2 1-2 2.5 0 1.5 0 3-1.5 3" />
+    <path d="M10 8.25v3.5M8.25 10h3.5" />
+  </Icon>
+)
+
+/** The check inside a selected checkbox row (the field picker). */
+export const IconCheck = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 10.5 8 14l7.5-8" />
+  </Icon>
+)
+
 /**
  * "Install Warsha" — arrow landing INSIDE a device, not a tray (that's
  * IconImport, one row away in the same chrome) — installing puts the app

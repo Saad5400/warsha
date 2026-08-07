@@ -30,6 +30,7 @@ export const JAVA_IMPORTS: Record<string, string> = {
   HashSet: 'java.util.HashSet',
   TreeSet: 'java.util.TreeSet',
   Arrays: 'java.util.Arrays',
+  Objects: 'java.util.Objects',
   Collections: 'java.util.Collections',
   Random: 'java.util.Random',
   List: 'java.util.List',
