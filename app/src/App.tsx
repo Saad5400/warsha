@@ -21,6 +21,7 @@ import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
 import { setProjectDocsSource } from './editor/hoverDocs'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
+import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
 import { shareProjectAsPdf } from './actions/sharePdf'
 import { isCancelled, prefersShareSheet } from './actions/deliver'
@@ -47,8 +48,9 @@ import { QuickInput, type QuickCommand, type QuickInputMode } from './components
 import { TemplatePicker } from './components/TemplatePicker'
 import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
-import type { MenuItem } from './components/ui/Menu'
-import { IconFileLines, IconFiles, IconFolderOpen, IconLink, IconShare, IconWand } from './components/ui/Icons'
+import { GenerateMenu } from './components/GenerateMenu'
+import type { MenuAnchor, MenuItem } from './components/ui/Menu'
+import { IconFileLines, IconFiles, IconFolderOpen, IconGenerate, IconLink, IconShare, IconWand } from './components/ui/Icons'
 import { COPY } from './copy'
 import { DirectionProvider } from '@radix-ui/react-direction'
 import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
@@ -160,6 +162,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [sideView, setSideView] = useState<SideView>('explorer')
   const [importOpen, setImportOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  // The "Generate…" surface — anchor is the caret's viewport point, analysis the
+  // parsed class it reads from. Null while closed.
+  const [genMenu, setGenMenu] = useState<{ anchor: MenuAnchor; analysis: GenAnalysis } | null>(null)
   // Which QuickInput face is up: commands (Ctrl+Shift+P), files (Ctrl+P), goto (Ctrl+G), recent (Ctrl+R).
   const [quickPick, setQuickPick] = useState<QuickInputMode | null>(null)
   // Null until a file is open — a caret position for nothing on screen would be a lie.
@@ -617,6 +622,50 @@ function Ide({ report }: { report: CapabilityReport }) {
       if (e instanceof PythonNotLoadedError) notify(COPY.noteFormatNeedsPython)
       else notify(COPY.noteFormatFailed, 'error')
     }
+  }, [activePath, project, notify])
+
+  /** Alt+Insert (also the ⋯ and Run menus) — parse the class the cursor sits in,
+   *  then open the generator menu at the caret. Parsing is lazy (the Java grammar
+   *  wasm loads on first use), so this is async; a class that can't be read
+   *  answers with a quiet, worded notice rather than an empty menu. */
+  const openGenerate = useCallback(async () => {
+    const path = activePath
+    if (!path || !canGenerate(path)) return
+    const dom = document.querySelector('.cm-editor')
+    const view = dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null
+    const source = project.read(path) ?? ''
+    const cursor = view ? view.state.selection.main.head : 0
+    let result: Awaited<ReturnType<typeof analyzeForGenerate>>
+    try {
+      result = await analyzeForGenerate(path, source, cursor)
+    } catch {
+      notify(COPY.noteGenerateFailed, 'error')
+      return
+    }
+    if ('reason' in result) {
+      notify(
+        result.reason === 'syntaxError'
+          ? COPY.noteGenerateSyntax
+          : result.reason === 'noClass'
+            ? COPY.noteGenerateNoClass
+            : COPY.noteGenerateFailed,
+        result.reason === 'unsupported' ? 'error' : 'info',
+      )
+      return
+    }
+    // A menu of all-disabled rows is dead UI — happens on Python/C# once every
+    // generator's output already exists (Java is spared: Constructor is always
+    // offerable). Say so instead of opening it.
+    if (result.options.every((o) => !o.available)) {
+      notify(COPY.noteGenerateExists)
+      return
+    }
+    // Open at the caret (its bottom edge), like the tab menu opens at its button.
+    const coords = view?.coordsAtPos(cursor)
+    const anchor: MenuAnchor = coords
+      ? { x: coords.left, y: coords.bottom }
+      : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    setGenMenu({ anchor, analysis: result })
   }, [activePath, project, notify])
 
   /** Renders the active file to PNG: share sheet on handhelds, clipboard/download on
@@ -1084,6 +1133,21 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: () => void formatActiveFile(),
     },
     {
+      id: 'edit.generate',
+      title: COPY.cmdGenerate,
+      // JetBrains' binding; Ctrl+Alt+Enter is its alias, and the one Macs can
+      // reach (no Insert key). Not in the editor keymap (editor/setup.ts) — the
+      // caret position it needs is read here, at dispatch. Ctrl+Alt+Enter is
+      // also CodeMirror's Replace-All, but only while the Find/Replace panel
+      // holds focus — a scoped overlap that never reaches this global binding.
+      // skipWhenTyping keeps both chords out of dialog fields and console stdin;
+      // the editor itself isn't "typing", so Alt+Insert still fires there.
+      keys: ['Alt+Insert', 'Ctrl+Alt+Enter'],
+      skipWhenTyping: true,
+      enabled: () => canGenerate(activePath),
+      run: () => void openGenerate(),
+    },
+    {
       id: 'file.share',
       title: COPY.cmdFileShareImage,
       enabled: () => activePath !== null,
@@ -1352,6 +1416,13 @@ function Ide({ report }: { report: CapabilityReport }) {
           disabled: !canFormat(activePath),
           onSelect: () => void formatActiveFile(),
         },
+        {
+          label: COPY.menuGenerate,
+          // ⌥Insert names a key Macs lack — show them the reachable alias.
+          hint: formatKeys(isMacLike ? 'Ctrl+Alt+Enter' : 'Alt+Insert'),
+          disabled: !canGenerate(activePath),
+          onSelect: () => void openGenerate(),
+        },
       ],
     },
     {
@@ -1409,6 +1480,14 @@ function Ide({ report }: { report: CapabilityReport }) {
       hint: formatKeys('Shift+Alt+F'),
       disabled: !canFormat(activePath),
       onSelect: () => void formatActiveFile(),
+    },
+    {
+      label: COPY.menuGenerate,
+      icon: <IconGenerate size={18} />,
+      // ⌥Insert names a key Macs lack — show them the reachable alias.
+      hint: formatKeys(isMacLike ? 'Ctrl+Alt+Enter' : 'Alt+Insert'),
+      disabled: !canGenerate(activePath),
+      onSelect: () => void openGenerate(),
     },
     {
       label: COPY.menuShareImage,
@@ -1700,6 +1779,21 @@ function Ide({ report }: { report: CapabilityReport }) {
           onPick={pickStarter}
           onBlank={startBlank}
           onCancel={() => setPickerOpen(false)}
+        />
+      ) : null}
+
+      {genMenu ? (
+        <GenerateMenu
+          anchor={genMenu.anchor}
+          analysis={genMenu.analysis}
+          // One edit through the controller — one undo step, normal dirty/save path.
+          onApply={(source) => {
+            editorRef.current?.applyEdit(source)
+            notify(COPY.noteGenerated)
+          }}
+          onExists={() => notify(COPY.noteGenerateExists)}
+          onError={() => notify(COPY.noteGenerateFailed, 'error')}
+          onClose={() => setGenMenu(null)}
         />
       ) : null}
     </div>

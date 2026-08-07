@@ -414,6 +414,11 @@ export const AR: Bundle = {
   noteFormatted: 'نُسّق الملف.',
   noteFormatNeedsPython: 'شغّل هذا الملف مرة ليُحمَّل Python، وبعدها يعمل التنسيق.',
   noteFormatFailed: 'لم يُنسَّق هذا الملف.',
+  noteGenerated: 'تم التوليد.',
+  noteGenerateExists: 'هذا الكود موجود في الصف بالفعل.',
+  noteGenerateNoClass: 'ضع المؤشر داخل صف أولًا.',
+  noteGenerateSyntax: 'صحّح الأخطاء النحوية أولًا، ثم ولّد.',
+  noteGenerateFailed: 'تعذّر توليد كود لهذا الملف.',
   noteImageCopied: 'نُسخت الصورة — الصقها أينما شئت.',
   noteImageDownloaded: 'نُزّلت الصورة.',
   noteImageFailed: 'لم تُنشأ صورة لهذا الملف.',
@@ -469,6 +474,7 @@ export const AR: Bundle = {
   menuRunEntry: (entry) => `تشغيل ${iso(entry)}`,
   menuStop: 'إيقاف',
   menuFormatFile: 'تنسيق الملف',
+  menuGenerate: 'توليد…',
   menuHelp: 'مساعدة',
   menuAbout: 'عن ورشة',
   menuCommandPalette: 'لوحة الأوامر…',
@@ -518,6 +524,26 @@ export const AR: Bundle = {
   cmdProjectsEmpty: 'المشاريع: إفراغ المشروع…',
   cmdProjectsDelete: 'المشاريع: حذف المشروع…',
   cmdViewLanguage: 'عرض: تغيير لغة الواجهة',
+  cmdGenerate: 'توليد…',
+
+  // ---- Generate… (Alt+Insert) ----
+  // Member names stay in their code form (toString()/__repr__) — a Java or C#
+  // student reads the same identifier an Arabic-localised IDE shows.
+  genMenuLabel: 'توليد',
+  genConstructor: 'مُنشئ',
+  genGetter: 'دالة جلب',
+  genSetter: 'دالة تعيين',
+  genGetterSetter: 'دالتا الجلب والتعيين',
+  genToString: 'toString()',
+  genEqualsHashCode: 'equals() و hashCode()',
+  genPyRepr: '__repr__()',
+  genPyEq: '__eq__()',
+  genCsConstructor: 'مُنشئ',
+  genCsProperties: 'خصائص تلقائية',
+  genFieldsTitle: 'اختر الحقول',
+  genFieldsIntro: (name) => `حقول ${iso(name)} المراد تضمينها.`,
+  genSelectAll: 'تحديد الكل',
+  genGenerate: 'توليد',
 
   // Starter names and blurbs, by Template id — see en.ts's note on why this
   // record lives only here. Missing ids fall back to the template's English

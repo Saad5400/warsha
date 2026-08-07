@@ -411,6 +411,11 @@ export const EN = {
   noteFormatted: 'Formatted.',
   noteFormatNeedsPython: 'Run this file once to load Python, then Format will work.',
   noteFormatFailed: 'Could not format this file.',
+  noteGenerated: 'Generated.',
+  noteGenerateExists: 'That code is already in this class.',
+  noteGenerateNoClass: 'Put the cursor inside a class first.',
+  noteGenerateSyntax: 'Fix the syntax errors first, then Generate.',
+  noteGenerateFailed: 'Could not generate code for this file.',
   noteImageCopied: 'Image copied — paste it anywhere.',
   noteImageDownloaded: 'Image downloaded.',
   noteImageFailed: 'Could not create an image of this file.',
@@ -467,6 +472,7 @@ export const EN = {
   menuRunEntry: (entry: string) => `Run ${entry}`,
   menuStop: 'Stop',
   menuFormatFile: 'Format File',
+  menuGenerate: 'Generate…',
   menuHelp: 'Help',
   menuAbout: 'About Warsha',
   menuCommandPalette: 'Command Palette…',
@@ -519,6 +525,26 @@ export const EN = {
   cmdProjectsEmpty: 'Projects: Empty Project…',
   cmdProjectsDelete: 'Projects: Delete Project…',
   cmdViewLanguage: 'View: Switch Language',
+  cmdGenerate: 'Generate…',
+
+  // ---- Generate… (Alt+Insert) ----
+  // Menu wording tracks IntelliJ's Generate popup, where each term already exists.
+  genMenuLabel: 'Generate',
+  genConstructor: 'Constructor',
+  genGetter: 'Getter',
+  genSetter: 'Setter',
+  genGetterSetter: 'Getter and Setter',
+  genToString: 'toString()',
+  genEqualsHashCode: 'equals() and hashCode()',
+  genPyRepr: '__repr__()',
+  genPyEq: '__eq__()',
+  genCsConstructor: 'Constructor',
+  genCsProperties: 'Auto-properties',
+  /** The checkbox field-picker (shown when a class has more than one field). */
+  genFieldsTitle: 'Choose fields',
+  genFieldsIntro: (name: string) => `Fields from ${name} to include.`,
+  genSelectAll: 'Select all',
+  genGenerate: 'Generate',
 
   /**
    * Starter names and blurbs, by Template id (templates.ts).
