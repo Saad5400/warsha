@@ -209,6 +209,14 @@ const chromeTheme = EditorView.theme(
       // the active line as a 1px border, not a fill.
       boxShadow: '-4px 0 0 0 var(--code-active-line)',
     },
+    // Drop the fill while a selection exists (desk does the same, line ~670).
+    // drawSelection paints the selection in a layer BELOW the content, so this
+    // opaque fill would otherwise cover it on the caret's line — and a part-line
+    // selection sits entirely on that line, which is why it looked invisible.
+    '&.cm-editor.cm-hasSelection .cm-activeLine': {
+      backgroundColor: 'transparent',
+      boxShadow: 'none',
+    },
     // Flat gutter: same fill as the canvas, no border. A filled gutter costs
     // horizontal pixels of perceived width on a 390px phone.
     '&.cm-editor .cm-gutters': {
