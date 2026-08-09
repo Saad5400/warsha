@@ -1,7 +1,9 @@
 # Privacy
 
-**Short version: your code stays on your device. We don't have accounts, and we don't have
-a server that stores your work. We count anonymous page visits, and nothing else.**
+**Short version: your code stays on your device. We don't have accounts, and we don't
+have a server that stores your work. We count anonymous visits, and a short list of
+anonymous actions — which language was started, whether a program ran. Never what you
+wrote.**
 
 This page is written to be readable by students and parents, not just lawyers. Last
 updated 2026-08-09.
@@ -16,7 +18,7 @@ separate, shorter list — see the [README](../../README.md#browser-support).)
 
 ## What we collect
 
-A count of page visits. Nothing else.
+Anonymous counts. Never your work.
 
 - **No accounts.** There is no sign-up, no email address, no password, no profile.
 - **Anonymous visit counts.** Warsha counts how many people open the site. It uses
@@ -27,20 +29,50 @@ A count of page visits. Nothing else.
   browser, operating system and screen size. Your IP address is used to work out the
   country and is then discarded — it is never written down. Nothing identifies you between
   visits, so we cannot tell whether today's visitor and yesterday's are the same person.
-  See [Why we count visits](#why-we-count-visits) below.
-- **No code uploads.** Your programs are never sent to us. Warsha itself is a set of
-  static files, and no server ever receives your work.
-- **No teacher dashboard, no grades, no submissions.** Warsha does not report your
-  activity to anyone: not to us, not to a school, not to a parent. The visit count above
-  cannot be broken down to an individual student, because nothing distinguishes one.
+- **A short, fixed list of anonymous actions.** Alongside the visit count, Warsha counts a
+  handful of things happening — never what they contained. The complete list is below, and
+  it is the *whole* list: the code that sends these can only send an action from this
+  list, with a value from this list.
 
-## Why we count visits
+  | We count | With | We never send |
+  |---|---|---|
+  | A project was started | `template`, `blank`, `zip` or `share`, and the language | the project's name, the zip's name |
+  | Run was pressed | the language | the file, the code |
+  | A program finished | the language, and `ok` / `error` / `stopped` | the error, the output, the exit code |
+  | A program couldn't start | the language, and why (`offline`, `engine`…) | the technical failure text |
+  | You exported or shared | `zip`, `pdf` or `link` | the files, the link |
+  | A "Soon" language was tapped | which one | — |
+
+  "The language" means one of a fixed set of names — `java`, `python`, `html` and so on.
+  Nothing else about a file reaches it: not its name, not its size, not a line of it.
+  Because nothing identifies you between visits, these counts cannot be assembled into a
+  history of one student's work — they are only ever totals. See
+  [Why we count these](#why-we-count-these) below.
+- **No code uploads.** Your programs are never sent to us. Warsha itself is a set of
+  static files, and no server ever receives your work. What you type, what your program
+  prints, and the errors you get are never transmitted anywhere.
+- **No teacher dashboard, no grades, no submissions.** Warsha does not report your
+  activity to anyone: not to us, not to a school, not to a parent. The counts above cannot
+  be broken down to an individual student, because nothing distinguishes one.
+
+## Why we count these
 
 Warsha is free, has no adverts and sells nothing, so the only way to know whether it is
-worth continuing to build is to know whether anyone opens it. That is the whole reason,
-and it is why the measurement stops at a page count rather than following what you do
-inside the editor. Which language you choose, which files you create, whether your program
-compiled, what the error said — none of that is measured or sent anywhere.
+worth continuing to build is to know whether anyone opens it, and whether it works when
+they do.
+
+That second half is why the list above is not just a page count. Warsha's real risk is
+that a student opens it on a phone or a school tablet, presses Run, and the Java engine
+never starts — and we would never hear about it, because there is no account, no support
+inbox and no error report. A count of "Run pressed" against "a program finished" is the
+only way we can see that happening. The same goes for the roadmap: which of the greyed-out
+"Soon" languages gets tapped is the difference between building C++ next and building it
+third.
+
+Everything on that list is a count of *something happening*. None of it is a copy of
+anything you made. The line is deliberate and it holds in both directions: we count that a
+program failed, and we do not send the error; we count that a zip was imported, and we do
+not send its name.
 
 ## Where your work is stored
 
@@ -61,7 +93,7 @@ Two practical consequences worth knowing:
 
 ## Two more things we want to be honest about
 
-Besides the visit count described above, we could have written "nothing ever leaves your
+Besides the counts described above, we could have written "nothing ever leaves your
 device" and stopped. That would not be quite true either, so here are two more nuances.
 
 **1. The Java and Python engines are downloaded from other companies' servers.**
@@ -100,9 +132,10 @@ visits, and keeps no record that can be traced back to one student. So the conce
 privacy laws such as the **GDPR** (Europe), **COPPA** (United States), and Saudi Arabia's
 **PDPL** exist to address — collecting children's data, profiling, advertising to minors,
 transferring personal information, obtaining parental consent for data collection — do not
-arise in Warsha's own operation. The visit count is anonymous and cookieless, which is the
-category of measurement those laws treat most leniently, but we would rather describe it
-to you plainly than leave it unmentioned. **We are not claiming a formal certification, audit, or
+arise in Warsha's own operation. The counts described above are anonymous and cookieless,
+which is the category of measurement those laws treat most leniently, and none of them
+carry anything a student wrote, but we would rather describe them to you plainly than
+leave them unmentioned. **We are not claiming a formal certification, audit, or
 compliance approval from any authority**, and nothing here is legal advice to a school. If
 your school or district needs a formal privacy assessment before adopting Warsha, the
 answer is easier than usual: point them at this page, at
@@ -115,6 +148,10 @@ review its own hosting and network arrangements against them.
 Anonymous visit counting was added on 2026-08-09. This page was updated the same day, but
 shortly *after* that version shipped rather than before it — which is not the order
 promised here, and is recorded plainly rather than quietly corrected.
+
+The short list of anonymous actions ("What we collect", second bullet) was added on
+2026-08-09 as well. This time the page went live first and the measuring shipped after it,
+which is the order this section promises.
 
 If Warsha ever starts collecting anything further, this page will say so before that
 version ships, and the change will be visible in the project's public commit history like

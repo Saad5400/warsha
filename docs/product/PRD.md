@@ -89,7 +89,11 @@ Debugger. Real LSP / IntelliSense. Shell or terminal. Git. Extension/plugin syst
 
 ## 5. Success metrics (things a two-person OSS project can actually measure)
 
-The only thing measured automatically is an **anonymous page-visit count** (self-hosted Umami — see [PRIVACY](../legal/PRIVACY.md)): it says how many people opened Warsha, and nothing about what they did once inside. So every metric below is still either measured by hand on real hardware, or observable on GitHub. Anything else is decoration.
+What is measured automatically is an **anonymous visit count plus a short fixed list of anonymous actions** (self-hosted Umami — see [PRIVACY](../legal/PRIVACY.md)): project started (source + language), Run pressed, run finished (`ok`/`error`/`stopped`), run failed to start (failure kind), exported/shared, and "Soon" language tapped. Never a file, a name, an error or a line of code.
+
+That list is deliberately shaped to cover the two things this PRD says can kill the product and that no lab session can observe at scale: **R1** — `run_failed{kind}` broken down by browser and OS is the WebKit answer, arriving from real iPads rather than the one we borrowed; and the `run_started` − `run_finished` gap is the "engine never booted" rate. **R3** and the roadmap get the rest: `language_requested` is the only real evidence for what to build after C.
+
+Everything else below is still measured by hand on real hardware, or observable on GitHub. In particular *no* timing is instrumented — TTFSR (A1) stays a stopwatch number, because a number good enough to publish has to come from a known device on a known network, not from a field average over unknown hardware. Anything else is decoration.
 
 **A. Lab metrics — stopwatch, real devices, recorded in `docs/product/measurements.md` each release**
 1. **Time-to-first-successful-run (TTFSR)** — URL tap → first line of correct Java output visible, cold cache, on a mid-range Android phone over Wi-Fi. **Target ≤ 180 s; stretch ≤ 90 s.** Warm cache **≤ 20 s.** Single most important number in the project.
@@ -108,7 +112,7 @@ The only thing measured automatically is an **anonymous page-visit count** (self
 10. Issues labelled `broken-on-device` open > 14 days: **target 0.**
 11. Time from "student reports it doesn't run" to a reproduction on a real device: **target ≤ 48 h.**
 
-**Not metrics:** DAU, retention, stars, session length. We cannot measure them without a server, and none of them tell us whether Nouf handed in her homework.
+**Not metrics:** DAU, retention, stars, session length. Umami will happily draw some of these — and we ignore them on purpose. Retention in particular is not even real here: nothing identifies a visitor between visits, so a "returning user" chart is an artefact, not a fact. None of them tell us whether Nouf handed in her homework.
 
 ---
 

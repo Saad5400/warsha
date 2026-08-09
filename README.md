@@ -57,9 +57,12 @@ care about.
   project needs one.
 - **Import and export.** Any project round-trips through a zip file, so work moves
   between devices without an account.
-- **Your code never leaves the device.** No backend, no account, no sign-in. Anonymous
-  page visits are counted with a self-hosted, cookieless Umami instance; nothing about
-  what you write, run, or see is measured. See [PRIVACY](docs/legal/PRIVACY.md).
+- **Your code never leaves the device.** No backend, no account, no sign-in. A
+  self-hosted, cookieless Umami instance counts visits plus a short fixed list of
+  anonymous actions — which language a project starts in, whether a run finished or the
+  engine failed — so we can see that Warsha broke on a real phone without a support inbox.
+  Your files, keystrokes, output and errors are never sent anywhere. See
+  [PRIVACY](docs/legal/PRIVACY.md).
 
 ## Browser support
 
