@@ -7,6 +7,7 @@ import {
   IconChevronRight,
   IconChevronUp,
   IconCopy,
+  IconDownload,
   IconFiles,
   IconFolderOpen,
   IconFolderPlus,
@@ -43,6 +44,13 @@ export interface ExplorerProps {
   onNewFolder(parentDir: string, name?: string): void
   onRename(path: string, isDir: boolean, name?: string): void
   onDelete(path: string, isDir: boolean): void
+  /**
+   * Saves a single file to the device. The shell owns delivery (share sheet on
+   * touch, download at desk) and the toast, exactly as it owns every other
+   * filesystem-touching action — the explorer only names the file. Folders have
+   * no single-file body to hand over, so this only shows on file rows.
+   */
+  onDownload(path: string): void
   /**
    * Drag-and-drop moved `path` into folder `toDir` (`''` is the project root).
    * The shell owns the filesystem move, exactly as it owns rename — the explorer
@@ -237,6 +245,9 @@ export function Explorer(props: ExplorerProps) {
       // The hint goes through formatKeys like every other shortcut label, even
       // though F2 formats to itself — one formatter, no hand-written variants.
       { label: COPY.explorerRename, icon: <IconPencil />, hint: formatKeys('F2'), startsGroup: true, onSelect: () => setRenaming(node.path) },
+      // Only files have bytes to save — a folder would need zipping, which is the
+      // project-wide "Export as .zip" up in the File menu, not a row action.
+      ...(isDir ? [] : [{ label: COPY.explorerDownload, icon: <IconDownload />, onSelect: () => props.onDownload(node.path) }]),
       // The node's full path to the clipboard — VS Code's own "Copy Path", its
       // own group above Delete. Fire-and-forget (`void`): the explorer owns no
       // toast surface, and a path copy is not a moment that needs one.

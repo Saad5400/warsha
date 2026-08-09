@@ -209,6 +209,14 @@ export const IconShare = (p: IconProps) => (
   </Icon>
 )
 
+/** "Download" — the mirror of IconShare: the arrow drops DOWN into the tray. */
+export const IconDownload = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 3v9.5M6.75 9.25 10 12.5l3.25-3.25" />
+    <path d="M4.5 11v3.75a1.25 1.25 0 0 0 1.25 1.25h8.5a1.25 1.25 0 0 0 1.25-1.25V11" />
+  </Icon>
+)
+
 /** "Share as link" — two chain links at 45°, the universal URL glyph. */
 export const IconLink = (p: IconProps) => (
   <Icon {...p}>

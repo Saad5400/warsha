@@ -24,7 +24,7 @@ import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
 import { shareProjectAsPdf } from './actions/sharePdf'
-import { isCancelled, prefersShareSheet } from './actions/deliver'
+import { deliverFile, isCancelled, prefersShareSheet } from './actions/deliver'
 import { ActivityBar, type SideView } from './components/ActivityBar'
 import { SearchView } from './components/SearchView'
 import { Breadcrumbs } from './components/Breadcrumbs'
@@ -731,6 +731,24 @@ function Ide({ report }: { report: CapabilityReport }) {
       notify(COPY.noteImageFailed, 'error')
     }
   }, [activePath, project, notify])
+
+  /** Saves one file to the device — the Explorer row's "Download". `project.read`
+   *  is the on-screen text (edits land there per keystroke), so no save is needed
+   *  first. deliverFile picks the surface: share sheet on touch, download at desk,
+   *  and a cancelled share sheet is not a failure (see deliver.ts). */
+  const downloadFile = useCallback(
+    async (path: string) => {
+      const { name } = splitPath(path)
+      const file = new File([project.read(path) ?? ''], name, { type: 'text/plain' })
+      try {
+        const result = await deliverFile(file)
+        if (result === 'downloaded') notify(COPY.noteFileDownloaded(name))
+      } catch {
+        notify(COPY.noteFileDownloadFailed, 'error')
+      }
+    },
+    [project, notify],
+  )
 
   /** Folds the project into a URL (sharelink.ts). Clipboard on desktop, not the share
    *  sheet — Windows Chrome/Edge's own Copy button in that dialog strands the link (see deliver.ts). */
@@ -1761,6 +1779,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             onNewFolder={(dir, name) => void newFolder(dir, name)}
             onRename={(p, isDir, name) => void renameEntry(p, isDir, name)}
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
+            onDownload={(p) => void downloadFile(p)}
             onMove={(p, toDir) => void moveEntry(p, toDir)}
             // From a drawer, closing it reveals the starters already in the workspace;
             // docked, they're already visible so the button would be a no-op.
