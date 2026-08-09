@@ -216,6 +216,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [quickPick, setQuickPick] = useState<QuickInputMode | null>(null)
   // Null until a file is open — a caret position for nothing on screen would be a lie.
   const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null)
+  // The linter's running tally, for the status bar's problems item.
+  const [problems, setProblems] = useState<{ errors: number; warnings: number }>({ errors: 0, warnings: 0 })
 
   const candidates = useMemo(() => entryCandidates(project.sourceFiles()), [project, revision])
 
@@ -1842,6 +1844,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                   onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
                   projectWords={projectWords}
                   onCursor={(line, col) => setCursor({ line, col })}
+                  onDiagnostics={setProblems}
                 />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
                     menu. Quiet at rest, semi-transparent, above the home indicator. */}
@@ -1965,6 +1968,9 @@ function Ide({ report }: { report: CapabilityReport }) {
           activePath={activePath}
           entryPath={runControl.entry}
           cursor={empty || !activePath ? null : cursor}
+          // Same gate as the caret: a problems count belongs to an open file.
+          problems={empty || !activePath ? null : problems}
+          onProblems={() => editorRef.current?.toggleProblems()}
           fontSize={fontSize}
           onFontSize={setFontSize}
           // Ln/Col opens Go to Line — the quick input's ':' face, VS Code's

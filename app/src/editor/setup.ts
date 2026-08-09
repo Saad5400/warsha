@@ -46,10 +46,12 @@ import {
   completionKeymap,
   acceptCompletion,
 } from '@codemirror/autocomplete'
+import { lintKeymap, openLintPanel, closeLintPanel, forEachDiagnostic } from '@codemirror/lint'
 import { indentGuides } from './indentGuides'
 import { rainbowBrackets } from './rainbowBrackets'
 import { completionSources, type CompletionLang } from './completions'
 import { hoverDocs } from './hoverDocs'
+import { linting } from './lint'
 
 /**
  * The density gate, same expression as index.css's DENSITY media: desktop
@@ -566,6 +568,89 @@ const chromeTheme = EditorView.theme(
       maxHeight: '45%',
       overflowY: 'auto',
     },
+    // ---- The red line (editor/lint.ts) and its problems panel. -----------
+    // The squiggle: @codemirror/lint paints a fixed-colour SVG via
+    // background-image; drop it for a wavy text-underline in Design's own
+    // severity tokens, which follows the glyphs and reads on a 3x phone. The
+    // `&.cm-editor` prefix (0,2,0) beats the package's bare `.cm-lintRange`.
+    '&.cm-editor .cm-lintRange': {
+      backgroundImage: 'none',
+      textDecorationLine: 'underline',
+      textDecorationStyle: 'wavy',
+      textDecorationSkipInk: 'none',
+      textUnderlineOffset: '0.2em',
+    },
+    '&.cm-editor .cm-lintRange-error': { textDecorationColor: 'var(--danger)' },
+    '&.cm-editor .cm-lintRange-warning': { textDecorationColor: 'var(--warn)' },
+    '&.cm-editor .cm-lintRange-info, &.cm-editor .cm-lintRange-hint': {
+      textDecorationColor: 'var(--info)',
+    },
+    // The range lit while its diagnostic is hovered or selected in the panel.
+    '&.cm-editor .cm-lintRange-active': {
+      backgroundColor: 'color-mix(in srgb, var(--warn) 20%, transparent)',
+    },
+    // The message tooltip (hover, and the panel row) inherits `.cm-tooltip`'s
+    // surface above; these style its parts. `cm-tooltip-lint` caps width so a
+    // sentence never runs off a phone, same viewport maths as the popup.
+    '&.cm-editor .cm-tooltip-lint': {
+      maxWidth: 'min(360px, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
+      padding: 'var(--sp-1) 0',
+    },
+    '&.cm-editor .cm-diagnostic': {
+      fontFamily: 'var(--font-ui)',
+      fontSize: 'var(--fs-meta)',
+      lineHeight: '1.5',
+      color: 'var(--text-2)',
+      padding: 'var(--sp-1) var(--sp-3)',
+      borderLeft: '3px solid transparent',
+    },
+    '&.cm-editor .cm-diagnostic-error': { borderLeftColor: 'var(--danger)' },
+    '&.cm-editor .cm-diagnostic-warning': { borderLeftColor: 'var(--warn)' },
+    '&.cm-editor .cm-diagnostic-info, &.cm-editor .cm-diagnostic-hint': {
+      borderLeftColor: 'var(--info)',
+    },
+    // The fix button. The default is a grey pill; make it a real Warsha button,
+    // with a 44px tap target held off-glyph by an ::after halo (the same trick
+    // the find buttons use) so a thumb can hit it in the panel on a phone.
+    '&.cm-editor .cm-diagnosticAction': {
+      display: 'inline-block',
+      position: 'relative',
+      marginTop: 'var(--sp-2)',
+      marginRight: 'var(--sp-2)',
+      padding: '4px var(--sp-3)',
+      borderRadius: 'var(--r-sm)',
+      backgroundColor: 'var(--surface-4)',
+      color: 'var(--text-1)',
+      border: '1px solid var(--border-subtle)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: 'var(--fs-meta)',
+      cursor: 'pointer',
+    },
+    '&.cm-editor .cm-diagnosticAction:hover': { backgroundColor: 'var(--surface-3)' },
+    '&.cm-editor .cm-diagnosticSource': {
+      fontSize: 'var(--fs-micro)',
+      color: 'var(--text-3)',
+      marginTop: 'var(--sp-1)',
+    },
+    // The problems panel — the touch/keyboard way to reach every red line at
+    // once (the status bar's problems item opens it). Docks at the bottom on
+    // the same anatomy as the docs dock above.
+    '&.cm-editor .cm-panel.cm-panel-lint': {
+      backgroundColor: 'var(--code-widget-bg)',
+      borderTop: '1px solid var(--border-widget)',
+      boxShadow: 'var(--shadow-raised)',
+    },
+    '&.cm-editor .cm-panel.cm-panel-lint ul': {
+      maxHeight: '35vh',
+      paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
+    },
+    '&.cm-editor .cm-panel.cm-panel-lint ul [aria-selected]': {
+      backgroundColor: 'var(--surface-4)',
+    },
+    '&.cm-editor .cm-panel.cm-panel-lint button[name="close"]': {
+      color: 'var(--text-3)',
+      cursor: 'pointer',
+    },
     // ---- Desktop (fine-pointer) metrics: VS Code's own editor chrome. Touch
     // keeps every rule above untouched — these rules only override. Gated by
     // the `.cm-desk` root class (an editorAttributes facet in `extensions()`,
@@ -1043,6 +1128,12 @@ export interface EditorController {
    * quick-input `:` mode — the widget parses the number, the editor moves.
    */
   gotoLine(line: number): void
+  /**
+   * Toggle the problems panel — the list of every diagnostic in the file, each
+   * with its fix button. The status bar's problems item calls this; it is the
+   * pointer/touch route to the same panel the lint keymap opens (setup.ts).
+   */
+  toggleProblems(): void
   destroy(): void
 }
 
@@ -1064,6 +1155,12 @@ export function createEditor(
      * keystroke for a number that usually did not change.
      */
     onCursor?(line: number, col: number): void
+    /**
+     * How many errors and warnings the linter currently reports, for the status
+     * bar's problems item (editor/lint.ts). Called only when the tally changes,
+     * for the same reason as `onCursor` — not on every keystroke.
+     */
+    onDiagnostics?(counts: { errors: number; warnings: number }): void
   },
 ): EditorController {
   const fontTheme = new Compartment()
@@ -1084,6 +1181,25 @@ export function createEditor(
     if (key === reported) return
     reported = key
     opts.onCursor(line.number, col)
+  }
+
+  // The diagnostics feed for the status bar's problems item. The linter writes
+  // its results in with a state effect a beat after an edit, which lands as its
+  // own update — so counting here, and skipping when the tally has not moved,
+  // is enough to keep the bar current without a count on every keystroke.
+  let reportedDiag = ''
+  const reportDiagnostics = (state: EditorState) => {
+    if (!opts.onDiagnostics) return
+    let errors = 0
+    let warnings = 0
+    forEachDiagnostic(state, (d) => {
+      if (d.severity === 'error') errors++
+      else if (d.severity === 'warning') warnings++
+    })
+    const key = `${errors}:${warnings}`
+    if (key === reportedDiag) return
+    reportedDiag = key
+    opts.onDiagnostics({ errors, warnings })
   }
 
   /**
@@ -1149,6 +1265,13 @@ export function createEditor(
       // and a rename (.txt → .py) must swap the hover vocabulary with the
       // grammar. See editor/hoverDocs.ts.
       hoverDocs(completionLang(lang)),
+      // The red line and its one-tap fixes. In this compartment for the same
+      // reason as the grammar it reads: a rename swaps the rule set, and the
+      // reconfigure clears the old language's diagnostics with it. Only some
+      // languages get one — see editor/lint.ts. No lint *gutter*: it would
+      // reserve a column of width on every grammar file, and horizontal pixels
+      // are the scarcest thing on a 390px phone (see the gutter notes above).
+      linting(lang),
     ]
   }
 
@@ -1268,6 +1391,10 @@ export function createEditor(
       ...defaultKeymap,
       ...historyKeymap,
       ...completionKeymap,
+      // Mod-Shift-m opens the problems panel, F8 / Shift-F8 step through the
+      // red lines — the keyboard path; the status bar's problems item is the
+      // pointer/touch one, and both call the same openLintPanel.
+      ...lintKeymap,
       indentWithTab,
     ]),
     // Dark+ syntax colours (see syntaxColors above — oneDark is gone);
@@ -1284,6 +1411,12 @@ export function createEditor(
     EditorView.updateListener.of((u) => {
       if (u.docChanged && path && !applying) opts.onChange(path, u.state.doc.toString())
       if (u.docChanged || u.selectionSet) reportCursor(u.state)
+      // The linter's results and a language reconfigure both arrive as effect
+      // transactions, not doc changes — so key off effects to catch the moment
+      // the red lines land (or clear on a language swap).
+      if (u.docChanged || u.transactions.some((tr) => tr.effects.length > 0)) {
+        reportDiagnostics(u.state)
+      }
     }),
   ]
 
@@ -1349,8 +1482,10 @@ export function createEditor(
       syncLanguage(p)
       // `setState` swaps the whole state rather than dispatching a selection, so
       // the update listener does not see the new file's caret. Switching tabs has
-      // to move the status bar's Ln:Col, so say it here.
+      // to move the status bar's Ln:Col, so say it here — and the problems count
+      // too, since a cached state carries the file's own diagnostics with it.
       reportCursor(view.state)
+      reportDiagnostics(view.state)
     },
     closeFile(p) {
       states.delete(p)
@@ -1359,6 +1494,8 @@ export function createEditor(
         applying = true
         view.setState(stateFor('', ''))
         applying = false
+        // The empty state has no linter — clear the problems count with the file.
+        reportDiagnostics(view.state)
       }
     },
     renamePath(from, to) {
@@ -1405,6 +1542,14 @@ export function createEditor(
       const clamped = Math.max(1, Math.min(Math.floor(line), doc.lines))
       view.dispatch({ selection: { anchor: doc.line(clamped).from }, scrollIntoView: true })
       view.focus()
+    },
+    toggleProblems() {
+      // No exported "is it open" — the docked panel's own class is the tell.
+      if (view.dom.querySelector('.cm-panel-lint')) closeLintPanel(view)
+      else {
+        openLintPanel(view)
+        view.focus()
+      }
     },
     focus: () => view.focus(),
     currentPath: () => path,

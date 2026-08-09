@@ -2,7 +2,7 @@ import type { RunStatus } from '../hooks/useRunner'
 import { langForPath } from '../runtime'
 import { extOf } from './FileBadge'
 import { StatusPill } from './StatusPill'
-import { IconTextBigger, IconTextSmaller } from './ui/Icons'
+import { IconError, IconTextBigger, IconTextSmaller, IconWarning } from './ui/Icons'
 import { COPY } from '../copy'
 
 export interface StatusBarProps {
@@ -13,6 +13,10 @@ export interface StatusBarProps {
   /** The file Run starts — not necessarily the one being edited. */
   entryPath: string | null
   cursor: { line: number; col: number } | null
+  /** The linter's tally, or null when no file is open. The item hides at zero. */
+  problems?: { errors: number; warnings: number } | null
+  /** Opens the problems panel — the touch/pointer route to every red line and its fix. */
+  onProblems?(): void
   fontSize: number
   onFontSize(next: number): void
   /** Moves the caret via go-to-line. Optional: until the controller grows `gotoLine()`,
@@ -75,8 +79,10 @@ const STEP_BTN =
  * Bottom bar (LAYOUT-VSCODE §3); App hides it while the keyboard is up, since the
  * console's kb-open pill (RunBar.tsx) carries the run state for that window instead.
  * Left is the same `StatusPill` as the console header, so the two can never disagree.
- * VS Code's problems counter and notification bell are absent — no diagnostics feed
- * or notification centre exists behind them, and a dead control is worse than none.
+ * VS Code's problems counter now sits beside it, fed by the editor's linter and
+ * opening the problems panel on tap — but only while a file with problems is open
+ * (it hides at zero). The notification bell stays absent: no notification centre
+ * exists behind it, and a dead control is worse than none.
  */
 export function StatusBar({
   status,
@@ -84,14 +90,42 @@ export function StatusBar({
   activePath,
   entryPath,
   cursor,
+  problems,
+  onProblems,
   fontSize,
   onFontSize,
   onGotoLine,
 }: StatusBarProps) {
+  const problemCount = problems ? problems.errors + problems.warnings : 0
   return (
     <footer className={BAR} aria-label={COPY.a11yStatusBar}>
       <div className={GROUP + GROUP_LEAD}>
         <StatusPill status={status} exitCode={exitCode} variant="bar" />
+        {/* VS Code's problems counter: far left, colour-coded, tap to open the
+            panel. Inline colours beat STATUS_ITEM's hover:text-white so the
+            severity hues survive a hover, as they do in VS Code. */}
+        {problems && problemCount > 0 ? (
+          <button
+            type="button"
+            className={STATUS_ITEM}
+            aria-label={COPY.a11yProblems}
+            title={COPY.statusBarProblems(problems.errors, problems.warnings)}
+            onClick={() => onProblems?.()}
+          >
+            {problems.errors > 0 ? (
+              <span className="flex items-center gap-0.5" style={{ color: 'var(--danger)' }}>
+                <IconError size={13} />
+                <span className="tabular-nums">{problems.errors}</span>
+              </span>
+            ) : null}
+            {problems.warnings > 0 ? (
+              <span className="flex items-center gap-0.5" style={{ color: 'var(--warn)' }}>
+                <IconWarning size={13} />
+                <span className="tabular-nums">{problems.warnings}</span>
+              </span>
+            ) : null}
+          </button>
+        ) : null}
         <span className={ITEM} title={entryPath ? COPY.statusBarRunStarts(entryPath) : COPY.noEntry}>
           {/* max-w caps a marathon path; min-w-0 lets it ellipsis before anything to the right loses a pixel. */}
           <span className="min-w-0 max-w-[40ch] overflow-hidden text-ellipsis whitespace-nowrap">

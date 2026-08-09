@@ -367,6 +367,22 @@ export const IconInfo = (p: IconProps) => (
   </Icon>
 )
 
+/** A diagnostic error — the circle-cross the status bar's problems item wears. */
+export const IconError = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="10" cy="10" r="6.5" />
+    <path d="M7.75 7.75l4.5 4.5M12.25 7.75l-4.5 4.5" />
+  </Icon>
+)
+
+/** A diagnostic warning — the triangle-bang beside it. */
+export const IconWarning = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 4.25 16.5 15.5H3.5L10 4.25Z" />
+    <path d="M10 9v2.75M10 13.75h.01" />
+  </Icon>
+)
+
 /** "Command Palette" — the ⌘ loop. */
 export const IconCommand = (p: IconProps) => (
   <Icon {...p}>
