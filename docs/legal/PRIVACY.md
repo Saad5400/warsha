@@ -1,10 +1,10 @@
 # Privacy
 
-**Short version: your code stays on your device. We don't have accounts, we don't have a
-server that stores your work, and we don't collect anything about you.**
+**Short version: your code stays on your device. We don't have accounts, and we don't have
+a server that stores your work. We count anonymous page visits, and nothing else.**
 
 This page is written to be readable by students and parents, not just lawyers. Last
-updated 2026-07-30.
+updated 2026-08-09.
 
 ## What Warsha is
 
@@ -16,15 +16,31 @@ separate, shorter list — see the [README](../../README.md#browser-support).)
 
 ## What we collect
 
-Nothing.
+A count of page visits. Nothing else.
 
 - **No accounts.** There is no sign-up, no email address, no password, no profile.
-- **No analytics.** No Google Analytics, no tracking pixels, no telemetry, no
-  fingerprinting, no advertising or marketing cookies.
-- **No code uploads.** Your programs are never sent to us. There is no "us" to send them
-  to — Warsha is a set of static files, with no server that receives your work.
+- **Anonymous visit counts.** Warsha counts how many people open the site. It uses
+  [Umami](https://umami.is), an open-source analytics tool that we run ourselves on our
+  own server — not Google Analytics, and not an advertising network. It sets **no
+  cookies**, does no fingerprinting, and has no advertising or marketing purpose. What it
+  records is the page address, the page that linked you here, and your rough country,
+  browser, operating system and screen size. Your IP address is used to work out the
+  country and is then discarded — it is never written down. Nothing identifies you between
+  visits, so we cannot tell whether today's visitor and yesterday's are the same person.
+  See [Why we count visits](#why-we-count-visits) below.
+- **No code uploads.** Your programs are never sent to us. Warsha itself is a set of
+  static files, and no server ever receives your work.
 - **No teacher dashboard, no grades, no submissions.** Warsha does not report your
-  activity to anyone: not to us, not to a school, not to a parent.
+  activity to anyone: not to us, not to a school, not to a parent. The visit count above
+  cannot be broken down to an individual student, because nothing distinguishes one.
+
+## Why we count visits
+
+Warsha is free, has no adverts and sells nothing, so the only way to know whether it is
+worth continuing to build is to know whether anyone opens it. That is the whole reason,
+and it is why the measurement stops at a page count rather than following what you do
+inside the editor. Which language you choose, which files you create, whether your program
+compiled, what the error said — none of that is measured or sent anywhere.
 
 ## Where your work is stored
 
@@ -43,10 +59,10 @@ Two practical consequences worth knowing:
 - Your work does **not** follow you to another device or another browser. Use **Export**
   to download a `.zip` if you want to move it or keep a backup.
 
-## Two things we want to be honest about
+## Two more things we want to be honest about
 
-We could have written "nothing ever leaves your device" and stopped. That would not be
-quite true, so here are the two nuances.
+Besides the visit count described above, we could have written "nothing ever leaves your
+device" and stopped. That would not be quite true either, so here are two more nuances.
 
 **1. The Java and Python engines are downloaded from other companies' servers.**
 
@@ -79,11 +95,14 @@ nothing for us to store, lose, or misuse. Warsha never asks for a name, age, ema
 address, school, or location, and it has no chat, comments, uploads, or any other way for
 users to contact each other or be contacted.
 
-Because we collect no personal data at all, the concerns that privacy laws such as the
-**GDPR** (Europe), **COPPA** (United States), and Saudi Arabia's **PDPL** exist to
-address — collecting children's data, profiling, advertising to minors, transferring
-personal information, obtaining parental consent for data collection — do not arise in
-Warsha's own operation. **We are not claiming a formal certification, audit, or
+Warsha asks for no personal information, stores no identifier that follows a user between
+visits, and keeps no record that can be traced back to one student. So the concerns that
+privacy laws such as the **GDPR** (Europe), **COPPA** (United States), and Saudi Arabia's
+**PDPL** exist to address — collecting children's data, profiling, advertising to minors,
+transferring personal information, obtaining parental consent for data collection — do not
+arise in Warsha's own operation. The visit count is anonymous and cookieless, which is the
+category of measurement those laws treat most leniently, but we would rather describe it
+to you plainly than leave it unmentioned. **We are not claiming a formal certification, audit, or
 compliance approval from any authority**, and nothing here is legal advice to a school. If
 your school or district needs a formal privacy assessment before adopting Warsha, the
 answer is easier than usual: point them at this page, at
@@ -93,9 +112,13 @@ review its own hosting and network arrangements against them.
 
 ## Changes
 
-If Warsha ever starts collecting anything — it currently has no plans to — this page will
-say so before that version ships, and the change will be visible in the project's public
-commit history like everything else.
+Anonymous visit counting was added on 2026-08-09. This page was updated the same day, but
+shortly *after* that version shipped rather than before it — which is not the order
+promised here, and is recorded plainly rather than quietly corrected.
+
+If Warsha ever starts collecting anything further, this page will say so before that
+version ships, and the change will be visible in the project's public commit history like
+everything else.
 
 ## Questions
 

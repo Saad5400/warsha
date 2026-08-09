@@ -57,7 +57,9 @@ care about.
   project needs one.
 - **Import and export.** Any project round-trips through a zip file, so work moves
   between devices without an account.
-- **Nothing leaves the device.** No backend, no account, no telemetry.
+- **Your code never leaves the device.** No backend, no account, no sign-in. Anonymous
+  page visits are counted with a self-hosted, cookieless Umami instance; nothing about
+  what you write, run, or see is measured. See [PRIVACY](docs/legal/PRIVACY.md).
 
 ## Browser support
 

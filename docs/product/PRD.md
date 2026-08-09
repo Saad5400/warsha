@@ -89,7 +89,7 @@ Debugger. Real LSP / IntelliSense. Shell or terminal. Git. Extension/plugin syst
 
 ## 5. Success metrics (things a two-person OSS project can actually measure)
 
-No server means **no telemetry**. So every metric below is either measured by hand on real hardware, or observable on GitHub. Anything else is decoration.
+The only thing measured automatically is an **anonymous page-visit count** (self-hosted Umami — see [PRIVACY](../legal/PRIVACY.md)): it says how many people opened Warsha, and nothing about what they did once inside. So every metric below is still either measured by hand on real hardware, or observable on GitHub. Anything else is decoration.
 
 **A. Lab metrics — stopwatch, real devices, recorded in `docs/product/measurements.md` each release**
 1. **Time-to-first-successful-run (TTFSR)** — URL tap → first line of correct Java output visible, cold cache, on a mid-range Android phone over Wi-Fi. **Target ≤ 180 s; stretch ≤ 90 s.** Warm cache **≤ 20 s.** Single most important number in the project.
