@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import { track } from '../analytics'
 import { COPY } from '../copy'
 import {
   languageById,
@@ -171,7 +172,16 @@ const SOON_TILE =
 
 function SoonTile({ language }: { language: Language }) {
   return (
-    <div className={SOON_TILE} aria-disabled="true" aria-label={COPY.pickerSoonLabel(language.label)}>
+    // The tap still does nothing — deliberately. It is only counted, because
+    // which unbuilt language students reach for is the only evidence we have for
+    // ordering the roadmap, and the alternative is guessing. Stays a `div`:
+    // giving it a role or a key handler would promise an action it doesn't have.
+    <div
+      className={SOON_TILE}
+      aria-disabled="true"
+      aria-label={COPY.pickerSoonLabel(language.label)}
+      onClick={() => track('language_requested', { lang: language.id })}
+    >
       <LangMark language={language} dimmed />
       <span className="min-w-0 flex-1 truncate text-btn leading-[1.2] font-semibold text-text-2">{language.label}</span>
       {/* Section header + dimming already say "unbuilt"; the pill is a wider-screen nicety, hidden on a two-up phone grid. */}

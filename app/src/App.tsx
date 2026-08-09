@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { undo, redo, selectAll } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { EditorView } from '@codemirror/view'
+import { langOfEntry, track } from './analytics'
 import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
@@ -266,6 +267,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       if (!result) {
         notify(COPY.noteShareSaveFailed, 'error')
         return false
+      }
+      // Only a genuinely new copy counts — re-opening the same link on the same
+      // device is one student returning, which the visit count already says.
+      if (result.created) {
+        const first = shared.entry ?? entryCandidates(shared.snapshot.files)[0] ?? null
+        track('project_created', { source: 'share', lang: first ? langOfEntry(first) : 'none' })
       }
       // Skip re-pointing to a project already open: reopening identical [path, content] doesn't
       // remount Editor, leaving it detached and silently swallowing keystrokes. Boot case still adopts.
@@ -758,6 +765,10 @@ function Ide({ report }: { report: CapabilityReport }) {
       notify(COPY.noteLinkTooBig, 'error')
       return
     }
+    // Counted once here rather than at each of the share-sheet / clipboard exits
+    // below: the question is how often a link gets made, and the URL — which is
+    // the project — is never part of the event.
+    track('project_shared', { via: 'link' })
     if (prefersShareSheet() && navigator.canShare?.({ url })) {
       try {
         await navigator.share({ url, title: currentProject?.name })
@@ -785,6 +796,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     notify(COPY.notePdfMaking)
     try {
       const result = await shareProjectAsPdf(name, project.snapshot(), `${slug(name) || 'warsha-project'}.pdf`)
+      track('project_shared', { via: 'pdf' })
       if (result === 'downloaded') notify(COPY.notePdfDownloaded)
     } catch {
       notify(COPY.notePdfFailed, 'error')
@@ -828,6 +840,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const applyTemplate = async (t: Template) => {
+    // Counted before the branch: both paths below start the same starter, and
+    // which one ran is an implementation detail, not a fact about the student.
+    track('project_created', { source: 'template', lang: t.lang })
     // Fills the current empty project and takes its name, rather than leaving an
     // empty "My project" behind on first visit.
     if (project.isEmpty()) {
@@ -847,6 +862,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
   const startBlank = () => {
     setPickerOpen(false)
+    track('project_created', { source: 'blank', lang: 'none' })
     if (project.isEmpty()) void newFile('')
     else void newProject()
   }
@@ -859,12 +875,16 @@ function Ide({ report }: { report: CapabilityReport }) {
   const onZipImported = async (snapshot: FsSnapshot, fileName: string) => {
     setImportOpen(false)
     const entry = entryCandidates(snapshot.files)[0] ?? snapshot.files[0]?.path ?? null
+    // The zip's own name is the teacher's assignment title — not ours to count.
+    // Only its entry file's language, and only as one of the fixed ids.
+    track('project_created', { source: 'zip', lang: entry ? langOfEntry(entry) : 'none' })
     await replaceProject(snapshot, entry, COPY.imported(fileName, snapshot.files.length))
   }
 
   const exportProject = () => {
     const name = `${slug(currentProject?.name) || 'warsha-project'}.zip`
     exportZip(project.snapshot(), name)
+    track('project_shared', { via: 'zip' })
     notify(COPY.exported(name, project.paths().length), 'success')
   }
 

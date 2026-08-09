@@ -5,6 +5,7 @@ import { normalizeProgress, type LoadProgress, type RunSession, type Runtime } f
 import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
 import { COPY } from '../copy'
+import { langOfEntry, track } from '../analytics'
 
 /**
  * Run status. Drives the single Run/Stop control and the status pill, and is
@@ -220,6 +221,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       session.current = null
     }
 
+    // Counted here rather than on the button: this is the first point where a
+    // tap is definitely a run of something runnable, so `run_started` minus
+    // `run_finished` is exactly the "engine never came back" rate.
+    const lang = langOfEntry(entry)
+    track('run_started', { lang })
+
     const mine = ++token.current
     awaiting.current = false
     typedAhead.current = []
@@ -245,6 +252,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
         stall = window.setTimeout(() => {
           if (token.current !== mine) return
           const failure = classifyRunFailure(new Error('timed out'), langName(entry))
+          track('run_failed', { lang, kind: failure.kind })
           abandonRun(failure, failure.message, 'failed')
         }, LOAD_STALL_MS)
         timers.current.push(stall)
@@ -323,6 +331,9 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           if (code === null) buffer.line(COPY.runStopped, 'meta')
           else if (code === 0) buffer.line(COPY.runOk, 'meta')
           else buffer.line(COPY.runFailed(code), 'meta')
+          // The exit code itself is not sent — a non-zero code is a student's
+          // own bug, and how it failed is their business. Only that it did.
+          track('run_finished', { lang, result: code === null ? 'stopped' : code === 0 ? 'ok' : 'error' })
           setState({
             status: code === null ? 'stopped' : code === 0 ? 'ok' : 'failed',
             exitCode: code,
@@ -346,6 +357,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       // Covers anything that blocked startup (CDN down, not isolated, worker won't
       // boot) — discard the engine and surface an actionable message.
       const failure = classifyRunFailure(e, langName(entry))
+      track('run_failed', { lang, kind: failure.kind })
       abandonRun(failure, failure.message, 'failed')
     }
   }, [state.busy, project, entryPath, buffer, deliverStdin, abandonRun])
