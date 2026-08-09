@@ -163,6 +163,31 @@ const syntaxColors = HighlightStyle.define(
  * than whatever oneDark writes for the same node, and it wins wherever the
  * extension happens to sit in the array.
  */
+/**
+ * A bold wavy underline as a repeating background image — the lint squiggle.
+ *
+ * `text-decoration: wavy` is what a first pass reached for, but Chrome draws it
+ * thin and shallow, and on the dark canvas the soft `--danger` red all but
+ * vanishes (the "barely visible" report). @codemirror/lint's own SVG is nearly
+ * as faint (stroke .7). This wave is taller (amplitude 2 over a 4px tile) and
+ * heavier (stroke 1.2), so it reads as an angry squiggle rather than a hairline.
+ *
+ * The colour is baked into the data URI — a `data:` URI cannot read a CSS custom
+ * property — so these three are the literal --danger/--warn/--info values from
+ * docs/design/tokens.css and must be kept in step with them. The editor is
+ * dark-only (see syntaxColors), so there is no light-theme variant to track.
+ */
+const squiggle = (color: string) => {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4">` +
+    `<path d="m0 3 l1.5 -2 l1.5 2 l1.5 -2 l1.5 2" fill="none" stroke="${color}" stroke-width="1.2"/>` +
+    `</svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+const DANGER_SQUIGGLE = squiggle('#FF8A8F') // --danger
+const WARN_SQUIGGLE = squiggle('#E5B95C') // --warn
+const INFO_SQUIGGLE = squiggle('#7FC4F5') // --info
+
 const chromeTheme = EditorView.theme(
   {
     '&.cm-editor': {
@@ -577,21 +602,23 @@ const chromeTheme = EditorView.theme(
       overflowY: 'auto',
     },
     // ---- The red line (editor/lint.ts) and its problems panel. -----------
-    // The squiggle: @codemirror/lint paints a fixed-colour SVG via
-    // background-image; drop it for a wavy text-underline in Design's own
-    // severity tokens, which follows the glyphs and reads on a 3x phone. The
-    // `&.cm-editor` prefix (0,2,0) beats the package's bare `.cm-lintRange`.
+    // The squiggle. The browser's own `text-decoration: wavy` renders faint and
+    // shallow on the dark canvas — barely a line — and @codemirror/lint's stock
+    // SVG is nearly as thin, so paint a bolder wave (taller amplitude, heavier
+    // stroke) via `squiggle()` above, in Design's severity colours. Keep the
+    // package's `repeat-x`/`left bottom` positioning, which already sits the
+    // wave right under the glyphs. `&.cm-editor` (0,2,0) beats the bare class.
     '&.cm-editor .cm-lintRange': {
-      backgroundImage: 'none',
-      textDecorationLine: 'underline',
-      textDecorationStyle: 'wavy',
-      textDecorationSkipInk: 'none',
-      textUnderlineOffset: '0.2em',
+      backgroundRepeat: 'repeat-x',
+      backgroundPosition: 'left bottom',
+      // A touch of room so the wave clears descenders (g, p, y) instead of
+      // colliding with them; `skip-ink` does not apply to a background image.
+      paddingBottom: '2px',
     },
-    '&.cm-editor .cm-lintRange-error': { textDecorationColor: 'var(--danger)' },
-    '&.cm-editor .cm-lintRange-warning': { textDecorationColor: 'var(--warn)' },
+    '&.cm-editor .cm-lintRange-error': { backgroundImage: DANGER_SQUIGGLE },
+    '&.cm-editor .cm-lintRange-warning': { backgroundImage: WARN_SQUIGGLE },
     '&.cm-editor .cm-lintRange-info, &.cm-editor .cm-lintRange-hint': {
-      textDecorationColor: 'var(--info)',
+      backgroundImage: INFO_SQUIGGLE,
     },
     // The range lit while its diagnostic is hovered or selected in the panel.
     '&.cm-editor .cm-lintRange-active': {
