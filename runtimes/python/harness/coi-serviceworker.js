@@ -21,6 +21,9 @@ if (typeof window === 'undefined') {
         }
     });
 
+    // Null-body statuses: `new Response(body, {status})` throws for these.
+    const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
     self.addEventListener("fetch", function (event) {
         const r = event.request;
         if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
@@ -48,7 +51,7 @@ if (typeof window === 'undefined') {
                     }
                     newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
 
-                    return new Response(response.body, {
+                    return new Response(NULL_BODY_STATUS.has(response.status) ? null : response.body, {
                         status: response.status,
                         statusText: response.statusText,
                         headers: newHeaders,

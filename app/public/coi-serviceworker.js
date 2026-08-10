@@ -1,11 +1,11 @@
 /*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT
  *
- * MODIFIED for Warsha. Two changes, both additive; the original code is intact:
+ * MODIFIED for Warsha. Three changes, all additive; the original logic is intact:
  *
  *   1. An offline caching layer wraps the fetch handler. The COOP/COEP header
- *      transform below (now `isolate()`) is byte-for-byte the upstream one and
- *      still runs on every response we serve — from the network OR the cache —
- *      so cross-origin isolation holds offline exactly as it does online.
+ *      transform below (now `isolate()`) still runs on every response we serve —
+ *      from the network OR the cache — so cross-origin isolation holds offline
+ *      exactly as it does online.
  *   2. The window-side script now registers even when the origin already sends
  *      the isolation headers (production nginx). Upstream returned early there
  *      because header injection was its only job; Warsha also needs the worker
@@ -13,6 +13,7 @@
  *      *reloads* stay gated on `!crossOriginIsolated`, so an already-isolated
  *      page registers with zero reloads and a header-less host still reloads
  *      exactly once — the invariant tools/qa/verify.mjs pins.
+ *   3. `isolate()` drops the body on a null-body status — see the note there.
  *
  * See app/ARCHITECTURE.md §2.5 and docs/legal/THIRD-PARTY.md.
  */
@@ -119,10 +120,15 @@ if (typeof window === 'undefined') {
         }
     });
 
-    // The upstream coi transform, unchanged: rewrites a response so it can live
-    // in a cross-origin-isolated page. Opaque responses (status 0) pass through
-    // as they must — their headers cannot be rewritten. Called on EVERY response
-    // we return, network or cache, which is what keeps isolation intact offline.
+    // Fetch-spec null-body statuses: `new Response(body, {status})` throws for
+    // these, and CheerpJ's conditional Range reads come back 304 — the crash that
+    // surfaced as "Warsha could not start Java".
+    const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
+    // The upstream coi transform: rewrites a response so it can live in a
+    // cross-origin-isolated page. Opaque responses (status 0) pass through as
+    // they must — their headers cannot be rewritten. Called on EVERY response we
+    // return, network or cache, which is what keeps isolation intact offline.
     const isolate = (response) => {
         if (response.status === 0) {
             return response;
@@ -137,7 +143,7 @@ if (typeof window === 'undefined') {
         }
         newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
 
-        return new Response(response.body, {
+        return new Response(NULL_BODY_STATUS.has(response.status) ? null : response.body, {
             status: response.status,
             statusText: response.statusText,
             headers: newHeaders,
