@@ -52,6 +52,10 @@ export interface ProjectView {
   renameProject(id: string, name: string): Promise<void>
   /** Deletes a project; if it was open, the next most recent one opens. */
   deleteProject(id: string): Promise<void>
+  /** Read-only snapshot of any project's files — the Home cards' previews. Null if storage is down. */
+  snapshotOf(id: string): Promise<FsSnapshot | null>
+  /** Copies a project into a new one without opening it — the Home "Duplicate". */
+  duplicateProject(id: string, name: string): Promise<ProjectMeta | null>
 }
 
 export function useProject(): ProjectView {
@@ -95,9 +99,12 @@ export function useProject(): ProjectView {
         const opened = await openProjects(prefs().currentProjectId)
         if (cancelled) return
         storeRef.current = opened.projects
-        await project.switchStore(opened.projects.storeFor(opened.current.id))
-        if (cancelled) return
-        setPrefs({ currentProjectId: opened.current.id })
+        // Fresh device: nothing to open, so no store to attach — Home shows its empty state.
+        if (opened.current) {
+          await project.switchStore(opened.projects.storeFor(opened.current.id))
+          if (cancelled) return
+          setPrefs({ currentProjectId: opened.current.id })
+        }
         setProjects(opened.list)
         setCurrent(opened.current)
         setMigration(opened.migration)
@@ -254,15 +261,41 @@ export function useProject(): ProjectView {
         setProjects(remaining)
         return
       }
-      // Deleted project was open — fall back to the next survivor, or a fresh one; the app is never project-less.
+      // Deleted project was open — fall back to the next survivor, else leave the app
+      // project-less (current = null) so the shell can return to Home's empty state.
       if (remaining.length > 0) {
         await open(remaining[0])
       } else {
-        const meta = await guard(() => store.create('My project'), null)
-        if (meta) await open(meta)
+        setCurrent(null)
+        setProjects([])
+        setPrefs({ currentProjectId: null })
       }
     },
     [current, open, guard],
+  )
+
+  const snapshotOf = useCallback(
+    async (id: string): Promise<FsSnapshot | null> => {
+      const store = storeRef.current
+      if (!store) return null
+      return guard(() => store.storeFor(id).snapshot(), null)
+    },
+    [guard],
+  )
+
+  const duplicateProject = useCallback(
+    async (id: string, name: string): Promise<ProjectMeta | null> => {
+      const store = storeRef.current
+      if (!store) return null
+      // Duplicating the open one: flush first, or the copy is 350ms of edits behind.
+      if (id === current?.id) await project.saveAll()
+      const snap = await guard(() => store.storeFor(id).snapshot(), null)
+      if (!snap) return null
+      const meta = await guard(() => store.create(name, snap), null)
+      await refresh()
+      return meta
+    },
+    [current, project, refresh, guard],
   )
 
   // Recomputed only when something actually changed.
@@ -288,5 +321,7 @@ export function useProject(): ProjectView {
     openProject,
     renameProject,
     deleteProject,
+    snapshotOf,
+    duplicateProject,
   }
 }

@@ -53,6 +53,21 @@ export const IconPlus = (p: IconProps) => (
   </Icon>
 )
 
+const STAR = 'M10 2.75l2.09 4.24 4.68.68-3.39 3.3.8 4.66L10 13.43l-4.18 2.2.8-4.66-3.39-3.3 4.68-.68z'
+
+export const IconStar = (p: IconProps) => (
+  <Icon {...p}>
+    <path d={STAR} />
+  </Icon>
+)
+
+// Filled twin — the "pinned" indicator; the outline star is the "pin" action.
+export const IconStarFilled = (p: IconProps) => (
+  <Icon {...p} fill="currentColor">
+    <path d={STAR} />
+  </Icon>
+)
+
 export const IconFolderPlus = (p: IconProps) => (
   <Icon {...p}>
     <path d="M2.75 6A1.25 1.25 0 0 1 4 4.75h2.9l1.35 1.9H16A1.25 1.25 0 0 1 17.25 7.9v6.35A1.25 1.25 0 0 1 16 15.5H4a1.25 1.25 0 0 1-1.25-1.25V6Z" />

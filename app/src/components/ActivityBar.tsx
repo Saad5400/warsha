@@ -1,5 +1,6 @@
 import { useState, type SVGProps } from 'react'
 import { IconFilesStack } from './ui/Icons'
+import { Logo } from './Logo'
 import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
 import { COPY } from '../copy'
 
@@ -32,6 +33,8 @@ export interface ActivityBarProps {
    *  exactly one rail item carries the active rule at a time, VS Code's own
    *  selection model. */
   activeView: SideView | null
+  /** Leave the editor for the projects Home. The brand mark doubles as the way back. */
+  onHome(): void
   /** Show the Explorer view (or hide the sidebar if it is already up). */
   onShowExplorer(): void
   /** Show the cross-file Search view (same toggle contract). */
@@ -47,6 +50,7 @@ export interface ActivityBarProps {
  */
 export function ActivityBar({
   activeView,
+  onHome,
   onShowExplorer,
   onShowSearch,
   manageItems,
@@ -57,6 +61,11 @@ export function ActivityBar({
 
   return (
     <nav className={RAIL} aria-label={COPY.a11yActivityBar}>
+      {/* Home base — the brand mark leads back to the projects grid. Not a view toggle, so it never carries the active rule. */}
+      <button type="button" className={SLOT} aria-label={COPY.a11yHome} title={COPY.a11yHome} data-state="inactive" onClick={onHome}>
+        <Logo size={24} />
+      </button>
+
       <button
         type="button"
         className={SLOT}

@@ -163,6 +163,26 @@ export const EN = {
   welcomeRecentEmpty: 'Projects you create appear here.',
   welcomeLanguagesReady: (n: number) => `${n} languages ready · more soon`,
 
+  // ---- the Home / projects screen (components/Home.tsx) ----
+  homeTitle: 'Your projects',
+  homeContinue: 'Continue where you left off',
+  homeAll: 'All projects',
+  homeOpen: 'Open',
+  homeDuplicate: 'Duplicate',
+  // Appended to a copy's name: "Bank accounts" → "Bank accounts copy".
+  homeDupSuffix: 'copy',
+  a11yHome: 'Home',
+  noteProjectDuplicated: (name: string) => `Copied to “${name}”.`,
+  homeSearchPlaceholder: 'Search projects',
+  homeNoMatches: (q: string) => `No projects match “${q}”.`,
+  homeSortBy: 'Sort',
+  homeSortRecent: 'Recent',
+  homeSortName: 'Name',
+  homeSortCreated: 'Created',
+  homePin: 'Pin to top',
+  homeUnpin: 'Unpin',
+  a11yPinned: 'Pinned',
+
   // ---- the New-project template picker (languages.ts + TemplatePicker) ----
   // One entry point for every starter — step one picks the language, step two
   // its starters, grouped beginner → advanced.

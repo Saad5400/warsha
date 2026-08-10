@@ -44,6 +44,9 @@ import { Tabs } from './components/Tabs'
 import { TopBar } from './components/TopBar'
 import type { MenuBarMenu } from './components/MenuBar'
 import { WelcomePanel } from './components/WelcomePanel'
+import { Home } from './components/Home'
+import { Logo } from './components/Logo'
+import type { IconLang } from './components/ui/LangIcons'
 import { ImportZipDialog } from './components/ImportZipDialog'
 import { QuickInput, type QuickCommand, type QuickInputMode } from './components/QuickInput'
 import { TemplatePicker } from './components/TemplatePicker'
@@ -133,6 +136,11 @@ function slug(name: string | undefined): string {
     .slice(0, 40)
 }
 
+/** langForPath's id, narrowed to the five that own a LangIcon glyph (js folds into web). */
+function toIconLang(l: ReturnType<typeof langForPath>): IconLang | null {
+  return l === 'js' ? 'web' : l
+}
+
 export function App() {
   const report = useMemo(() => checkCapabilities(), [])
   useEffect(() => installViewport(), [])
@@ -165,6 +173,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     openProject,
     renameProject,
     deleteProject,
+    snapshotOf,
+    duplicateProject,
   } = useProject()
   const dialogs = useDialogs()
   const notify = useToast()
@@ -250,6 +260,14 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [shareHandled, setShareHandled] = useState(pendingShareRef.current === null)
   const shareAdopted = useRef(false)
 
+  // Cold start lands on the projects Home (founder ruling); a #share= link opens
+  // straight into the shared project instead. Entering/creating one flips to 'editor'.
+  const [view, setView] = useState<'home' | 'editor'>(() =>
+    pendingShareRef.current && pendingShareRef.current !== 'broken' ? 'editor' : 'home',
+  )
+  // Home's pinned projects (persisted). A per-device preference, so it lives in prefs, not the manifest.
+  const [pinned, setPinned] = useState<string[]>(() => prefs().pinnedProjectIds ?? [])
+
   const shareBrokenNotice = useCallback(
     () => notify(COPY.noteShareBroken, 'error'),
     [notify],
@@ -291,6 +309,8 @@ function Ide({ report }: { report: CapabilityReport }) {
           : COPY.noteShareDuplicate(result.meta.name),
         'success',
       )
+      // A shared link is an instruction to open that project — never strand it behind Home.
+      setView('editor')
       return true
     },
     [whenReady, runner, currentProject, tabs, adoptShared, notify, buffer],
@@ -862,17 +882,26 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const applyTemplate = async (t: Template) => {
-    // Counted before the branch: both paths below start the same starter, and
+    // Counted before the branch: every path below starts the same starter, and
     // which one ran is an implementation detail, not a fact about the student.
     track('project_created', { source: 'template', lang: t.lang })
-    // Fills the current empty project and takes its name, rather than leaving an
-    // empty "My project" behind on first visit.
-    if (project.isEmpty()) {
+    // Fill the open empty project and adopt the starter's name.
+    if (project.isEmpty() && currentProject) {
       await replaceProject(t.snapshot, t.entry, COPY.noteTemplateReady(t.name, t.snapshot.files.length))
-      if (currentProject) await renameProject(currentProject.id, uniqueProjectName(t.name))
+      await renameProject(currentProject.id, uniqueProjectName(t.name))
       return
     }
-    // Non-empty project: make a new one instead — the non-destructive path.
+    // Fresh device (no project yet): create the first one straight from the starter, no name prompt.
+    if (!currentProject) {
+      stopIfRunning()
+      const leaving = tabs
+      const meta = await createProject(uniqueProjectName(t.name), t.snapshot)
+      if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
+      adoptProject(leaving)
+      notify(COPY.noteProjectReady(meta.name, t.snapshot.files.length))
+      return
+    }
+    // A non-empty project is open: make a new one instead — the non-destructive path.
     return newProject(t)
   }
 
@@ -880,12 +909,15 @@ function Ide({ report }: { report: CapabilityReport }) {
   // name an empty project, or open a file if already in one.
   const pickStarter = (t: Template) => {
     setPickerOpen(false)
+    setView('editor')
     void applyTemplate(t)
   }
   const startBlank = () => {
     setPickerOpen(false)
+    setView('editor')
     track('project_created', { source: 'blank', lang: 'none' })
-    if (project.isEmpty()) void newFile('')
+    // A blank file only lands in an EXISTING empty project; with none open (fresh device), make one first.
+    if (project.isEmpty() && currentProject) void newFile('')
     else void newProject()
   }
 
@@ -929,6 +961,32 @@ function Ide({ report }: { report: CapabilityReport }) {
   const stopIfRunning = () => {
     if (runner.busy) runner.stop()
   }
+
+  /** Resets the editor to nothing — for when the last project is deleted and the app returns to Home. */
+  const clearWorkspace = (leavingTabs: string[]) => {
+    for (const path of leavingTabs) editorRef.current?.closeFile(path)
+    setTabs([])
+    setActivePath(null)
+    setEntryPath(null)
+    buffer.clear()
+    setConsoleOpen(false)
+  }
+
+  const togglePin = (id: string) =>
+    setPinned((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      setPrefs({ pinnedProjectIds: next })
+      return next
+    })
+
+  /** Drops a deleted project's pin so it can't haunt the prefs. */
+  const unpin = (id: string) =>
+    setPinned((prev) => {
+      if (!prev.includes(id)) return prev
+      const next = prev.filter((x) => x !== id)
+      setPrefs({ pinnedProjectIds: next })
+      return next
+    })
 
   const projectNameTaken = (name: string, exceptId?: string): string | null =>
     projects.some((p) => p.id !== exceptId && p.name.trim() === name.trim())
@@ -990,10 +1048,113 @@ function Ide({ report }: { report: CapabilityReport }) {
     stopIfRunning()
     const leaving = tabs
     const gone = currentProject.name
-    // Deleting the last project opens the next most recent one, or a fresh empty project.
-    await deleteProject(currentProject.id)
-    adoptProject(leaving)
+    const goneId = currentProject.id
+    const willBeEmpty = projects.length <= 1
+    await deleteProject(goneId)
+    unpin(goneId)
+    if (willBeEmpty) {
+      // Last project gone — return to Home's empty state instead of auto-creating one.
+      clearWorkspace(leaving)
+      setView('home')
+    } else {
+      // useProject opened the next survivor — resync the workspace to it.
+      adoptProject(leaving)
+    }
     notify(COPY.noteProjectDeleted(gone))
+  }
+
+  // ---- the projects Home (components/Home.tsx) ----
+  /** Language + file count for a Home card. The open project is read live; others via a snapshot. */
+  const metaOf = useCallback(
+    async (id: string): Promise<{ lang: IconLang | null; files: number }> => {
+      if (id === currentProject?.id) {
+        const files = project.sourceFiles()
+        const entry = entryCandidates(files)[0] ?? files[0]?.path ?? null
+        return { lang: entry ? toIconLang(langForPath(entry)) : null, files: project.paths().length }
+      }
+      const snap = await snapshotOf(id)
+      if (!snap) return { lang: null, files: 0 }
+      const entry = entryCandidates(snap.files)[0] ?? snap.files[0]?.path ?? null
+      return { lang: entry ? toIconLang(langForPath(entry)) : null, files: snap.files.length }
+    },
+    [currentProject, project, snapshotOf],
+  )
+
+  const openFromHome = (id: string) => {
+    void (async () => {
+      await switchToProject(id)
+      setView('editor')
+    })()
+  }
+
+  /** Deduped against every project (unlike uniqueProjectName, which spares the open one). */
+  const uniqueAllNames = (base: string): string => {
+    let name = base
+    for (let n = 2; projects.some((p) => p.name.trim() === name.trim()); n++) name = `${base} ${n}`
+    return name
+  }
+
+  const homeRename = async (id: string) => {
+    const target = projects.find((p) => p.id === id)
+    if (!target) return
+    const name = await dialogs.prompt({
+      title: COPY.dlgRenameProjectTitle,
+      label: COPY.dlgProjectName,
+      value: target.name,
+      okLabel: COPY.dlgRename,
+      validate: (v) => (v.trim() ? projectNameTaken(v, id) : COPY.dlgProjectNameRequired),
+    })
+    if (!name || name === target.name) return
+    await renameProject(id, name)
+  }
+
+  const homeDuplicate = async (id: string) => {
+    const target = projects.find((p) => p.id === id)
+    if (!target) return
+    const meta = await duplicateProject(id, uniqueAllNames(`${target.name} ${COPY.homeDupSuffix}`))
+    if (meta) notify(COPY.noteProjectDuplicated(meta.name), 'success')
+    else notify(COPY.noteProjectCreateFailed, 'error')
+  }
+
+  const homeDelete = async (id: string) => {
+    const target = projects.find((p) => p.id === id)
+    if (!target) return
+    const snap = await snapshotOf(id)
+    const ok = await dialogs.confirm({
+      title: COPY.dlgDeleteProjectTitle(target.name),
+      message: COPY.dlgDeleteProjectBody(snap?.files.length ?? 0),
+      okLabel: COPY.dlgDelete,
+      danger: true,
+    })
+    if (!ok) return
+    const wasOpen = id === currentProject?.id
+    const willBeEmpty = projects.length <= 1
+    if (wasOpen) stopIfRunning()
+    const leaving = tabs
+    await deleteProject(id)
+    unpin(id)
+    if (willBeEmpty) {
+      // Last project gone — reset the editor and stay on Home's empty state.
+      clearWorkspace(leaving)
+      setView('home')
+    } else if (wasOpen) {
+      // useProject opened a survivor — resync the workspace to it.
+      adoptProject(leaving)
+    }
+    notify(COPY.noteProjectDeleted(target.name))
+  }
+
+  const homeExport = (id: string) => {
+    const target = projects.find((p) => p.id === id)
+    if (!target) return
+    void (async () => {
+      const snap = id === currentProject?.id ? project.snapshot() : await snapshotOf(id)
+      if (!snap) return
+      const name = `${slug(target.name) || 'warsha-project'}.zip`
+      exportZip(snap, name)
+      track('project_shared', { via: 'zip' })
+      notify(COPY.exported(name, snap.files.length), 'success')
+    })()
   }
 
   // ---- keyboard shortcuts ----
@@ -1572,7 +1733,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       label: COPY.menuFile,
       items: [
-        { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, onSelect: () => void newFile('') },
+        { label: COPY.homeTitle, icon: <Logo size={16} />, onSelect: () => setView('home') },
+        { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, startsGroup: true, onSelect: () => void newFile('') },
         // Opens the picker regardless of list size; language and starter are chosen there.
         { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
@@ -1763,11 +1925,30 @@ function Ide({ report }: { report: CapabilityReport }) {
   const outputFace: OutputView = previewActive ? (outputView ?? 'preview') : 'console'
 
   return (
+    <>
+      {view === 'home' ? (
+        <Home
+          projects={projects}
+          currentId={currentProject?.id ?? null}
+          pinnedIds={pinned}
+          metaOf={metaOf}
+          locale={locale()}
+          onOpen={openFromHome}
+          onNewProject={() => setPickerOpen(true)}
+          onToggleLocale={() => setLocale(locale() === 'ar' ? 'en' : 'ar')}
+          onTogglePin={togglePin}
+          onRename={(id) => void homeRename(id)}
+          onDuplicate={(id) => void homeDuplicate(id)}
+          onDelete={(id) => void homeDelete(id)}
+          onExport={homeExport}
+        />
+      ) : (
     <div className={SHELL}>
       {/* Icon column at every width; below 900px its Explorer item toggles the overlay drawer instead of docking. */}
       <ActivityBar
         // Active rule follows whichever view the sidebar shows; none while it's hidden.
         activeView={explorerVisible ? sideView : null}
+        onHome={() => setView('home')}
         onShowExplorer={() => showSideView('explorer')}
         // Search is a VIEW now — the editor's own find panel stays on Mod+F / Edit > Find.
         onShowSearch={() => showSideView('search')}
@@ -2040,7 +2221,10 @@ function Ide({ report }: { report: CapabilityReport }) {
           onGotoLine={() => setQuickPick('goto')}
         />
       )}
+    </div>
+      )}
 
+      {/* Overlays live outside the Home/editor branch — New project, import, and quick-switch work from both. */}
       {quickPick ? (
         <QuickInput
           mode={quickPick}
@@ -2102,6 +2286,6 @@ function Ide({ report }: { report: CapabilityReport }) {
           onClose={() => setEditorActionsMenu(null)}
         />
       ) : null}
-    </div>
+    </>
   )
 }

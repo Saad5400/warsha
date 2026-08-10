@@ -218,7 +218,8 @@ export type MigrationOutcome =
 export interface OpenedProjects {
   projects: ProjectsStore
   list: ProjectMeta[]
-  current: ProjectMeta
+  /** Null on a fresh device (nothing to open) — the shell lands on Home's empty state instead of auto-creating a project. */
+  current: ProjectMeta | null
   migration: MigrationOutcome
 }
 
@@ -249,6 +250,11 @@ async function openWith(projects: ProjectsStore, preferredId: string | null): Pr
   let list = await projects.list()
   let migration: MigrationOutcome = { kind: 'none' }
 
+  // Only the legacy single-workspace layout is auto-adopted. A genuinely fresh
+  // device creates nothing — Home shows its empty state, and the first project is
+  // born when the student picks a starter. (The old eager "My project" create put
+  // a phantom project on every clean install and, under React StrictMode's
+  // double-mount in dev, raced two creates into two identical copies.)
   if (list.length === 0) {
     const legacy = await readLegacy()
     if (legacy && (legacy.files.length > 0 || legacy.dirs.length > 0)) {
@@ -261,28 +267,18 @@ async function openWith(projects: ProjectsStore, preferredId: string | null): Pr
       } else {
         migration = { kind: 'migration-kept-original', files: legacy.files.length }
       }
-    } else {
-      await projects.create(DEFAULT_FIRST_NAME)
-      migration = { kind: 'first-run' }
+      list = await projects.list()
     }
-    list = await projects.list()
   }
 
-  let current = list.find((p) => p.id === preferredId)
+  let current = list.find((p) => p.id === preferredId) ?? null
   if (!current) {
-    // Missing project is often iOS eviction, not a bug — fall back to the next
-    // most recent rather than loop forever.
+    // Missing preferred project is often iOS eviction, not a bug — fall back to the
+    // next most recent; null only when there is genuinely nothing to open.
     if (preferredId && list.length > 0) migration = { kind: 'reopened-elsewhere', wanted: preferredId }
-    current = list[0]
+    current = list[0] ?? null
   }
-  // `create` can fail too (a store lying about writability) — try once more,
-  // then let the caller's fallback take over.
-  if (!current) {
-    current = await projects.create(DEFAULT_FIRST_NAME)
-    list = await projects.list()
-    if (list.length === 0) list = [current]
-  }
-  await projects.touch(current.id)
+  if (current) await projects.touch(current.id)
   return { projects, list, current, migration }
 }
 

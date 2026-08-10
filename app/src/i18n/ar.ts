@@ -196,6 +196,25 @@ export const AR: Bundle = {
   welcomeLanguagesReady: (n) =>
     `${arCount(n, 'لغة واحدة جاهزة', 'لغتان جاهزتان', 'لغات جاهزة', 'لغةً جاهزة')} · والمزيد قريبًا`,
 
+  // ---- الرئيسية / شاشة المشاريع ----
+  homeTitle: 'مشاريعك',
+  homeContinue: 'تابِع من حيث توقّفت',
+  homeAll: 'كل المشاريع',
+  homeOpen: 'فتح',
+  homeDuplicate: 'إنشاء نسخة',
+  homeDupSuffix: 'نسخة',
+  a11yHome: 'الرئيسية',
+  noteProjectDuplicated: (name) => `أُنشئت نسخة باسم «${name}».`,
+  homeSearchPlaceholder: 'ابحث في مشاريعك',
+  homeNoMatches: (q) => `لا مشاريع تطابق «${q}».`,
+  homeSortBy: 'ترتيب',
+  homeSortRecent: 'الأحدث',
+  homeSortName: 'الاسم',
+  homeSortCreated: 'تاريخ الإنشاء',
+  homePin: 'تثبيت في الأعلى',
+  homeUnpin: 'إلغاء التثبيت',
+  a11yPinned: 'مثبَّت',
+
   // ---- the New-project template picker ----
   pickerTitle: 'مشروع جديد',
   pickerLangIntro: 'اختر لغة لترى قوالبها، ويمكنك تسمية المشروع لاحقًا.',

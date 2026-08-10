@@ -18,6 +18,8 @@ export interface Prefs {
   hand: 'right' | 'left'
   /** Project to reopen next visit. Tab/entry prefs stay global by design — filtered against whichever project loads. */
   currentProjectId: string | null
+  /** Projects pinned to the top of Home. A per-device preference like `recent`, so it lives here, not in the manifest. */
+  pinnedProjectIds: string[]
 }
 
 /** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
@@ -33,6 +35,7 @@ const defaults: Omit<Prefs, 'fontSize'> = {
   entryPath: null,
   hand: 'right',
   currentProjectId: null,
+  pinnedProjectIds: [],
 }
 
 let cache: Prefs | null = null
