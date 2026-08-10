@@ -1049,7 +1049,12 @@ class FindPanel implements Panel {
       if (follow && q.search && q.valid) {
         const { main } = this.view.state.selection
         if (!main.empty) this.view.dispatch({ selection: { anchor: main.from } })
+        // findNext select-all's the focused search field on a hit (its
+        // Enter-to-repeat behaviour). Mid-type that makes the next keystroke
+        // replace the needle instead of extending it, so put the caret back.
+        const caret: [number, number] = [this.searchField.selectionStart ?? 0, this.searchField.selectionEnd ?? 0]
         findNext(this.view)
+        this.searchField.setSelectionRange(caret[0], caret[1])
       }
     }
     this.refresh()

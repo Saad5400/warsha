@@ -15,6 +15,9 @@ export interface TabsProps {
   activePath: string | null
   onSelect(path: string): void
   onClose(path: string): void
+  /** Close-others / close-all in one batch — a stale-closure-safe update the
+   *  per-tab onClose can't give when looped (see App.tsx closeTabs). */
+  onCloseMany(paths: string[]): void
   /** Run/Stop's one home: the strip's trailing group. Same state object as the console
    *  header's copy, so the two can never drift. */
   runControl?: RunControlState
@@ -79,7 +82,7 @@ const TAB_CLOSE_REVEAL =
  * unambiguous in greyscale and sunlight. Adds what was missing from a basic tab strip:
  * middle-click to close, Cmd/Ctrl+W, Close-others/-all, and a dirty dot that becomes a ×.
  */
-export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl, moreItems }: TabsProps) {
+export function Tabs({ project, tabs, activePath, onSelect, onClose, onCloseMany, runControl, moreItems }: TabsProps) {
   const stripRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; path: string } | null>(null)
@@ -126,16 +129,12 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, runControl,
         label: COPY.tabsCloseOthers,
         icon: <IconClose />,
         disabled: tabs.length < 2,
-        onSelect: () => {
-          for (const t of tabs) if (t !== path) onClose(t)
-        },
+        onSelect: () => onCloseMany(tabs.filter((t) => t !== path)),
       },
       {
         label: COPY.tabsCloseAll,
         icon: <IconClose />,
-        onSelect: () => {
-          for (const t of [...tabs]) onClose(t)
-        },
+        onSelect: () => onCloseMany(tabs),
       },
     ]
   }

@@ -491,6 +491,28 @@ function Ide({ report }: { report: CapabilityReport }) {
     [tabs, activePath],
   )
 
+  // Close-others / close-all: one state update for the whole batch. Looping
+  // closeTab() would reschedule setTabs from the same stale `tabs` each pass, so
+  // only the last close survived (the "close all leaves everything but one" bug).
+  const closeTabs = useCallback(
+    (paths: string[]) => {
+      const removing = new Set(paths)
+      if (removing.size === 0) return
+      const next = tabs.filter((t) => !removing.has(t))
+      setTabs(next)
+      if (activePath && removing.has(activePath)) {
+        const i = tabs.indexOf(activePath)
+        setActivePath(
+          tabs.slice(i + 1).find((t) => !removing.has(t)) ??
+            tabs.slice(0, i).reverse().find((t) => !removing.has(t)) ??
+            null,
+        )
+      }
+      for (const t of paths) editorRef.current?.closeFile(t)
+    },
+    [tabs, activePath],
+  )
+
   // Deferred: right after creating a file on an empty project, Editor isn't mounted yet —
   // record the target and focus once it's actually open.
   const focusOnOpen = useRef<string | null>(null)
@@ -1848,6 +1870,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 activePath={activePath}
                 onSelect={(p) => setActivePath(p)}
                 onClose={closeTab}
+                onCloseMany={closeTabs}
                 // Run + file-scoped "⋯" — VS Code's editor-actions corner; Run's one home now
                 // (left the title bar and console header).
                 runControl={runControl}
