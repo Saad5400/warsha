@@ -223,8 +223,10 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
-  <!-- Analytics (self-hosted Umami, cookieless) -->
-  <script defer src="https://analytics.sb.sa/script.js" data-website-id="e59f0211-4dc2-41a5-8448-e907af1b000a"></script>
+  <!-- Analytics (self-hosted Umami, cookieless). `crossorigin` is load-bearing:
+       under COEP require-corp a cross-origin script needs CORP or CORS, and Umami
+       sends `Access-Control-Allow-Origin: *` (no CORP), so it must load via CORS. -->
+  <script defer crossorigin="anonymous" src="https://analytics.sb.sa/script.js" data-website-id="e59f0211-4dc2-41a5-8448-e907af1b000a"></script>
   </head>
   <body>
     <div id="root">
