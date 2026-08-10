@@ -28,7 +28,7 @@ Last reviewed: 2026-08-06.
 | [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj) (`org.eclipse.jdt:ecj`, Eclipse Foundation) | 3.46.0 | [EPL-2.0](https://www.eclipse.org/legal/epl-2.0/) | Java compiler: compiles student Java source, running unmodified inside the CheerpJ JVM | **Bundled** — fetched from Maven Central at build time and served as a static asset | Redistributed — see the EPL-2.0 obligations below |
 | [React](https://react.dev/) | 19.x | MIT | UI layer | **Bundled** via npm into our JS build | Redistributed — MIT notice must be preserved |
 | [Tailwind CSS](https://tailwindcss.com/) | 4.x | MIT | Styling; compiles to CSS at build time | **Bundled** (generated CSS) | Redistributed — MIT notice must be preserved |
-| [Devicon](https://github.com/devicons/devicon) — `java-original` icon | commit [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96) (2021-05-15), file unchanged since | [MIT](https://github.com/devicons/devicon/blob/master/LICENSE) | Java language badge glyph (file badges, welcome cards, the OG image's Java tab) | **Bundled** — SVG path data vendored inline into `LangIcons.tsx` and `og-image.html` | Redistributed — MIT notice recorded below; see also the trademark note under "Language icons" |
+| [Devicon](https://github.com/devicons/devicon) — `java-original` icon | commit [`d98a72c`](https://github.com/devicons/devicon/commit/d98a72cb9a6d8e543ddbddc32bac231572349e96) (2021-05-15), file unchanged since | [MIT](https://github.com/devicons/devicon/blob/master/LICENSE) | Java glyph on the OG image's Java tab (the file badges and welcome cards now use a purpose-drawn cup — see below) | **Bundled** — SVG path data vendored inline into `og-image.html` and `og-image-ar.html` | Redistributed — MIT notice recorded below; see also the trademark note under "Language icons" |
 | [.NET WebAssembly runtime](https://github.com/dotnet/runtime) (Microsoft, `Microsoft.NET.Sdk.WebAssembly` + `Microsoft.NETCore.App.Runtime.Mono.browser-wasm`) | 9.0.x | [MIT](https://github.com/dotnet/runtime/blob/main/LICENSE.TXT) | C# runtime: Mono + the .NET base class library compiled to WebAssembly, runs student C# in the browser | **Bundled** — `dotnet publish` output (`_framework/`) staged by `runtimes/csharp/build.sh` and served as same-origin static assets under `warsha-dotnet/` | Redistributed — MIT notice must be preserved |
 | [Roslyn](https://github.com/dotnet/roslyn) (Microsoft, `Microsoft.CodeAnalysis.CSharp`) | 4.11.x | [MIT](https://github.com/dotnet/roslyn/blob/main/License.txt) | C# compiler: compiles student C# source into an assembly in the browser | **Bundled** — its assemblies land in the .NET publish `_framework/` above | Redistributed — MIT notice must be preserved |
 | [`@wasmer/sdk`](https://github.com/wasmerio/wasmer-js) (Wasmer) | 0.10.x | [MIT](https://github.com/wasmerio/wasmer-js/blob/main/LICENSE.md) | C runtime: loads and runs the `clang/clang` Wasmer package in a worker to compile student C to WebAssembly | **CDN-loaded** from `unpkg.com` (self-hosting permitted — an M3 item) | Not currently redistributed; MIT permits bundling when we self-host |
@@ -217,6 +217,14 @@ approval we do not have. So the component embeds the real artwork with its origi
 paths and gradients, and only pads and uniformly scales it. **Do not recolour it.**
 
 ### Java — Devicon's `java-original` mark, embedded unaltered
+
+> **Scope note (2026-08-10).** The file badges and welcome cards no longer embed the
+> Devicon glyph: at the 16px they render, Devicon's detailed cup collapsed to a faint
+> smudge, so [`LangIcons.tsx`](../../app/src/components/ui/LangIcons.tsx) now draws its
+> own house-style cup instead (an original work — no third-party licence to track). The
+> Devicon glyph below is still embedded in the OG images (`og-image.html`,
+> `og-image-ar.html`), which render it large, so the analysis in this section still
+> applies there.
 
 **Conclusion: no Oracle mark is used, none is imitated, and the artwork we do use is
 under an MIT licence that permits exactly this.**
