@@ -28,6 +28,8 @@ import { shareProjectAsPdf } from './actions/sharePdf'
 import { deliverFile, isCancelled, prefersShareSheet } from './actions/deliver'
 import { ActivityBar, type SideView } from './components/ActivityBar'
 import { SearchView } from './components/SearchView'
+import { ExtensionsView } from './components/ExtensionsView'
+import { isExtEnabled, setExtEnabled, type ExtId } from './extensions/registry'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { CapabilityBanner, CapabilityFatalScreen } from './components/CapabilityScreens'
 import { StorageBanner } from './components/StorageBanner'
@@ -693,12 +695,34 @@ function Ide({ report }: { report: CapabilityReport }) {
   const saveAll = useCallback(async () => project.saveAll(), [project])
 
   /** Silent on success — dirty dots emptying is confirmation enough (VS Code does the same);
-   *  a failed save still speaks. */
+   *  a failed save still speaks. Runs the Format on Save extension first when it is on. */
   const saveAllQuiet = useCallback(() => {
-    void saveAll().then((ok) => {
+    void (async () => {
+      // Format on Save (extensions/registry.ts) — the active file only, and
+      // dead silent when auto: it never boots Python (PythonNotLoadedError), and
+      // a file it cannot format is left as written. The explicit Format action
+      // is where a student hears about those; a save must never nag.
+      if (isExtEnabled('format-on-save') && activePath && canFormat(activePath)) {
+        try {
+          const source = project.read(activePath) ?? ''
+          const formatted = await formatFile(activePath, source)
+          if (formatted !== source) editorRef.current?.applyEdit(formatted)
+        } catch {
+          /* silent by design — see above */
+        }
+      }
+      const ok = await saveAll()
       if (!ok) notify(COPY.saveFailed, 'error')
-    })
-  }, [saveAll, notify])
+    })()
+  }, [saveAll, notify, activePath, project])
+
+  /** Flip an extension on/off: persist the choice, then apply it live — the
+   *  editor-kind ones reconfigure the view; behavior ones (Format on Save) are
+   *  read straight from the store where they are used. */
+  const toggleExtension = useCallback((id: ExtId, on: boolean) => {
+    setExtEnabled(id, on)
+    editorRef.current?.setExtensions()
+  }, [])
 
   /** Shift+Alt+F (see actions/format.ts for the Java/Python split). Applied via the editor
    *  controller so it's one undo step through the normal onChange/dirty/save path. */
@@ -1952,6 +1976,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         onShowExplorer={() => showSideView('explorer')}
         // Search is a VIEW now — the editor's own find panel stays on Mod+F / Edit > Find.
         onShowSearch={() => showSideView('search')}
+        onShowExtensions={() => showSideView('extensions')}
         manageItems={manageItems}
       />
 
@@ -1989,6 +2014,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         >
           {sideView === 'search' ? (
             <SearchView project={project} revision={revision} onOpenMatch={openAt} />
+          ) : sideView === 'extensions' ? (
+            <ExtensionsView onToggle={toggleExtension} />
           ) : (
           <Explorer
             project={project}

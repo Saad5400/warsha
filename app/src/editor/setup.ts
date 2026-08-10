@@ -47,8 +47,7 @@ import {
   acceptCompletion,
 } from '@codemirror/autocomplete'
 import { lintKeymap, openLintPanel, closeLintPanel, forEachDiagnostic } from '@codemirror/lint'
-import { indentGuides } from './indentGuides'
-import { rainbowBrackets } from './rainbowBrackets'
+import { enabledEditorExtensions } from '../extensions/registry'
 import { completionSources, type CompletionLang } from './completions'
 import { hoverDocs } from './hoverDocs'
 import { linting } from './lint'
@@ -1147,6 +1146,12 @@ export interface EditorController {
   closeFile(path: string): void
   renamePath(from: string, to: string): void
   setFontSize(px: number): void
+  /**
+   * Swap the enabled toggleable extensions to match the registry's current
+   * state (extensions/registry.ts, backed by prefs). Called after the
+   * Extensions view flips a switch — one live reconfigure, no editor rebuild.
+   */
+  setExtensions(): void
   focus(): void
   currentPath(): string | null
   /**
@@ -1205,6 +1210,9 @@ export function createEditor(
 ): EditorController {
   const fontTheme = new Compartment()
   const langConf = new Compartment()
+  // Holds the enabled toggleable extensions; `setExtensions` reconfigures it
+  // when the student flips a switch in the Extensions view.
+  const extConf = new Compartment()
   const states = new Map<string, EditorState>()
   let path: string | null = null
   let applying = false
@@ -1380,9 +1388,6 @@ export function createEditor(
       ? EditorView.editorAttributes.of({ class: 'cm-desk' })
       : [],
     indentUnit.of('    '),
-    // Python's control flow *is* its indentation, and line wrapping makes the
-    // eye lose the column. One hairline per level puts it back.
-    indentGuides(4),
     // Wrap rather than scroll horizontally on touch: a wrapped line is readable
     // on a phone, a horizontally-scrolling one is not. At desk it is the
     // opposite — VS Code does not wrap — so the choice is evaluated once per
@@ -1442,9 +1447,11 @@ export function createEditor(
     // tokens. With no unlayered oneDark module in the fight any more, the
     // `&.cm-editor` specificity in chromeTheme is belt-and-braces, and cheap.
     syntaxHighlighting(syntaxColors),
-    // After syntaxHighlighting so the depth marks beat the flat punctuation
-    // grey (#D4D4D4) on the same spans.
-    rainbowBrackets(),
+    // Toggleable editor extensions (Rainbow Brackets, Indent Guides, Indent
+    // Rainbow — see extensions/registry.ts), swapped live via `setExtensions`.
+    // After syntaxHighlighting so bracket depth marks beat the flat punctuation
+    // grey (#D4D4D4) on the same spans; the registry keeps brackets last.
+    extConf.of(enabledEditorExtensions()),
     chromeTheme,
     fontTheme.of(themeFor(fontSize)),
     langConf.of(languageExtensions(lang)),
@@ -1555,6 +1562,11 @@ export function createEditor(
     setFontSize(px) {
       fontSize = px
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(px)) })
+    },
+    setExtensions() {
+      // Re-reads the registry (which reads prefs), so the caller just persists
+      // the toggle then calls this — no need to pass the new set through.
+      view.dispatch({ effects: extConf.reconfigure(enabledEditorExtensions()) })
     },
     applyEdit(content) {
       if (!path) return

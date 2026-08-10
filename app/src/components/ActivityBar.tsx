@@ -26,7 +26,7 @@ const SLOT =
   // Inset ring: an outset one would be clipped by the rail's own edge.
   'focus-visible:outline-offset-[-1px]'
 
-export type SideView = 'explorer' | 'search'
+export type SideView = 'explorer' | 'search' | 'extensions'
 
 export interface ActivityBarProps {
   /** Which sidebar view is showing, or null while the sidebar is hidden —
@@ -39,6 +39,8 @@ export interface ActivityBarProps {
   onShowExplorer(): void
   /** Show the cross-file Search view (same toggle contract). */
   onShowSearch(): void
+  /** Show the Extensions view (same toggle contract). */
+  onShowExtensions(): void
   /** The gear's dropdown — built by App, which owns every action in it. */
   manageItems: MenuItem[]
 }
@@ -53,6 +55,7 @@ export function ActivityBar({
   onHome,
   onShowExplorer,
   onShowSearch,
+  onShowExtensions,
   manageItems,
 }: ActivityBarProps) {
   const [manageOpen, setManageOpen] = useState(false)
@@ -89,6 +92,19 @@ export function ActivityBar({
         onClick={onShowSearch}
       >
         <IconSearch size={24} />
+      </button>
+
+      {/* Switches the sidebar to the Extensions list (enable/disable editor features). */}
+      <button
+        type="button"
+        className={SLOT}
+        aria-label={COPY.a11yExtensions}
+        title={COPY.a11yExtensions}
+        aria-pressed={activeView === 'extensions'}
+        data-state={activeView === 'extensions' ? 'active' : 'inactive'}
+        onClick={onShowExtensions}
+      >
+        <IconExtensions size={24} />
       </button>
 
       {/* Pushes Manage to the bottom of the rail, VS Code style. */}
@@ -129,6 +145,14 @@ const IconSearch = (p: IconProps) => (
     <g transform="scale(1.5)">
       <path d="M10.0195 10.7266C9.06578 11.5217 7.83875 12 6.5 12C3.46243 12 1 9.53757 1 6.5C1 3.46243 3.46243 1 6.5 1C9.53757 1 12 3.46243 12 6.5C12 7.83875 11.5217 9.06578 10.7266 10.0195L13.8535 13.1464C14.0488 13.3417 14.0488 13.6583 13.8535 13.8536C13.6583 14.0488 13.3417 14.0488 13.1464 13.8536L10.0195 10.7266ZM11 6.5C11 4.01472 8.98528 2 6.5 2C4.01472 2 2 4.01472 2 6.5C2 8.98528 4.01472 11 6.5 11C8.98528 11 11 8.98528 11 6.5Z" />
     </g>
+  </CodIcon>
+)
+
+// A puzzle piece — the near-universal "extensions / plugins" mark. Traced from
+// Material Icons' `extension` (Apache-2.0), already on the 24px grid.
+const IconExtensions = (p: IconProps) => (
+  <CodIcon {...p}>
+    <path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z" />
   </CodIcon>
 )
 

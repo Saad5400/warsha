@@ -244,6 +244,7 @@ export const EN = {
   a11yActivityBar: 'Activity bar',
   a11yExplorer: 'Explorer',
   a11ySearch: 'Search',
+  a11yExtensions: 'Extensions',
   a11yManage: 'Manage',
   a11yBreadcrumbs: 'Breadcrumbs',
   a11yDismiss: 'Dismiss',
@@ -466,6 +467,24 @@ export const EN = {
   noteFormatted: 'Formatted.',
   noteFormatNeedsPython: 'Run this file once to load Python, then Format will work.',
   noteFormatFailed: 'Could not format this file.',
+
+  // ---- Extensions view (sidebar: enable/disable built-in editor features) ----
+  extensionsTitle: 'Extensions',
+  extCategoryAppearance: 'Appearance',
+  extCategoryFormatting: 'Formatting',
+  extRainbowBracketsName: 'Rainbow Brackets',
+  extRainbowBracketsDesc:
+    'Colour each pair of brackets by depth so you can see which closing bracket matches which opening one.',
+  extIndentGuidesName: 'Indent Guides',
+  extIndentGuidesDesc: 'Draw a thin line at each indentation level to keep blocks aligned as you read.',
+  extIndentRainbowName: 'Indent Rainbow',
+  extIndentRainbowDesc:
+    'Tint each level of indentation in a rotating colour — useful for deeply nested code.',
+  extFormatOnSaveName: 'Format on Save',
+  extFormatOnSaveDesc:
+    'Reformat the file automatically every time you save. Files it cannot format yet are skipped quietly.',
+  /** Accessible label for a row's on/off switch. */
+  extEnableLabel: (name: string) => `Enable ${name}`,
   noteGenerated: 'Generated.',
   noteGenerateExists: 'That code is already in this class.',
   noteGenerateNoClass: 'Put the cursor inside a class first.',

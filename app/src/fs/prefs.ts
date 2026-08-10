@@ -20,6 +20,8 @@ export interface Prefs {
   currentProjectId: string | null
   /** Projects pinned to the top of Home. A per-device preference like `recent`, so it lives here, not in the manifest. */
   pinnedProjectIds: string[]
+  /** Enabled/disabled editor extensions, by id (see extensions/registry.ts). Sparse — holds only explicit choices, so a descriptor's own default answers for the rest. */
+  extensions: Record<string, boolean>
 }
 
 /** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
@@ -36,6 +38,7 @@ const defaults: Omit<Prefs, 'fontSize'> = {
   hand: 'right',
   currentProjectId: null,
   pinnedProjectIds: [],
+  extensions: {},
 }
 
 let cache: Prefs | null = null
