@@ -2,6 +2,8 @@ import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import type { LangId } from '../runtime'
+import { recordable, withUsageBoost } from './usage'
+import { JAVA_FQCN } from './javaApi.generated'
 
 /**
  * Two of the three gaps from the founder report live here:
@@ -20,43 +22,29 @@ import type { LangId } from '../runtime'
  * see completions.ts's header comment.
  */
 
-/** class name → its fully-qualified name. Only classes worth auto-importing; java.lang is never in here. */
-export const JAVA_IMPORTS: Record<string, string> = {
-  Scanner: 'java.util.Scanner',
-  ArrayList: 'java.util.ArrayList',
-  LinkedList: 'java.util.LinkedList',
-  HashMap: 'java.util.HashMap',
-  TreeMap: 'java.util.TreeMap',
-  HashSet: 'java.util.HashSet',
-  TreeSet: 'java.util.TreeSet',
-  Arrays: 'java.util.Arrays',
-  Objects: 'java.util.Objects',
-  Collections: 'java.util.Collections',
-  Random: 'java.util.Random',
-  List: 'java.util.List',
-  Map: 'java.util.Map',
-  Set: 'java.util.Set',
-  Queue: 'java.util.Queue',
-  Deque: 'java.util.Deque',
-  ArrayDeque: 'java.util.ArrayDeque',
-  Stack: 'java.util.Stack',
-  Comparator: 'java.util.Comparator',
-  Optional: 'java.util.Optional',
-  Iterator: 'java.util.Iterator',
-  NoSuchElementException: 'java.util.NoSuchElementException',
-  InputMismatchException: 'java.util.InputMismatchException',
-  Stream: 'java.util.stream.Stream',
-  IntStream: 'java.util.stream.IntStream',
-  Collectors: 'java.util.stream.Collectors',
-  BufferedReader: 'java.io.BufferedReader',
-  InputStreamReader: 'java.io.InputStreamReader',
-  IOException: 'java.io.IOException',
-  File: 'java.io.File',
-  FileReader: 'java.io.FileReader',
-  FileWriter: 'java.io.FileWriter',
-  PrintWriter: 'java.io.PrintWriter',
-  FileNotFoundException: 'java.io.FileNotFoundException',
-}
+/**
+ * The classes worth auto-importing — the curated scope of a first-year course.
+ * java.lang is deliberately absent (needs no import), and so is a class like
+ * PrintStream that a student reaches through `System.out`, never `new`.
+ *
+ * Only the *selection* is editorial; each fully-qualified name is looked up from
+ * `JAVA_FQCN` (generated from JDK reflection — see javaApi.generated.ts), so a
+ * mistyped or drifted package can no longer creep in. The audit in
+ * `gen-java-api.mjs` fails if any name here is missing from the JDK.
+ */
+const IMPORTABLE: readonly string[] = [
+  'Scanner', 'ArrayList', 'LinkedList', 'HashMap', 'TreeMap', 'LinkedHashMap', 'HashSet', 'TreeSet',
+  'LinkedHashSet', 'PriorityQueue', 'Arrays', 'Objects', 'Collections', 'Random', 'List', 'Map', 'Set',
+  'Queue', 'Deque', 'ArrayDeque', 'Stack', 'Comparator', 'Optional', 'Iterator', 'NoSuchElementException',
+  'InputMismatchException', 'Stream', 'IntStream', 'Collectors', 'BufferedReader', 'BufferedWriter',
+  'InputStreamReader', 'IOException', 'File', 'FileReader', 'FileWriter', 'PrintWriter',
+  'FileNotFoundException', 'Files', 'Path', 'Paths',
+]
+
+/** class name → its fully-qualified name, from the curated selection above. */
+export const JAVA_IMPORTS: Record<string, string> = Object.fromEntries(
+  IMPORTABLE.map((name) => [name, JAVA_FQCN[name]]),
+)
 
 /** java.lang needs no import; still worth completing after `import java.lang.` for a curious student. */
 const JAVA_LANG_CLASSES = [
@@ -75,6 +63,7 @@ const JAVA_PACKAGES: Record<string, readonly string[]> = {
   'java.io': byPackage('java.io'),
   'java.lang': JAVA_LANG_CLASSES,
   'java.util.stream': byPackage('java.util.stream'),
+  'java.nio.file': byPackage('java.nio.file'),
 }
 
 export const PYTHON_STDLIB_MODULES: readonly (readonly [string, string])[] = [
@@ -93,6 +82,9 @@ export const PYTHON_STDLIB_MODULES: readonly (readonly [string, string])[] = [
   ['statistics', 'mean, median, and friends'],
   ['heapq', 'a priority queue'],
   ['bisect', 'binary search on sorted lists'],
+  ['csv', 'read and write CSV data files'],
+  ['typing', 'type hints for annotations'],
+  ['pathlib', 'file paths as objects'],
 ]
 
 /* --------------------------------------------------------- inserting an import */
@@ -209,7 +201,10 @@ function javaImportSource(ctx: CompletionContext): CompletionResult | null {
   if (segments.length === 0) {
     options = [{ label: 'java', type: 'namespace', boost: 20, apply: namespaceApply }]
   } else if (path === 'java') {
-    options = ['util', 'io', 'lang'].map((seg) => ({ label: seg, type: 'namespace', boost: 20, apply: namespaceApply }))
+    options = ['util', 'io', 'nio', 'lang'].map((seg) => ({ label: seg, type: 'namespace', boost: 20, apply: namespaceApply }))
+  } else if (path === 'java.nio') {
+    // The one sub-package a course reaches for: java.nio.file (Files, Path, Paths).
+    options = [{ label: 'file', type: 'namespace', boost: 20, apply: namespaceApply }]
   } else if (JAVA_PACKAGES[path]) {
     options = JAVA_PACKAGES[path].map((cls) => ({
       label: cls,
@@ -237,5 +232,11 @@ function pythonImportSource(ctx: CompletionContext): CompletionResult | null {
 }
 
 export function importStatementSource(lang: LangId): CompletionSource {
-  return lang === 'java' ? javaImportSource : pythonImportSource
+  const base = lang === 'java' ? javaImportSource : pythonImportSource
+  // Record and re-rank by usage, same as the other sources — a student who
+  // always imports Scanner sees it lead the list.
+  return (ctx: CompletionContext) => {
+    const res = base(ctx)
+    return res ? { ...res, options: withUsageBoost(lang, res.options.map((o) => recordable(lang, o))) } : null
+  }
 }
