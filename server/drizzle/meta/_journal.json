@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786395998198,
+      "tag": "0000_third_frank_castle",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786476007236,
+      "tag": "0001_phase2_accounts_sharing",
+      "breakpoints": true
+    }
+  ]
+}

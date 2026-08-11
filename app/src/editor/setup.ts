@@ -48,9 +48,42 @@ import {
 } from '@codemirror/autocomplete'
 import { lintKeymap, openLintPanel, closeLintPanel, forEachDiagnostic } from '@codemirror/lint'
 import { enabledEditorExtensions } from '../extensions/registry'
+// Type-only: the collab binding is built in ../collab and injected via
+// `setCollab`, so the editor stays free of any yjs/y-codemirror.next import and
+// the base app tree-shakes collaboration away entirely.
+import type { CollabBinding } from '../collab/editorBridge'
 import { completionSources, type CompletionLang } from './completions'
 import { hoverDocs } from './hoverDocs'
 import { linting } from './lint'
+
+/**
+ * Editor exception sink (M1). y-codemirror.next's remote-selection plugin can throw
+ * a bounds `RangeError` ("Invalid position N in document of length M") when a remote
+ * awareness cursor resolves to a Y.Text index momentarily ahead of the local
+ * CodeMirror document during a concurrent content/awareness sync race (multi-peer
+ * editing). CodeMirror already ISOLATES the throw — the plugin is skipped for that
+ * one update and re-renders correctly on the next — so it is non-fatal; but by
+ * default it floods `console.error`. We swallow ONLY that specific benign error
+ * (a bounds RangeError raised from the remote-selection plugin) and forward
+ * everything else, so genuine plugin crashes still surface.
+ *
+ * Why not a "real" fix: the only precise fix is a two-line index clamp inside the
+ * library's `YRemoteSelectionsPluginValue.update`, which lives in node_modules
+ * (must not be patched). Recomposing `yCollab` from exports to substitute a clamped
+ * selections plugin is impossible — y-codemirror.next does not export its
+ * undo-manager facet/plugin, so a recompose would silently break the verified-good
+ * per-file local-only CRDT undo. Swallowing the isolated, benign error in our own
+ * wiring is the clean, low-risk path. Documented in COLLAB-SYNC-CONTRACT §7.4.
+ */
+function editorExceptionSink(err: unknown): void {
+  const stack = err instanceof Error && typeof err.stack === 'string' ? err.stack : ''
+  const isBounds = err instanceof RangeError && /Invalid position \d+ in document of length \d+/.test(err.message)
+  const fromRemoteSelections = /y-codemirror|YRemoteSelection|RemoteSelection/.test(stack)
+  // Swallow the known benign case; a stack that lost the signature still only ever
+  // swallows this exact bounds RangeError, never an unrelated exception.
+  if (isBounds && (fromRemoteSelections || stack === '')) return
+  console.error(err)
+}
 
 /**
  * The density gate, same expression as index.css's DENSITY media: desktop
@@ -1152,6 +1185,13 @@ export interface EditorController {
    * Extensions view flips a switch — one live reconfigure, no editor rebuild.
    */
   setExtensions(): void
+  /**
+   * Attach or detach the live-collaboration binding (contract edge #1). Passing
+   * a binding invalidates the per-file `states` cache and rebuilds the on-screen
+   * file so its EditorState gains (or loses) the yCollab extension bound to that
+   * file's `Y.Text`; passing `null` returns every file to solo editing.
+   */
+  setCollab(binding: CollabBinding | null): void
   focus(): void
   currentPath(): string | null
   /**
@@ -1216,6 +1256,11 @@ export function createEditor(
   const states = new Map<string, EditorState>()
   let path: string | null = null
   let applying = false
+  // The live-collaboration binding, or null when solo. When set for the open
+  // file, its Y.Text is the source of truth: yCollab is added to that file's
+  // state (below), and the write-back listener is suppressed so a synced change
+  // does not echo back out through onChange → Project.setContent (edge #2).
+  let collab: CollabBinding | null = null
   let fontSize = opts.fontSize
   const projectWords = () => opts.projectWords?.() ?? []
 
@@ -1323,7 +1368,19 @@ export function createEditor(
     ]
   }
 
-  const extensions = (lang: EditorLang | null) => [
+  const extensions = (lang: EditorLang | null, p: string) => {
+    // Is this file a live collab doc? If so, yCollab owns its history (its own
+    // CRDT undo manager), so native history()/historyKeymap are dropped for it.
+    const collabExt = p && collab?.isCollab(p) ? collab.extensionFor(p) : null
+    // A viewer's editor is read-only (contract §7.4): block every local edit at
+    // the source so nothing reaches the Y.Text (no peer, no OPFS divergence),
+    // while yCollab's programmatic dispatches still stream remote edits in.
+    // `editable:false` also drops the caret/contenteditable so it reads as a view.
+    // NOT gated on collabExt (L7): a guest whose role is unknown/viewer must be
+    // read-only on a file whose Y.Text has not synced in yet too — otherwise it
+    // could type into an about-to-be-tracked file during the fail-closed window.
+    const collabReadOnly = collab != null && collab.readOnly()
+    return [
     // Where the completion popup and the docs card are allowed to be.
     //
     // Both are CodeMirror "tooltips": CM measures the caret with
@@ -1361,7 +1418,9 @@ export function createEditor(
     highlightActiveLineGutter(),
     highlightActiveLine(),
     highlightSpecialChars(),
-    history(),
+    // yCollab brings its own (CRDT) undo manager, so a collab file skips the
+    // native local history — otherwise Mod-Z could revert a peer's edit.
+    collabExt ? [] : history(),
     drawSelection(),
     dropCursor(),
     indentOnInput(),
@@ -1434,7 +1493,9 @@ export function createEditor(
       },
       ...closeBracketsKeymap,
       ...defaultKeymap,
-      ...historyKeymap,
+      // Native undo bindings are replaced by yCollab's (yUndoManagerKeymap,
+      // added inside collabExt) when the file is collaborative.
+      ...(collabExt ? [] : historyKeymap),
       ...completionKeymap,
       // Mod-Shift-m opens the problems panel, F8 / Shift-F8 step through the
       // red lines — the keyboard path; the status bar's problems item is the
@@ -1455,8 +1516,23 @@ export function createEditor(
     chromeTheme,
     fontTheme.of(themeFor(fontSize)),
     langConf.of(languageExtensions(lang)),
+    // The per-file yCollab binding (edge #1) — bound to this file's Y.Text plus
+    // awareness (remote cursors) and the CRDT undo keymap. Empty when solo.
+    collabExt ?? [],
+    // Viewer read-only: EditorState.readOnly rejects user-event edits, editable
+    // false removes the contenteditable/caret. yCollab's remote dispatches are
+    // programmatic, so incoming edits still render.
+    collabReadOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
+    // M1: swallow y-codemirror.next's benign remote-selection bounds RangeError so
+    // it stops spamming the console under concurrent multi-peer editing. Everything
+    // else still logs. See `editorExceptionSink`.
+    EditorView.exceptionSink.of(editorExceptionSink),
     EditorView.updateListener.of((u) => {
-      if (u.docChanged && path && !applying) opts.onChange(path, u.state.doc.toString())
+      // Suppress write-back for a collab file: its Project (and OPFS) copy is
+      // fed from the Y.Text via the materializer, so a synced doc change here
+      // must not loop back out through onChange → Project.setContent (edge #2).
+      if (u.docChanged && path && !applying && !(collab?.isCollab(path)))
+        opts.onChange(path, u.state.doc.toString())
       if (u.docChanged || u.selectionSet) reportCursor(u.state)
       // The linter's results and a language reconfigure both arrive as effect
       // transactions, not doc changes — so key off effects to catch the moment
@@ -1465,10 +1541,11 @@ export function createEditor(
         reportDiagnostics(u.state)
       }
     }),
-  ]
+    ]
+  }
 
   const stateFor = (p: string, content: string) =>
-    EditorState.create({ doc: content, extensions: extensions(editorLangForPath(p)) })
+    EditorState.create({ doc: content, extensions: extensions(editorLangForPath(p), p) })
 
   const view = new EditorView({ parent, state: stateFor('', '') })
 
@@ -1508,8 +1585,12 @@ export function createEditor(
 
   return {
     open(p, content) {
+      // For a collab file the Y.Text is authoritative and yCollab keeps the doc
+      // in step, so never force-replace from `content` (a possibly-stale
+      // Project read mid-materialize) — that would fight the CRDT merge (edge #2).
+      const isCollab = collab?.isCollab(p) ?? false
       if (path === p) {
-        if (view.state.doc.toString() !== content) {
+        if (!isCollab && view.state.doc.toString() !== content) {
           applying = true
           view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } })
           applying = false
@@ -1520,8 +1601,9 @@ export function createEditor(
       path = p
       const saved = states.get(p)
       // Reuse the cached state (cursor, scroll, undo history) when the file has
-      // not changed underneath us.
-      const next = saved && saved.doc.toString() === content ? saved : stateFor(p, content)
+      // not changed underneath us. A collab file never reuses a stale-content
+      // cache — it rebuilds so yCollab initialises from the live Y.Text.
+      const next = saved && (isCollab || saved.doc.toString() === content) ? saved : stateFor(p, content)
       applying = true
       view.setState(next)
       applying = false
@@ -1568,8 +1650,32 @@ export function createEditor(
       // the toggle then calls this — no need to pass the new set through.
       view.dispatch({ effects: extConf.reconfigure(enabledEditorExtensions()) })
     },
+    setCollab(binding) {
+      collab = binding
+      // Per-file states cache states built for the *old* collab mode — drop it
+      // so every file rebuilds with (or without) its yCollab binding (edge #1).
+      states.clear()
+      if (!path) return
+      // Rebuild the on-screen file's state in the new mode. Keep the current doc
+      // text — for a collab file it already equals the Y.Text (the materializer
+      // made Project match before this fires), so yCollab initialises cleanly.
+      const p = path
+      const content = view.state.doc.toString()
+      applying = true
+      view.setState(stateFor(p, content))
+      applying = false
+      view.dispatch({ effects: fontTheme.reconfigure(themeFor(fontSize)) })
+      syncLanguage(p)
+      reportCursor(view.state)
+      reportDiagnostics(view.state)
+    },
     applyEdit(content) {
       if (!path) return
+      // On a collab file, Format/Generate must land as a *minimal* Y.Text splice
+      // (edge #2), not a whole-doc CM replace that yCollab would turn into a
+      // delete-all + reinsert and clobber a peer's concurrent edit. yCollab then
+      // reflects the Y.Text change back into this view.
+      if (collab?.replaceDoc(path, content)) return
       const cur = view.state.doc
       if (cur.toString() === content) return
       const head = view.state.selection.main.head

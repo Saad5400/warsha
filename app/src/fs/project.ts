@@ -25,6 +25,10 @@ export class Project {
   private dirtyListeners: Listener[] = []
   private storageListeners: Listener[] = []
   private problem: StorageProblem | null = null
+  /** Bumped on every `switchStore`. Collab's ProjectBridge captures it at
+   *  construction and hard-gates on it, so a project switch can never diff the
+   *  NEW project's files against an old room's doc (which wiped the room). */
+  private storeEpoch = 0
 
   /** Starts on an in-memory store; `switchStore` points it at real storage later — touching OPFS here could recreate the legacy root before migration runs. */
   constructor(store: ProjectStore = new MemoryStore()) {
@@ -33,6 +37,11 @@ export class Project {
 
   get storeKind() {
     return this.store.kind
+  }
+
+  /** Identity of the attached store over time — changes iff `switchStore` ran. */
+  get epoch() {
+    return this.storeEpoch
   }
 
   /** Returns an unsubscribe function, so React effects can clean up. */
@@ -92,6 +101,9 @@ export class Project {
   async switchStore(store: ProjectStore): Promise<void> {
     await this.saveAll()
     this.store = store
+    // Bumped BEFORE load()'s emitStructure, so a still-attached collab bridge is
+    // already gated out when the new project's structure event fires.
+    this.storeEpoch++
     await this.load()
   }
 

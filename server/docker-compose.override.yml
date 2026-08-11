@@ -1,0 +1,12 @@
+# Local-only port remap: host 5432/9000 are already taken on this machine.
+# !override REPLACES the base ports list (a plain list would merge/append and
+# keep the conflicting 5432). Container-internal ports and the minio-setup job
+# (talks to minio:9000 over the compose network) are unaffected.
+services:
+  postgres:
+    ports: !override
+      - '55432:5432'
+  minio:
+    ports: !override
+      - '59000:9000'
+      - '59001:9001'

@@ -6,7 +6,7 @@ import { langOfEntry, track } from './analytics'
 import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
-import { prefs, setPrefs } from './fs/prefs'
+import { forgetRoomsForProject, prefs, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
@@ -15,6 +15,9 @@ import { exportZip } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
+import { useCollab, CollabControl, peekRoomFromUrl, type Peer } from './collab'
+import { createApi } from './collab/api'
+import { currentToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
@@ -50,6 +53,8 @@ import { Home } from './components/Home'
 import { Logo } from './components/Logo'
 import type { IconLang } from './components/ui/LangIcons'
 import { ImportZipDialog } from './components/ImportZipDialog'
+import { AccountDialog } from './components/AccountDialog'
+import { ShareDialog } from './components/ShareDialog'
 import { QuickInput, type QuickCommand, type QuickInputMode } from './components/QuickInput'
 import { TemplatePicker } from './components/TemplatePicker'
 import { useDialogs } from './components/ui/DialogProvider'
@@ -86,6 +91,7 @@ import {
   IconStop,
   IconSwap,
   IconTerminal,
+  IconUser,
   IconTextBigger,
   IconTextSmaller,
   IconTrash,
@@ -219,6 +225,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [sideView, setSideView] = useState<SideView>('explorer')
   const [importOpen, setImportOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  // Phase-2 account + share dialogs (COLLAB-SYNC-CONTRACT §7.4).
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   // The "Generate…" surface — anchor is the caret's viewport point, analysis the
   // parsed class it reads from. Null while closed.
   const [genMenu, setGenMenu] = useState<{ anchor: MenuAnchor; analysis: GenAnalysis } | null>(null)
@@ -254,6 +263,188 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   const runner = useRunner(project, buffer, entryPath)
 
+  // ---- live collaboration (collab/, COLLAB-SYNC-CONTRACT) ----
+  // Keyed to the open project; owns the room lifecycle and presence. It reads a
+  // #room= link and connects only from inside this (post-fatal-check) component,
+  // never during boot (edge #4). Off by default — nothing connects until the
+  // student runs "Start collaboration".
+  const collab = useCollab({
+    project,
+    currentProjectId: currentProject?.id ?? null,
+    currentProjectName: currentProject?.name,
+    entryPath,
+    whenReady,
+  })
+  // The singleton editor is told about the binding whenever it changes or the
+  // editor (re)mounts — setCollab rebuilds the open file's state around yCollab.
+  const [editorReady, setEditorReady] = useState(false)
+  useEffect(() => {
+    editorRef.current?.setCollab(collab.binding)
+    // `collab.readOnly` is a dep though the binding identity is stable across the
+    // flip: when the server resolves a viewer role the open file must rebuild with
+    // EditorState.readOnly (the binding reads readOnly live, but nothing re-renders
+    // the CM state without this re-bind).
+  }, [collab.binding, collab.readOnly, editorReady])
+
+  // ---- Phase-2 accounts (collab/auth.ts, §7.1) ----
+  // A separate api client for account/sharing calls (the collab hook keeps its
+  // own for doc sync). Both resolve the bearer through `currentToken`, so a
+  // sign-in swaps the header everywhere at once. Null offline (no VITE_WARSHA_API).
+  const auth = useAuth()
+  const authApi = useMemo(() => createApi(undefined, undefined, currentToken), [])
+  // On boot, validate a stored session against /v1/me: a 401 means the token was
+  // revoked/expired — drop it (back to the anonymous device principal); otherwise
+  // refresh the cached user + usage. A network failure leaves the session intact
+  // (offline is not signed-out). Runs once.
+  useEffect(() => {
+    if (!authApi) return
+    let live = true
+    // No device-token mint on boot (L1): a visitor who never collaborates and never
+    // signs in must make ZERO /v1 calls and create no device row. The anonymous
+    // device principal is now minted lazily on the FIRST collaborate action
+    // (useCollab.begin, before its first authenticated sync call) or on sign-in
+    // (AccountDialog → claim-device) — each awaits ensureDeviceToken first.
+    // Validate a stored session against /v1/me: a 401 means the token was
+    // revoked/expired — drop it (back to the device principal); otherwise refresh
+    // the cached user + usage. A network failure leaves the session intact (offline
+    // is not signed-out).
+    if (prefs().sessionToken) {
+      void authApi.me().then((me) => {
+        if (!live) return
+        if ('error' in me) {
+          if (me.error === 'auth') clearSession()
+          return
+        }
+        setUser(me.user)
+        setUsage(me.usage)
+      })
+    }
+    return () => {
+      live = false
+    }
+  }, [authApi])
+
+  // A file opened before its room's doc has synced (a guest joins with the file
+  // already on screen) gets a plain, non-collab EditorState: its Y.Text does not
+  // exist yet, so `isCollab` is false and yCollab is never attached. Remote edits
+  // then never render and local ones never propagate. Once the open file becomes a
+  // tracked doc (its Y.Text synced in — `revision` bumps as the materializer runs),
+  // rebind it. One-shot per path via the ref, so this is not a per-keystroke rebuild.
+  const collabBoundPath = useRef<string | null>(null)
+  useEffect(() => {
+    if (!collab.active) {
+      collabBoundPath.current = null
+      return
+    }
+    if (!collab.binding || !activePath) return
+    if (collab.binding.isCollab(activePath) && collabBoundPath.current !== activePath) {
+      collabBoundPath.current = activePath
+      editorRef.current?.setCollab(collab.binding)
+    }
+    // `collab.filesRev` (H1): a restarted reused-room session loads its persisted
+    // doc whose content matches Project verbatim, so `revision` never bumps — the
+    // files-map signal is what re-runs this effect the moment the open file's new
+    // Y.Text exists, so it rebinds and post-restart edits resume propagating.
+  }, [collab.active, collab.binding, activePath, revision, collab.filesRev])
+
+  // Which local project a room materialises into (persisted, per device). Both the
+  // host (on start) and a guest (on first join) record it, so a reload rejoins the
+  // same project rather than spawning a duplicate. See enterRoom below. Writes go
+  // through rememberRoomMapping (both directions, cross-tab-safe fresh merge).
+  const roomProjectId = useCallback((roomId: string): string | null => (prefs().roomProjects ?? {})[roomId] ?? null, [])
+  const rememberRoomProject = useCallback((roomId: string, projectId: string) => {
+    rememberRoomMapping(roomId, projectId)
+  }, [])
+
+  // Latest collab state behind a ref, so switch-path helpers and the tab-hide
+  // flush handler can reach it without re-registering per render.
+  const collabRef = useRef(collab)
+  collabRef.current = collab
+  // The open project's id, readable from long-lived async flows (enterRoom's boot
+  // invocation) whose closures went stale. Without this, a boot-time
+  // switchToProject(<already-open id>) missed the early-return and stopped the
+  // just-joined session.
+  const currentProjectIdRef = useRef<string | null>(null)
+  currentProjectIdRef.current = currentProject?.id ?? null
+
+  /** Ends any live session — flushing its durable store — BEFORE the workspace
+   *  points at another project. Every project switch/delete path awaits this: a
+   *  still-attached bridge would otherwise diff the NEW project's files against
+   *  the room doc and wipe the room (and every guest's OPFS with it). */
+  const stopCollabBeforeSwitch = useCallback(async () => {
+    if (collabRef.current.active) await collabRef.current.stop()
+  }, [])
+
+  /** Start/stop collaboration; on start the join link goes to the clipboard. */
+  const toggleCollab = useCallback(async () => {
+    if (collab.active) {
+      await collab.stop()
+      notify(COPY.collabStopped)
+      return
+    }
+    const url = await collab.start()
+    if (!url) {
+      notify(COPY.collabStartFailed, 'error')
+      return
+    }
+    // Bind this room to the project it was started from, so a host reload rejoins
+    // that project (not a fresh empty one) and a later re-start reuses the same
+    // room id. start() has just written the #room= hash.
+    const startedRoom = peekRoomFromUrl()
+    if (startedRoom && currentProject) rememberRoomProject(startedRoom, currentProject.id)
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      /* clipboard blocked — the link is still in the address bar as #room= */
+    }
+    notify(COPY.collabStarted, 'success')
+  }, [collab, notify, currentProject, rememberRoomProject])
+
+  // Peer join/left toasts — a quiet status line, not a modal (fix: peers used to
+  // come and go with no signal at all, including the host leaving).
+  const prevPeersRef = useRef<Peer[]>([])
+  useEffect(() => {
+    if (!collab.active) {
+      prevPeersRef.current = []
+      return
+    }
+    const prev = prevPeersRef.current
+    prevPeersRef.current = collab.peers
+    const prevIds = new Set(prev.map((p) => p.clientId))
+    const curIds = new Set(collab.peers.map((p) => p.clientId))
+    for (const p of collab.peers) if (!prevIds.has(p.clientId)) notify(COPY.collabJoined(p.user.name))
+    for (const p of prev) if (!curIds.has(p.clientId)) notify(COPY.collabLeft(p.user.name))
+  }, [collab.active, collab.peers, notify])
+
+  // Surface durable-sync failures once per state change: an oversized project or
+  // a rejected token used to fail silently in an endless retry loop.
+  const lastCollabStatus = useRef<string | null>(null)
+  useEffect(() => {
+    if (!collab.active) {
+      lastCollabStatus.current = null
+      return
+    }
+    if (collab.status === lastCollabStatus.current) return
+    lastCollabStatus.current = collab.status
+    if (collab.status === 'too-large') notify(COPY.collabTooLarge, 'error')
+    else if (collab.status === 'auth') notify(COPY.collabAuthFailed, 'error')
+  }, [collab.active, collab.status, notify])
+
+  // A guest sitting in an empty room (host offline, nothing persisted) gets a
+  // non-blocking heads-up after ~15s instead of a blank project labeled "Live".
+  useEffect(() => {
+    if (!collab.active || collab.synced) return
+    const timer = window.setTimeout(() => notify(COPY.collabNobodyYet), 15_000)
+    return () => window.clearTimeout(timer)
+  }, [collab.active, collab.synced, notify])
+
+  // Host: propagate project rename and entry changes into the doc's meta map so
+  // guests follow along mid-session (setMeta no-ops when nothing changed).
+  useEffect(() => {
+    if (!collab.active || !collab.isHost) return
+    collabRef.current.setMeta({ name: currentProject?.name, entry: entryPath })
+  }, [collab.active, collab.isHost, currentProject?.name, entryPath])
+
   // ---- a #share= link in the URL (sharelink.ts) ----
   // Funnels URL (fresh load) and hashchange (link pasted into an open tab) through `applyShared`.
   // The boot value gates workspace restore below, to avoid racing the project switch; hash clears only once import lands (see peekSharedFromUrl).
@@ -262,10 +453,17 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [shareHandled, setShareHandled] = useState(pendingShareRef.current === null)
   const shareAdopted = useRef(false)
 
-  // Cold start lands on the projects Home (founder ruling); a #share= link opens
-  // straight into the shared project instead. Entering/creating one flips to 'editor'.
+  // ---- a #room= live-collab invite in the URL (collab/room.ts) ----
+  // The twin of #share=, but the payload is only a room id — the files arrive over
+  // the session. Boot reads it once so the shell opens straight into the editor
+  // (never stranded on Home); `enterRoom` below opens the room's project and joins.
+  const pendingRoomRef = useRef<string | null | undefined>(undefined)
+  if (pendingRoomRef.current === undefined) pendingRoomRef.current = peekRoomFromUrl()
+
+  // Cold start lands on the projects Home (founder ruling); a #share= or #room=
+  // link opens straight into the project instead. Entering/creating one flips to 'editor'.
   const [view, setView] = useState<'home' | 'editor'>(() =>
-    pendingShareRef.current && pendingShareRef.current !== 'broken' ? 'editor' : 'home',
+    (pendingShareRef.current && pendingShareRef.current !== 'broken') || pendingRoomRef.current ? 'editor' : 'home',
   )
   // Home's pinned projects (persisted). A per-device preference, so it lives in prefs, not the manifest.
   const [pinned, setPinned] = useState<string[]>(() => prefs().pinnedProjectIds ?? [])
@@ -281,6 +479,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     async (shared: SharedProject): Promise<boolean> => {
       await whenReady()
       if (runner.busy) runner.stop()
+      // A live room must end before the workspace re-points — see stopCollabBeforeSwitch.
+      await stopCollabBeforeSwitch()
       const before = currentProject?.id
       const leaving = tabs
       const result = await adoptShared(shared.name, shared.snapshot)
@@ -315,7 +515,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       setView('editor')
       return true
     },
-    [whenReady, runner, currentProject, tabs, adoptShared, notify, buffer],
+    [whenReady, runner, currentProject, tabs, adoptShared, notify, buffer, stopCollabBeforeSwitch],
   )
 
   useEffect(() => {
@@ -359,6 +559,68 @@ function Ide({ report }: { report: CapabilityReport }) {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [applyShared, shareBrokenNotice])
+
+  // ---- a #room= live-collaboration invite (collab/, COLLAB-SYNC-CONTRACT §5) ----
+  // Opening a room link must land the guest IN the session, not on Home. `enterRoom`
+  // (defined lower — it needs the project-switch helpers, reached via this ref) opens
+  // or creates the project the room materialises into; the gated effect then joins
+  // once that project is current, so the session's bridge fills the right project.
+  const enterRoomRef = useRef<(roomId: string) => void>(() => {})
+  const roomEntered = useRef<Set<string>>(new Set())
+  const joinedRoom = useRef<string | null>(null)
+  const roomAdopted = useRef<string | null>(null)
+
+  // Boot (link opened cold) + hashchange (link pasted into an already-open app).
+  useEffect(() => {
+    if (pendingRoomRef.current) enterRoomRef.current(pendingRoomRef.current)
+    const onHashChange = () => {
+      const roomId = peekRoomFromUrl()
+      if (roomId) enterRoomRef.current(roomId)
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Connect only once the room's project is the open one — the session's bridge
+  // then materialises into it, never into whatever was open at boot.
+  useEffect(() => {
+    const roomId = peekRoomFromUrl()
+    if (!roomId || collab.active || joinedRoom.current === roomId) return
+    if (currentProject && roomProjectId(roomId) === currentProject.id) {
+      joinedRoom.current = roomId
+      void collab.join(roomId)
+    }
+  }, [currentProject, collab, roomProjectId])
+
+  // Once a joined room's files + meta have synced in, adopt the host's project name
+  // and open its entry file (a fresh guest project is otherwise filled but tab-less).
+  useEffect(() => {
+    const roomId = collab.roomId
+    const meta = collab.roomMeta
+    if (!roomId || !currentProject || roomAdopted.current === roomId) return
+    if (roomProjectId(roomId) !== currentProject.id) return
+    const files = project.sourceFiles()
+    if (files.length === 0) return // wait for the first materialise
+    roomAdopted.current = roomId
+    if (meta?.name && meta.name !== currentProject.name) void renameProject(currentProject.id, meta.name)
+    const entry = meta?.entry && project.has(meta.entry) ? meta.entry : (entryCandidates(files)[0] ?? project.paths()[0] ?? null)
+    if (entry && tabs.length === 0) {
+      setTabs([entry])
+      setActivePath(entry)
+      setEntryPath(entry)
+    }
+  }, [collab.roomId, collab.roomMeta, currentProject, project, revision, tabs.length, roomProjectId, renameProject])
+
+  // …and KEEP adopting meta after that first pass: a host rename or entry change
+  // mid-session writes the doc's meta map, and a guest follows it live (the
+  // one-shot effect above only covers the join).
+  useEffect(() => {
+    if (!collab.active || collab.isHost || !collab.roomMeta || !currentProject) return
+    if (roomAdopted.current !== collab.roomId) return // initial adoption owns the first pass
+    const meta = collab.roomMeta
+    if (meta.name && meta.name !== currentProject.name) void renameProject(currentProject.id, meta.name)
+    if (meta.entry && meta.entry !== entryPath && project.has(meta.entry)) setEntryPath(meta.entry)
+  }, [collab.active, collab.isHost, collab.roomId, collab.roomMeta, currentProject, entryPath, project, revision, renameProject])
 
   // ---- restore the workspace once the project has loaded ----
   // An empty project is not a special mode and does not open anything: the
@@ -986,6 +1248,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (runner.busy) runner.stop()
   }
 
+  /** A deleted project takes its collab room state with it: both prefs mappings
+   *  and the rooms' y-indexeddb databases (kept on a plain stop, so a reload
+   *  rejoins fast — but a deleted project's rooms are garbage). */
+  const forgetProjectRoomState = (projectId: string) => {
+    for (const room of forgetRoomsForProject(projectId)) {
+      try {
+        indexedDB.deleteDatabase(room) // y-indexeddb names its DB after the doc/room id
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+  }
+
   /** Resets the editor to nothing — for when the last project is deleted and the app returns to Home. */
   const clearWorkspace = (leavingTabs: string[]) => {
     for (const path of leavingTabs) editorRef.current?.closeFile(path)
@@ -1018,12 +1293,54 @@ function Ide({ report }: { report: CapabilityReport }) {
       : null
 
   const switchToProject = async (id: string) => {
-    if (id === currentProject?.id) return
+    // Checked against the LIVE ref, not this closure's snapshot: enterRoom calls
+    // this from a boot-time closure where currentProject was still null.
+    if (id === currentProjectIdRef.current) return
+    // Order matters: the live session (and its bridge) must be gone before
+    // openProject's switchStore emits the new project's structure.
+    await stopCollabBeforeSwitch()
     stopIfRunning()
     const leaving = tabs
     await openProject(id)
     adoptProject(leaving)
   }
+
+  // Opens the project a #room= link joins into (contract §5): the one already mapped
+  // to this room (host reload / returning guest) if it still exists, else a fresh
+  // empty project the live session then fills. Runs once per room id; the gated
+  // effect above does the actual join once the project is current.
+  const enterRoom = async (roomId: string) => {
+    if (roomEntered.current.has(roomId)) return
+    roomEntered.current.add(roomId)
+    await whenReady()
+    // A second #room= link while a session is live: end the old room first, or
+    // two sessions end up fighting over one project through their bridges.
+    if (collabRef.current.roomId !== roomId) await stopCollabBeforeSwitch()
+    const mappedId = roomProjectId(roomId)
+    const exists = mappedId ? (await snapshotOf(mappedId)) !== null : false
+    if (mappedId && exists) {
+      await switchToProject(mappedId) // no-op if it is already the open one
+    } else {
+      // The mapped project was deleted out from under this room (L8): clear its
+      // stale mappings (both directions) before minting a fresh project, or the
+      // projectRooms[oldId]→roomId reverse entry lingers as cruft forever. This
+      // does not touch the room's y-indexeddb — the room itself is still live.
+      if (mappedId) forgetRoomsForProject(mappedId)
+      stopIfRunning()
+      await stopCollabBeforeSwitch()
+      const leaving = tabs
+      const meta = await createProject(COPY.collabRoomName)
+      if (!meta) {
+        notify(COPY.collabStartFailed, 'error')
+        roomEntered.current.delete(roomId)
+        return
+      }
+      rememberRoomProject(roomId, meta.id)
+      adoptProject(leaving)
+    }
+    setView('editor')
+  }
+  enterRoomRef.current = enterRoom
 
   const newProject = async (template?: Template) => {
     const suggested = template ? template.name : nextProjectName(projects)
@@ -1036,6 +1353,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
     if (!name) return
     stopIfRunning()
+    await stopCollabBeforeSwitch()
     const leaving = tabs
     const meta = await createProject(name, template?.snapshot)
     if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
@@ -1070,11 +1388,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
     if (!ok) return
     stopIfRunning()
+    await stopCollabBeforeSwitch()
     const leaving = tabs
     const gone = currentProject.name
     const goneId = currentProject.id
     const willBeEmpty = projects.length <= 1
     await deleteProject(goneId)
+    forgetProjectRoomState(goneId)
     unpin(goneId)
     if (willBeEmpty) {
       // Last project gone — return to Home's empty state instead of auto-creating one.
@@ -1153,9 +1473,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!ok) return
     const wasOpen = id === currentProject?.id
     const willBeEmpty = projects.length <= 1
-    if (wasOpen) stopIfRunning()
+    if (wasOpen) {
+      stopIfRunning()
+      await stopCollabBeforeSwitch()
+    }
     const leaving = tabs
     await deleteProject(id)
+    forgetProjectRoomState(id)
     unpin(id)
     if (willBeEmpty) {
       // Last project gone — reset the editor and stay on Home's empty state.
@@ -1272,7 +1596,12 @@ function Ide({ report }: { report: CapabilityReport }) {
   // backgrounded tab). All call the same idempotent flush, so firing twice is free.
   // Async, so the page may vanish before OPFS finishes — unavoidable, hence the tight 350ms debounce.
   useEffect(() => {
-    const flush = () => void project.saveAll()
+    const flush = () => {
+      void project.saveAll()
+      // The room's durable snapshot mirrors project.saveAll() here — otherwise
+      // closing the tab dropped up to a debounce-window of collab edits.
+      void collabRef.current.flush()
+    }
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush()
     }
@@ -1725,6 +2054,23 @@ function Ide({ report }: { report: CapabilityReport }) {
     },
     { id: 'projects.export', title: COPY.cmdProjectsExport, enabled: () => !empty, run: exportProject },
     { id: 'projects.shareLink', title: COPY.cmdProjectsShareLink, enabled: () => !empty, run: () => void shareLink() },
+    {
+      // Live collaboration is a project-scoped share, so it sits with the other
+      // share actions. Title flips with state; the "Live" pill is the other way out.
+      id: 'collab.toggle',
+      title: collab.active ? COPY.collabStop : COPY.collabStart,
+      enabled: () => Boolean(currentProject),
+      run: () => void toggleCollab(),
+    },
+    {
+      // Manage who can open the live-room link (owner) / copy it (guest). Only
+      // meaningful while a room is live — hidden from the palette otherwise.
+      id: 'collab.share',
+      title: COPY.menuShareRoom,
+      inPalette: collab.active,
+      enabled: () => collab.active,
+      run: () => setShareOpen(true),
+    },
     { id: 'projects.sharePdf', title: COPY.cmdProjectsSharePdf, enabled: () => !empty, run: () => void sharePdf() },
     // Danger last, the same rule every menu in the app follows.
     { id: 'projects.empty', title: COPY.cmdProjectsEmpty, enabled: () => !empty, run: () => void startEmpty() },
@@ -1767,6 +2113,10 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
         { label: COPY.menuShareLink, icon: <IconLink size={18} />, disabled: empty, onSelect: () => void shareLink() },
         { label: COPY.menuSharePdf, icon: <IconFileLines size={18} />, disabled: empty, onSelect: () => void sharePdf() },
+        // Same share family; label flips Start/Stop with the room state.
+        { label: collab.active ? COPY.collabStop : COPY.collabStart, icon: <IconShare size={18} />, disabled: !currentProject, onSelect: () => void toggleCollab() },
+        // Sharing controls for the live room (link access / copy link) — only while a room is up.
+        { label: COPY.menuShareRoom, icon: <IconLink size={18} />, disabled: !collab.active, onSelect: () => setShareOpen(true) },
         { label: COPY.menuSaveAll, icon: <IconSave size={18} />, hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
         {
           label: COPY.menuRenameProject,
@@ -1864,6 +2214,19 @@ function Ide({ report }: { report: CapabilityReport }) {
   // VS Code keeps the app-scoped odds and ends behind the rail's own gear; every row here is an action that already exists.
   const manageItems: MenuItem[] = [
     { label: COPY.menuCommandPalette, icon: <IconCommand size={18} />, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
+    // Account: only when a backend is configured (authApi non-null). Label carries
+    // the email once signed in; opens the sign-in form otherwise. The rail gear is
+    // where the app's odds-and-ends live — no new nav pattern (§7.4).
+    ...(authApi
+      ? [
+          {
+            label: auth.user ? auth.user.email : COPY.menuSignIn,
+            icon: <IconUser size={18} />,
+            startsGroup: true,
+            onSelect: () => setAccountOpen(true),
+          } satisfies MenuItem,
+        ]
+      : []),
     {
       // Control row, not a command: `render` rows aren't Radix Items, so dragging the thumb never
       // closes the menu. Same pref as View > Zoom In/Out (not the editor's separate text-size stepper).
@@ -1989,8 +2352,14 @@ function Ide({ report }: { report: CapabilityReport }) {
         dirty={activePath ? project.isDirty(activePath) : false}
         onToggleSidebar={toggleExplorer}
         onTogglePanel={() => setConsoleOpen((v) => !v)}
-        // A slot: the control renders itself away when there's nothing to install (most sessions).
-        installSlot={<InstallControl />}
+        // A slot: each control renders itself away when idle — the "Live" pill only
+        // while a room is active, Install only when the browser offers it.
+        installSlot={
+          <>
+            <CollabControl active={collab.active} connecting={!collab.synced} peers={collab.peers} readOnly={collab.readOnly} onStop={() => void toggleCollab()} />
+            <InstallControl />
+          </>
+        }
       />
 
       <div className={BODY}>
@@ -2109,6 +2478,10 @@ function Ide({ report }: { report: CapabilityReport }) {
                   onSave={saveAllQuiet}
                   onController={(c) => {
                     editorRef.current = c
+                    // Flags the effect above to (re)push the collab binding once
+                    // the singleton editor exists — covers a room joined before
+                    // the first file opened the editor.
+                    setEditorReady(!!c)
                   }}
                   // Only offered behind a drawer — docked, the files are already visible.
                   onBrowseFiles={narrow ? () => setDrawerOpen(true) : undefined}
@@ -2284,6 +2657,23 @@ function Ide({ report }: { report: CapabilityReport }) {
           onPick={pickStarter}
           onBlank={startBlank}
           onCancel={() => setPickerOpen(false)}
+        />
+      ) : null}
+
+      {accountOpen ? <AccountDialog api={authApi} onClose={() => setAccountOpen(false)} notify={notify} /> : null}
+
+      {shareOpen && collab.roomId ? (
+        <ShareDialog
+          api={authApi}
+          roomId={collab.roomId}
+          // The host owns the doc; a guest sees copy-link only.
+          isOwner={collab.isHost}
+          // H2: an owner's link-access change is ALSO published into the live doc
+          // meta, so already-connected honest guests re-resolve their role and flip
+          // read-only (the server PATCH stays the authoritative enforcement).
+          onLinkAccess={(access) => collab.setLinkAccess(access)}
+          onClose={() => setShareOpen(false)}
+          notify={notify}
         />
       ) : null}
 

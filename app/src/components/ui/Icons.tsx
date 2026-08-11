@@ -382,6 +382,22 @@ export const IconGlobe = (p: IconProps) => (
   </Icon>
 )
 
+/** "View only" — the eye a read-only (viewer-role) session wears. */
+export const IconEye = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 10s3-5.25 8-5.25S18 10 18 10s-3 5.25-8 5.25S2 10 2 10Z" />
+    <circle cx="10" cy="10" r="2.25" />
+  </Icon>
+)
+
+/** "Sign in / account" — a simple person glyph for the account affordance. */
+export const IconUser = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="10" cy="6.75" r="3" />
+    <path d="M4.5 16c0-2.9 2.4-4.75 5.5-4.75S15.5 13.1 15.5 16" />
+  </Icon>
+)
+
 /** "About" — the info circle. */
 export const IconInfo = (p: IconProps) => (
   <Icon {...p}>

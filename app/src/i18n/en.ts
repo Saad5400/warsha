@@ -431,6 +431,8 @@ export const EN = {
   dlgCreate: 'Create',
   dlgOk: 'OK',
   dlgCancel: 'Cancel',
+  dlgClose: 'Close',
+  dlgDone: 'Done',
   dlgRenameFileTitle: 'Rename file',
   dlgRenameFolderTitle: 'Rename folder',
   dlgRename: 'Rename',
@@ -626,6 +628,88 @@ export const EN = {
   genFieldsIntro: (name: string) => `Fields from ${name} to include.`,
   genSelectAll: 'Select all',
   genGenerate: 'Generate',
+
+  // ---- live collaboration (collab/, COLLAB-SYNC-CONTRACT) ----
+  // Opt-in and quiet: there is no collab UI until the student starts it, and the
+  // only standing indicator is the "Live" pill, which is also the way out.
+  collabStart: 'Start collaboration',
+  collabStop: 'Stop collaboration',
+  /** The standing pill while a room is live; clicking it ends the session. */
+  collabLive: 'Live',
+  collabStarted: 'Collaboration on — the invite link is on your clipboard.',
+  collabStopped: 'Collaboration ended.',
+  collabStartFailed: 'Collaboration could not start.',
+  /** Peer-presence toasts: someone else arrived / left this room. */
+  collabJoined: (name: string) => `${name} joined the session.`,
+  collabLeft: (name: string) => `${name} left the session.`,
+  /** The pill while a joined room has no data yet (host offline / nothing persisted). */
+  collabConnecting: 'Connecting…',
+  /** Non-blocking notice after ~15s in a room with no data and no peers. */
+  collabNobodyYet: 'Nobody here yet — keep this tab open; the project appears when the host connects.',
+  /** The doc exceeds the sync size cap; local editing and live peers still work. */
+  collabTooLarge: 'This project is too large to sync online — edits stay on this device and with connected peers.',
+  /** The backend rejected our token — durable backup is off for this session. */
+  collabAuthFailed: 'Online sync sign-in failed — changes are not being backed up to the server.',
+  /** Placeholder name for a guest's project before the host's own name syncs in. */
+  collabRoomName: 'Shared session',
+  a11yCollab: 'Collaboration',
+  /** The badge beside the Live pill when the local participant is a viewer. */
+  collabViewOnly: 'View only',
+  collabViewOnlyHint: 'The room owner shared this with you as a viewer — editing is off.',
+
+  // ---- accounts (collab/auth.ts, §7.1) ----
+  /** Account entry point in the Manage (gear) menu — label flips with sign-in state. */
+  menuSignIn: 'Sign in…',
+  menuAccount: 'Account',
+  authSignInTitle: 'Sign in',
+  authSignUpTitle: 'Create an account',
+  authAccountTitle: 'Your account',
+  authIntro: 'Sign in to raise your sync limits and share your work across devices.',
+  authEmailLabel: 'Email',
+  authPasswordLabel: 'Password',
+  authPasswordHint: 'At least 8 characters.',
+  authEmailInvalid: 'Enter a valid email address.',
+  authPasswordWeak: 'Use at least 8 characters.',
+  authPasswordRequired: 'Enter your password.',
+  authSignInAction: 'Sign in',
+  authSignUpAction: 'Create account',
+  authWorking: 'Working…',
+  authSwitchToSignUp: 'New here? Create an account',
+  authSwitchToSignIn: 'Already have an account? Sign in',
+  authErrorTaken: 'That email is already registered — sign in instead.',
+  authErrorInvalid: 'Email or password is incorrect.',
+  authErrorNetwork: 'Could not reach the server. Check your connection and try again.',
+  authSignedIn: 'Signed in.',
+  authSignedUp: 'Account created — you are signed in.',
+  authSignedOut: 'Signed out.',
+  /** Toast after login when anonymous docs are re-owned to the account. */
+  authClaimed: (n: number) => (n === 1 ? '1 project moved to your account.' : `${n} projects moved to your account.`),
+  authSignedInAs: 'Signed in as',
+  authSignOut: 'Sign out',
+  authUsageTitle: 'Usage',
+  authUsageDocs: 'Projects',
+  authUsageStorage: 'Storage',
+
+  // ---- share dialog (components/ShareDialog.tsx, §7.2) ----
+  /** The "Share room…" entry — enabled only while a room is live. */
+  menuShareRoom: 'Share room…',
+  shareTitle: 'Share this session',
+  shareIntro: 'Choose who can open the invite link.',
+  shareLinkAccessLabel: 'Link access',
+  shareLinkEditor: 'Anyone with the link can edit',
+  shareLinkEditorDesc: 'They join and edit the project with you.',
+  shareLinkViewer: 'Anyone with the link can view',
+  shareLinkViewerDesc: 'They can follow along, but not make changes.',
+  shareLinkOff: 'Link off',
+  shareLinkOffDesc: 'No new people can join with the link.',
+  shareCopyLink: 'Copy link',
+  shareLinkCopied: 'Invite link copied to your clipboard.',
+  shareUpdated: 'Link access updated.',
+  shareUpdateFailed: 'Could not update link access.',
+  shareGuestNote: 'Copy the link to invite others. Only the session owner can change who may join.',
+  shareEmailTitle: 'Invite people by email',
+  shareComingSoon: 'Coming soon',
+  shareEmailNote: 'Per-person sharing arrives in a later update.',
 
   /**
    * Starter names and blurbs, by Template id (templates.ts).

@@ -29,6 +29,11 @@ if (typeof window === 'undefined') {
     const PRECACHE = self.__WARSHA_PRECACHE__ || [];
     const SHELL_CACHE = `warsha-shell-${VERSION}`;
     const RUNTIME_CACHE = `warsha-runtime-${VERSION}`;
+    // Under `vite dev` neither global is injected, so VERSION stays 'dev'. In that
+    // mode we MUST NOT cache: every module Vite serves is same-origin, so cache-first
+    // would pin the first build and silently swallow every later edit (HMR included).
+    // Isolation still holds — isolate() stamps COOP/COEP on the live network response.
+    const DEV = VERSION === 'dev';
 
     // The app shell: the build-hashed JS/CSS (injected above) plus the stable
     // entry and icon set from public/. `./` and `./index.html` are both listed
@@ -94,7 +99,8 @@ if (typeof window === 'undefined') {
     self.addEventListener("activate", (event) => {
         event.waitUntil((async () => {
             // Drop caches from older builds — their names carry the old VERSION.
-            const keep = new Set([SHELL_CACHE, RUNTIME_CACHE]);
+            // In dev, keep nothing: a stale dev cache is exactly what we must purge.
+            const keep = DEV ? new Set() : new Set([SHELL_CACHE, RUNTIME_CACHE]);
             const names = await caches.keys();
             await Promise.all(
                 names.map((n) => (n.startsWith('warsha-') && !keep.has(n) ? caches.delete(n) : undefined)),
@@ -238,7 +244,7 @@ if (typeof window === 'undefined') {
         // via a no-cors `importScripts()` and lazily fetches runtime pieces it
         // did not touch on the first run — is only partially cached and is not
         // guaranteed offline. See tools/qa/offline-check.mjs and ARCHITECTURE §2.5.
-        if (cacheable(r)) {
+        if (!DEV && cacheable(r)) {
             event.respondWith((async () => {
                 const cached = await caches.match(r);
                 if (cached) return isolate(cached);
