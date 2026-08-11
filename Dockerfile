@@ -62,6 +62,14 @@ ENV WARSHA_ORIGIN=${WARSHA_ORIGIN}
 # `npm run build` runs the prebuild `assets` step, which now finds ../runtimes
 # and ../../docs because the context is the repo root.
 COPY . .
+
+# Optional collab/sync backend URL, baked into the bundle at build time (Vite
+# statically replaces import.meta.env.VITE_WARSHA_API). Unset is fine and is the
+# default — the editor runs fully offline with no server. Set this build arg
+# (Coolify passes it through) to point the deployed SPA at the live API.
+ARG VITE_WARSHA_API
+ENV VITE_WARSHA_API=${VITE_WARSHA_API}
+
 RUN cd app && npm run build
 
 # ---- serve stage ----------------------------------------------------------
