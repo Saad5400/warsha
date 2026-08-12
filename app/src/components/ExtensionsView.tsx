@@ -34,12 +34,18 @@ const THUMB =
   'group-aria-checked:bg-(--surface-1)'
 
 const CATEGORY_LABEL = (c: ExtCategory): string =>
-  c === 'appearance' ? COPY.extCategoryAppearance : COPY.extCategoryFormatting
+  c === 'diagnostics'
+    ? COPY.extCategoryLearning
+    : c === 'appearance'
+      ? COPY.extCategoryAppearance
+      : COPY.extCategoryFormatting
 
 /** name + description for an extension id — read from COPY during render so a
  *  language switch flows through (copy.ts's one rule). */
 function meta(id: ExtId): { name: string; desc: string } {
   switch (id) {
+    case 'beginner-helper':
+      return { name: COPY.extBeginnerHelperName, desc: COPY.extBeginnerHelperDesc }
     case 'rainbow-brackets':
       return { name: COPY.extRainbowBracketsName, desc: COPY.extRainbowBracketsDesc }
     case 'indent-guides':

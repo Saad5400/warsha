@@ -21,9 +21,14 @@ import { indentGuides } from '../editor/indentGuides'
 import { indentRainbow } from '../editor/indentRainbow'
 import { prefs, setPrefs } from '../fs/prefs'
 
-export type ExtId = 'rainbow-brackets' | 'indent-guides' | 'indent-rainbow' | 'format-on-save'
+export type ExtId =
+  | 'beginner-helper'
+  | 'rainbow-brackets'
+  | 'indent-guides'
+  | 'indent-rainbow'
+  | 'format-on-save'
 
-export type ExtCategory = 'appearance' | 'formatting'
+export type ExtCategory = 'diagnostics' | 'appearance' | 'formatting'
 
 interface BaseExt {
   id: ExtId
@@ -49,6 +54,9 @@ export type ExtDescriptor = EditorExt | BehaviorExt
  *  editor kind it is also precedence order inside `extConf`. Rainbow Brackets
  *  is last so its depth marks sit over the indent tints on shared spans. */
 export const EXTENSIONS: readonly ExtDescriptor[] = [
+  // A `behavior` flag read by the linter (editor/lint.ts), not the editor
+  // compartment — so setExtensions forces a re-lint to apply it live.
+  { id: 'beginner-helper', category: 'diagnostics', kind: 'behavior', default: true },
   { id: 'indent-guides', category: 'appearance', kind: 'editor', default: true, build: () => indentGuides(4) },
   { id: 'indent-rainbow', category: 'appearance', kind: 'editor', default: false, build: () => indentRainbow(4) },
   { id: 'rainbow-brackets', category: 'appearance', kind: 'editor', default: true, build: () => rainbowBrackets() },

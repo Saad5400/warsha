@@ -1,8 +1,10 @@
 import { syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import { linter, type Diagnostic, type Action } from '@codemirror/lint'
-import type { EditorState } from '@codemirror/state'
+import { StateEffect, type EditorState } from '@codemirror/state'
 import type { SyntaxNode, Tree } from '@lezer/common'
 import { COPY } from '../copy'
+import { isExtEnabled } from '../extensions/registry'
+import { scanStructural, OPEN_TO_CLOSE, type StructuralIssue } from './structuralScan'
 import type { EditorLang } from './setup'
 
 /**
@@ -11,7 +13,7 @@ import type { EditorLang } from './setup'
  *
  * Warsha has no language server and no per-keystroke compiler (Run is where the
  * real ECJ/Roslyn/clang/Pyodide live), so this is deliberately NOT a type
- * checker. It is two things a plain parse can do honestly:
+ * checker. It is three things a plain parse can do honestly:
  *
  *   1. Syntax errors from the Lezer grammar itself. The grammars that back
  *      Java, Python, JavaScript, HTML and CSS emit error nodes for input they
@@ -27,6 +29,14 @@ import type { EditorLang } from './setup'
  *      each is chosen to have effectively no false positives on a first-course
  *      program. When in doubt, a rule is left out: a linter that cries wolf on
  *      valid code is worse for a beginner than one that stays quiet.
+ *
+ *   3. The structural scan (editor/structuralScan.ts) — the mistakes the grammar
+ *      loses in a cascade far from their source: an unclosed brace reported at
+ *      end of file, a Python block with no colon, a string with no end quote. It
+ *      reads raw text (skipping comments and strings) rather than the tree, so it
+ *      names the exact bracket. This one is opt-in: it backs the default-on
+ *      "Beginner helper" extension, and when it finds a real structural break it
+ *      takes over from item 1, whose error nodes past the break are just noise.
  *
  * The fixes are the point of the feature ("auto fix suggestions"): each
  * `Diagnostic` that can be repaired mechanically carries an `Action` that
@@ -222,19 +232,122 @@ function syntaxErrors(state: EditorState, error: SyntaxNode, seenLines: Set<numb
   out.push({ from, to, severity: 'error', source: 'Warsha', message: COPY.lintSyntax })
 }
 
+/** Insert the matching closer at end of file, on its own line. */
+function appendClosing(close: string): Action['apply'] {
+  return (view) => {
+    const end = view.state.doc.length
+    const nl = end > 0 && view.state.doc.sliceString(end - 1, end) !== '\n' ? '\n' : ''
+    view.dispatch({ changes: { from: end, to: end, insert: `${nl}${close}` }, scrollIntoView: true })
+    view.focus()
+  }
+}
+
+/** Insert `text` at the diagnostic's end — where a missing closing quote goes. */
+function insertAtEnd(text: string): Action['apply'] {
+  return (view, _from, to) => {
+    view.dispatch({ changes: { from: to, to, insert: text }, scrollIntoView: true })
+    view.focus()
+  }
+}
+
+/** Add the `:` a Python block header is missing, before any trailing comment. */
+const appendColon: Action['apply'] = (view, from) => {
+  const line = view.state.doc.lineAt(from)
+  const hash = line.text.indexOf('#')
+  let end = hash === -1 ? line.text.length : hash
+  while (end > 0 && (line.text[end - 1] === ' ' || line.text[end - 1] === '\t')) end--
+  const pos = line.from + end
+  view.dispatch({ changes: { from: pos, to: pos, insert: ':' }, scrollIntoView: true })
+  view.focus()
+}
+
+/** One structural issue → a red Diagnostic. Fixes are computed against the live
+ *  state at apply time, so they land correctly even after further typing. */
+function structuralDiagnostic(iss: StructuralIssue): Diagnostic {
+  const base = { from: iss.from, to: iss.to, severity: 'error' as const, source: 'Warsha' }
+  switch (iss.kind) {
+    case 'bracket-unclosed': {
+      const close = OPEN_TO_CLOSE[iss.ch!]
+      return {
+        ...base,
+        message: COPY.lintBracketUnclosed(iss.ch!, close),
+        actions: [{ name: COPY.lintFixAddBracket(close), apply: appendClosing(close) }],
+      }
+    }
+    case 'bracket-stray':
+      return {
+        ...base,
+        message: COPY.lintBracketStray(iss.ch!),
+        actions: [{ name: COPY.lintFixRemove(iss.ch!), apply: replace('') }],
+      }
+    case 'bracket-mismatch':
+      return { ...base, message: COPY.lintBracketMismatch(iss.ch!) }
+    case 'string-unterminated':
+      return {
+        ...base,
+        message: COPY.lintStringUnterminated,
+        actions: [{ name: COPY.lintFixCloseString, apply: insertAtEnd(iss.ch ?? '"') }],
+      }
+    case 'java-char-literal':
+      return {
+        ...base,
+        message: COPY.lintCharLiteral,
+        actions: [{ name: COPY.lintFixDoubleQuotes, apply: replace(iss.replacement ?? '') }],
+      }
+    case 'py-missing-colon':
+      return {
+        ...base,
+        message: COPY.lintMissingColon,
+        actions: [{ name: COPY.lintFixAddColon, apply: appendColon }],
+      }
+    case 'java-case':
+      return {
+        ...base,
+        message: COPY.lintCaseTypo(iss.ch ?? '', iss.replacement ?? ''),
+        actions: [{ name: COPY.lintFixUseCase(iss.replacement ?? ''), apply: replace(iss.replacement ?? '') }],
+      }
+    case 'java-missing-semicolon':
+      return {
+        ...base,
+        message: COPY.lintMissingSemicolon,
+        actions: [{ name: COPY.lintFixAddSemicolon, apply: insertAtEnd(';') }],
+      }
+  }
+}
+
+/** The opt-in structural scan: push its diagnostics, mark their lines seen so the
+ *  grammar underline never doubles them, and report whether the parse is now too
+ *  broken for the grammar's follow-on error nodes to be worth showing. */
+function structuralPass(state: EditorState, lang: EditorLang, seenLines: Set<number>, out: Diagnostic[]): boolean {
+  const { issues, brokeStructure } = scanStructural(state.doc.toString(), lang)
+  for (const iss of issues) {
+    seenLines.add(state.doc.lineAt(iss.from).number)
+    out.push(structuralDiagnostic(iss))
+  }
+  return brokeStructure
+}
+
 /** Exported so the rules can be exercised against a bare `EditorState` in
- *  isolation; the app itself only ever reaches this through `linting` below. */
-export function diagnostics(state: EditorState, lang: EditorLang): Diagnostic[] {
+ *  isolation; the app itself only ever reaches this through `linting` below.
+ *  `beginnerHelper` gates the opt-in structural scan (extensions/registry.ts). */
+export function diagnostics(
+  state: EditorState,
+  lang: EditorLang,
+  opts: { beginnerHelper?: boolean } = {},
+): Diagnostic[] {
   // The full document, not the viewport slice `syntaxTree` may hand back for a
   // large file — a student file is small enough to parse whole in the budget.
   const tree = ensureSyntaxTree(state, state.doc.length, 1000) ?? syntaxTree(state)
   const out: Diagnostic[] = []
   const seenLines = new Set<number>()
+  // The scan runs first: its lines seed `seenLines`, and a real structural break
+  // silences the grammar's cascade below in favour of its one precise mark.
+  const brokeStructure = opts.beginnerHelper ? structuralPass(state, lang, seenLines, out) : false
 
   tree.iterate({
     enter(ref) {
       if (ref.type.isError) {
-        syntaxErrors(state, ref.node, seenLines, out)
+        if (!brokeStructure) syntaxErrors(state, ref.node, seenLines, out)
         return
       }
       switch (lang) {
@@ -262,7 +375,22 @@ export function diagnostics(state: EditorState, lang: EditorLang): Diagnostic[] 
  * renaming a file swaps the rule set (and clears the old file's diagnostics)
  * in the same reconfigure that swaps the grammar.
  */
+/** Dispatched by setExtensions when a toggle changes what the linter reports —
+ *  the Beginner helper is read per pass, so the lint has to be told to re-run
+ *  even though the document did not change. `needsRefresh` below picks it up. */
+export const refreshLint = StateEffect.define<null>()
+
 export function linting(lang: EditorLang | null) {
   if (!lang || !LINTED.has(lang)) return []
-  return linter((view) => diagnostics(view.state, lang), { delay: LINT_DELAY })
+  // `isExtEnabled` is read per lint pass (not captured), so toggling the
+  // Beginner helper takes effect as soon as the lint re-runs. A plain
+  // forceLinting cannot start that run (it only hurries a scheduled one), so a
+  // `refreshLint` effect schedules the run and setExtensions then forces it.
+  return linter(
+    (view) => diagnostics(view.state, lang, { beginnerHelper: isExtEnabled('beginner-helper') }),
+    {
+      delay: LINT_DELAY,
+      needsRefresh: (u) => u.transactions.some((tr) => tr.effects.some((e) => e.is(refreshLint))),
+    },
+  )
 }

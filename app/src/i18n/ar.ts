@@ -321,6 +321,22 @@ export const AR: Bundle = {
   lintFixStrictEquals: (op) => `استخدم ${iso(op)}`,
   lintFixIsNone: (keyword) => `استخدم ${iso(keyword)}`,
   lintFixPrintCall: `أعد كتابتها بالشكل ${iso('print( )')}`,
+  // ---- structural scan (editor/structuralScan.ts, the Beginner helper) ----
+  lintBracketUnclosed: (open, close) => `فتحت ${iso(open)} هنا ولم يُغلق. أضف ${iso(close)} المقابل حيث ينبغي أن ينتهي.`,
+  lintFixAddBracket: (close) => `أضف ${iso(close)}`,
+  lintBracketStray: (ch) => `ليس قبل ${iso(ch)} هذا قوسٌ يفتحه. احذفه، أو أضف القوس الذي يغلقه.`,
+  lintFixRemove: (ch) => `احذف ${iso(ch)}`,
+  lintBracketMismatch: (ch) => `${iso(ch)} هذا يغلق نوعًا مختلفًا عن القوس المفتوح الآن. تأكّد أنّ كل زوج متقابل.`,
+  lintStringUnterminated: 'هذا النص بلا علامة اقتباس تُغلقه، فامتدّ إلى آخر السطر. أضف علامة الاقتباس التي تُنهيه.',
+  lintFixCloseString: 'أغلق الاقتباس',
+  lintCharLiteral: `الاقتباس المفرد في Java يسع حرفًا واحدًا فقط. للكلمة أو الجملة استخدم الاقتباس المزدوج ${iso('" "')}.`,
+  lintFixDoubleQuotes: `استخدم ${iso('" "')}`,
+  lintMissingColon: `كتلة كهذه تُفتح بـ ${iso(':')}. ضع ${iso(':')} في آخر السطر، قبل جسمها المُزاح.`,
+  lintFixAddColon: `أضف ${iso(':')}`,
+  lintCaseTypo: (wrong, right) => `Java تُفرّق بين ${iso(wrong)} و${iso(right)} بحجم الحرف. الصنف الذي تقصده هو ${iso(right)}.`,
+  lintFixUseCase: (right) => `استخدم ${iso(right)}`,
+  lintMissingSemicolon: `هذا السطر يُنهي جملة، والجملة في Java تنتهي بـ ${iso(';')}. أضفها هنا.`,
+  lintFixAddSemicolon: `أضف ${iso(';')}`,
   statusBarProblems: (errors, warnings) => {
     const parts: string[] = []
     if (errors) parts.push(arCount(errors, 'خطأ واحد', 'خطآن', 'أخطاء', 'خطأً'))
@@ -463,6 +479,9 @@ export const AR: Bundle = {
   extensionsTitle: 'الإضافات',
   extCategoryAppearance: 'المظهر',
   extCategoryFormatting: 'التنسيق',
+  extCategoryLearning: 'التعلّم',
+  extBeginnerHelperName: 'مساعد المبتدئ',
+  extBeginnerHelperDesc: 'يرصد أخطاء المبتدئين الشائعة وأنت تكتب — قوسًا بلا نظير، ونقطتين ناقصتين، واقتباسًا لم يُغلق — فيشرح كلًّا منها ويصلحه بلمسة واحدة.',
   extRainbowBracketsName: 'أقواس ملوّنة',
   extRainbowBracketsDesc: 'يلوّن كل زوج من الأقواس بلون يوافق عمقه، فترى أيّ قوس إغلاق يقابل أيّ قوس فتح.',
   extIndentGuidesName: 'خطوط الإزاحة',
