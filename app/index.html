@@ -229,6 +229,421 @@
   <script defer crossorigin="anonymous" src="https://analytics.sb.sa/script.js" data-website-id="e59f0211-4dc2-41a5-8448-e907af1b000a"></script>
   </head>
   <body>
+    <!-- COLD-LOAD SPLASH. Self-contained, dependency-free, and first in <body> so
+         the browser paints it on frame one — before /src/main.tsx is even fetched,
+         let alone hydrated. It is a full-screen fixed overlay at the top of the
+         stacking context that plays Warsha's core loop (code → compile → binary →
+         scatter → console output) on its own requestAnimationFrame loop, entirely
+         independent of the React bundle. The app calls window.__appReady() after it
+         has mounted and painted (see src/main.tsx); the splash then finishes its
+         current scene, fades via a CSS opacity transition, and removes itself. A
+         ~15s failsafe force-dismisses it so it can never strand the app behind it.
+         Dark-only to match the fixed `color-scheme: dark` shell above; honours
+         prefers-reduced-motion with a static mark and no rAF loop.
+         Literal colours are the v5 monochrome tokens (docs/design/tokens.css):
+         #09090B --surface-0, #FAFAFA --text-1/--accent, #6BD68F --success. -->
+    <style>
+      #warsha-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: grid;
+        place-items: center;
+        background: #09090b;
+        opacity: 1;
+        transition: opacity 480ms cubic-bezier(0.4, 0, 0.2, 1);
+        overflow: hidden;
+      }
+      #warsha-splash.warsha-splash--done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #warsha-splash-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        z-index: 2;
+      }
+      /* Base layer: shows for the one frame before the canvas draws, and is the
+         entire splash when the animation is suppressed. */
+      #warsha-splash-static {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        #warsha-splash-static > svg {
+          animation: warsha-splash-in 240ms cubic-bezier(0.2, 0, 0.2, 1) both;
+        }
+        @keyframes warsha-splash-in {
+          from {
+            opacity: 0;
+          }
+        }
+      }
+      /* Static fallback: no canvas animation, just the mark on the dark frame. */
+      @media (prefers-reduced-motion: reduce) {
+        #warsha-splash-canvas {
+          display: none;
+        }
+      }
+    </style>
+    <div id="warsha-splash" role="presentation" aria-hidden="true">
+      <canvas id="warsha-splash-canvas" aria-hidden="true"></canvas>
+      <div id="warsha-splash-static" aria-hidden="true">
+        <!-- The mark, same geometry as #boot / components/Logo.tsx. -->
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M6.75 4.275 3.15 4.275 3.15 19.725 6.75 19.725"
+            stroke="#FAFAFA"
+            stroke-width="3.3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M17.25 4.275 20.85 4.275 20.85 19.725 17.25 19.725"
+            stroke="#FAFAFA"
+            stroke-width="3.3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <rect x="9.6" y="7.65" width="4.8" height="8.7" rx="2.4" fill="#FAFAFA" />
+        </svg>
+      </div>
+    </div>
+    <script>
+      /* Warsha cold-start splash — the product's core loop as one continuous shot,
+         ported from the design-doc composition (Warsha Splash.dc.html) to a plain
+         canvas + rAF IIFE with no imports, no framework, no external assets.
+         Everything is a pure function of a looping clock T (0..6.5s): code types
+         out, the vise jaws clamp, each line compiles to binary, every bit scatters
+         and turns green, then the green bits gather block-by-block into a printed
+         console line and a success bar — and it seams back to the caret. */
+      ;(function () {
+        var host = document.getElementById('warsha-splash')
+        var canvas = document.getElementById('warsha-splash-canvas')
+        if (!host || !canvas) return
+        var ctx = canvas.getContext('2d')
+        var reduce =
+          window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+        // Play the full animation on a first visit only; on return visits dismiss as
+        // soon as the app is ready. localStorage so it persists across sessions — and
+        // because the flag is only set once the splash actually begins dismissing, a
+        // genuine first visit (which coi-serviceworker reloads once, before the app
+        // boots) still plays in full on the post-reload load. Blocked storage falls
+        // back to treating the load as a first visit — the safe, more-generous default.
+        var SEEN_KEY = 'warsha:splash-seen'
+        var firstVisit = true
+        try { firstVisit = !localStorage.getItem(SEEN_KEY) } catch (e) {}
+        var markSeen = function () { try { localStorage.setItem(SEEN_KEY, '1') } catch (e) {} }
+
+        /* ---- palette (v5 monochrome tokens) ---- */
+        var C = {
+          frame: '#09090B', canvas: '#0E0E11', panel: '#151519', border: '#242429',
+          tok: '#4F4F59', tok2: '#6A6A7C', text2: '#BABAC4', success: '#6BD68F',
+        }
+        var accent = '#FAFAFA'
+        var AC = function (c) { return c === 'accent' ? accent : c }
+
+        /* ---- easing (all motion lives here) ---- */
+        var clamp = function (v, a, b) { return v < a ? a : v > b ? b : v }
+        var frac = function (T, a, b) { return clamp((T - a) / (b - a), 0, 1) }
+        var lerp = function (a, b, u) { return a + (b - a) * u }
+        var easeOutCubic = function (x) { return 1 - Math.pow(1 - x, 3) }
+        var easeInOutQuad = function (x) { return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2 }
+        var c1 = 1.70158, c3 = c1 + 1
+        var easeOutBack = function (x) { return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2) }
+        var enter = function (T, a, b) { return easeOutCubic(frac(T, a, b)) }
+        var travel = function (T, a, b) { return easeInOutQuad(frac(T, a, b)) }
+        var pop = function (T, a, b) { return easeOutBack(frac(T, a, b)) }
+        var rnd = function (n) { var s = Math.sin(n) * 43758.5453; return s - Math.floor(s) }
+
+        /* ---- world layout (1920x1080) — three lines of code ---- */
+        var START_X = 734, GAP = 18
+        var LINES_Y = [402, 470, 538]
+        var RAW = [[122, 46, 156, 60, 110, 44], [96, 60, 214, 72], [122, 46, 132, 60, 122, 44]]
+        var LINES = RAW.map(function (ws) {
+          var x = START_X
+          return ws.map(function (w, i) {
+            var t = { x: x, w: w, c: i === 0 ? 'accent' : i % 2 ? C.tok : C.tok2 }
+            x += w + GAP
+            return t
+          })
+        })
+        var lineEnd = function (li) { var l = LINES[li]; var t = l[l.length - 1]; return t.x + t.w }
+
+        /* ---- printed console output line ---- */
+        var OUT_Y = 726, PROMPT_X = 676, OUT_X0 = 708
+        var OUT_RAW = [90, 128, 58, 150, 92, 112]
+        var OUT = (function () {
+          var x = OUT_X0
+          return OUT_RAW.map(function (w, i) {
+            var t = { x: x, w: w, c: i === 0 ? 'accent' : [C.tok2, C.tok, C.tok2, C.tok, C.tok2][i % 5] }
+            x += w + 15
+            return t
+          })
+        })()
+        var OUT_END = OUT[OUT.length - 1].x + OUT[OUT.length - 1].w
+        var OUTN = OUT.length
+        var EMIT0 = 3.95, ESTEP = 0.27
+        var emitAt = function (g) { return EMIT0 + g * ESTEP }
+
+        /* ---- binary digits — each an individual particle, assigned to an output block ---- */
+        var B_X0 = 736, B_N = 46, B_ADV = (1404 - B_X0) / (B_N - 1)
+        var BITS = []
+        LINES_Y.forEach(function (_, r) {
+          for (var i = 0; i < B_N; i++) {
+            var gid = r * 100 + i
+            BITS.push({
+              r: r, i: i, gid: gid, x: B_X0 + i * B_ADV, colFrac: i / (B_N - 1),
+              bit: Math.floor(Math.abs(Math.sin((i + 1) * (r + 1.3) * 12.9898)) * 1e4) % 2,
+              sx: 616 + rnd(gid * 1.7 + 0.5) * 828,
+              sy: 352 + rnd(gid * 3.1 + 2.0) * 436,
+              sj: rnd(gid * 5.3) * 0.22,
+              g: Math.floor(rnd(gid * 7.71) * OUTN),
+            })
+          }
+        })
+
+        /* ---- camera: one interpolated path across the whole timeline ---- */
+        var CAM = [
+          { t: 0.0, fx: 806, fy: 402, s: 1.52 },
+          { t: 1.7, fx: 1010, fy: 470, s: 1.05 },
+          { t: 2.4, fx: 1044, fy: 470, s: 1.12 },
+          { t: 3.45, fx: 1020, fy: 560, s: 0.8 },
+          { t: 4.35, fx: 860, fy: 726, s: 1.14 },
+          { t: 5.35, fx: 1180, fy: 720, s: 0.98 },
+          { t: 5.95, fx: 1080, fy: 720, s: 1.05 },
+          { t: 6.5, fx: 806, fy: 402, s: 1.52 },
+        ]
+        var camAt = function (T) {
+          var k = 0
+          while (k < CAM.length - 1 && T > CAM[k + 1].t) k++
+          var a = CAM[k], b = CAM[Math.min(k + 1, CAM.length - 1)]
+          var u = a === b ? 0 : travel(T, a.t, b.t)
+          return { fx: lerp(a.fx, b.fx, u), fy: lerp(a.fy, b.fy, u), s: lerp(a.s, b.s, u) }
+        }
+
+        var blink = function (T) { return 0.55 + 0.45 * Math.cos((2 * Math.PI * T) / 0.6) }
+        var WRITE = [[0.06, 0.62, 0], [0.66, 1.12, 1], [1.16, 1.62, 2]]
+        var LOOP = 6.5
+
+        /* ---- a rounded-rect path with independent corner radii ---- */
+        var path = function (x, y, w, h, tl, tr, br, bl) {
+          ctx.beginPath()
+          ctx.moveTo(x + tl, y)
+          ctx.lineTo(x + w - tr, y); ctx.arcTo(x + w, y, x + w, y + tr, tr)
+          ctx.lineTo(x + w, y + h - br); ctx.arcTo(x + w, y + h, x + w - br, y + h, br)
+          ctx.lineTo(x + bl, y + h); ctx.arcTo(x, y + h, x, y + h - bl, bl)
+          ctx.lineTo(x, y + tl); ctx.arcTo(x, y, x + tl, y, tl)
+          ctx.closePath()
+        }
+        var fillRR = function (x, y, w, h, r, color, alpha) {
+          if (alpha <= 0.002 || w <= 0) return
+          ctx.globalAlpha = alpha
+          ctx.fillStyle = color
+          path(x, y, w, h, r, r, r, r)
+          ctx.fill()
+          ctx.globalAlpha = 1
+        }
+
+        var dpr = 1, VW = 0, VH = 0
+        var resize = function () {
+          dpr = Math.min(window.devicePixelRatio || 1, 2)
+          VW = host.clientWidth || window.innerWidth
+          VH = host.clientHeight || window.innerHeight
+          canvas.width = Math.round(VW * dpr)
+          canvas.height = Math.round(VH * dpr)
+        }
+
+        function draw(T) {
+          // clear the whole backing store to the frame colour
+          ctx.setTransform(1, 0, 0, 1, 0, 0)
+          ctx.fillStyle = C.frame
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+          // stage->screen (cover) composed with the camera; focal point sits at screen centre
+          var cam = camAt(T)
+          var fit = Math.max(VW / 1920, VH / 1080)
+          var s = fit * cam.s
+          ctx.setTransform(
+            dpr * s, 0, 0, dpr * s,
+            dpr * (VW / 2 - s * cam.fx), dpr * (VH / 2 - s * cam.fy)
+          )
+
+          // ---- editor pane (grounds the shot in Warsha's own UI) ----
+          ctx.globalAlpha = 1
+          path(540, 300, 1000, 560, 18, 18, 18, 18); ctx.fillStyle = C.canvas; ctx.fill()
+          ctx.lineWidth = 1; ctx.strokeStyle = C.border; ctx.stroke()
+          path(540, 300, 58, 560, 18, 0, 0, 18); ctx.fillStyle = C.panel; ctx.fill()
+          ctx.beginPath(); ctx.moveTo(598, 300); ctx.lineTo(598, 860); ctx.strokeStyle = C.border; ctx.stroke()
+
+          // ---- source token-blocks, three lines ----
+          var srcExit = travel(T, 2.2, 2.7)
+          LINES.forEach(function (line, li) {
+            line.forEach(function (t, i) {
+              var born = WRITE[li][0] + (i / line.length) * (WRITE[li][1] - WRITE[li][0])
+              var op = enter(T, born, born + 0.14) * (1 - srcExit)
+              fillRR(t.x, LINES_Y[li] - 15, t.w, 30, 6, AC(t.c), op)
+            })
+          })
+
+          // ---- binary: compile in place, scatter (green), then gather to the output block ----
+          ctx.font = '600 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          BITS.forEach(function (d) {
+            var on = 2.2 + d.colFrac * 0.5 + d.r * 0.06
+            var appear = enter(T, on, on + 0.12)
+            if (appear <= 0.002) return
+            var eg = emitAt(d.g)
+            var fade = enter(T, eg + 0.24, eg + 0.55)
+            var opv = appear * (1 - fade)
+            if (opv <= 0.004) return
+            var su = enter(T, 3.0 + d.sj, 3.9 + d.sj)
+            var cu = enter(T, eg, eg + 0.46)
+            var slot = OUT[d.g]
+            var tx = slot.x + slot.w / 2 - 6.5
+            var x = lerp(lerp(d.x, d.sx, su), tx, cu)
+            var y = lerp(lerp(LINES_Y[d.r], d.sy, su), OUT_Y, cu)
+            var sc = lerp(1, 0.45, cu)
+            var settleAt = on + 0.2
+            var ch = T < settleAt ? String((Math.floor(T * 26) + d.i + d.r) % 2) : String(d.bit)
+            var color = T >= 2.98 ? C.success : d.i % 6 === 0 ? accent : C.text2
+            ctx.save()
+            ctx.globalAlpha = opv
+            ctx.fillStyle = color
+            ctx.translate(x + 6.5, y)
+            ctx.scale(sc, sc)
+            ctx.fillText(ch, 0, 0)
+            ctx.restore()
+          })
+
+          // ---- vise jaws (Warsha's bracket mark) clamping the code block ----
+          var jSeat = pop(T, 1.66, 2.1)
+          var jRelease = travel(T, 2.9, 3.35)
+          var leftX = lerp(lerp(614, 692, jSeat), 600, jRelease)
+          var rightX = lerp(lerp(1524, 1444, jSeat), 1536, jRelease)
+          var jawOp = enter(T, 1.66, 1.95) * (1 - enter(T, 2.95, 3.45))
+          if (jawOp > 0.001) {
+            var jawH = 208, barW = 10, ret = 34, cy = LINES_Y[1]
+            ctx.globalAlpha = jawOp
+            ctx.fillStyle = accent
+            var jaw = function (x, dir) {
+              path(x, cy - jawH / 2, barW, jawH, 4, 4, 4, 4); ctx.fill()
+              var rx = dir > 0 ? x : x - ret + barW
+              path(rx, cy - jawH / 2, ret, barW, 4, 4, 4, 4); ctx.fill()
+              path(rx, cy + jawH / 2 - barW, ret, barW, 4, 4, 4, 4); ctx.fill()
+            }
+            jaw(leftX, 1); jaw(rightX, -1)
+            ctx.globalAlpha = 1
+          }
+
+          // ---- console row + the printed output line (one block per bit-cluster) ----
+          var rowFade = 1 - enter(T, 6.2, 6.48)
+          var greenBase = enter(T, 5.75, 6.15)
+          var rowOn = enter(T, 3.9, 4.3) * rowFade
+          if (rowOn > 0.004) {
+            fillRR(PROMPT_X - 28, OUT_Y - 33, OUT_END - PROMPT_X + 64, 66, 10, C.panel, 0.4 * rowOn)
+            fillRR(PROMPT_X, OUT_Y - 13, 5, 26, 2, accent, enter(T, 3.95, 4.25) * rowFade)
+            OUT.forEach(function (t, i) {
+              var eg = emitAt(i)
+              var bu = pop(T, eg + 0.26, eg + 0.62)
+              var op = bu * rowFade
+              if (op <= 0.004) return
+              var flash = clamp(1 - enter(T, eg + 0.28, eg + 0.78), 0, 1)
+              var sc = 0.72 + 0.28 * bu
+              var cx = t.x + t.w / 2, cyy = OUT_Y
+              ctx.save()
+              ctx.globalAlpha = op
+              if (flash > 0.02) {
+                ctx.shadowColor = 'rgba(107,214,143,' + (flash * 0.47).toFixed(3) + ')'
+                ctx.shadowBlur = 14 * flash
+              }
+              ctx.translate(cx, cyy); ctx.scale(sc, sc); ctx.translate(-cx, -cyy)
+              ctx.fillStyle = AC(t.c)
+              path(t.x, OUT_Y - 15, t.w, 30, 7, 7, 7, 7); ctx.fill()
+              ctx.restore()
+            })
+            fillRR(OUT_X0, OUT_Y + 27, (OUT_END - OUT_X0) * greenBase, 6, 3, C.success, rowFade)
+          }
+
+          // ---- caret: types line by line, gone in the middle, returns for the seam ----
+          var caretX, caretY
+          if (T >= 6.1) { caretX = START_X; caretY = LINES_Y[0] }
+          else if (T < 1.66) {
+            var seg = null
+            for (var w = 0; w < WRITE.length; w++) { if (T <= WRITE[w][1]) { seg = WRITE[w]; break } }
+            if (!seg) seg = WRITE[2]
+            caretX = lerp(START_X, lineEnd(seg[2]), clamp((T - seg[0]) / (seg[1] - seg[0]), 0, 1))
+            caretY = LINES_Y[seg[2]]
+          } else { caretX = lineEnd(2); caretY = LINES_Y[2] }
+          var writeGate = 1 - enter(T, 1.66, 1.86)
+          var tail = enter(T, 6.15, 6.5)
+          var caretOp = clamp(Math.max(blink(T) * writeGate, tail), 0, 1)
+          fillRR(caretX, caretY - 24, 4, 48, 2, accent, caretOp)
+        }
+
+        /* ---- lifecycle: rAF loop, ready handshake, fade-out, failsafe ---- */
+        var raf = 0, startTs = null, elapsed = 0, dismissing = false, fadeAt = null
+        var SCENE_ENDS = [1.66, 2.2, 3.0, 3.95, 6.5] // cumulative scene boundaries
+        var graceToBoundary = function (T) {
+          for (var i = 0; i < SCENE_ENDS.length; i++) { if (SCENE_ENDS[i] > T + 0.12) return SCENE_ENDS[i] - T }
+          return LOOP - T // to the seam
+        }
+
+        var cleanup = function () {
+          if (raf) cancelAnimationFrame(raf)
+          if (failsafe) clearTimeout(failsafe)
+          if (host && host.parentNode) host.parentNode.removeChild(host)
+          try { delete window.__appReady } catch (e) { window.__appReady = undefined }
+        }
+        var beginFade = function () {
+          if (dismissing) return
+          dismissing = true
+          markSeen() // this visit has now seen the splash; future visits fast-dismiss
+          host.classList.add('warsha-splash--done')
+          var done = false
+          var finish = function () { if (done) return; done = true; cleanup() }
+          host.addEventListener('transitionend', finish)
+          setTimeout(finish, 700) // fallback if transitionend never fires
+        }
+        // force (failsafe) or reduced-motion dismiss immediately. A return visitor
+        // dismisses as soon as the app is ready. A first-time visitor holds until the
+        // animation has played one full cycle (fade at the seam), or — if the app was
+        // still loading past that first cycle — finishes the current scene and fades.
+        var requestDismiss = function (force) {
+          if (dismissing) return
+          if (force || reduce || !firstVisit) { beginFade(); return }
+          if (fadeAt === null) fadeAt = elapsed < LOOP ? LOOP : elapsed + graceToBoundary(elapsed % LOOP)
+        }
+
+        var frame = function (ts) {
+          if (startTs === null) startTs = ts
+          elapsed = (ts - startTs) / 1000
+          draw(elapsed % LOOP)
+          if (fadeAt !== null && !dismissing && elapsed >= fadeAt) beginFade()
+          raf = requestAnimationFrame(frame)
+        }
+
+        // The app signals it has mounted and painted real content (see src/main.tsx).
+        window.__appReady = function () { requestDismiss(false) }
+        // Failsafe: never let the splash cover the app forever.
+        var failsafe = setTimeout(function () { requestDismiss(true) }, 15000)
+
+        if (reduce) {
+          // Static fallback: the mark stays, no animation loop runs.
+          return
+        }
+        resize()
+        window.addEventListener('resize', resize)
+        raf = requestAnimationFrame(frame)
+      })()
+    </script>
     <div id="root">
       <div id="boot">
         <!-- The mark, geometry copied from docs/design/logo.svg (brand v3's
