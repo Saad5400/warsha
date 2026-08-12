@@ -181,12 +181,14 @@ try {
              : fail('viewer: no "View only" indicator (role not resolved to viewer)')
 
     // Typing must do NOTHING: neither the viewer's own doc nor the host changes.
-    const before = await editorText(G)
+    // Detect the actual TYPED MARK, not a raw textContent diff — a remote peer's
+    // yCollab cursor/name label streams into .cm-content under latency and would
+    // be a false positive for "the viewer edited".
     const VMARK = 'VIEWER_TRIED_TO_TYPE'
     await typeAtTop(G, `# ${VMARK}\n`)
     await G.waitForTimeout(1500)
-    const after = await editorText(G)
-    after === before
+    const localEdited = (await editorText(G)).includes(VMARK)
+    !localEdited
       ? pass('viewer: editor is read-only — local typing changed nothing')
       : fail('viewer: read-only editor still accepted a local edit')
     // And nothing the viewer typed reached the host.
@@ -242,15 +244,16 @@ try {
     // the editor rejected it (read-only) AND nothing reached the host — either would
     // mean the guest could write before its role was ever confirmed. (Pre-fix this
     // failed both ways: localChanged=true, reachedHost=true.)
-    const before = await editorText(H)
+    // Detect the actual TYPED MARK, not a raw textContent diff (a remote peer's
+    // yCollab cursor/name label streams into .cm-content under latency).
     const HRACE = 'H1_RACE_BEFORE_PROBE'
     await typeAtTop(H, `# ${HRACE}\n`)
     await H.waitForTimeout(1500)
-    const after = await editorText(H)
+    const localEdited = (await editorText(H)).includes(HRACE)
     const hostRaced = await seesText(O, HRACE, 4000)
-    after === before && !hostRaced
+    !localEdited && !hostRaced
       ? pass('H1: a guest stays read-only until role-resolve — no edit, locally or to the host')
-      : fail(`H1: guest wrote before role-resolve (localChanged=${after !== before}, reachedHost=${hostRaced})`)
+      : fail(`H1: guest wrote before role-resolve (localEdited=${localEdited}, reachedHost=${hostRaced})`)
   } else {
     fail('H1: race viewer never reached the editor')
   }
@@ -314,14 +317,14 @@ try {
              : fail('H2: connected guest never went read-only after the owner downgraded access')
 
       // A post-downgrade edit must change nothing locally and never reach the host.
-      const before = await editorText(H2G)
+      // Mark-based (not textContent diff) to ignore remote cursor-label DOM noise.
       await typeAtTop(H2G, `# H2_AFTER_REVOKE\n`)
       await H2G.waitForTimeout(1500)
-      const after = await editorText(H2G)
+      const localEdited = (await editorText(H2G)).includes('H2_AFTER_REVOKE')
       const reachedHost = await seesText(H2O, 'H2_AFTER_REVOKE', 4000)
-      after === before && !reachedHost
+      !localEdited && !reachedHost
         ? pass('H2: after revocation the guest edit is blocked and never reaches the host')
-        : fail(`H2: revoked guest still wrote (localChanged=${after !== before}, reachedHost=${reachedHost})`)
+        : fail(`H2: revoked guest still wrote (localEdited=${localEdited}, reachedHost=${reachedHost})`)
     } else {
       fail('H2: editor-guest never reached the editor')
     }
