@@ -11,11 +11,10 @@ import { createS3Storage, s3OptionsFromEnv } from './storage/s3.js'
 import { makeBearerResolver } from './auth.js'
 import { createSignalTicketStore } from './tickets.js'
 import { registerHealth } from './routes/health.js'
-import { registerIce } from './routes/ice.js'
 import { registerDevices } from './routes/devices.js'
 import { registerAuth } from './routes/auth.js'
 import { registerDocs } from './routes/docs.js'
-import { registerSignal } from './routes/signal.js'
+import { registerSync } from './routes/sync.js'
 
 export interface BuildAppOptions {
   env: Env
@@ -95,9 +94,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     timeWindow: env.RATE_LIMIT_WINDOW,
   })
 
-  // Signaling frames are tiny JSON; cap the WS payload so a socket can't stream
-  // huge frames at us (finding H4). 64 KiB is generous for SDP/ICE.
-  await app.register(websocket, { options: { maxPayload: 64 * 1024 } })
+  // Cap the WS payload so a socket can't stream unbounded frames at us (finding
+  // H4). The live sync layer must fit a full-state sync frame (a fresh joiner's
+  // SyncStep2 can be the whole doc), so allow the durable per-snapshot cap plus a
+  // protocol-overhead margin — but no more.
+  await app.register(websocket, {
+    options: { maxPayload: env.MAX_SNAPSHOT_BYTES + 64 * 1024 },
+  })
 
   // Build or accept dependencies.
   let ownedRepo: DocRepo | null = null
@@ -117,21 +120,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     devBearerEnabled: env.DEV_BEARER_ENABLED,
   })
 
-  // Single-use signaling tickets (finding H9): minted by an authed HTTP call,
-  // consumed by the WS. Shared between the auth route (issuer) and signal (consumer).
+  // Single-use socket tickets (finding H9): minted by an authed HTTP call,
+  // consumed by the WS. Shared between the auth route (issuer) and sync (consumer).
   const tickets = createSignalTicketStore()
 
   // Routes.
   registerHealth(app)
-  registerIce(app, env)
   registerDevices(app, env, repo)
   registerAuth(app, { env, repo, resolveBearer, tickets })
   registerDocs(app, { env, repo, storage, resolveBearer })
-  registerSignal(app, {
+  registerSync(app, {
     repo,
     resolveBearer,
     tickets,
     emailSharingEnabled: env.ACCOUNT_EMAIL_SHARING_ENABLED,
+    maxSnapshotBytes: env.MAX_SNAPSHOT_BYTES,
   })
 
   return app

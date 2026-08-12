@@ -1,15 +1,9 @@
 /**
  * Environment configuration. Everything the service needs comes from process.env
- * (endpoint / region / credentials for S3, the Postgres URL, auth secret, ICE config).
+ * (endpoint / region / credentials for S3, the Postgres URL, auth secret).
  * Parsed once at boot; `loadEnv()` throws early on anything malformed OR on a
  * fail-open production misconfiguration (dev bearer on, dev creds, missing secrets).
  */
-
-export interface IceServer {
-  urls: string | string[]
-  username?: string
-  credential?: string
-}
 
 /**
  * Fastify `trustProxy` value. `false` (dev) = the socket peer is the client.
@@ -76,8 +70,6 @@ export interface Env {
   S3_FORCE_PATH_STYLE: boolean
 
   MAX_SNAPSHOT_BYTES: number
-
-  ICE_SERVERS: IceServer[]
 }
 
 /** The well-known placeholder that must never reach production. */
@@ -156,18 +148,6 @@ function trustProxy(isProd: boolean): TrustProxy {
   return v.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
-function iceServers(name: string, fallback: IceServer[]): IceServer[] {
-  const v = process.env[name]
-  if (v === undefined || v === '') return fallback
-  try {
-    const parsed = JSON.parse(v)
-    if (!Array.isArray(parsed)) throw new Error('not an array')
-    return parsed as IceServer[]
-  } catch (e) {
-    throw new Error(`Env var ${name} must be a JSON array of ICE servers: ${(e as Error).message}`)
-  }
-}
-
 export function loadEnv(): Env {
   const isProd = str('NODE_ENV', 'development') === 'production'
 
@@ -233,7 +213,5 @@ export function loadEnv(): Env {
     S3_FORCE_PATH_STYLE: bool('S3_FORCE_PATH_STYLE', true),
 
     MAX_SNAPSHOT_BYTES: int('MAX_SNAPSHOT_BYTES', 5 * 1024 * 1024),
-
-    ICE_SERVERS: iceServers('ICE_SERVERS', [{ urls: 'stun:stun.l.google.com:19302' }]),
   }
 }

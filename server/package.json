@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Warsha collaboration/sync service — Yjs blob store + WebRTC signaling relay + accounts/sharing/quotas",
+  "description": "Warsha collaboration/sync service — Yjs blob store + y-websocket live relay + accounts/sharing/quotas",
   "engines": {
     "node": ">=20.12.0"
   },
@@ -24,7 +24,10 @@
     "@node-rs/argon2": "^2.0.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.3",
-    "postgres": "^3.4.9"
+    "lib0": "^0.2.117",
+    "postgres": "^3.4.9",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

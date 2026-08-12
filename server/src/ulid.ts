@@ -1,7 +1,7 @@
 /**
  * Minimal ULID generator (Crockford base32, 48-bit timestamp + 80-bit randomness).
- * Kept dependency-free on purpose. A doc id is simultaneously the WebRTC room name
- * and the S3 blob-store key, so it must be URL/path-safe — Crockford base32 is.
+ * Kept dependency-free on purpose. A doc id is simultaneously the live-sync room
+ * name and the S3 blob-store key, so it must be URL/path-safe — Crockford base32 is.
  */
 
 const ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ' // Crockford: no I, L, O, U
@@ -36,7 +36,7 @@ export function ulid(seedTime: number = Date.now()): string {
 }
 
 /**
- * Canonical-ULID guard for values that flow into an S3 key / WebRTC room name.
+ * Canonical-ULID guard for values that flow into an S3 key / live-sync room name.
  * 26 chars, uppercase Crockford base32 (no I/L/O/U), first char in `[0-7]`
  * (48-bit timestamp fits 10 base32 chars). Rejecting anything else at the route
  * boundary prevents `/`, `.`, `..`, control chars and other key-injection /

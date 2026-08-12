@@ -4,11 +4,14 @@ A small Fastify + TypeScript service that backs Warsha's real-time collaboration
 
 - a **dumb blob store** for durable Yjs snapshots (Postgres for metadata + version,
   S3-compatible object storage for the bytes),
-- a **WebRTC signaling relay** (the y-webrtc protocol) so peers can find each other, and
+- a **light live-sync relay** (the y-websocket protocol) that fans tiny Yjs deltas between
+  peers over a server-mediated WebSocket, enforcing roles (a viewer's document updates are
+  dropped), and
 - **accounts, sharing and quotas** (Phase 2): email+password users, Google-Docs-style
   per-doc ACLs + link access, and per-principal doc/byte quotas.
 
-The server never runs Yjs and never merges — all CRDT merging is client-side. See
+The server never persists Yjs and never owns the merge — all CRDT merging is client-side; the
+relay keeps only an ephemeral per-room doc, evicted when the room empties. See
 `../docs/engineering/COLLAB-SYNC-CONTRACT.md` for the authoritative contract (§7 = Phase 2).
 
 ## Stack
@@ -39,11 +42,10 @@ server/
       s3.ts             S3 wrapper (put/get/delete)
     routes/
       health.ts         GET  /v1/health
-      ice.ts            GET  /v1/ice
       devices.ts        POST /v1/devices
       auth.ts           /v1/auth/* + /v1/me (signup/login/logout/claim-device)
       docs.ts           /v1/docs CRUD + ACL endpoints (roles + quotas + CAS)
-      signal.ts         WS   /v1/signal  (y-webrtc relay; room access check on subscribe)
+      sync.ts           WS   /v1/sync/<room>  (y-websocket relay; viewer+ to connect, viewer writes dropped)
   test/
     cas.test.ts         CAS path: 200 bump / 409 stale / 413 oversize / 401 / 404
     auth.test.ts        signup/login/logout/me/claim-device + prod dev-bearer off
@@ -114,8 +116,8 @@ curl -s -X PUT "$BASE/v1/docs/$ID" \
 # Read it back (blob is base64).
 curl -s "$BASE/v1/docs/$ID" -H "authorization: Bearer $SECRET"
 
-# ICE config for WebRTC.
-curl -s $BASE/v1/ice
+# Mint a live-sync ticket, then open the relay socket at ws://…/v1/sync/<ID>?ticket=<ticket>.
+curl -s -XPOST $BASE/v1/signal-ticket -H "authorization: Bearer $SECRET"
 ```
 
 ## Scripts
@@ -150,9 +152,8 @@ curl -s $BASE/v1/ice
 | GET | `/v1/docs/:id/acl` | owner → `200 {entries:[{email,role}]}` |
 | PUT | `/v1/docs/:id/acl` | owner; `{email, role: editor\|viewer}` → `204` (upsert) |
 | DELETE | `/v1/docs/:id/acl/:email` | owner → `204` (idempotent) |
-| POST | `/v1/signal-ticket` | auth → `201 {ticket, expiresIn:60}`; single-use short-lived ticket for the signaling WS |
-| GET | `/v1/ice` | `{iceServers:[...]}` from env |
-| WS | `/v1/signal` | y-webrtc signaling relay; `?ticket=<ticket>` (preferred) or `?token=<bearer>` (**deprecated**) authenticates the socket; subscribe to a persisted doc's room needs viewer+ |
+| POST | `/v1/signal-ticket` | auth → `201 {ticket, expiresIn:60}`; single-use short-lived ticket for the live-sync WS |
+| WS | `/v1/sync/:room` | y-websocket live relay; `?ticket=<ticket>` (preferred) or `?token=<bearer>` (**deprecated**) authenticates the socket; connecting to a persisted doc's room needs viewer+; a `<editor` socket's document updates are dropped |
 
 **Auth:** `Authorization: Bearer <token>` where the token is a session token from
 `/v1/auth/*`, a device token from `POST /v1/devices`, or (dev mode only) the
@@ -214,7 +215,7 @@ These MUST be set to real values under `NODE_ENV=production` (dev defaults are r
 Plus `DEV_BEARER_ENABLED` must be off in prod (the default) — booting with it on is refused.
 `DEV_SHARED_SECRET` is only needed when the dev bearer is explicitly enabled, and may not be
 the well-known placeholder. Everything else (`HOST`, `PORT`, `S3_REGION`, quotas, rate limits,
-`ICE_SERVERS`, `TRUST_PROXY`) has a safe default; see `.env.example`.
+`MAX_SNAPSHOT_BYTES`, `TRUST_PROXY`) has a safe default; see `.env.example`.
 
 ### Behind Traefik (X-Forwarded-For)
 
@@ -234,8 +235,8 @@ lets any client spoof `X-Forwarded-For` and mint unlimited rate-limit buckets.
 - **Postgres `bytea` fallback** for tiny snapshots is intentionally not implemented —
   S3/MinIO is the single storage path (keeps the `docs` schema exactly as the
   contract specifies).
-- **TURN/coturn** is an infra/deploy task; `/v1/ice` just serves whatever `ICE_SERVERS`
-  contains (a public STUN by default).
+- **No TURN/STUN/ICE** — the live layer is a server-relayed WebSocket, not WebRTC, so no
+  NAT-traversal infra is needed (this is why it always connects on school networks).
 - **Device tokens** are stored in plaintext (they are the principal identity used in
   `docs.owner = 'device:<token>'`); session tokens are sha256-hashed. Hashing device tokens
   would require re-keying ownership + the claim flow (a data migration) and is deliberately
