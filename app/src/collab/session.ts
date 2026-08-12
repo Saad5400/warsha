@@ -52,6 +52,15 @@ const WEBRTC_SYNC_GRACE_MS = 3000
  *  is slow or the doc isn't persisted yet. */
 const ROLE_PROBE_GRACE_MS = 2500
 
+/** Upper bound on waiting for the provider stack's initial sync before firing the
+ *  deterministic "session ready" rebind signal anyway (H1). The normal path fires
+ *  it the instant IndexedDB+blob settle (webrtc is separately grace-bounded above);
+ *  this only covers a provider whose `whenSynced` never resolves, so the open file
+ *  still re-binds instead of silently syncing to OPFS alone. Comfortably above the
+ *  webrtc grace so it never pre-empts a healthy sync — and harmless if it does,
+ *  since it only triggers a rebind attempt, never the snapshot reconcile. */
+const SESSION_READY_GRACE_MS = 6000
+
 export interface CollabSessionOptions {
   roomId: string
   project: Project
@@ -90,6 +99,14 @@ export interface CollabSessionOptions {
    *  restart otherwise never bumps `revision`, so the open file stayed unbound and
    *  post-restart edits never entered the shared doc (H1). */
   onFilesChanged?(): void
+  /** Fired once the session's initial local(IndexedDB)+durable(blob) sync has
+   *  settled and the doc's `files` are populated with the mirror open — a definite
+   *  "ready to bind" signal. The app uses it to DETERMINISTICALLY rebind the open
+   *  editor to THIS session's Y.Text, rather than waiting on a `files`-map change
+   *  event that a reused-room restart (reconciled content identical to Project)
+   *  never produces (H1). Fires uniformly for host and guest; bounded by a fallback
+   *  timer so a stuck provider can't strand the rebind. */
+  onSessionReady?(): void
 }
 
 export class CollabSession {
@@ -103,7 +120,10 @@ export class CollabSession {
   private api: WarshaApi | null
   private freshRoom: boolean
   private owner: boolean
-  private snapshot?: FsSnapshot
+  /** The live host project — snapshotted FRESH at reconcile time so a reused-room
+   *  rehost captures edits the host made between Start and the initial sync
+   *  settling, instead of a stale begin-time snapshot that would clobber them. */
+  private project: Project
   private seedMeta?: { name?: string; entry?: string | null }
   private onPresence?: (peers: Peer[]) => void
   private onMeta?: (meta: DocMeta) => void
@@ -111,6 +131,10 @@ export class CollabSession {
   private onSynced?: () => void
   private onReadOnly?: (readOnly: boolean) => void
   private onFilesChanged?: () => void
+  private onSessionReady?: () => void
+  /** Latches the once-only "session ready" signal (H1) so neither the normal
+   *  settle nor the bounded fallback can fire it twice. */
+  private readyFired = false
   /** Viewer role, learned from the server after connect (guests only). The editor
    *  binding reads this through a getter, so flipping it makes the open file
    *  rebuild read-only. A non-owner guest starts read-only (fail-closed, H1) and
@@ -139,7 +163,7 @@ export class CollabSession {
     // rejoining after a reload (M2), always edit.
     this.roleReadOnly = !this.owner && !opts.host
     this.api = opts.api
-    this.snapshot = opts.snapshot
+    this.project = opts.project
     this.seedMeta = opts.meta
     this.onPresence = opts.onPresence
     this.onMeta = opts.onMeta
@@ -147,6 +171,7 @@ export class CollabSession {
     this.onSynced = opts.onSynced
     this.onReadOnly = opts.onReadOnly
     this.onFilesChanged = opts.onFilesChanged
+    this.onSessionReady = opts.onSessionReady
     this.user = opts.user ?? makeUser()
 
     this.doc = new Y.Doc()
@@ -272,19 +297,51 @@ export class CollabSession {
           }),
         )
       }
+      // Bounded fallback: fire the deterministic rebind signal even if a provider's
+      // `whenSynced` never resolves. Never touches the reconcile (that stays gated
+      // on the real settle below), so a premature fire only prompts a harmless
+      // rebind attempt — the open file may not yet be a tracked doc, and the real
+      // settle re-fires markReady once it is.
+      const fallback = setTimeout(() => this.markReady(), SESSION_READY_GRACE_MS)
       void Promise.allSettled(waits).then(() => {
+        clearTimeout(fallback)
         if (this.destroyed) return
         // Re-hosting: reconcile the CURRENT project state into the loaded doc —
         // per-key minimal edits (snapshotToYdoc), never a duplicate blind seed.
-        if (this.host && this.snapshot) {
-          snapshotToYdoc(this.snapshot, this.doc, {
+        // The snapshot is taken FRESH here, not at begin(): a reused-room restart
+        // where the host typed between Start and this settle would otherwise be
+        // reconciled against a stale begin-time snapshot, whose replaceYText forces
+        // the open file's Y.Text back to the pre-edit text — silently DELETING the
+        // post-restart edits the bound editor had already inserted (H1). The live
+        // project (edits materialise into it) is the authoritative rehost state.
+        if (this.host) {
+          snapshotToYdoc(this.project.snapshot(), this.doc, {
             name: this.seedMeta?.name,
             entry: this.seedMeta?.entry ?? null,
           })
         }
         this.bridge.enableMirror()
+        // Deterministic H1 rebind: the doc's `files` are now loaded and the mirror
+        // is open, so the app can bind the open editor to THIS session's Y.Text
+        // right now — no dependence on a `files`-map change event that a reused-room
+        // restart (content identical to Project) never emits. Idempotent via the
+        // readyFired latch, so the fallback above can't double-fire it.
+        this.markReady()
       })
+    } else {
+      // Fresh-room host: the doc was seeded synchronously and the mirror is on from
+      // construction, so the session is ready to bind the open file immediately.
+      this.markReady()
     }
+  }
+
+  /** Fire the once-only "session ready" rebind signal (H1). Guarded so the normal
+   *  settle and the bounded fallback are mutually idempotent, and so nothing fires
+   *  after teardown. */
+  private markReady(): void {
+    if (this.readyFired || this.destroyed) return
+    this.readyFired = true
+    this.onSessionReady?.()
   }
 
   /**

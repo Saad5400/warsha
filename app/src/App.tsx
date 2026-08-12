@@ -15,7 +15,7 @@ import { exportZip } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
-import { useCollab, CollabControl, peekRoomFromUrl, type Peer } from './collab'
+import { useCollab, CollabControl, peekRoomFromUrl, type Peer, type CollabBinding } from './collab'
 import { createApi } from './collab/api'
 import { currentToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
@@ -331,21 +331,35 @@ function Ide({ report }: { report: CapabilityReport }) {
   // tracked doc (its Y.Text synced in — `revision` bumps as the materializer runs),
   // rebind it. One-shot per path via the ref, so this is not a per-keystroke rebuild.
   const collabBoundPath = useRef<string | null>(null)
+  // The binding object identity of the session collabBoundPath was last resolved
+  // against. A new session hands us a NEW binding, at which point the old session's
+  // collabBoundPath is meaningless — clearing it here, before any rebind decision,
+  // is what makes a reused-room restart deterministic (H1): a stale "activePath is
+  // already bound" from the torn-down session can no longer suppress the rebind,
+  // regardless of React effect ordering around the `active` flag.
+  const collabBoundBinding = useRef<CollabBinding | null>(null)
   useEffect(() => {
     if (!collab.active) {
       collabBoundPath.current = null
+      collabBoundBinding.current = null
       return
+    }
+    if (collabBoundBinding.current !== collab.binding) {
+      collabBoundBinding.current = collab.binding
+      collabBoundPath.current = null
     }
     if (!collab.binding || !activePath) return
     if (collab.binding.isCollab(activePath) && collabBoundPath.current !== activePath) {
       collabBoundPath.current = activePath
       editorRef.current?.setCollab(collab.binding)
     }
-    // `collab.filesRev` (H1): a restarted reused-room session loads its persisted
-    // doc whose content matches Project verbatim, so `revision` never bumps — the
-    // files-map signal is what re-runs this effect the moment the open file's new
-    // Y.Text exists, so it rebinds and post-restart edits resume propagating.
-  }, [collab.active, collab.binding, activePath, revision, collab.filesRev])
+    // `collab.readyRev` (H1) is the DETERMINISTIC trigger: it bumps once this
+    // session's initial local+durable sync has settled with the mirror open, so
+    // the open file's Y.Text is guaranteed to exist and `isCollab(activePath)` is
+    // true — the reused-room restart rebinds here without racing any change event.
+    // `collab.filesRev` stays a backstop for a guest's late-arriving files, and
+    // `revision` covers a materialise that also bumped the Project.
+  }, [collab.active, collab.binding, activePath, revision, collab.filesRev, collab.readyRev])
 
   // Which local project a room materialises into (persisted, per device). Both the
   // host (on start) and a guest (on first join) record it, so a reload rejoins the

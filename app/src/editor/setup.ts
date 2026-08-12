@@ -1661,6 +1661,18 @@ export function createEditor(
       // made Project match before this fires), so yCollab initialises cleanly.
       const p = path
       const content = view.state.doc.toString()
+      // H1: when this file becomes collab-bound but the local editor holds text
+      // the Y.Text does NOT yet have — a reused-room restart where the host typed
+      // into the still-unbound editor between Start and the async rebind — splice
+      // those local edits INTO the Y.Text first. yCollab's sync plugin only
+      // observes its Y.Text; it never reconciles a mismatched initial CM doc, so
+      // without this the pre-bind edits would sit in CM/OPFS forever and never
+      // reach the shared doc, the blob store, or peers ("Live" but silently dead).
+      // replaceDoc is a minimal diff (a no-op on the normal path, where the
+      // materializer already made content == Y.Text) and is swallowed for a
+      // read-only viewer — so this only ever captures a writable participant's own
+      // un-synced local edits, never clobbers with a viewer's or an empty buffer.
+      if (binding?.isCollab(p)) binding.replaceDoc(p, content)
       applying = true
       view.setState(stateFor(p, content))
       applying = false

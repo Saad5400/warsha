@@ -66,6 +66,12 @@ export interface CollabState {
    *  re-attaches the open file to its new Y.Text even when the reconciled content
    *  matches Project verbatim and `revision` never bumps (H1). */
   filesRev: number
+  /** Bumps once per session when its initial local+durable sync has settled (the
+   *  doc's files are loaded and the mirror is open). The App keys the open-file
+   *  editor rebind off this so a restarted (reused-room) session DETERMINISTICALLY
+   *  re-attaches the open file to its new Y.Text — no dependence on a files-map
+   *  change event that never fires when the reconciled content matches Project (H1). */
+  readyRev: number
   /** Host a new room from the current project; returns the shareable join URL (or null).
    *  Reuses the project's previous room id when it had one. */
   start(): Promise<string | null>
@@ -103,6 +109,7 @@ export function useCollab(opts: UseCollabOptions): CollabState {
   const [roomMeta, setRoomMeta] = useState<DocMeta | null>(null)
   const [readOnly, setReadOnly] = useState(false)
   const [filesRev, setFilesRev] = useState(0)
+  const [readyRev, setReadyRev] = useState(0)
 
   // Read inside stable callbacks (start) without re-creating them per render.
   const currentProjectIdRef = useRef(currentProjectId)
@@ -150,9 +157,14 @@ export function useCollab(opts: UseCollabOptions): CollabState {
         onStatus: setStatus,
         onSynced: () => setSynced(true),
         onReadOnly: setReadOnly,
-        // A structural change to the doc's files map — the App's editor-rebind
-        // trigger for a reused-room restart whose content matches Project (H1).
+        // A structural change to the doc's files map — a backstop editor-rebind
+        // trigger for late-arriving files (a guest materialising in) (H1).
         onFilesChanged: () => setFilesRev((n) => n + 1),
+        // The PRIMARY, deterministic editor-rebind trigger (H1): fires once this
+        // session's initial sync has settled with the mirror open, so the open
+        // file is guaranteed bindable — the reused-room restart fix that no longer
+        // races a files-map change event.
+        onSessionReady: () => setReadyRev((n) => n + 1),
       })
       sessionRef.current = session
       setRoomId(id)
@@ -236,5 +248,5 @@ export function useCollab(opts: UseCollabOptions): CollabState {
   // bridge's project-epoch gate has already made the session inert.
   useEffect(() => () => void teardown(), [currentProjectId, teardown])
 
-  return { active: roomId !== null, roomId, isHost, synced, status, peers, binding, roomMeta, readOnly, filesRev, start, join, stop, flush, setMeta, setLinkAccess }
+  return { active: roomId !== null, roomId, isHost, synced, status, peers, binding, roomMeta, readOnly, filesRev, readyRev, start, join, stop, flush, setMeta, setLinkAccess }
 }
