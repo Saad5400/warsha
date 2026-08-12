@@ -40,6 +40,17 @@ export interface UseCollabOptions {
   entryPath: string | null
   /** Resolves once storage is attached (useProject.whenReady). */
   whenReady(): Promise<void>
+  /** Push the per-file editor binding into the singleton editor SYNCHRONOUSLY, the
+   *  instant a session is created (and null on teardown) — not a render later. The
+   *  binding carries the guest's fail-closed read-only role through `readOnly()`, and
+   *  the editor reads it when it first constructs a file's state. Routing the binding
+   *  only through the React `binding` state let the auto-opened entry file build (and
+   *  briefly accept edits) BEFORE the read-only facet was applied, a window prod
+   *  latency widened enough for a keystroke to land locally (H1). Called before
+   *  `connect()` materialises anything, so the first paint of any collab file is
+   *  already read-only for an unresolved guest. The `binding` state stays a backstop
+   *  (editor mounting after the session; the writable flip when role=editor resolves). */
+  onBinding?(binding: CollabBinding | null): void
 }
 
 export interface CollabState {
@@ -92,6 +103,10 @@ export interface CollabState {
 
 export function useCollab(opts: UseCollabOptions): CollabState {
   const { project, currentProjectId, currentProjectName, entryPath, whenReady } = opts
+  // Behind a ref so the stable `begin`/`teardown` callbacks push the binding without
+  // taking `onBinding` as a dependency (which would rebuild them on every render).
+  const onBindingRef = useRef(opts.onBinding)
+  onBindingRef.current = opts.onBinding
   // Null when VITE_WARSHA_API is unset — the session still runs locally
   // (IndexedDB + same-origin cross-tab WebRTC), just without the backend.
   // `currentToken` resolves per request: the account session token when signed
@@ -126,6 +141,9 @@ export function useCollab(opts: UseCollabOptions): CollabState {
     setBinding(null)
     setRoomMeta(null)
     setReadOnly(false)
+    // Drop the binding from the editor synchronously too, so a stopped session's
+    // read-only facet can't linger on the next state build (symmetric with begin).
+    onBindingRef.current?.(null)
     if (!session) return
     // Best-effort final flush BEFORE destroy — BlobSyncProvider.destroy() drops
     // pending state, so without this the last debounce-window of edits was lost.
@@ -179,6 +197,16 @@ export function useCollab(opts: UseCollabOptions): CollabState {
       // that re-binds the open editor (see App's setCollab effect on collab.readOnly).
       setReadOnly(!(host || owner))
       setBinding(session.binding)
+      // Push the binding into the editor NOW, synchronously — before connect()
+      // materialises the doc and the auto-open effect opens the entry file. The React
+      // `binding` state lands a render later (a parent effect that a fresh guest's
+      // child editor-open effect can beat), so without this the entry file's first
+      // EditorState was built with `collab == null` — writable — and a keystroke in
+      // that window landed locally before the read-only rebuild (H1). The editor reads
+      // `binding.readOnly()` (fail-closed true for an unresolved guest) at state build,
+      // so this guarantees the very first paint is read-only. Idempotent with the
+      // `binding`-state effect that re-pushes it (and covers an editor mounting later).
+      onBindingRef.current?.(session.binding)
       // Anonymous sync authenticates as the device principal — make sure its token
       // is minted before connect() opens the blob store (else its first GET/PUT
       // would 401 and terminate durable sync). Skipped when signed in (the session

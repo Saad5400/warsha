@@ -274,6 +274,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     currentProjectName: currentProject?.name,
     entryPath,
     whenReady,
+    // Push the binding into the editor SYNCHRONOUSLY the instant a session is created,
+    // before its doc materialises and the auto-open effect opens the entry file. The
+    // `collab.binding` state effect below lands a render later — a window a fresh
+    // guest's editor-open effect can beat, building the entry file writable before the
+    // read-only facet applies (H1). With the binding present, the file's first
+    // EditorState reads the guest's fail-closed `readOnly()` and paints read-only.
+    onBinding: (binding) => editorRef.current?.setCollab(binding),
   })
   // The singleton editor is told about the binding whenever it changes or the
   // editor (re)mounts — setCollab rebuilds the open file's state around yCollab.
@@ -2492,9 +2499,20 @@ function Ide({ report }: { report: CapabilityReport }) {
                   onSave={saveAllQuiet}
                   onController={(c) => {
                     editorRef.current = c
+                    // Push the live binding SYNCHRONOUSLY the instant the controller
+                    // exists, BEFORE the Editor's own file-open effect runs (mount
+                    // effect precedes the open effect in declaration order). A fresh
+                    // guest joins (binding set) BEFORE this editor mounts, so the
+                    // `onBinding` push in begin found no controller and the setEditorReady
+                    // effect below lands a render too late — the entry file opened with
+                    // `collab == null` (writable) and briefly accepted a keystroke under
+                    // latency (H1). Pushing here means the first EditorState reads the
+                    // guest's fail-closed `readOnly()` and paints read-only.
+                    if (c) c.setCollab(collabRef.current.binding)
                     // Flags the effect above to (re)push the collab binding once
                     // the singleton editor exists — covers a room joined before
-                    // the first file opened the editor.
+                    // the first file opened the editor, and the read-only→writable
+                    // flip when the server resolves role=editor.
                     setEditorReady(!!c)
                   }}
                   // Only offered behind a drawer — docked, the files are already visible.
