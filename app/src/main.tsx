@@ -20,6 +20,10 @@ initLocale()
 declare global {
   interface Window {
     __warshaErrors?: string[]
+    /** Installed by the cold-load splash in index.html; called once the shell has
+     *  mounted and painted so the splash can finish its cycle and fade out. The
+     *  splash deletes it after dismissal, so guard the call. */
+    __appReady?: () => void
   }
 }
 window.__warshaErrors = []
@@ -45,3 +49,13 @@ createRoot(host).render(
     </CrashScreen>
   </StrictMode>,
 )
+
+// The initial mount commits synchronously, so the shell's real content is in the
+// DOM by now; two rAFs guarantee the browser has actually painted it before we let
+// the cold-load splash (index.html) dismiss itself. Guarded because the splash
+// deletes the global after it fades — and it may already have gone on its failsafe.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    window.__appReady?.()
+  })
+})
