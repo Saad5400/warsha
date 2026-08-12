@@ -474,9 +474,15 @@
           ctx.fillStyle = C.frame
           ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-          // stage->screen (cover) composed with the camera; focal point sits at screen centre
+          // stage->screen composed with the camera; focal point sits at screen centre.
+          // Fill the viewport (cover) on landscape, where the wide 16:9 shot fits its
+          // aspect; but on a viewport taller/narrower than 16:9, cover would blow the
+          // content up until the sides (code lines, vise jaws) fall off the screen. Cap
+          // the scale at 1.4x the width-fit there, so a phone scales the whole shot down
+          // to fit its width and the centred action always stays on screen.
           var cam = camAt(T)
-          var fit = Math.max(VW / 1920, VH / 1080)
+          var fitW = VW / 1920, fitH = VH / 1080
+          var fit = Math.min(Math.max(fitW, fitH), fitW * 1.4)
           var s = fit * cam.s
           ctx.setTransform(
             dpr * s, 0, 0, dpr * s,
