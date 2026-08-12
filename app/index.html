@@ -330,6 +330,17 @@
         var reduce =
           window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+        // Play the full animation on a first visit only; on return visits dismiss as
+        // soon as the app is ready. localStorage so it persists across sessions — and
+        // because the flag is only set once the splash actually begins dismissing, a
+        // genuine first visit (which coi-serviceworker reloads once, before the app
+        // boots) still plays in full on the post-reload load. Blocked storage falls
+        // back to treating the load as a first visit — the safe, more-generous default.
+        var SEEN_KEY = 'warsha:splash-seen'
+        var firstVisit = true
+        try { firstVisit = !localStorage.getItem(SEEN_KEY) } catch (e) {}
+        var markSeen = function () { try { localStorage.setItem(SEEN_KEY, '1') } catch (e) {} }
+
         /* ---- palette (v5 monochrome tokens) ---- */
         var C = {
           frame: '#09090B', canvas: '#0E0E11', panel: '#151519', border: '#242429',
@@ -594,17 +605,21 @@
         var beginFade = function () {
           if (dismissing) return
           dismissing = true
+          markSeen() // this visit has now seen the splash; future visits fast-dismiss
           host.classList.add('warsha-splash--done')
           var done = false
           var finish = function () { if (done) return; done = true; cleanup() }
           host.addEventListener('transitionend', finish)
           setTimeout(finish, 700) // fallback if transitionend never fires
         }
-        // On ready: finish the current scene, then fade. force = dismiss immediately.
+        // force (failsafe) or reduced-motion dismiss immediately. A return visitor
+        // dismisses as soon as the app is ready. A first-time visitor holds until the
+        // animation has played one full cycle (fade at the seam), or — if the app was
+        // still loading past that first cycle — finishes the current scene and fades.
         var requestDismiss = function (force) {
           if (dismissing) return
-          if (force || reduce) { beginFade(); return }
-          if (fadeAt === null) fadeAt = elapsed + graceToBoundary(elapsed % LOOP)
+          if (force || reduce || !firstVisit) { beginFade(); return }
+          if (fadeAt === null) fadeAt = elapsed < LOOP ? LOOP : elapsed + graceToBoundary(elapsed % LOOP)
         }
 
         var frame = function (ts) {
