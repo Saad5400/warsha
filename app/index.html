@@ -431,6 +431,14 @@
         var blink = function (T) { return 0.55 + 0.45 * Math.cos((2 * Math.PI * T) / 0.6) }
         var WRITE = [[0.06, 0.62, 0], [0.66, 1.12, 1], [1.16, 1.62, 2]]
         var LOOP = 6.5
+        // The finished frame: output printed, success bar full, before any teardown
+        // or caret-return. This is where the animation "lands" — the splash settles
+        // and fades here rather than at the loop seam, and the loop lingers here for
+        // HOLD seconds so it breathes instead of snapping straight back to the caret.
+        var FINALE = 6.15, HOLD = 0.8, PERIOD = LOOP + HOLD
+        // Map a period-phase (0..PERIOD) to an animation time T, freezing at FINALE
+        // for the hold so the finished frame lingers before the teardown resumes.
+        var timeAt = function (p) { return p < FINALE ? p : p < FINALE + HOLD ? FINALE : p - HOLD }
 
         /* ---- a rounded-rect path with independent corner radii ---- */
         var path = function (x, y, w, h, tl, tr, br, bl) {
@@ -590,10 +598,13 @@
 
         /* ---- lifecycle: rAF loop, ready handshake, fade-out, failsafe ---- */
         var raf = 0, startTs = null, elapsed = 0, dismissing = false, fadeAt = null
-        var SCENE_ENDS = [1.66, 2.2, 3.0, 3.95, 6.5] // cumulative scene boundaries
-        var graceToBoundary = function (T) {
-          for (var i = 0; i < SCENE_ENDS.length; i++) { if (SCENE_ENDS[i] > T + 0.12) return SCENE_ENDS[i] - T }
-          return LOOP - T // to the seam
+        var frozenT = null // animation time held (frozen) under the fade — no restart shows through
+        // Absolute time of the next finale (the landed, finished frame) at/after `from`.
+        var nextFinale = function (from) {
+          var k = Math.floor(from / PERIOD)
+          var cand = k * PERIOD + FINALE
+          if (cand < from) cand += PERIOD
+          return cand
         }
 
         var cleanup = function () {
@@ -602,9 +613,13 @@
           if (host && host.parentNode) host.parentNode.removeChild(host)
           try { delete window.__appReady } catch (e) { window.__appReady = undefined }
         }
-        var beginFade = function () {
+        // Freeze the frame we fade from so the loop never visibly restarts underneath the
+        // fade: holdAt = FINALE for a settled first-visit exit, or the current frame for
+        // an immediate dismiss.
+        var beginFade = function (holdAt) {
           if (dismissing) return
           dismissing = true
+          frozenT = holdAt != null ? holdAt : timeAt(elapsed % PERIOD)
           markSeen() // this visit has now seen the splash; future visits fast-dismiss
           host.classList.add('warsha-splash--done')
           var done = false
@@ -614,19 +629,19 @@
         }
         // force (failsafe) or reduced-motion dismiss immediately. A return visitor
         // dismisses as soon as the app is ready. A first-time visitor holds until the
-        // animation has played one full cycle (fade at the seam), or — if the app was
-        // still loading past that first cycle — finishes the current scene and fades.
+        // animation lands on its finished frame — playing at least one full cycle — and
+        // fades from that settled frame rather than from a fresh loop's opening.
         var requestDismiss = function (force) {
           if (dismissing) return
           if (force || reduce || !firstVisit) { beginFade(); return }
-          if (fadeAt === null) fadeAt = elapsed < LOOP ? LOOP : elapsed + graceToBoundary(elapsed % LOOP)
+          if (fadeAt === null) fadeAt = nextFinale(elapsed)
         }
 
         var frame = function (ts) {
           if (startTs === null) startTs = ts
           elapsed = (ts - startTs) / 1000
-          draw(elapsed % LOOP)
-          if (fadeAt !== null && !dismissing && elapsed >= fadeAt) beginFade()
+          if (fadeAt !== null && !dismissing && elapsed >= fadeAt) beginFade(FINALE)
+          draw(dismissing ? frozenT : timeAt(elapsed % PERIOD))
           raf = requestAnimationFrame(frame)
         }
 
