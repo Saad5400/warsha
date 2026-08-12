@@ -36,6 +36,18 @@ export interface CollabBinding {
    * and setup.ts rebuilds the open file's state when it flips.
    */
   readOnly(): boolean
+  /**
+   * True for a GENUINE GUEST (not a host, not an owner-rejoin) whose edits must go
+   * through the file's Y.Text ONLY. Such a guest must not be allowed to type into a
+   * file that has not yet bound to its Y.Text: those keystrokes would reach neither
+   * the Y.Text (no yCollab extension yet) nor OPFS (onChange is suppressed once the
+   * file is collab), living in a throwaway CM buffer that is overwritten at bind —
+   * the data-loss window. setup.ts pairs this with "is this file bound yet?" to keep
+   * the guest read-only until its Y.Text arrives; once bound it types straight in.
+   * A host / owner-rejoin returns false: it may safely edit an unbound file (its
+   * local edits are seeded/reconciled into the doc, never discarded).
+   */
+  guarded(): boolean
 }
 
 export function createEditorBinding(
@@ -43,6 +55,8 @@ export function createEditorBinding(
   awareness: Awareness,
   /** Learns the local participant's read-only role — see `CollabBinding.readOnly`. */
   isReadOnly: () => boolean = () => false,
+  /** Learns whether the local participant is a guarded guest — see `CollabBinding.guarded`. */
+  isGuarded: () => boolean = () => false,
 ): CollabBinding {
   const files = filesMap(doc)
   // One UndoManager per file, tracking only local (sync-plugin) edits — so undo
@@ -75,6 +89,7 @@ export function createEditorBinding(
 
   return {
     readOnly: isReadOnly,
+    guarded: isGuarded,
     isCollab(path) {
       return files.has(path)
     },

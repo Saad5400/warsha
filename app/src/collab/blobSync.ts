@@ -31,11 +31,18 @@
  */
 import * as Y from 'yjs'
 import type { WarshaApi } from './api'
+import { filesMap } from './doc'
 
 /** Marks updates this provider applies to the doc, so our own `update` handler ignores them. */
 const ORIGIN = Symbol('blobSync')
 
 const DEFAULT_DEBOUNCE_MS = 800
+/** GUEST 404 retry (contract §5): a fresh guest's initial GET can 404 because the
+ *  host's seed PUT hasn't landed yet. Rather than fall back to slow WebRTC P2P
+ *  (~10s between real remote devices) for the doc, re-GET a few times on a short
+ *  interval until the seed appears — the durable store then delivers it in ~1s. */
+const DOC_RETRY_INTERVAL_MS = 700
+const DOC_RETRY_MAX_ATTEMPTS = 8
 /** A 409 can immediately 409 again if a third writer is racing; cap the retry loop. */
 const MAX_RETRIES = 5
 /** Client-side twin of the server's per-PUT cap (contract §3) — checked BEFORE the
@@ -74,8 +81,8 @@ export class BlobSyncProvider {
   readonly docId: string
   /** Origins whose updates are REMOTE (other providers on the same doc): they do
    *  not schedule a push here — the peer that authored them persists them. The
-   *  session registers its y-webrtc / y-indexeddb instances (and y-webrtc's inner
-   *  Room, which is what it passes as the applyUpdate origin). */
+   *  session registers its y-indexeddb instance and its WebsocketProvider (the
+   *  y-websocket provider is what it passes as the applyUpdate origin). */
   readonly remoteOrigins = new Set<unknown>()
   private doc: Y.Doc
   private api: WarshaApi
@@ -122,6 +129,15 @@ export class BlobSyncProvider {
       // Freshly minted room: nothing to GET (and a GET would just 404).
       this.resolveSynced()
       this.onStatus?.('idle')
+      // Fresh-room host seed: push it NOW instead of waiting out the ~800ms debounce
+      // the constructor scheduled. The seed is what a joining guest GETs, and the
+      // guest's blob GET can arrive before that debounce fires — landing a 404 that
+      // forces the guest onto slow WebRTC P2P (~10s between real remote devices).
+      // Flushing immediately makes the doc available on the store as early as possible;
+      // it awaits whenSynced (already resolved) and is idempotent/guarded, so this is
+      // one push, not a loop — the scheduled debounce still governs later edits (and
+      // finds nothing dirty once this lands).
+      if (this.dirty) void this.flush()
       return
     }
     const got = await this.api.getDoc(this.docId)
@@ -143,7 +159,14 @@ export class BlobSyncProvider {
         // store is unreachable — the doc still works over IndexedDB/WebRTC.
         this.onStatus?.(got.error === 'network' ? 'offline' : 'idle')
       }
+      // Resolve whenSynced after this FIRST attempt regardless — connect()'s
+      // allSettled/enableMirror timing must be unchanged. The 404 retry below runs
+      // in the BACKGROUND (a fresh guest whose GET 404'd because the host's seed PUT
+      // hasn't landed): it re-GETs so the doc arrives over the durable store in ~1s
+      // instead of waiting on slow WebRTC P2P. 'network' does not retry — its own
+      // failure handling / the live layers own recovery there.
       this.resolveSynced()
+      if (got.error === 'not-found') void this.pollForDoc()
       return
     }
     this.version = got.version
@@ -155,6 +178,46 @@ export class BlobSyncProvider {
     }
     this.resolveSynced()
     this.onStatus?.('idle')
+  }
+
+  /**
+   * Background retry after an initial 404 (guest joining a fresh room): the host's
+   * seed PUT may simply not have landed at the store yet. Poll `getDoc` a few times
+   * on a short interval so the doc arrives over the DURABLE store within ~1s, rather
+   * than the guest falling back to slow WebRTC P2P (~10s between real remote devices)
+   * for the whole doc. Stops early the moment content arrives by ANY route — another
+   * provider (webrtc/idb) populating the doc store, or the files map filling in — so
+   * it never GETs pointlessly once the content is already here. Cancel-safe: every
+   * await is guarded by `destroyed`, and `stopped` (a terminal 401/403) ends it.
+   */
+  private async pollForDoc(): Promise<void> {
+    for (let attempt = 0; attempt < DOC_RETRY_MAX_ATTEMPTS; attempt++) {
+      // Content already here via a sibling provider (or an earlier iteration)? Done.
+      if (this.destroyed || this.stopped) return
+      if (this.doc.store.clients.size > 0 || filesMap(this.doc).size > 0) return
+      await new Promise((r) => setTimeout(r, DOC_RETRY_INTERVAL_MS))
+      if (this.destroyed || this.stopped) return
+      if (this.doc.store.clients.size > 0 || filesMap(this.doc).size > 0) return
+      const got = await this.api.getDoc(this.docId)
+      if (this.destroyed || this.stopped) return
+      if ('error' in got) {
+        // A terminal auth/forbidden mid-poll ends it (start()'s first attempt already
+        // set the status/stopped for those; here we just stop re-GETting). 'not-found'
+        // and 'network' simply retry until the cap.
+        if (got.error === 'auth' || got.error === 'forbidden') return
+        continue
+      }
+      // Success — apply exactly like start()'s success path.
+      this.version = got.version
+      if (got.blob && got.blob.length) {
+        Y.applyUpdate(this.doc, got.blob, ORIGIN)
+        // Clear the stale construction-time dirty flag if the store already holds
+        // everything we have (same guard start() uses), so we don't PUT it back.
+        if (this.dirty && this.serverHasOurState(got.blob)) this.dirty = false
+      }
+      this.onStatus?.('idle')
+      return
+    }
   }
 
   /**

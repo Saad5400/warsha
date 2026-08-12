@@ -7,8 +7,15 @@
  *
  * Construction is two-phase: the synchronous `create*` sets up the doc, bridge,
  * editor binding and local persistence immediately; `connect()` then does the
- * async part (fetch ICE, open WebRTC + the blob CAS provider). Connecting is
- * deliberately post-mount — no socket is opened during boot (contract edge #4).
+ * async part (mint a ticket, open the live WebSocket relay + the blob CAS
+ * provider). Connecting is deliberately post-mount — no socket is opened during
+ * boot (contract edge #4).
+ *
+ * The live layer is a server-relayed WebSocket (y-websocket), NOT y-webrtc P2P:
+ * STUN-only P2P dies behind symmetric NAT (school networks — the target users),
+ * so a relay that always connects is both more reliable and lets the server drop
+ * a read-only peer's writes. It stays LIGHT — only tiny Yjs deltas cross it; the
+ * heavy durable snapshots go to S3 via BlobSyncProvider, never through the relay.
  *
  * Seeding rules (contract §5):
  *  - host + FRESH room: seed the doc from the snapshot synchronously; the mirror
@@ -24,7 +31,7 @@
  *    minted fresh Y.Texts that clobbered the real ones arriving later).
  */
 import * as Y from 'yjs'
-import { WebrtcProvider } from 'y-webrtc'
+import { WebsocketProvider } from 'y-websocket'
 import { IndexeddbPersistence } from 'y-indexeddb'
 import { Awareness } from 'y-protocols/awareness'
 import type { Project } from '../fs/project'
@@ -38,14 +45,11 @@ import { BlobSyncProvider, type SyncStatus } from './blobSync'
 
 export type { SyncStatus }
 
-/** A public STUN, the dev default when `/v1/ice` isn't reachable (contract §4). */
-const DEFAULT_ICE: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }]
-
 /** How long the mirror gate grants the LIVE layer to deliver the doc before
  *  reconciling. The blob store can honestly 404 (nothing persisted yet) while a
- *  peer's state is mid-flight over WebRTC/BroadcastChannel — reconciling a full
- *  local project against that not-yet-arrived doc would mint duplicate Y.Texts. */
-const WEBRTC_SYNC_GRACE_MS = 3000
+ *  peer's state is mid-flight over the WebSocket relay — reconciling a full local
+ *  project against that not-yet-arrived doc would mint duplicate Y.Texts. */
+const WS_SYNC_GRACE_MS = 3000
 
 /** Upper bound on waiting for the blob layer before probing the caller's role
  *  (contract §7.4). Keeps a viewer's read-only flip prompt even if durable sync
@@ -54,17 +58,18 @@ const ROLE_PROBE_GRACE_MS = 2500
 
 /** Upper bound on waiting for the provider stack's initial sync before firing the
  *  deterministic "session ready" rebind signal anyway (H1). The normal path fires
- *  it the instant IndexedDB+blob settle (webrtc is separately grace-bounded above);
- *  this only covers a provider whose `whenSynced` never resolves, so the open file
- *  still re-binds instead of silently syncing to OPFS alone. Comfortably above the
- *  webrtc grace so it never pre-empts a healthy sync — and harmless if it does,
+ *  it the instant IndexedDB+blob settle (the live socket is separately grace-bounded
+ *  above); this only covers a provider whose `whenSynced` never resolves, so the open
+ *  file still re-binds instead of silently syncing to OPFS alone. Comfortably above the
+ *  live-sync grace so it never pre-empts a healthy sync — and harmless if it does,
  *  since it only triggers a rebind attempt, never the snapshot reconcile. */
 const SESSION_READY_GRACE_MS = 6000
 
 export interface CollabSessionOptions {
   roomId: string
   project: Project
-  /** Null when offline / no account — the session still runs (IndexedDB + cross-tab WebRTC). */
+  /** Null when offline / no account — the session still runs (IndexedDB only; the
+   *  live WebSocket relay needs the server). */
   api: WarshaApi | null
   /** True for the host that seeds the room from its snapshot; false for a guest joining. */
   host: boolean
@@ -148,7 +153,7 @@ export class CollabSession {
   private meta: Y.Map<unknown>
   private bridge: ProjectBridge
   private idb: IndexeddbPersistence | null = null
-  private webrtc: WebrtcProvider | null = null
+  private ws: WebsocketProvider | null = null
   private blob: BlobSyncProvider | null = null
   private destroyed = false
 
@@ -191,7 +196,18 @@ export class CollabSession {
     this.bridge = new ProjectBridge(this.doc, opts.project, { mirror: opts.host && this.freshRoom })
     // The binding reads `roleReadOnly` live: a guest starts writable and flips to
     // read-only once the server resolves a viewer role (resolveRole in connect()).
-    this.binding = createEditorBinding(this.doc, this.awareness, () => this.roleReadOnly)
+    // It also reads `guarded` live: a GENUINE GUEST (`!this.owner` — a host and an
+    // owner-rejoin both have owner=true) must never edit a file whose Y.Text has not
+    // bound yet, or the keystrokes typed during the connect window are discarded at
+    // bind (the data-loss bug). setup.ts keeps such a guest read-only until the open
+    // file carries yCollab; the owner/host path is unaffected (it may edit unbound
+    // files, its edits are seeded/reconciled into the doc).
+    this.binding = createEditorBinding(
+      this.doc,
+      this.awareness,
+      () => this.roleReadOnly,
+      () => !this.owner,
+    )
 
     // Surface the doc's meta (name/entry). Fires now for a host that seeded it,
     // and again for a guest once the name/entry sync in over a provider.
@@ -207,7 +223,7 @@ export class CollabSession {
     this.filesObserved = true
 
     // "Synced" = this session has something real to show. A host always does; a
-    // guest does once file content arrives (idb/blob/webrtc all funnel into the
+    // guest does once file content arrives (idb/blob/live-sync all funnel into the
     // files map) or another peer is present.
     if (this.host) {
       this.fireSynced()
@@ -225,24 +241,37 @@ export class CollabSession {
     }
   }
 
-  /** The async half: ICE + live WebRTC + the durable blob CAS provider. */
+  /** The async half: the live WebSocket relay + the durable blob CAS provider. */
   async connect(): Promise<void> {
     if (this.destroyed) return
 
-    // WebRTC (contract §5.2). Even with no signaling server (offline / no API),
-    // y-webrtc still connects same-origin browser tabs over BroadcastChannel, so
-    // this is an additive win rather than dead weight.
-    const iceServers = (this.api ? await this.api.getIce() : null) ?? DEFAULT_ICE
-    if (this.destroyed) return
-    const signaling = this.api ? [this.api.signalingUrl()] : []
-    try {
-      this.webrtc = new WebrtcProvider(this.roomId, this.doc, {
-        signaling,
-        awareness: this.awareness,
-        peerOpts: { config: { iceServers } },
-      })
-    } catch {
-      this.webrtc = null
+    // Live layer (contract §5.2): a server-relayed WebSocket (y-websocket). Needs
+    // the server, so it is skipped entirely when offline / no API — the editor
+    // still works via y-indexeddb + local. (y-webrtc's free same-origin cross-tab
+    // sync is intentionally dropped; a dedicated cross-tab layer is not worth a
+    // dead socket retry loop against a server that isn't there.)
+    if (this.api) {
+      // A single-use ticket authenticates the socket without a bearer in the URL.
+      // Null (mint failed) still connects: the server drops it only if the doc is
+      // private, and the durable + local layers carry on regardless.
+      const ticket = await this.api.mintSyncTicket()
+      if (this.destroyed) return
+      try {
+        this.ws = new WebsocketProvider(this.api.syncUrl(), this.roomId, this.doc, {
+          awareness: this.awareness,
+          params: ticket ? { ticket } : {},
+        })
+        // Re-mint the single-use ticket before EVERY reconnect. y-websocket rebuilds
+        // its connect URL from `params` on each (re)connect but never re-mints, so
+        // after any drop it would reuse the now-consumed ticket → server sees us
+        // anonymous → in a viewer/none-link room the owner is demoted and the live
+        // write-block silently freezes their edits. `connection-close` fires before
+        // every scheduled reconnect, so re-minting there refreshes the ticket the
+        // next URL will carry. See remintTicket for the full why.
+        this.ws.on('connection-close', this.remintTicket)
+      } catch {
+        this.ws = null
+      }
     }
 
     // Durable snapshot store (contract §5.3) — only when there's an API. A host
@@ -256,13 +285,11 @@ export class CollabSession {
         },
       })
       // Updates applied by the sibling providers are remote — the blob provider
-      // must not re-push them (that was the PUT storm / 409 ping-pong). y-webrtc
-      // passes its inner Room as the applyUpdate origin; register both to be safe.
+      // must not re-push them (that was the PUT storm / 409 ping-pong). y-websocket
+      // applies incoming sync updates with the WebsocketProvider instance as the
+      // applyUpdate origin, so registering it is what suppresses the re-push.
       if (this.idb) this.blob.remoteOrigins.add(this.idb)
-      if (this.webrtc) {
-        this.blob.remoteOrigins.add(this.webrtc)
-        if (this.webrtc.room) this.blob.remoteOrigins.add(this.webrtc.room)
-      }
+      if (this.ws) this.blob.remoteOrigins.add(this.ws)
       // A guest asks the server for its effective role — a link-access viewer stays
       // read-only, an editor flips writable (contract §7.4). An owner (host, or this
       // device rejoining a room it started) always edits, so skip the probe.
@@ -272,28 +299,31 @@ export class CollabSession {
     // Open the Project→doc mirror once the doc's initial sync settled (guests and
     // reused-room hosts — a fresh-room host's mirror is on from construction).
     // "Settled" means all three layers: IndexedDB, the blob store, AND the live
-    // layer (first webrtc 'synced', bounded by a grace window — it may never
-    // fire when nobody else is around).
+    // layer (the WebsocketProvider's first `sync` with isSynced=true, bounded by a
+    // grace window — it settles as soon as the server answers the initial sync).
     if (!(this.host && this.freshRoom)) {
       const waits: Promise<unknown>[] = []
       if (this.idb) waits.push(this.idb.whenSynced)
       if (this.blob) waits.push(this.blob.whenSynced)
-      if (this.webrtc) {
-        const rtc = this.webrtc
+      if (this.ws) {
+        const ws = this.ws
         waits.push(
           new Promise<void>((resolve) => {
             let timer: ReturnType<typeof setTimeout> | null = null
+            const onSync = (isSynced: boolean) => {
+              if (isSynced) done()
+            }
             const done = () => {
               if (timer) clearTimeout(timer)
               try {
-                rtc.off('synced', done)
+                ws.off('sync', onSync)
               } catch {
                 /* provider already destroyed */
               }
               resolve()
             }
-            timer = setTimeout(done, WEBRTC_SYNC_GRACE_MS)
-            rtc.on('synced', done)
+            timer = setTimeout(done, WS_SYNC_GRACE_MS)
+            ws.on('sync', onSync)
           }),
         )
       }
@@ -342,6 +372,45 @@ export class CollabSession {
     if (this.readyFired || this.destroyed) return
     this.readyFired = true
     this.onSessionReady?.()
+  }
+
+  /**
+   * Re-mint the single-use sync ticket ahead of y-websocket's next reconnect.
+   *
+   * WHY: the ticket minted at construction (and by every prior reconnect) is
+   * consumed SERVER-SIDE the instant its socket connects. y-websocket derives the
+   * connect URL from `this.params` on EVERY (re)connect — its `url` getter reads
+   * `params` fresh — but it never re-mints on its own. So after any disconnect it
+   * would reconnect carrying the already-consumed ticket, the server resolves
+   * `principal=null` (anonymous), and in a room whose link access is `viewer` or
+   * `none` the OWNER is demoted: the ★ write-block then silently drops the owner's
+   * live edits (the durable S3 PUT still lands via bearer, so no data loss — but
+   * live sync freezes), and a `none` room closes the socket outright. Minting a
+   * fresh ticket and writing it back into `params.ticket` (the exact field we
+   * passed at construction) makes the next reconnect URL carry a valid ticket, so
+   * the owner reconnects as itself and live sync recovers.
+   *
+   * Hooked on `connection-close`, which fires before every scheduled reconnect
+   * (network drop, idle watchdog, or a retriable server close). Best-effort: a
+   * destroyed session, a null api, or a mint failure leaves the old (consumed)
+   * ticket in place — the reconnect may then fail auth exactly as before, but this
+   * never throws. A terminal 44xx close (permanent deny) also fires this; the fresh
+   * ticket simply goes unused because y-websocket won't reconnect, which is
+   * harmless. The initial connect already mints a fresh ticket above.
+   */
+  private remintTicket = async (): Promise<void> => {
+    if (this.destroyed || !this.api || !this.ws) return
+    const ws = this.ws
+    let ticket: string | null
+    try {
+      ticket = await this.api.mintSyncTicket()
+    } catch {
+      return // leave the stale ticket; the reconnect may fail auth, never throw
+    }
+    // Re-check after the await: the session may have been torn down or the provider
+    // swapped out while the mint was in flight.
+    if (this.destroyed || !ticket || ws !== this.ws) return
+    ws.params.ticket = ticket
   }
 
   /**
@@ -481,8 +550,9 @@ export class CollabSession {
     this.awareness.off('change', this.emitPresence)
     this.blob?.destroy()
     try {
-      // removeAwarenessStates via destroy tells peers we've left.
-      this.webrtc?.destroy()
+      // destroy() disconnects the socket and clears our awareness state, so peers
+      // see us leave.
+      this.ws?.destroy()
     } catch {
       /* provider already torn down */
     }

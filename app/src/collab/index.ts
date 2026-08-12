@@ -1,6 +1,6 @@
 /**
  * Phase-1 collaboration/sync layer (COLLAB-SYNC-CONTRACT). Everything the shell
- * touches is re-exported here; the heavy provider stack (yjs, y-webrtc, …) is
+ * touches is re-exported here; the heavy provider stack (yjs, y-websocket, …) is
  * only pulled in through `useCollab`/`CollabSession`, so a build with
  * collaboration never started tree-shakes it out.
  */

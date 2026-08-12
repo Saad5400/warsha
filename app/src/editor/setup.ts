@@ -1376,10 +1376,26 @@ export function createEditor(
     // the source so nothing reaches the Y.Text (no peer, no OPFS divergence),
     // while yCollab's programmatic dispatches still stream remote edits in.
     // `editable:false` also drops the caret/contenteditable so it reads as a view.
-    // NOT gated on collabExt (L7): a guest whose role is unknown/viewer must be
-    // read-only on a file whose Y.Text has not synced in yet too — otherwise it
-    // could type into an about-to-be-tracked file during the fail-closed window.
-    const collabReadOnly = collab != null && collab.readOnly()
+    // NOT gated on collabExt for the viewer case (L7): a guest whose role is
+    // unknown/viewer must be read-only on a file whose Y.Text has not synced in yet
+    // too — otherwise it could type into an about-to-be-tracked file during the
+    // fail-closed window.
+    //
+    // READ-ONLY-UNTIL-BOUND (data-loss fix): a GENUINE GUEST (`guarded()`) is also
+    // held read-only on ANY file that is not yet bound to its Y.Text (`collabExt ==
+    // null`). During the connect window the open file can still be a plain, non-collab
+    // buffer (its Y.Text hasn't arrived); a keystroke then reaches neither the Y.Text
+    // (no yCollab extension) nor OPFS (onChange is suppressed once the file is collab),
+    // so it lives only in a throwaway buffer that is overwritten at bind — discarded.
+    // We can't safely splice that buffer into a non-empty Y.Text (replaceYText is a
+    // naive prefix/suffix diff that would corrupt), so the fix is to never let the
+    // guest create uncapturable edits: stay read-only until yCollab is present, then
+    // type straight into the Y.Text. The state REBUILDS when the file binds — the
+    // Y.Text's arrival fires the files-map observer → onFilesChanged → App rebind →
+    // setCollab → stateFor rebuilds → collabExt becomes non-null → read-only lifts.
+    // A host / owner-rejoin has `guarded() === false`, so this never touches the
+    // owner path (owner-rejoin H1 seed-forward keeps editing an unbound file).
+    const collabReadOnly = collab != null && (collab.readOnly() || (collab.guarded() && collabExt == null))
     return [
     // Where the completion popup and the docs card are allowed to be.
     //
@@ -1672,7 +1688,17 @@ export function createEditor(
       // materializer already made content == Y.Text) and is swallowed for a
       // read-only viewer — so this only ever captures a writable participant's own
       // un-synced local edits, never clobbers with a viewer's or an empty buffer.
-      if (binding?.isCollab(p)) binding.replaceDoc(p, content)
+      //
+      // Seed-forward is a HOST/OWNER-only mechanism (contract ~setup.ts:1680): only
+      // a host/owner may hold un-synced local edits worth splicing into a
+      // just-arrived Y.Text. It is gated on `!guarded()` because a GENUINE GUEST is
+      // held read-only until its file binds precisely so it has NOTHING to forward
+      // (guarded()===true even for an editor-guest whose role isn't fail-closed).
+      // Without this gate an editor-guest that reaches bind with a buffer differing
+      // from the just-arrived Y.Text — a path collision or open-before-materialize —
+      // would splice a stale/empty buffer into the host's content (an empty buffer
+      // would DELETE the Y.Text). So: never seed-forward from a guarded guest.
+      if (binding?.isCollab(p) && !binding.guarded()) binding.replaceDoc(p, content)
       applying = true
       view.setState(stateFor(p, content))
       applying = false

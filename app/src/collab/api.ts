@@ -110,10 +110,14 @@ export interface WarshaApi {
   putDoc(id: string, version: number, bytes: Uint8Array): Promise<DocPutResult>
   /** POST /v1/docs — server-assigned id + version 0. Null on failure. */
   createDoc(name?: string): Promise<{ id: string; version: number } | null>
-  /** GET /v1/ice → ICE servers for WebRTC, or null (caller falls back to a public STUN). */
-  getIce(): Promise<RTCIceServer[] | null>
-  /** The `wss://…/v1/signal` URL for y-webrtc signaling. */
-  signalingUrl(): string
+  /** The `ws(s)://…/v1/sync` base URL for the live Yjs WebSocket relay. The
+   *  WebsocketProvider appends the room id as a path segment (`/v1/sync/<ULID>`). */
+  syncUrl(): string
+  /** POST /v1/signal-ticket — mint a single-use, ~60s ticket that authenticates the
+   *  live-sync socket, so a long-lived bearer never travels in the WS URL. Null on
+   *  failure (the caller connects without one; the server drops it if the doc is
+   *  private). */
+  mintSyncTicket(): Promise<string | null>
   /** GET /v1/health — a quick reachability probe. */
   health(): Promise<boolean>
 
@@ -249,20 +253,25 @@ export function createApi(
       }
     },
 
-    async getIce() {
+    syncUrl() {
+      // http(s) → ws(s); the live-sync endpoint is the same origin as the API. The
+      // WebsocketProvider appends `/<roomId>` and any `?ticket=` param itself.
+      return base.replace(/^http/, 'ws') + '/v1/sync'
+    },
+
+    async mintSyncTicket() {
       try {
-        const res = await fetch(`${base}/v1/ice`, { method: 'GET', mode: 'cors', headers: { ...authHeaders(bearer()) } })
-        if (!res.ok) return null
-        const body = (await res.json()) as { iceServers?: RTCIceServer[] }
-        return Array.isArray(body.iceServers) ? body.iceServers : null
+        const res = await fetch(`${base}/v1/signal-ticket`, {
+          method: 'POST',
+          mode: 'cors',
+          headers: { ...authHeaders(bearer()) },
+        })
+        if (res.status !== 201) return null
+        const body = (await res.json().catch(() => ({}))) as { ticket?: string }
+        return typeof body.ticket === 'string' ? body.ticket : null
       } catch {
         return null
       }
-    },
-
-    signalingUrl() {
-      // http(s) → ws(s); the signaling endpoint is the same origin as the API.
-      return base.replace(/^http/, 'ws') + '/v1/signal'
     },
 
     async health() {

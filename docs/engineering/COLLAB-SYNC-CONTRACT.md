@@ -5,8 +5,10 @@ backend and client teams. If an implementation detail here proves wrong, change 
 first, then the code — do not let the two sides diverge silently.
 
 Yjs is the canonical data model. The server is a **dumb blob store** for durable snapshots
-plus a **signaling relay** for WebRTC. It does not run Yjs and does not merge; all merging is
-client-side CRDT. (No end-to-end encryption in Phase 1 — plaintext at rest, accepted.)
+plus a **light live-sync relay** (a server-mediated WebSocket that relays tiny Yjs deltas —
+NOT a Yjs backend: it holds an ephemeral per-room doc only to answer a joiner and fan out
+deltas; durable state stays in S3). It does not persist Yjs and does not own the merge; all
+merging is client-side CRDT. (No end-to-end encryption in Phase 1 — plaintext at rest, accepted.)
 
 ---
 
@@ -74,35 +76,51 @@ routes and the signaling WS share it.
 
 ---
 
-## 4. Signaling — y-webrtc, WS at `/v1/signal`
-Implement the y-webrtc signaling protocol (topic subscribe / publish / ping-pong over rooms)
-on `@fastify/websocket`. Port the logic from `y-webrtc/bin/server.js`. Rooms are opaque doc
-ids; the relay never inspects payloads.
+## 4. Live sync — y-websocket relay, WS at `/v1/sync/<room>`
+The live layer is a **server-relayed WebSocket** (y-websocket protocol) on
+`@fastify/websocket`, **replacing** the former y-webrtc P2P mesh. STUN-only WebRTC P2P dies
+behind symmetric NAT (school networks — the target users), giving no live layer and a ~10s
+connect; a relay that always connects is more reliable AND lets the server enforce roles. It
+stays **light**: only tiny Yjs deltas cross it. The server holds ONE ephemeral in-memory
+`Y.Doc` per active room (with gc on) to answer a joiner's `SyncStep1`, merge writers' updates,
+and broadcast deltas; it is **evicted the instant the last connection to the room closes**.
+The room id is the URL **path segment** (`/v1/sync/<ULID>` — how y-websocket builds its URL),
+validated as a canonical ULID before it selects a room.
 
 **Socket auth:** prefer a **single-use, ~60s ticket** — `POST /v1/signal-ticket` (auth)
-returns `{ticket}`, presented on the WS URL as `?ticket=<ticket>` — so a long-lived bearer
-does not travel in the query string (logs / Referer / proxy history). The legacy
-`?token=<bearer>` (and `Authorization` header for non-browser clients) still works but is
-**deprecated**; clients should migrate to tickets.
+returns `{ticket}`, presented as the `?ticket=<ticket>` query param — so a long-lived bearer
+does not travel in the URL (logs / Referer / proxy history). The legacy `?token=<bearer>` (and
+`Authorization` header for non-browser clients) still works but is **deprecated**.
 
-**Publish authorization:** a socket may only publish to a topic it has successfully
-subscribed to (a topic it was denied on subscribe must not accept publishes) — otherwise a
-denied peer could still inject SDP/ICE into a private room's mesh.
+**Read access:** connecting to a room whose doc **is persisted** requires viewer+ (denied
+sockets are closed `1008`); rooms with **no persisted doc** stay open to anyone (the room ULID
+is the capability). The effective role is computed once at connect.
 
-**Resource bounds:** the WS payload is capped (64 KiB); each socket is bounded on
-subscriptions, message rate, topics per `subscribe` frame, and sockets per client IP; the
-per-topic access decision is memoized per socket so a subscribe frame cannot amplify into one
-DB query per topic.
+**★ Write enforcement (the point of moving off P2P):** a socket whose effective role is
+`< editor` (a viewer / read-only link holder) may request state (`SyncStep1`) and relay
+awareness (cursors), but any inbound Yjs **document update** (`SyncStep2` / update) is
+**dropped** — it never merges into the room doc and never fans out. This closes the live-layer
+hole the old WebRTC mesh accepted (see §7.2 "Honesty note"): a hostile view-only link holder
+can no longer inject edits the server would launder to every peer. It is unit-tested
+(viewer's update does NOT reach a second socket / the room doc; an editor's does).
 
-ICE config for clients: `GET /v1/ice → { iceServers:[...] }`, read from env. TURN itself
-(coturn on the VPS, `turns:` on :443) is an **infra/deploy task**, not code — clients just
-consume whatever `/v1/ice` returns; default to a public STUN in dev.
+**Resource bounds:** the WS payload is capped at `MAX_SNAPSHOT_BYTES + 64 KiB` (a full-state
+sync frame must fit, but no larger); each socket is bounded on message rate; sockets per client
+IP are capped; app-level ping/pong reaps idle sockets.
+
+There is **no ICE / TURN / `/v1/ice`** anymore — the relay needs none (removed with the WebRTC
+transport).
 
 ---
 
 ## 5. Client provider stack (all on one `Y.Doc`, all optional)
 1. `IndexeddbPersistence(docId, ydoc)` — local durability / offline.
-2. `WebrtcProvider(docId, ydoc, { signaling:[<wss>/v1/signal], peerOpts:{config:{iceServers}} })` — live.
+2. `WebsocketProvider(api.syncUrl(), docId, ydoc, { awareness, params:{ticket} })` — live. The
+   ticket is minted via `POST /v1/signal-ticket`; the provider is registered as a
+   `BlobSyncProvider` remote origin (y-websocket applies incoming updates with the provider
+   instance as the origin) so socket-borne deltas are never re-PUT. Skipped entirely when
+   offline (`api === null`): the editor still works via IndexedDB. (Same-origin cross-tab sync
+   is no longer provided for free — an accepted trade for dropping the P2P/WebRTC stack.)
 3. `BlobSyncProvider(docId, ydoc, api)` — **custom**, this repo:
    - on start: `GET /v1/docs/:id` → `applyUpdate`. **Exception:** the host of a
      *freshly minted* room skips this GET — the doc cannot exist server-side yet, and the
@@ -181,7 +199,7 @@ Base editor must work with **none** of these connected (no account, offline). Th
 | `POST` | `/v1/auth/login`  | `{email, password}` | `200 {token, user}` | `401` (uniform for bad email/password) |
 | `POST` | `/v1/auth/logout` | — (auth) | `204` (revokes this token) | `401` |
 | `GET`  | `/v1/me` | — (auth) | `200 {user \| null, usage:{docs, bytes, limits}}` | `401` |
-| `POST` | `/v1/signal-ticket` | — (auth) | `201 {ticket, expiresIn:60}` (single-use signaling ticket, see §4) | `401` |
+| `POST` | `/v1/signal-ticket` | — (auth) | `201 {ticket, expiresIn:60}` (single-use live-sync socket ticket, see §4) | `401` |
 
 - Passwords: **argon2id** at rest (`@node-rs/argon2`). Emails lowercased/trimmed, unique.
 - Session tokens: opaque 32-byte random (`sess_` prefix), stored **hashed** (sha256) in a
@@ -230,18 +248,21 @@ enabled*, link_access if the caller presented the doc id). Enforcement:
 - `GET /v1/docs` (auth) lists docs owned by + shared with (ACL by account email) the principal:
   `200 {docs:[{id,name,version,role,linkAccess,sizeBytes,updatedAt}]}` where `role` is the
   caller's role on that doc (`owner` | ACL role).
-- **Signaling access check:** the WS socket authenticates via `?ticket=<ticket>` (preferred,
-  see §4) or the deprecated `?token=<bearer>` on the `/v1/signal` URL (or an `Authorization`
-  header for non-browser clients). Subscribing to a room whose doc **is persisted** requires
-  viewer+ — denied topics are never joined and the socket gets `{type:"access-denied", topic}`,
-  and a socket may only publish to topics it actually joined. Rooms with **no persisted doc**
-  stay open to anyone (they exist purely P2P, pre-first-PUT; the room ULID is the capability).
-  The relay stays payload-blind.
-- **Honesty note:** the durable layer (blob store) enforces roles authoritatively. The live
-  WebRTC layer checks access when a socket subscribes to a room but peers relay updates P2P
-  afterwards — a viewer-role peer is made read-only in the client editor, and its writes are
-  rejected at the blob store, but a hostile client could still inject updates into the live
-  mesh. Accepted for Phase 2 (school context, unguessable room ids).
+- **Live-sync access check:** the WS socket authenticates via `?ticket=<ticket>` (preferred,
+  see §4) or the deprecated `?token=<bearer>` on the `/v1/sync/<room>` URL (or an
+  `Authorization` header for non-browser clients). Connecting to a room whose doc **is
+  persisted** requires viewer+ — a denied socket is closed (`1008`). Rooms with **no persisted
+  doc** stay open to anyone (pre-first-PUT; the room ULID is the capability). A `< editor`
+  socket's document updates are **dropped** by the relay (★ write enforcement, §4).
+- **Honesty note:** the durable layer (blob store) enforces roles authoritatively, and the
+  live relay now **also** enforces them: a viewer-role socket is made read-only in the client
+  editor, its durable PUSHes are rejected at the blob store, AND its live document updates are
+  dropped at the relay before they can merge or fan out. This closes the old WebRTC hole (where
+  peers relayed updates P2P after the subscribe check, so a hostile client could still inject
+  edits into the live mesh). Awareness/cursor frames from a viewer are still relayed (presence
+  is not a mutation). A fully hostile client forging another principal's ticket is out of scope
+  (tickets are single-use, unguessable, ~60s); the room ULID + school context remain the outer
+  boundary.
 - **Mid-session revocation propagation (H2):** role is probed once at connect, so a link-access
   change would not, on its own, reach an *already-connected* peer. To close this for **honest
   clients**, an owner's `PATCH /v1/docs/:id {linkAccess}` **also writes the new value into the
