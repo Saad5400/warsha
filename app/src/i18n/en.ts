@@ -321,6 +321,34 @@ export const EN = {
   lintFixStrictEquals: (op: string) => `Use ${op}`,
   lintFixIsNone: (keyword: string) => `Use ${keyword}`,
   lintFixPrintCall: 'Rewrite as print( )',
+  // ---- structural scan (editor/structuralScan.ts, the Beginner helper) ----
+  /** An opener with no matching closer — named so the student can find it. */
+  lintBracketUnclosed: (open: string, close: string) =>
+    `${open} opens here but nothing closes it. Add the matching ${close} where this should end.`,
+  lintFixAddBracket: (close: string) => `Add ${close}`,
+  /** A closer with no opener before it. */
+  lintBracketStray: (ch: string) =>
+    `This ${ch} has no opener to match. Remove it, or add the bracket it should close.`,
+  lintFixRemove: (ch: string) => `Remove ${ch}`,
+  /** A closer of the wrong kind for the bracket still open. */
+  lintBracketMismatch: (ch: string) =>
+    `This ${ch} closes a different kind of bracket than the one still open. Check the pairs line up.`,
+  /** A string with no closing quote on its line. */
+  lintStringUnterminated: 'This text has no closing quote, so it runs to the end of the line. Add the quote that ends it.',
+  lintFixCloseString: 'Add closing quote',
+  /** Java `'ab'` — single quotes are one character; text needs double quotes. */
+  lintCharLiteral: 'Single quotes hold one character in Java. For a word or a sentence, use double quotes " ".',
+  lintFixDoubleQuotes: 'Use " "',
+  /** A Python block header (`if`, `for`, `def`, …) with no trailing colon. */
+  lintMissingColon: 'A block like this opens with a colon. Add : at the end of the line, before its indented body.',
+  lintFixAddColon: 'Add :',
+  /** A known class in the wrong case — `system` for `System`. Java is case-sensitive. */
+  lintCaseTypo: (wrong: string, right: string) =>
+    `Java tells ${wrong} and ${right} apart by their capitals. The class you want is ${right}.`,
+  lintFixUseCase: (right: string) => `Use ${right}`,
+  /** A Java statement with no `;` at its end. */
+  lintMissingSemicolon: 'This line finishes a statement, and a Java statement ends with a ; — add one here.',
+  lintFixAddSemicolon: 'Add ;',
   /** The status bar's problems item and its accessible name. */
   statusBarProblems: (errors: number, warnings: number) => {
     const parts: string[] = []
@@ -474,6 +502,10 @@ export const EN = {
   extensionsTitle: 'Extensions',
   extCategoryAppearance: 'Appearance',
   extCategoryFormatting: 'Formatting',
+  extCategoryLearning: 'Learning',
+  extBeginnerHelperName: 'Beginner Helper',
+  extBeginnerHelperDesc:
+    'Spot common beginner mistakes as you type — unmatched brackets, a missing colon, an unclosed quote — and explain each with a one-tap fix.',
   extRainbowBracketsName: 'Rainbow Brackets',
   extRainbowBracketsDesc:
     'Colour each pair of brackets by depth so you can see which closing bracket matches which opening one.',

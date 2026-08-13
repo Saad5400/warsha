@@ -46,7 +46,7 @@ import {
   completionKeymap,
   acceptCompletion,
 } from '@codemirror/autocomplete'
-import { lintKeymap, openLintPanel, closeLintPanel, forEachDiagnostic } from '@codemirror/lint'
+import { lintKeymap, openLintPanel, closeLintPanel, forEachDiagnostic, forceLinting } from '@codemirror/lint'
 import { enabledEditorExtensions } from '../extensions/registry'
 // Type-only: the collab binding is built in ../collab and injected via
 // `setCollab`, so the editor stays free of any yjs/y-codemirror.next import and
@@ -54,7 +54,7 @@ import { enabledEditorExtensions } from '../extensions/registry'
 import type { CollabBinding } from '../collab/editorBridge'
 import { completionSources, type CompletionLang } from './completions'
 import { hoverDocs } from './hoverDocs'
-import { linting } from './lint'
+import { linting, refreshLint } from './lint'
 
 /**
  * Editor exception sink (M1). y-codemirror.next's remote-selection plugin can throw
@@ -1664,7 +1664,12 @@ export function createEditor(
     setExtensions() {
       // Re-reads the registry (which reads prefs), so the caller just persists
       // the toggle then calls this — no need to pass the new set through.
-      view.dispatch({ effects: extConf.reconfigure(enabledEditorExtensions()) })
+      // The Beginner helper is a linter flag, not an editor extension, so the
+      // reconfigure does not touch it: the refreshLint effect schedules a lint
+      // pass (forceLinting alone only hurries an already-scheduled one), and
+      // forceLinting then runs it now so the toggle lands without a keystroke.
+      view.dispatch({ effects: [extConf.reconfigure(enabledEditorExtensions()), refreshLint.of(null)] })
+      forceLinting(view)
     },
     setCollab(binding) {
       collab = binding
