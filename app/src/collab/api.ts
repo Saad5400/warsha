@@ -152,6 +152,9 @@ export interface WarshaApi {
   removeAcl(id: string, email: string): Promise<boolean>
   /** PATCH /v1/docs/:id — owner only (name / linkAccess). Null on 403/failure. */
   patchDoc(id: string, patch: { name?: string | null; linkAccess?: LinkAccess }): Promise<DocMetaResult | null>
+  /** DELETE /v1/docs/:id — owner only. Removes the account's copy on EVERY device
+   *  (blob + rows). True on 204; false on 403 (not owner) / 404 / network. */
+  deleteDoc(id: string): Promise<boolean>
   /** Non-mutating write-permission probe (see `ProbeRole`): a stale-version PUT
    *  the server rejects (403 viewer) or 409s (editor) before any write, so a guest
    *  learns its effective role even when it holds only a `#room=` link. */
@@ -458,6 +461,19 @@ export function createApi(
         return (await res.json()) as DocMetaResult
       } catch {
         return null
+      }
+    },
+
+    async deleteDoc(id) {
+      try {
+        const res = await fetch(`${base}/v1/docs/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          mode: 'cors',
+          headers: { ...authHeaders(bearer()) },
+        })
+        return res.status === 204
+      } catch {
+        return false
       }
     },
 

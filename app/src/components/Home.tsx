@@ -11,6 +11,7 @@ import {
   IconCloud,
   IconCloudCheck,
   IconCopy,
+  IconDownload,
   IconExport,
   IconFolderOpen,
   IconGlobe,
@@ -90,6 +91,9 @@ export interface HomeProps {
   cloudOnly?: CloudOnlyEntry[]
   /** Materialize a cloud-only project into a fresh local project and open it. */
   onOpenCloud?(docId: string, name: string, role: 'owner' | 'editor' | 'viewer'): void
+  /** Delete a cloud-only project from the account (owner only). Absent → no delete
+   *  action on cloud-only cards. */
+  onDeleteCloud?(docId: string, name: string, role: 'owner' | 'editor' | 'viewer'): void
 }
 
 // Full-viewport surface, scrolls on its own. Height + /ui-scale mirror the shell
@@ -178,6 +182,7 @@ export function Home({
   cloudStatus,
   cloudOnly,
   onOpenCloud,
+  onDeleteCloud,
 }: HomeProps) {
   const [facts, setFacts] = useState<Record<string, ProjectFacts>>({})
   const [query, setQuery] = useState('')
@@ -341,7 +346,9 @@ export function Home({
                     />
                   ))}
                   {onOpenCloud
-                    ? cloudOrdered.map((c) => <CloudCard key={c.id} entry={c} onOpenCloud={onOpenCloud} />)
+                    ? cloudOrdered.map((c) => (
+                        <CloudCard key={c.id} entry={c} onOpenCloud={onOpenCloud} onDeleteCloud={onDeleteCloud} />
+                      ))
                     : null}
                 </div>
               )}
@@ -504,17 +511,45 @@ function ProjectCard({
 }
 
 /**
- * A cloud-only project (Chunk 4) — present in the signed-in account but not on this
- * device. Reuses the ProjectCard chrome, minus the pin/manage menu it has no local
- * state for. Clicking it materializes the doc into a fresh local project (App's
- * `onOpenCloud`) and enters the editor; the durable engine then attaches.
+ * A cloud-only project (Chunk 4) — present in the signed-in account but not downloaded
+ * to this device. Reuses the ProjectCard chrome. Clicking it (or "Download to this
+ * device") materializes the doc into a fresh local project (App's `onOpenCloud`) and
+ * enters the editor; the durable engine then attaches. An owner also gets "Delete from
+ * account" so a project can be removed without first downloading it. The cloud glyph +
+ * download hint make it read as online-not-local, distinct from a downloaded card.
  */
-function CloudCard({ entry, onOpenCloud }: { entry: CloudOnlyEntry; onOpenCloud: NonNullable<HomeProps['onOpenCloud']> }) {
+function CloudCard({
+  entry,
+  onOpenCloud,
+  onDeleteCloud,
+}: {
+  entry: CloudOnlyEntry
+  onOpenCloud: NonNullable<HomeProps['onOpenCloud']>
+  onDeleteCloud?: HomeProps['onDeleteCloud']
+}) {
+  // Only the owner may delete the account's copy (the server enforces it too), so a
+  // shared cloud-only doc shows just the download action; render the menu whenever there
+  // is more than the redundant tap-to-open, which today means owner-with-delete.
+  const canDelete = !!onDeleteCloud && entry.role === 'owner'
+  const items: MenuItem[] = [
+    { label: COPY.homeCloudDownload, icon: <IconDownload size={18} />, onSelect: () => onOpenCloud(entry.id, entry.name, entry.role) },
+    ...(canDelete
+      ? [
+          {
+            label: COPY.homeCloudDelete,
+            icon: <IconTrash size={18} />,
+            danger: true,
+            onSelect: () => onDeleteCloud!(entry.id, entry.name, entry.role),
+          } as MenuItem,
+        ]
+      : []),
+  ]
+
   return (
     <div className={CARD}>
       <button
         type="button"
-        aria-label={`${COPY.homeOpen} — ${entry.name}`}
+        aria-label={`${COPY.homeCloudDownload} — ${entry.name}`}
         onClick={() => onOpenCloud(entry.id, entry.name, entry.role)}
         className="absolute inset-0 z-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--focus-ring)"
       />
@@ -526,9 +561,14 @@ function CloudCard({ entry, onOpenCloud }: { entry: CloudOnlyEntry; onOpenCloud:
           <span className="mt-0.5 flex min-w-0 flex-1 items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
           </span>
+          {canDelete ? (
+            <span className="pointer-events-auto -me-1 -mt-1 flex-none">
+              <CardMenu items={items} />
+            </span>
+          ) : null}
         </div>
         <span className="mt-auto inline-flex items-center gap-1.5 truncate text-meta leading-normal text-text-3">
-          <IconCloud size={13} className="flex-none" />
+          <IconDownload size={13} className="flex-none" />
           {COPY.homeCloudOnly}
         </span>
       </div>

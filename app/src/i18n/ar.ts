@@ -219,6 +219,8 @@ export const AR: Bundle = {
   homeAccount: (email: string) => `الحساب — ${email}`,
   homeCloudSynced: 'محفوظ في حسابك',
   homeCloudOnly: 'في حسابك',
+  homeCloudDownload: 'تنزيل إلى هذا الجهاز',
+  homeCloudDelete: 'حذف من الحساب',
   homeCloudSeeding: 'يجري الحفظ…',
   homeCloudFull: 'المساحة ممتلئة',
   homeCloudUntitled: 'مشروع بلا اسم',
@@ -226,6 +228,7 @@ export const AR: Bundle = {
   homeCloudSavedSignedOut: 'سجّل الدخول للمزامنة',
   homeCloudOtherAccount: 'حساب آخر',
   noteCloudOpenFailed: 'تعذّر فتح هذا المشروع من حسابك. تحقق من اتصالك وحاول مرة أخرى.',
+  noteCloudDeleteFailed: 'تعذّر حذف هذا المشروع من حسابك. تحقق من اتصالك وحاول مرة أخرى.',
 
   // ---- the New-project template picker ----
   pickerTitle: 'مشروع جديد',
@@ -472,6 +475,7 @@ export const AR: Bundle = {
   // Verb first, so one form agrees with «ملف واحد» and with «5 ملفات» alike.
   dlgDeleteProjectBody: (fileCount) =>
     `${fileCount ? `سيُحذف معه ${files(fileCount)}. ` : ''}لا رجعة في هذا. صدّر ملف ${ZIP} أولًا إن أردت الاحتفاظ بعملك.`,
+  dlgDeleteCloudBody: 'سيُحذف من حسابك على كل الأجهزة. لا رجعة في هذا.',
   aboutTitle: 'ورشة',
   aboutBody: `ورشة للكود — Java و Python و ${CSHARP} والويب، كلها داخل متصفّحك. وملفاتك تبقى على هذا الجهاز.`,
   aboutVersion: (version) => `الإصدار ${iso(version)}`,

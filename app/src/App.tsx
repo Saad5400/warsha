@@ -1606,6 +1606,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
     if (!name || name === currentProject.name) return
     await renameProject(currentProject.id, name)
+    syncCloudName(currentProject.id, name) // owner + signed in → reflect the rename cross-device
   }
 
   const deleteCurrentProject = async () => {
@@ -1624,6 +1625,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     const gone = currentProject.name
     const goneId = currentProject.id
     const willBeEmpty = projects.length <= 1
+    await deleteOwnedCloudDoc(goneId) // owner: remove the account copy too, BEFORE the mapping is forgotten
     await deleteProject(goneId)
     forgetProjectRoomState(goneId)
     unpin(goneId)
@@ -1693,6 +1695,63 @@ function Ide({ report }: { report: CapabilityReport }) {
     void refreshCloudDocs()
   }, [view, signedInNow, cloud.statuses, refreshCloudDocs])
 
+  // Push a signed-in owner's rename to the cloud doc, so ANOTHER device's cloud-only
+  // card (and the account list) shows the new title. Best-effort, owner-only.
+  const syncCloudName = useCallback(
+    (projectId: string, name: string) => {
+      if (!authApi) return
+      const docId = (prefs().projectRooms ?? {})[projectId]
+      if (docId && projectOwner(projectId) === accountOwnerRef.current) void authApi.patchDoc(docId, { name })
+    },
+    [authApi],
+  )
+
+  /** Remove a project's cloud copy from the account when we OWN it — so a delete the
+   *  student runs actually reaches the server (blob + rows on EVERY device), not just
+   *  this device. MUST read the mapping BEFORE forgetProjectRoomState wipes it. Also
+   *  optimistically drops the doc from the cached list so it can't flash back as a
+   *  phantom "cloud-only" card the instant its local mapping is forgotten. Best-effort +
+   *  owner-only (the server is owner-gated too); a foreign / anonymous doc is untouched. */
+  const deleteOwnedCloudDoc = useCallback(
+    async (projectId: string): Promise<void> => {
+      if (!authApi) return
+      const docId = (prefs().projectRooms ?? {})[projectId]
+      if (!docId || projectOwner(projectId) !== accountOwnerRef.current) return
+      setCloudDocs((prev) => (prev ? prev.filter((d) => d.id !== docId) : prev))
+      await authApi.deleteDoc(docId)
+    },
+    [authApi],
+  )
+
+  // Self-heal older owned docs that were seeded before the name was stamped: when the
+  // account list shows one of MY mapped docs with a blank name, PATCH it from the local
+  // project name and refetch, so its cloud-only card on other devices stops reading
+  // "Untitled project". Converges in one pass — a filled name no longer matches the
+  // blank filter, so this can't loop.
+  useEffect(() => {
+    if (!authApi || !cloudDocs || !accountOwner) return
+    let live = true
+    void (async () => {
+      const rooms = prefs().projectRooms ?? {}
+      const byId = new Map(cloudDocs.map((d) => [d.id, d]))
+      const patches: Promise<unknown>[] = []
+      for (const p of projects) {
+        if (projectOwner(p.id) !== accountOwner) continue
+        const docId = rooms[p.id]
+        const d = docId ? byId.get(docId) : undefined
+        if (d && d.role === 'owner' && !(d.name && d.name.trim()) && p.name.trim()) {
+          patches.push(authApi.patchDoc(docId, { name: p.name }))
+        }
+      }
+      if (patches.length === 0) return
+      await Promise.all(patches)
+      if (live) void refreshCloudDocs()
+    })()
+    return () => {
+      live = false
+    }
+  }, [authApi, cloudDocs, accountOwner, projects, refreshCloudDocs])
+
   // Reconcile local ⇄ cloud by docId (`prefs.projectRooms`). A local project whose
   // mapped docId matches a cloud entry renders ONCE (from its local card) with a
   // synced glyph; a cloud entry with no local mapping becomes a cloud-only card.
@@ -1759,6 +1818,28 @@ function Ide({ report }: { report: CapabilityReport }) {
     })()
   }
 
+  /** Delete a cloud-only project (one not on this device) straight from its card — the
+   *  owner's "remove from my account". Confirms, optimistically drops it from the list,
+   *  then DELETEs server-side; a failure re-fetches so the card returns rather than lying. */
+  const homeDeleteCloud = async (docId: string, name: string) => {
+    if (!authApi) return
+    const ok = await dialogs.confirm({
+      title: COPY.dlgDeleteProjectTitle(name),
+      message: COPY.dlgDeleteCloudBody,
+      okLabel: COPY.dlgDelete,
+      danger: true,
+    })
+    if (!ok) return
+    setCloudDocs((prev) => (prev ? prev.filter((d) => d.id !== docId) : prev))
+    const done = await authApi.deleteDoc(docId)
+    if (!done) {
+      notify(COPY.noteCloudDeleteFailed, 'error')
+      void refreshCloudDocs()
+      return
+    }
+    notify(COPY.noteProjectDeleted(name))
+  }
+
   const homeRename = async (id: string) => {
     const target = projects.find((p) => p.id === id)
     if (!target) return
@@ -1771,6 +1852,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     })
     if (!name || name === target.name) return
     await renameProject(id, name)
+    syncCloudName(id, name) // owner + signed in → reflect the rename cross-device
   }
 
   const homeDuplicate = async (id: string) => {
@@ -1801,6 +1883,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       await stopCollabBeforeSwitch()
     }
     const leaving = tabs
+    await deleteOwnedCloudDoc(id) // owner: remove the account copy too, BEFORE the mapping is forgotten
     await deleteProject(id)
     forgetProjectRoomState(id)
     unpin(id)
@@ -2666,6 +2749,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           cloudStatus={cloud.statuses}
           cloudOnly={cloudView.cloudOnly}
           onOpenCloud={authApi ? openCloudDoc : undefined}
+          onDeleteCloud={authApi ? homeDeleteCloud : undefined}
         />
       ) : view === 'tutorials' ? (
         <TutorialsPage

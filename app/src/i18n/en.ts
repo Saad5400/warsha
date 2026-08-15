@@ -191,6 +191,10 @@ export const EN = {
   homeCloudSynced: 'Backed up to your account',
   /** A cloud-only project — in your account but not yet on this device. Glyph tooltip. */
   homeCloudOnly: 'In your account',
+  /** Cloud-only card menu: pull the project down into a local project on this device. */
+  homeCloudDownload: 'Download to this device',
+  /** Cloud-only card menu (owner): remove the account's copy without downloading it. */
+  homeCloudDelete: 'Delete from account',
   /** Card status pill while a project is being backed up for the first time. */
   homeCloudSeeding: 'Backing up…',
   /** Card status pill when the account is out of cloud space (this one stayed local). */
@@ -207,6 +211,8 @@ export const EN = {
   homeCloudOtherAccount: 'Another account',
   /** materializeCloudDoc came back empty (missing / forbidden / offline). */
   noteCloudOpenFailed: 'Could not open that project from your account. Check your connection and try again.',
+  /** deleteDoc failed (offline / not owner / already gone) — the card is restored. */
+  noteCloudDeleteFailed: 'Could not delete that project from your account. Check your connection and try again.',
 
   // ---- the New-project template picker (languages.ts + TemplatePicker) ----
   // One entry point for every starter — step one picks the language, step two
@@ -508,6 +514,8 @@ export const EN = {
   dlgDeleteProjectTitle: (name: string) => `Delete “${name}”?`,
   dlgDeleteProjectBody: (files: number) =>
     `${files ? `The ${count(files, 'file')} in it will be removed. ` : ''}This cannot be undone. Export a .zip first if you want to keep them.`,
+  /** Deleting a cloud-only project (not on this device): it leaves the account everywhere. */
+  dlgDeleteCloudBody: 'This removes it from your account on every device. This cannot be undone.',
   aboutTitle: 'Warsha',
   aboutBody: 'A workshop for code — Java, Python, C# and the web, running entirely in your browser. Your files live on this device.',
   aboutVersion: (version: string) => `Version ${version}`,

@@ -262,6 +262,13 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
           // this device (mirrors useCollab.start). This is what composes with claimDevice.
           rememberRoomMapping(docId, pid)
           rememberOwnedRoom(docId)
+          // Stamp the server-side doc name so ANOTHER device's cloud-only card shows the
+          // real title, not "Untitled project": the seed's If-Match:0 PUT creates the doc
+          // with a null name (the Yjs blob carries files, not the name), and GET /v1/docs
+          // reads only this column. Best-effort — patchDoc never throws; a miss just leaves
+          // the older "Untitled" label until a rename or the Home self-heal patches it.
+          const name = projectsRef.current.find((p) => p.id === pid)?.name
+          if (name) void api.patchDoc(docId, { name })
           setStatus(pid, 'saved')
           setMapVersion((n) => n + 1) // let the attach effect pick up the open project
         } else if (res === 'quota') {
