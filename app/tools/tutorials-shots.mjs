@@ -38,7 +38,11 @@ const HL_CSS = `.tut-hl { position: relative !important; z-index: 40 !important;
   outline: 3px solid var(--accent) !important; outline-offset: 3px !important;
   border-radius: 10px !important;
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 26%, transparent),
-              0 0 26px 6px color-mix(in srgb, var(--accent) 45%, transparent) !important; }`
+              0 0 26px 6px color-mix(in srgb, var(--accent) 45%, transparent) !important; }
+/* Lighten the modal scrim for tutorial shots so the app stays visible behind a
+   dialog — the real app dims harder, but a teaching screenshot reads clearer
+   with its context showing. */
+:root { --scrim: rgba(0, 0, 0, 0.28) !important; }`
 
 const log = (m) => console.log(m)
 const misses = []
@@ -273,7 +277,8 @@ async function capture(lang) {
     return hl(page.getByRole('menuitem', { name: /(Sign in|تسجيل الدخول)/ }).first())
   })
   await shot('account-dialog', lang, async () => {
-    const row = page.getByRole('menuitem', { name: /(Sign in|تسجيل الدخول)/ }).first()
+    let row = page.getByRole('menuitem', { name: /(Sign in|تسجيل الدخول)/ }).first()
+    if ((await row.count()) === 0) { await rail().last().click(); await page.waitForTimeout(350); row = page.getByRole('menuitem', { name: /(Sign in|تسجيل الدخول)/ }).first() }
     if ((await row.count()) === 0) return false
     await row.click(); await page.waitForTimeout(400)
     return hl(page.locator('[role="dialog"]'))
