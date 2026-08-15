@@ -46,12 +46,18 @@ export interface Prefs {
    *  persisted (contract §7). It is the no-account principal's bearer — the
    *  fallback when there is no session token. Null until first minted. */
   deviceToken: string | null
-  /** The account id whose docs the `projectRooms` mappings currently belong to
-   *  (Phase C, chunk 5). Set the first time auto-sync reconciles for an account;
-   *  a later sign-in as a DIFFERENT account (id mismatch) is what triggers orphaning
-   *  the previous account's mappings so they re-seed fresh. Null before any sign-in
-   *  reconcile — the first sign-in is the claim-device carry-over path, not a switch. */
+  /** Legacy (pre "local-first ownership"): the account the `projectRooms` mappings
+   *  belonged to, used by the old different-account orphan-and-reseed reconcile. That
+   *  reconcile is gone — ownership is now per-project (`projectOwners`), so this key is
+   *  no longer read or written. Kept on the type only so a stored value round-trips. */
   syncAccountId: string | null
+  /** Per-project cloud OWNER (the "local-first ownership" model). Absent → the project
+   *  is anonymous / device-owned (the default: local-only, never auto-backed-up). A
+   *  value of `account:<id>` means the project belongs to that account — which is what
+   *  scopes background backup, the "backed up" badge, and the open-project sync engine
+   *  to the signed-in owner. A sign-in/out/switch never rewrites these: local files are
+   *  never touched, and a different account simply isn't the owner (see useCloudSync). */
+  projectOwners: Record<string, string>
 }
 
 /** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
@@ -76,6 +82,7 @@ const defaults: Omit<Prefs, 'fontSize'> = {
   sessionUser: null,
   deviceToken: null,
   syncAccountId: null,
+  projectOwners: {},
 }
 
 let cache: Prefs | null = null
@@ -198,4 +205,40 @@ export function forgetRoomsForProject(projectId: string): string[] {
     if (changed) setPrefsFresh({ ownedRooms: [...owned] })
   }
   return rooms
+}
+
+// ---- per-project cloud ownership (the "local-first ownership" model) ------------
+// Absent → device-owned (anonymous, local-only). `account:<id>` → owned by that
+// account, which scopes auto-backup + the "backed up" badge + the sync engine to it.
+// Read fresh from localStorage before merging, cross-tab-safe like the room maps.
+
+function storedProjectOwners(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(KEY)
+    const parsed = raw ? (JSON.parse(raw) as Partial<Prefs>) : null
+    return { ...(parsed?.projectOwners ?? cache?.projectOwners ?? {}) }
+  } catch {
+    return { ...(cache?.projectOwners ?? {}) }
+  }
+}
+
+/** The owner tag for a project, or null when it is device-owned (the default). */
+export function projectOwner(projectId: string): string | null {
+  return (prefs().projectOwners ?? {})[projectId] ?? null
+}
+
+/** Tag a project as owned by `owner` (an `account:<id>`). Idempotent, fresh-merged. */
+export function rememberProjectOwner(projectId: string, owner: string): void {
+  const owners = storedProjectOwners()
+  if (owners[projectId] === owner) return
+  owners[projectId] = owner
+  setPrefs({ projectOwners: owners })
+}
+
+/** Drop a project's owner tag (project deleted). Fresh-merged, cross-tab safe. */
+export function forgetProjectOwner(projectId: string): void {
+  const owners = storedProjectOwners()
+  if (!(projectId in owners)) return
+  delete owners[projectId]
+  setPrefs({ projectOwners: owners })
 }

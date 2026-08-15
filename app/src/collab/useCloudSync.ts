@@ -31,9 +31,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '../fs/project'
 import type { ProjectMeta } from '../fs/projects'
 import type { FsSnapshot } from '../fs/types'
-import { prefs, setPrefsFresh, forgetRoomsForProject, rememberRoomMapping, rememberOwnedRoom } from '../fs/prefs'
+import { prefs, projectOwner, rememberRoomMapping, rememberOwnedRoom } from '../fs/prefs'
 import { createApi } from './api'
-import { currentToken, ensureDeviceToken } from './auth'
+import { currentToken } from './auth'
 import { HeadlessSync, seedOnce, type SeedStatus } from './headlessSync'
 import { newRoomId } from './room'
 import type { SyncStatus } from './blobSync'
@@ -79,6 +79,21 @@ export interface CloudSyncState {
   resumeAfterCollab(): void
   /** Best-effort flush of the open engine (tab hide / before a project switch). */
   flushOpen(): Promise<void>
+  /** Re-run the owner-scoped backfill now and re-evaluate the open-project engine — the
+   *  App calls this after tagging projects account-owned (the sign-in "Add all" claim, a
+   *  project created/opened while signed in) so the newly-owned ones back up immediately
+   *  instead of waiting for the next sign-in epoch. Idempotent (skips already-mapped). */
+  syncNow(): void
+}
+
+/** True when `projectId` is owned by the currently signed-in account (`account:<id>`).
+ *  The gate for auto-backup and the open-project sync engine (local-first ownership):
+ *  a project owned by device (anonymous) or by a DIFFERENT account is never auto-synced
+ *  by this session, so switching accounts never pushes one account's work to another. */
+function ownedByCurrentAccount(projectId: string | null): boolean {
+  if (!projectId) return false
+  const acct = prefs().sessionUser?.id
+  return !!acct && projectOwner(projectId) === `account:${acct}`
 }
 
 export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
@@ -138,6 +153,7 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
           !!apiRef.current &&
           !!openId &&
           !!docId &&
+          ownedByCurrentAccount(openId) &&
           !collabActiveRef.current &&
           !suspendedRef.current &&
           !destroyedRef.current
@@ -165,6 +181,7 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
             !!apiRef.current &&
             !!openId2 &&
             !!docId2 &&
+            ownedByCurrentAccount(openId2) &&
             !collabActiveRef.current &&
             !suspendedRef.current &&
             !destroyedRef.current
@@ -192,66 +209,30 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
   // cheap, and the desired behavior; it never re-creates an existing project's doc).
   const backfilledRef = useRef(false)
 
-  const runBackfill = useCallback(async () => {
+  const runBackfillOnce = useCallback(async () => {
     await whenReady()
     const api = apiRef.current
     if (!api || !signedInRef.current || destroyedRef.current) return
 
-    // Anonymous sync authenticates as the device principal; a signed-in backfill uses
-    // the session token, but mint the device token defensively in case a race leaves us
-    // pre-session (a no-op when the session token is present / already cached).
-    await ensureDeviceToken(api)
-    if (!signedInRef.current || destroyedRef.current) return
-
-    // ---- chunk 5: different-account reconciliation (a single GET /v1/docs) ----
-    // A sign-in as a DIFFERENT account must not inherit the previous account's
-    // project↔doc mappings: those docs are owned by the OTHER account and are neither
-    // visible nor writable here. We detect the switch by the persisted `syncAccountId`
-    // (the account the current mappings belong to) and, on a genuine change, orphan
-    // every mapping whose docId is absent from THIS account's doc list — ONE list call,
-    // no per-doc probes. Same-account sign-in: ids match → skip entirely (no re-seed).
-    // First-ever sign-in (`syncAccountId` null): the mappings are the device's own
-    // anonymous docs, which claim-device carries over to this account — so we DON'T
-    // orphan, we only record the account. (Orphaning here would race claim-device and
-    // duplicate the just-claimed docs — the reason the null case is excluded.)
+    // Local-first ownership: back up ONLY the projects THIS account owns
+    // (`prefs.projectOwners[id] === account:<id>`). A project becomes account-owned by an
+    // explicit claim (the sign-in "Add all" prompt) or by being created / opened-from-cloud
+    // while signed in — NEVER by sign-in alone. So signing in uploads nothing on its own, a
+    // different account is simply not the owner (no cross-account re-upload, no shared-device
+    // absorption), and there is no mapping to orphan — a foreign account's projects are never
+    // in this target set, and their docs, mappings and local files are left untouched.
     const acct = prefs().sessionUser?.id ?? null
-    const prevAcct = prefs().syncAccountId ?? null
-    if (acct && acct !== prevAcct) {
-      if (prevAcct) {
-        const list = await api.listDocs()
-        if (destroyedRef.current || !signedInRef.current) return
-        // Only act on a SUCCESSFUL fetch — a null (offline/error) must not orphan
-        // anything, or a network blip would wipe every mapping and re-seed the world.
-        // Leave `prevAcct` in place so the reconcile retries on the next run.
-        if (!list) return
-        const visible = new Set(list.map((d) => d.id))
-        const rooms = prefs().projectRooms ?? {}
-        let orphaned = false
-        for (const [pid, docId] of Object.entries(rooms)) {
-          // A mapped doc the new account can neither see nor write belongs to a previous
-          // account — drop the mapping (both directions + the owned-room marker) so the
-          // backfill below re-seeds a FRESH doc for this account.
-          if (!visible.has(docId)) {
-            forgetRoomsForProject(pid)
-            orphaned = true
-          }
-        }
-        // If the OPEN project's mapping was orphaned, its engine now points at a doc this
-        // account can't write — nudge the attach effect so it detaches promptly (the
-        // fresh re-seed bumps this again when the new mapping lands).
-        if (orphaned) setMapVersion((n) => n + 1)
-      }
-      // Record the account these mappings now belong to (first sign-in or post-switch).
-      setPrefsFresh({ syncAccountId: acct })
-    }
+    if (!acct) return
+    const myOwner = `account:${acct}`
 
     const openId = openIdRef.current
     const mapped = prefs().projectRooms ?? {}
-    // Targets = projects with NO mapping yet. Open project first so its engine can
-    // attach as soon as it is mapped.
+    const owners = prefs().projectOwners ?? {}
+    // Targets = this account's not-yet-mapped projects. Open project first so its engine
+    // attaches as soon as it is mapped.
     const targets = projectsRef.current
       .map((p) => p.id)
-      .filter((id) => !mapped[id])
+      .filter((id) => !mapped[id] && owners[id] === myOwner)
       .sort((a, b) => (a === openId ? -1 : b === openId ? 1 : 0))
     if (targets.length === 0) return
 
@@ -304,6 +285,17 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
     await Promise.all(Array.from({ length: Math.min(BACKFILL_CONCURRENCY, targets.length) }, () => worker()))
   }, [whenReady, snapshotOf, setStatus])
 
+  // Serialize backfill runs so overlapping triggers — the sign-in epoch run plus a syncNow,
+  // or two syncNows from rapid project creation — can't both seed the SAME unmapped project
+  // and mint duplicate cloud docs. Each call queues behind the previous; a redundant run
+  // returns fast (nothing left to seed). The chain never stays rejected.
+  const backfillChainRef = useRef<Promise<void>>(Promise.resolve())
+  const runBackfill = useCallback((): Promise<void> => {
+    const next = backfillChainRef.current.then(() => runBackfillOnce())
+    backfillChainRef.current = next.catch(() => {})
+    return next
+  }, [runBackfillOnce])
+
   useEffect(() => {
     if (!signedIn) {
       // Signed out: allow a future sign-in to backfill again. Mappings are KEPT (and
@@ -339,6 +331,14 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
     }
   }, [])
 
+  // Explicit "back up my newly-owned projects now" — bump the map version so the reconcile
+  // re-evaluates the open project's ownership (a just-claimed OPEN project attaches even if
+  // it was already mapped), then re-run the owner-scoped backfill for the unmapped ones.
+  const syncNow = useCallback(() => {
+    setMapVersion((n) => n + 1)
+    void runBackfill()
+  }, [runBackfill])
+
   // Teardown on unmount: flush + destroy the open engine, stop further work.
   useEffect(
     () => () => {
@@ -353,5 +353,5 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
     [],
   )
 
-  return { statuses, suspendForCollab, resumeAfterCollab, flushOpen }
+  return { statuses, suspendForCollab, resumeAfterCollab, flushOpen, syncNow }
 }

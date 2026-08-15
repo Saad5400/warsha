@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { COPY } from '../copy'
 import type { AuthResult, Usage, WarshaApi } from '../collab/api'
-import { clearSession, ensureDeviceToken, setSession, setUsage, useAuth } from '../collab/auth'
+import { clearSession, setSession, setUsage, useAuth } from '../collab/auth'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
 
@@ -111,16 +111,12 @@ function AuthForm({
       setError(messageFor(result))
       return
     }
-    // Resolve the device token FIRST (its value, before it's superseded as the
-    // bearer), then land the session so the api's bearer becomes the account token
-    // — claim-device requires the account principal and takes the device token in
-    // the body, re-owning the device's anonymous docs to the new account.
-    const dev = await ensureDeviceToken(api)
+    // Land the session so every sync/sharing call now bears the account token.
     setSession(result.token, result.user)
-    if (dev) {
-      const claimed = await api.claimDevice(dev)
-      if (claimed > 0) notify(COPY.authClaimed(claimed), 'success')
-    }
+    // Carrying anonymous work into the account (claim-device + tagging local projects
+    // account-owned) is NOT done silently here — a shared/lab device would then absorb
+    // the previous student's work. The App shows an explicit "Add your projects?" prompt
+    // on this sign-in instead (local-first ownership); declining keeps them local.
     // Refresh usage for the account panel that replaces this form.
     const me = await api.me()
     if ('usage' in me) setUsage(me.usage)

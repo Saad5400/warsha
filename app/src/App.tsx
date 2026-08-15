@@ -6,7 +6,7 @@ import { langOfEntry, track } from './analytics'
 import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
-import { forgetRoomsForProject, prefs, rememberOwnedRoom, rememberRoomMapping, setPrefs } from './fs/prefs'
+import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, rememberOwnedRoom, rememberProjectOwner, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
@@ -17,7 +17,7 @@ import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
 import { useCollab, useCloudSync, materializeCloudDoc, CollabControl, peekRoomFromUrl, type Peer, type CollabBinding } from './collab'
 import { createApi, type DocListEntry, type DocRole } from './collab/api'
-import { currentToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
+import { currentToken, ensureDeviceToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
@@ -351,6 +351,59 @@ function Ide({ report }: { report: CapabilityReport }) {
   const cloudRef = useRef(cloud)
   cloudRef.current = cloud
 
+  // ---- local-first ownership (see docs/engineering + useCloudSync) ----
+  // Projects are device-global and never hidden/deleted by a sign-in change; an account
+  // owns only the CLOUD relationship (backup + badge + engine), tagged per project in
+  // `prefs.projectOwners`. `accountOwner` is the tag stamped on work made/claimed while
+  // signed in; null signed out → new work stays anonymous (device-owned), exactly as before.
+  const signedInNow = auth.token !== null && auth.user !== null
+  const accountOwner = auth.user ? `account:${auth.user.id}` : null
+  const accountOwnerRef = useRef(accountOwner)
+  accountOwnerRef.current = accountOwner
+  /** Tag a freshly created / adopted / cloud-opened project as owned by the signed-in
+   *  account and kick a backup. No-op when signed out — the project stays device-owned
+   *  (anonymous, local-only). Stable identity (reads the owner via a ref) so create
+   *  callbacks can call it without a dependency-array churn. */
+  const claimForBackup = useCallback((projectId: string) => {
+    const owner = accountOwnerRef.current
+    if (!owner) return
+    rememberProjectOwner(projectId, owner)
+    cloudRef.current.syncNow()
+  }, [])
+
+  // On a genuine signed-out → signed-in transition (an actual login/signup this session,
+  // NOT a reload that booted already-signed-in), offer to carry the device's anonymous
+  // projects into the account — one tap, non-destructive, personal-device default (the
+  // primary persona shares a family tablet, so carry-over should just work). Declining
+  // keeps them device-owned/local. Projects already owned by an account are left alone,
+  // so a different account never absorbs another's work (shared-device safety).
+  const prevSignedInRef = useRef(signedInNow)
+  useEffect(() => {
+    const was = prevSignedInRef.current
+    prevSignedInRef.current = signedInNow
+    if (was || !signedInNow || !authApi || !accountOwner) return
+    void (async () => {
+      const anon = projects.filter((p) => projectOwner(p.id) === null)
+      if (anon.length === 0) return
+      const ok = await dialogs.confirm({
+        title: COPY.authAddProjectsTitle,
+        message: COPY.authAddProjectsBody(auth.user!.email),
+        okLabel: COPY.authAddProjectsConfirm,
+        cancelLabel: COPY.authAddProjectsDismiss,
+      })
+      if (!ok) return
+      // Re-own the device's anonymous cloud docs (from prior anonymous collaboration) to
+      // this account, then tag every still-anonymous local project owned + back them up.
+      const dev = await ensureDeviceToken(authApi)
+      if (dev) {
+        const claimed = await authApi.claimDevice(dev)
+        if (claimed > 0) notify(COPY.authClaimed(claimed), 'success')
+      }
+      for (const p of anon) if (projectOwner(p.id) === null) rememberProjectOwner(p.id, accountOwner)
+      cloudRef.current.syncNow()
+    })()
+  }, [signedInNow, authApi, accountOwner, projects, dialogs, notify, auth.user])
+
   // A file opened before its room's doc has synced (a guest joins with the file
   // already on screen) gets a plain, non-collab EditorState: its Y.Text does not
   // exist yet, so `isCollab` is false and yCollab is never attached. Remote edits
@@ -546,6 +599,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         notify(COPY.noteShareSaveFailed, 'error')
         return false
       }
+      claimForBackup(result.meta.id) // signed in → the adopted copy is account-owned + backs up
       // Only a genuinely new copy counts — re-opening the same link on the same
       // device is one student returning, which the visit count already says.
       if (result.created) {
@@ -1233,6 +1287,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (project.isEmpty() && currentProject) {
       await replaceProject(t.snapshot, t.entry, COPY.noteTemplateReady(t.name, t.snapshot.files.length))
       await renameProject(currentProject.id, uniqueProjectName(t.name))
+      claimForBackup(currentProject.id) // filled while signed in → back it up
       return
     }
     // Fresh device (no project yet): create the first one straight from the starter, no name prompt.
@@ -1242,6 +1297,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       const meta = await createProject(uniqueProjectName(t.name), t.snapshot)
       if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
       adoptProject(leaving)
+      claimForBackup(meta.id)
       notify(COPY.noteProjectReady(meta.name, t.snapshot.files.length))
       return
     }
@@ -1317,6 +1373,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         /* best-effort cleanup */
       }
     }
+    forgetProjectOwner(projectId) // drop its cloud-owner tag (local-first ownership)
   }
 
   /** Resets the editor to nothing — for when the last project is deleted and the app returns to Home. */
@@ -1416,6 +1473,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     const meta = await createProject(name, template?.snapshot)
     if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
     adoptProject(leaving)
+    claimForBackup(meta.id) // signed in → account-owned + auto-backup; anonymous → no-op
     notify(
       template ? COPY.noteProjectReady(meta.name, template.snapshot.files.length) : COPY.noteProjectReadyBare(meta.name),
       'success',
@@ -1501,7 +1559,6 @@ function Ide({ report }: { report: CapabilityReport }) {
   // cloud-only cards a different device can open. `null` = we don't know yet (never
   // fetched / offline / a failed GET) — the list then degrades to local-only, no crash.
   const [cloudDocs, setCloudDocs] = useState<DocListEntry[] | null>(null)
-  const signedInNow = auth.token !== null && auth.user !== null
 
   /** GET /v1/docs and cache it. No-op (and clears) when signed out / no backend. */
   const refreshCloudDocs = useCallback(async () => {
@@ -1526,24 +1583,37 @@ function Ide({ report }: { report: CapabilityReport }) {
   // synced glyph; a cloud entry with no local mapping becomes a cloud-only card.
   const cloudView = useMemo(() => {
     const rooms = prefs().projectRooms ?? {}
+    const owners = prefs().projectOwners ?? {}
+    const myOwner = auth.user ? `account:${auth.user.id}` : null
     const cloudById = new Map((cloudDocs ?? []).map((d) => [d.id, d]))
-    const mappedDocIds = new Set<string>()
+    // Truthful per-card badges (local-first ownership): the green "backed up" check shows
+    // ONLY when signed in as the owner AND the doc is confirmed in the account. Signed out
+    // it drops to a neutral "sign in to sync"; a different account reads "another account".
     const cloudSyncedIds: string[] = []
+    const cloudSavedSignedOutIds: string[] = []
+    const cloudOtherAccountIds: string[] = []
     for (const p of projects) {
-      const docId = rooms[p.id]
-      if (!docId) continue
-      mappedDocIds.add(docId)
-      // Show the glyph when the mapping is confirmed present in the account — or, when
-      // we couldn't fetch the list (offline), trust the local mapping rather than blank it.
-      if (cloudDocs === null || cloudById.has(docId)) cloudSyncedIds.push(p.id)
+      const owner = owners[p.id] ?? null
+      if (!owner) continue // anonymous / device-owned → no cloud chrome at all
+      if (!signedInNow) {
+        cloudSavedSignedOutIds.push(p.id) // belongs to an account, but nobody is signed in
+      } else if (owner !== myOwner) {
+        cloudOtherAccountIds.push(p.id) // owned by a different account (still opens locally)
+      } else {
+        // Owned by the current account — confirmed backed up once the doc is in the list,
+        // or (offline / list unavailable) trust the local mapping rather than blank it.
+        const docId = rooms[p.id]
+        if (docId && (cloudDocs === null || cloudById.has(docId))) cloudSyncedIds.push(p.id)
+      }
     }
+    const mappedDocIds = new Set(Object.values(rooms))
     const cloudOnly: CloudOnlyEntry[] = (cloudDocs ?? [])
       .filter((d) => !mappedDocIds.has(d.id))
       .map((d) => ({ id: d.id, name: d.name?.trim() || COPY.homeCloudUntitled, role: d.role }))
-    return { cloudSyncedIds, cloudOnly }
-    // `prefs().projectRooms` is read imperatively; `cloud.statuses` (a dep of the fetch
-    // effect above) changing is what re-runs this after a backfill remaps a project.
-  }, [projects, cloudDocs, cloud.statuses])
+    return { cloudSyncedIds, cloudSavedSignedOutIds, cloudOtherAccountIds, cloudOnly }
+    // `prefs()` is read imperatively; `cloud.statuses` (a dep of the fetch effect above)
+    // ticking is what re-runs this after a backfill remaps/re-owns a project.
+  }, [projects, cloudDocs, cloud.statuses, signedInNow, auth.user])
 
   /** Open a cloud-only project on THIS device: materialize its doc into a fresh local
    *  project, map it, claim ownership only if we own it, then enter the editor. Mirrors
@@ -1562,7 +1632,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       // Map BOTH directions so the manager's reconcile attaches its engine; own the doc
       // only when the account is the owner (a shared editor/viewer must not claim it).
       rememberRoomMapping(docId, meta.id)
-      if (role === 'owner') rememberOwnedRoom(docId)
+      if (role === 'owner') {
+        rememberOwnedRoom(docId)
+        // Tag it account-owned so the durable engine attaches and it shows "backed up".
+        // A shared editor/viewer copy stays device-owned (local-only, no auto-backup).
+        claimForBackup(meta.id)
+      }
       adoptProject(leaving)
       setView('editor')
       void refreshCloudDocs() // it's local now — drop it from the cloud-only set
@@ -1587,8 +1662,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     const target = projects.find((p) => p.id === id)
     if (!target) return
     const meta = await duplicateProject(id, uniqueAllNames(`${target.name} ${COPY.homeDupSuffix}`))
-    if (meta) notify(COPY.noteProjectDuplicated(meta.name), 'success')
-    else notify(COPY.noteProjectCreateFailed, 'error')
+    if (meta) {
+      claimForBackup(meta.id) // a duplicate made while signed in backs up too
+      notify(COPY.noteProjectDuplicated(meta.name), 'success')
+    } else notify(COPY.noteProjectCreateFailed, 'error')
   }
 
   const homeDelete = async (id: string) => {
@@ -2469,6 +2546,8 @@ function Ide({ report }: { report: CapabilityReport }) {
           email={auth.user?.email}
           onAccount={authApi ? () => setAccountOpen(true) : undefined}
           cloudSyncedIds={cloudView.cloudSyncedIds}
+          cloudSavedSignedOutIds={cloudView.cloudSavedSignedOutIds}
+          cloudOtherAccountIds={cloudView.cloudOtherAccountIds}
           cloudStatus={cloud.statuses}
           cloudOnly={cloudView.cloudOnly}
           onOpenCloud={authApi ? openCloudDoc : undefined}

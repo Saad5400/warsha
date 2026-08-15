@@ -124,6 +124,9 @@ export interface ConfirmRequest {
   title: string
   message?: string
   okLabel?: string
+  /** Overrides the default "Cancel" — for a non-destructive optional prompt where
+   *  declining reads better as e.g. "Not now" than "Cancel". */
+  cancelLabel?: string
   danger?: boolean
   resolve: (value: boolean) => void
 }
@@ -263,7 +266,7 @@ function ConfirmDialog({ request, open }: { request: ConfirmRequest; open: boole
       {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
       <div className={ACTIONS}>
         <Button ref={cancelRef} variant="ghost" large onClick={() => request.resolve(false)}>
-          {COPY.dlgCancel}
+          {request.cancelLabel ?? COPY.dlgCancel}
         </Button>
         <Button
           ref={okRef}

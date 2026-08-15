@@ -199,6 +199,12 @@ export const EN = {
   homeCloudUntitled: 'Untitled project',
   /** Empty-state prompt (signed out) inviting sign-in to load the account's projects. */
   homeEmptySignedOut: 'Already have an account? Sign in to load your projects.',
+  /** Card status when a project belongs to an account but nobody is signed in — a green
+   *  "backed up" check would be a lie, so the neutral cloud glyph reads this instead. */
+  homeCloudSavedSignedOut: 'Sign in to sync',
+  /** Card status when a project is owned by a different account than the one signed in.
+   *  It still opens locally — files are never locked to an account. */
+  homeCloudOtherAccount: 'Another account',
   /** materializeCloudDoc came back empty (missing / forbidden / offline). */
   noteCloudOpenFailed: 'Could not open that project from your account. Check your connection and try again.',
 
@@ -741,6 +747,13 @@ export const EN = {
   authSignedOut: 'Signed out.',
   /** Toast after login when anonymous docs are re-owned to the account. */
   authClaimed: (n: number) => (n === 1 ? '1 project moved to your account.' : `${n} projects moved to your account.`),
+  /** Post-sign-in prompt (local-first ownership): carry the device's anonymous projects
+   *  into the just-signed-in account. Non-destructive — declining keeps them on-device. */
+  authAddProjectsTitle: 'Add your projects to this account?',
+  authAddProjectsBody: (email: string) =>
+    `Back up your projects to ${email} so they sync across your devices. They stay on this device either way.`,
+  authAddProjectsConfirm: 'Add all',
+  authAddProjectsDismiss: 'Not now',
   authSignedInAs: 'Signed in as',
   authSignOut: 'Sign out',
   authUsageTitle: 'Usage',

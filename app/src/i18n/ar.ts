@@ -223,6 +223,8 @@ export const AR: Bundle = {
   homeCloudFull: 'المساحة ممتلئة',
   homeCloudUntitled: 'مشروع بلا اسم',
   homeEmptySignedOut: 'لديك حساب؟ سجّل الدخول لعرض مشاريعك.',
+  homeCloudSavedSignedOut: 'سجّل الدخول للمزامنة',
+  homeCloudOtherAccount: 'حساب آخر',
   noteCloudOpenFailed: 'تعذّر فتح هذا المشروع من حسابك. تحقق من اتصالك وحاول مرة أخرى.',
 
   // ---- the New-project template picker ----
@@ -684,6 +686,10 @@ export const AR: Bundle = {
   authSignedUp: 'أُنشئ الحساب — أنت الآن مسجّل الدخول.',
   authSignedOut: 'تم تسجيل الخروج.',
   authClaimed: (n: number) => (n === 1 ? 'نُقل مشروع واحد إلى حسابك.' : `نُقلت ${n} مشاريع إلى حسابك.`),
+  authAddProjectsTitle: 'إضافة مشاريعك إلى هذا الحساب؟',
+  authAddProjectsBody: (email: string) => `احفظ مشاريعك في ${iso(email)} لتتزامن عبر أجهزتك. وتبقى على هذا الجهاز في الحالتين.`,
+  authAddProjectsConfirm: 'إضافة الكل',
+  authAddProjectsDismiss: 'ليس الآن',
   authSignedInAs: 'مسجّل الدخول باسم',
   authSignOut: 'تسجيل الخروج',
   authUsageTitle: 'الاستخدام',

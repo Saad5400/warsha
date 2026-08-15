@@ -76,8 +76,14 @@ export interface HomeProps {
    *  backend is configured, `authApi != null`) → no account affordance is rendered. */
   onAccount?(): void
   /** Local project ids whose durable doc is backed up to the account — drives the
-   *  per-card "synced" glyph. */
+   *  per-card "synced" glyph. Only when signed in AS the owner and confirmed. */
   cloudSyncedIds?: string[]
+  /** Account-owned project ids while signed OUT: they belong to an account but nothing
+   *  is syncing now, so the card reads "sign in to sync" instead of a green check. */
+  cloudSavedSignedOutIds?: string[]
+  /** Project ids owned by a DIFFERENT account than the one signed in — the card reads
+   *  "another account"; it still opens locally (files are never locked). */
+  cloudOtherAccountIds?: string[]
   /** Per-project durable-sync status (keyed by PROJECT id) for the card status pill. */
   cloudStatus?: Record<string, CloudDocStatus>
   /** Cloud-only projects — in the account but not on this device. Openable. */
@@ -167,6 +173,8 @@ export function Home({
   email,
   onAccount,
   cloudSyncedIds,
+  cloudSavedSignedOutIds,
+  cloudOtherAccountIds,
   cloudStatus,
   cloudOnly,
   onOpenCloud,
@@ -194,6 +202,8 @@ export function Home({
   const searching = q.length > 0
   const pinned = new Set(pinnedIds)
   const syncedSet = new Set(cloudSyncedIds ?? [])
+  const savedSignedOutSet = new Set(cloudSavedSignedOutIds ?? [])
+  const otherAccountSet = new Set(cloudOtherAccountIds ?? [])
 
   // Cloud-only projects (in the account, not on this device) share the grid with the
   // local cards. Searching ranks them by the same fuzzy score; otherwise they trail
@@ -319,6 +329,8 @@ export function Home({
                       isOpen={p.id === currentId}
                       pinned={pinned.has(p.id)}
                       synced={syncedSet.has(p.id)}
+                      savedSignedOut={savedSignedOutSet.has(p.id)}
+                      otherAccount={otherAccountSet.has(p.id)}
                       status={cloudStatus?.[p.id]}
                       onOpen={onOpen}
                       onTogglePin={onTogglePin}
@@ -397,6 +409,8 @@ function ProjectCard({
   isOpen,
   pinned,
   synced,
+  savedSignedOut,
+  otherAccount,
   status,
   onOpen,
   onTogglePin,
@@ -411,6 +425,8 @@ function ProjectCard({
   isOpen: boolean
   pinned: boolean
   synced: boolean
+  savedSignedOut: boolean
+  otherAccount: boolean
   status: CloudDocStatus | undefined
   onOpen(id: string): void
   onTogglePin(id: string): void
@@ -452,9 +468,17 @@ function ProjectCard({
               <IconStarFilled size={13} className="flex-none text-text-2" aria-label={COPY.a11yPinned} />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
-            {/* Backed-up glyph: this project's durable doc has reached the account. */}
+            {/* Cloud glyph: a green check only when confirmed backed up as the owner; a
+                neutral cloud when the project belongs to an account but this session isn't
+                actively syncing it (signed out, or a different account). Anonymous → none. */}
             {synced ? (
               <IconCloudCheck size={14} className="flex-none text-text-3" aria-label={COPY.homeCloudSynced} />
+            ) : savedSignedOut || otherAccount ? (
+              <IconCloud
+                size={14}
+                className="flex-none text-text-3"
+                aria-label={savedSignedOut ? COPY.homeCloudSavedSignedOut : COPY.homeCloudOtherAccount}
+              />
             ) : null}
           </span>
           <span className="pointer-events-auto -me-1 -mt-1 flex-none">
@@ -464,6 +488,10 @@ function ProjectCard({
         <span className="mt-auto flex items-center gap-1.5 truncate text-meta leading-normal text-text-3">
           {pill ? (
             <span className={pill.warn ? 'text-warn' : 'text-text-3'}>{pill.text}</span>
+          ) : savedSignedOut ? (
+            COPY.homeCloudSavedSignedOut
+          ) : otherAccount ? (
+            COPY.homeCloudOtherAccount
           ) : isOpen ? (
             COPY.menuProjectOpenHint
           ) : (
