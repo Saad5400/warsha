@@ -267,7 +267,14 @@ export function Home({
         </header>
 
         {projects.length === 0 && cloudList.length === 0 ? (
-          <EmptyState onNewProject={onNewProject} />
+          <EmptyState
+            onNewProject={onNewProject}
+            // A returning student on a fresh device lands here with nothing local and
+            // no account session — offer sign-in in the hero itself (the corner button
+            // is easy to miss), so their cloud projects are one tap away. Hidden once
+            // signed in (their projects would already be listed) or with no backend.
+            onSignIn={!signedIn && onAccount ? onAccount : undefined}
+          />
         ) : (
           <>
             {!searching && continueProject ? (
@@ -576,7 +583,7 @@ function NewProjectCard({ onNewProject }: { onNewProject(): void }) {
   )
 }
 
-function EmptyState({ onNewProject }: { onNewProject(): void }) {
+function EmptyState({ onNewProject, onSignIn }: { onNewProject(): void; onSignIn?(): void }) {
   return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center gap-5 text-center">
       <LogoLockup />
@@ -584,10 +591,19 @@ function EmptyState({ onNewProject }: { onNewProject(): void }) {
         <h2 className="m-0 text-[17px] leading-[1.3] font-semibold text-text-1">{COPY.welcomeStartProject}</h2>
         <p className="m-0 text-meta leading-normal text-text-3">{COPY.welcomeRecentEmpty}</p>
       </div>
-      <Button variant="primary" onClick={onNewProject}>
-        <IconPlus size={16} />
-        {COPY.dlgNewProjectTitle}
-      </Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button variant="primary" onClick={onNewProject}>
+          <IconPlus size={16} />
+          {COPY.dlgNewProjectTitle}
+        </Button>
+        {onSignIn ? (
+          <Button variant="ghost" onClick={onSignIn}>
+            <IconUser size={16} />
+            {COPY.homeSignIn}
+          </Button>
+        ) : null}
+      </div>
+      {onSignIn ? <p className="m-0 max-w-[24rem] text-meta leading-normal text-text-3">{COPY.homeEmptySignedOut}</p> : null}
     </div>
   )
 }

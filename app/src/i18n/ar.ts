@@ -222,6 +222,7 @@ export const AR: Bundle = {
   homeCloudSeeding: 'يجري الحفظ…',
   homeCloudFull: 'المساحة ممتلئة',
   homeCloudUntitled: 'مشروع بلا اسم',
+  homeEmptySignedOut: 'لديك حساب؟ سجّل الدخول لعرض مشاريعك.',
   noteCloudOpenFailed: 'تعذّر فتح هذا المشروع من حسابك. تحقق من اتصالك وحاول مرة أخرى.',
 
   // ---- the New-project template picker ----

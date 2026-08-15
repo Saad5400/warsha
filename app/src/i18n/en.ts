@@ -197,6 +197,8 @@ export const EN = {
   homeCloudFull: 'Storage full',
   /** A cloud-only doc with no name yet (the host never renamed it). */
   homeCloudUntitled: 'Untitled project',
+  /** Empty-state prompt (signed out) inviting sign-in to load the account's projects. */
+  homeEmptySignedOut: 'Already have an account? Sign in to load your projects.',
   /** materializeCloudDoc came back empty (missing / forbidden / offline). */
   noteCloudOpenFailed: 'Could not open that project from your account. Check your connection and try again.',
 
