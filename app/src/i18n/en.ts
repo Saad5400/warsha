@@ -743,6 +743,26 @@ export const EN = {
   shareComingSoon: 'Coming soon',
   shareEmailNote: 'Per-person sharing arrives in a later update.',
 
+  // ---- tutorials (components/TutorialsPage.tsx, src/tutorials/) ----
+  /** The rail/Home entry and the page heading. */
+  tutorialsTitle: 'Tutorials',
+  tutorialsSubtitle: 'Short, illustrated walkthroughs of everything you can do in Warsha.',
+  tutorialsSearchPlaceholder: 'Search tutorials',
+  tutorialsNoMatches: (q: string) => `No tutorials match “${q}”.`,
+  /** "1 step" / "5 steps" — the count on a lesson card. */
+  tutorialsSteps: (n: number) => (n === 1 ? '1 step' : `${n} steps`),
+  /** Back from a lesson to the index. */
+  tutorialsBackToAll: 'All tutorials',
+  /** "Step 3 of 5" — Western digits. */
+  tutorialsStepOf: (n: number, total: number) => `Step ${n} of ${total}`,
+  tutorialsPrev: 'Back',
+  tutorialsNext: 'Next',
+  tutorialsFinish: 'Finish',
+  /** Open a lesson from its card. */
+  tutorialsOpen: 'Open',
+  a11yTutorials: 'Tutorials',
+  a11yTutorialImage: 'Screenshot for this step',
+
   /**
    * Starter names and blurbs, by Template id (templates.ts).
    *

@@ -12,6 +12,7 @@ import {
   IconExport,
   IconFolderOpen,
   IconGlobe,
+  IconLightbulb,
   IconMore,
   IconPencil,
   IconPlus,
@@ -48,6 +49,8 @@ export interface HomeProps {
   onDuplicate(id: string): void
   onDelete(id: string): void
   onExport(id: string): void
+  /** Open the Tutorials page — the illustrated, searchable how-to library. */
+  onOpenTutorials(): void
 }
 
 // Full-viewport surface, scrolls on its own. Height + /ui-scale mirror the shell
@@ -126,6 +129,7 @@ export function Home({
   onDuplicate,
   onDelete,
   onExport,
+  onOpenTutorials,
 }: HomeProps) {
   const [facts, setFacts] = useState<Record<string, ProjectFacts>>({})
   const [query, setQuery] = useState('')
@@ -174,6 +178,9 @@ export function Home({
           </span>
           <span className="ms-3 hidden text-meta text-text-3 min-[560px]:inline">{COPY.homeTitle}</span>
           <span className="ms-auto flex items-center gap-2">
+            <IconButton label={COPY.tutorialsTitle} onClick={onOpenTutorials}>
+              <IconLightbulb />
+            </IconButton>
             <IconButton label={COPY.menuLanguage} onClick={onToggleLocale}>
               <IconGlobe />
             </IconButton>

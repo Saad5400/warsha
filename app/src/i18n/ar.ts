@@ -698,6 +698,21 @@ export const AR: Bundle = {
   shareComingSoon: 'قريبًا',
   shareEmailNote: 'المشاركة الفردية لكل شخص ستصل في تحديث لاحق.',
 
+  // ---- tutorials (components/TutorialsPage.tsx, src/tutorials/) ----
+  tutorialsTitle: 'الدروس',
+  tutorialsSubtitle: 'شروحات قصيرة مصوّرة لكل ما يمكنك فعله في ورشة.',
+  tutorialsSearchPlaceholder: 'ابحث في الدروس',
+  tutorialsNoMatches: (q) => `لا توجد دروس تطابق «${q}».`,
+  tutorialsSteps: (n) => (n === 1 ? 'خطوة واحدة' : n === 2 ? 'خطوتان' : n <= 10 ? `${n} خطوات` : `${n} خطوة`),
+  tutorialsBackToAll: 'كل الدروس',
+  tutorialsStepOf: (n, total) => `الخطوة ${n} من ${total}`,
+  tutorialsPrev: 'السابق',
+  tutorialsNext: 'التالي',
+  tutorialsFinish: 'إنهاء',
+  tutorialsOpen: 'افتح',
+  a11yTutorials: 'الدروس',
+  a11yTutorialImage: 'لقطة شاشة لهذه الخطوة',
+
   // Starter names and blurbs, by Template id — see en.ts's note on why this
   // record lives only here. Missing ids fall back to the template's English
   // fields rather than disappearing.
