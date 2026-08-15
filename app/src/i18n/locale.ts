@@ -77,47 +77,31 @@ function fromUrl(): Locale | null {
   }
 }
 
-const ENTRY_KEY = 'warsha:entry-locale'
-
 /**
- * `/ar/` and `/en/` — prerendered per-locale entry points, for search
- * engines: a single `/` can only offer a crawler one `<html lang>`/title, so
- * this serves each locale its own (build emits a copy of index.html per
- * prefix — see app/ARCHITECTURE.md §7 and the `warsha:locale-entries` plugin).
+ * `/ar/` and `/en/` — per-locale entry points, for search engines and for a
+ * teacher pinning one language: a single `/` can only offer a crawler one
+ * `<html lang>`/title, so the build emits a copy of index.html per prefix (see
+ * app/ARCHITECTURE.md §7 and the `warsha:locale-entries` plugin).
  *
- * Real entry points, not landing pages — `/ar/` boots the same bundle. The
- * inline script in index.html strips the prefix off the URL once it has read
- * it, because every runtime asset resolves against `document.baseURI` and a
- * prefix makes that base one directory too deep. The pathname is still read as
- * a fallback, for a blocked sessionStorage.
+ * The prefix is a real, addressable part of the URL — it stays in the path, and
+ * the locale is read straight off the first path segment (`/en/…` → `en`). It
+ * no longer needs stripping: runtime assets are root-absolute (see
+ * src/runtime/assetUrl.ts), so a prefix in the path can't push their resolution
+ * off the origin root. Any first segment that isn't a locale (`/tutorials/…`, a
+ * project id, or nothing at `/`) returns null and resolution falls through to
+ * the stored/detected choice.
  *
  * Not persisted, like `?lang=` — a URL naming a language is a fact about this
- * visit, not a standing choice. `setLocale()` clears it, or an explicit switch
- * would be undone by the next reload.
+ * visit. A prefix therefore outranks the stored preference (see `initLocale`),
+ * which is why the language toggle also rewrites the prefix (router `navigate`)
+ * so the URL and the active locale never disagree.
  */
 function fromEntry(): Locale | null {
-  const read = (raw: string | null | undefined): Locale | null => {
-    const l = raw?.toLowerCase()
-    return l === 'ar' || l === 'en' ? l : null
-  }
   try {
-    const stashed = read(sessionStorage.getItem(ENTRY_KEY))
-    if (stashed) return stashed
-  } catch {
-    // Blocked storage — fall through to the path.
-  }
-  try {
-    return read(location.pathname.split('/').filter(Boolean)[0])
+    const first = location.pathname.split('/').filter(Boolean)[0]?.toLowerCase()
+    return first === 'ar' || first === 'en' ? first : null
   } catch {
     return null
-  }
-}
-
-function clearEntry() {
-  try {
-    sessionStorage.removeItem(ENTRY_KEY)
-  } catch {
-    // Nothing was stored if storage is blocked.
   }
 }
 
@@ -144,7 +128,6 @@ export function initLocale(): Locale {
 export function setLocale(next: Locale) {
   if (next === current) return
   current = next
-  clearEntry()
   setPrefs({ locale: next })
   applyToDocument(next)
   for (const fn of listeners) fn()

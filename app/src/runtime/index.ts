@@ -5,6 +5,7 @@ import { CSharpRuntime } from '../../../runtimes/csharp/src'
 import { ClangRuntime } from '../../../runtimes/clang/src'
 import { WebRuntime } from './web'
 import { JsRuntime } from './js'
+import { assetUrl } from './assetUrl'
 
 /** Runtime key, distinct from the editor language (see editorLangForPath). `web` draws the preview; `js` is a headless script — an HTML-referenced `.js` is inlined by `web`, not chosen here. */
 export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
@@ -16,14 +17,14 @@ export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
  * see INTEGRATION.md §2.
  */
 const registry: Record<LangId, Runtime> = {
-  java: new JavaRuntime({ workerUrl: new URL('warsha-jvm.worker.js', document.baseURI).href }),
+  java: new JavaRuntime({ workerUrl: assetUrl('warsha-jvm.worker.js') }),
   python: new PythonRuntime(),
   // .NET-wasm + Roslyn; module worker loaded by URL (not bundled) so its relative
   // dotnet.js import resolves. See runtimes/csharp/INTEGRATION.md.
-  csharp: new CSharpRuntime({ workerUrl: new URL('warsha-dotnet/dotnet.worker.js', document.baseURI).href }),
+  csharp: new CSharpRuntime({ workerUrl: assetUrl('warsha-dotnet/dotnet.worker.js') }),
   // clang-wasm compiles in a module worker, which then runs the WASIX output
   // under a WASI shim so stdin can block (interactive scanf). See runtimes/clang/INTEGRATION.md.
-  c: new ClangRuntime({ workerUrl: new URL('warsha-clang.worker.js', document.baseURI).href }),
+  c: new ClangRuntime({ workerUrl: assetUrl('warsha-clang.worker.js') }),
   // First-party: `web` renders into the preview iframe, `js` runs headless like
   // Node. Both are free until TS or cross-file imports pull in esbuild on demand.
   web: new WebRuntime(),

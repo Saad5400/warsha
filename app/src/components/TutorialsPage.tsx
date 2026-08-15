@@ -52,19 +52,23 @@ function Highlighted({ text, ranges }: { text: string; ranges: Range[] }) {
 
 export interface TutorialsPageProps {
   locale: Locale
+  /** The open lesson's id, or null for the index. Owned by App so it maps to the
+   *  URL (`/tutorials/<slug>/`); see router.ts. */
+  openSlug: string | null
+  onOpenLesson(slug: string): void
+  onCloseLesson(): void
   onHome(): void
   onToggleLocale(): void
 }
 
-export function TutorialsPage({ locale, onHome, onToggleLocale }: TutorialsPageProps) {
+export function TutorialsPage({ locale, openSlug, onOpenLesson, onCloseLesson, onHome, onToggleLocale }: TutorialsPageProps) {
   const [query, setQuery] = useState('')
-  const [openId, setOpenId] = useState<string | null>(null)
 
-  const open = openId ? TUTORIALS.find((t) => t.id === openId) ?? null : null
+  const open = openSlug ? TUTORIALS.find((t) => t.id === openSlug) ?? null : null
 
   // Leaving a lesson clears the query context is fine; opening one from search keeps it.
   if (open) {
-    return <Lesson tutorial={open} locale={locale} onBack={() => setOpenId(null)} />
+    return <Lesson tutorial={open} locale={locale} onBack={onCloseLesson} />
   }
 
   const q = query.trim()
@@ -131,7 +135,7 @@ export function TutorialsPage({ locale, onHome, onToggleLocale }: TutorialsPageP
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-3">
               {ranked.map((t) => (
-                <Card key={t.id} tutorial={t} locale={locale} titleRanges={titleRanges(t)} onOpen={() => setOpenId(t.id)} />
+                <Card key={t.id} tutorial={t} locale={locale} titleRanges={titleRanges(t)} onOpen={() => onOpenLesson(t.id)} />
               ))}
             </div>
           )
@@ -144,7 +148,7 @@ export function TutorialsPage({ locale, onHome, onToggleLocale }: TutorialsPageP
                 <h2 className="m-0 text-btn leading-[1.3] font-semibold text-text-2">{say(cat.label, locale)}</h2>
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-3">
                   {items.map((t) => (
-                    <Card key={t.id} tutorial={t} locale={locale} titleRanges={[]} onOpen={() => setOpenId(t.id)} />
+                    <Card key={t.id} tutorial={t} locale={locale} titleRanges={[]} onOpen={() => onOpenLesson(t.id)} />
                   ))}
                 </div>
               </section>

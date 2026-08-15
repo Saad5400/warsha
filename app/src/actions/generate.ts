@@ -28,6 +28,7 @@ import { EditorState } from '@codemirror/state'
 import { Parser, Language, type Node } from 'web-tree-sitter'
 import runtimeWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import { langForPath } from '../runtime'
+import { assetUrl } from '../runtime/assetUrl'
 import { importInsertion } from '../editor/imports'
 import { formatJava } from './format'
 
@@ -127,7 +128,7 @@ function loadJavaParser(): Promise<Parser> {
     javaParserPromise = (async () => {
       await Parser.init({ locateFile: () => runtimeWasmUrl })
       const parser = new Parser()
-      const grammarUrl = new URL('warsha-tree-sitter-java.wasm', document.baseURI).href
+      const grammarUrl = assetUrl('warsha-tree-sitter-java.wasm')
       parser.setLanguage(await Language.load(grammarUrl))
       return parser
     })()

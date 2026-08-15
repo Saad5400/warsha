@@ -42,15 +42,20 @@ export function peekRoomFromUrl(): string | null {
   return ROOM_RE.test(id) ? id : null
 }
 
-/** The full joinable URL for a room. */
+/** The joinable link handed to a guest — anchored at the origin root, never the
+ *  host's `/p/<id>` (that project id is the host's device-local id and resolves
+ *  to nothing on the guest's device; the room join opens/creates the guest's own
+ *  project). The room id rides the fragment, so only that reaches the guest. */
 export function buildRoomUrl(roomId: string): string {
-  return `${location.origin}${location.pathname}${PARAM}${roomId}`
+  return `${location.origin}/${PARAM}${roomId}`
 }
 
-/** Writes `#room=<id>` into the URL without a navigation (so a reload rejoins). */
+/** Writes `#room=<id>` onto the HOST's *current* URL without a navigation, so a
+ *  reload rejoins — preserving `/p/<id>` (not buildRoomUrl, which is the clean
+ *  guest link) so the host stays on the project it is collaborating on. */
 export function setRoomHash(roomId: string): void {
   if (typeof history === 'undefined') return
-  history.replaceState(history.state, '', buildRoomUrl(roomId))
+  history.replaceState(history.state, '', location.pathname + location.search + PARAM + roomId)
 }
 
 /** Drops the `#room=` payload — used when the student ends collaboration. */

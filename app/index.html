@@ -51,26 +51,13 @@
          offline caching layer (it also precaches the app shell and caches the
          downloaded runtimes so the installed PWA works offline; see
          app/ARCHITECTURE.md §2.5). See runtimes/python/INTEGRATION.md §3. -->
-    <script src="./coi-serviceworker.js"></script>
-    <!-- /ar/ and /en/ are crawler entry points, not app routes: read the prefix,
-         then take it off the URL. Every runtime asset is `new URL(name,
-         document.baseURI)`, and under a prefix that base is one directory too
-         deep — the JVM, .NET and clang workers all 404. Inline because
-         src/runtime/index.ts bakes its worker URLs at import time, before any
-         module body runs; sessionStorage because coi-serviceworker reloads once
-         on a first visit. See app/ARCHITECTURE.md §7. -->
-    <script>
-      ;(function () {
-        try {
-          var here = location.pathname.match(/^(.*\/)(ar|en)\/?$/)
-          if (!here) return
-          sessionStorage.setItem('warsha:entry-locale', here[2])
-          history.replaceState(history.state, '', here[1] + location.search + location.hash)
-        } catch (e) {
-          // Blocked storage must not stop the boot — locale.ts falls back to the path.
-        }
-      })()
-    </script>
+    <script src="/coi-serviceworker.js"></script>
+    <!-- /ar/ and /en/ (and /tutorials/<slug>) are real, addressable URLs, not
+         prefixes to strip: the locale stays in the path and locale.ts reads it
+         there, while runtime assets are root-absolute (`new URL('/'+name, …)`,
+         see src/runtime/assetUrl.ts) so worker resolution no longer depends on
+         the current path depth. See app/ARCHITECTURE.md §7. -->
+
     <!-- No user-scalable=no / maximum-scale: that fails WCAG 1.4.4 and stops a
          student pinching into a stack trace. Double-tap zoom is killed per
          control with touch-action instead. See DESIGN-SPEC §4.2. -->
@@ -99,7 +86,7 @@
          by the service worker) alongside it without blocking anything. -->
     <link
       rel="preload"
-      href="./fonts/readex-pro-latin-wght-normal.woff2"
+      href="/fonts/readex-pro-latin-wght-normal.woff2"
       as="font"
       type="font/woff2"
       crossorigin
@@ -219,10 +206,10 @@
          404 in the console.
          All of these are generated from docs/design/mark.svg — see
          DESIGN-SPEC §11 and tools/brand/build-brand-assets.mjs. -->
-    <link rel="icon" href="./favicon.ico" sizes="any" />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
   <!-- Analytics (self-hosted Umami, cookieless). `crossorigin` is load-bearing:
        under COEP require-corp a cross-origin script needs CORP or CORS, and Umami
        sends `Access-Control-Allow-Origin: *` (no CORP), so it must load via CORS. -->

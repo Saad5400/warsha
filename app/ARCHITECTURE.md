@@ -603,9 +603,11 @@ that compile and run with piped stdin but have not been through that review. Eac
 
 ## 7. Deploy metadata: origin, robots, sitemap
 
-The app is relative everywhere (`base: './'`) except four tags that cannot be: `<link rel=canonical>`,
-`og:url`, `og:image`, `twitter:image`. A social scraper does not resolve a relative image URL against
-the page it fetched — it drops the card — so index.html has to name its own origin.
+The app uses root-absolute asset paths (`base: '/'`) — everything is host-relative except four tags that
+must name the full origin: `<link rel=canonical>`, `og:url`, `og:image`, `twitter:image`. A social
+scraper does not resolve a relative image URL against the page it fetched — it drops the card — so
+index.html has to name its own origin. (It used to be `base: './'`; §"URL routing" below is why that
+changed.)
 
 That origin is owned by **one** thing: the `warsha:site-origin` plugin in `vite.config.ts`. It
 substitutes the `__WARSHA_ORIGIN__` token in index.html (in dev *and* build) and emits `dist/robots.txt`
@@ -624,20 +626,22 @@ own bug: with neither file on disk, nginx's SPA catch-all answered `/robots.txt`
 `200 text/html`. `deploy/nginx.conf` now pins both to `try_files $uri =404` so a build that stops
 emitting them fails loudly instead of serving a React shell to a crawler.
 
-**Three indexable URLs: `/`, `/en/`, `/ar/`.** The rendered DOM is IDE chrome ("Run", "New file",
-"Console"), so the `<title>`, the meta description and the `SoftwareApplication` JSON-LD block are the
-entire indexable surface of each — which is exactly why there has to be more than one of them. The
-interface is bilingual (`src/i18n`); with a single URL a crawler sees one `<html lang>`, one title and
-one description, and half of what Warsha ships is unreachable from an Arabic query.
+**The home shell: `/`, `/en/`, `/ar/`.** The rendered DOM is IDE chrome ("Run", "New file", "Console"),
+so the `<title>`, the meta description and the `SoftwareApplication` JSON-LD block are the entire
+indexable surface of each — which is exactly why there has to be more than one of them. The interface is
+bilingual (`src/i18n`); with a single URL a crawler sees one `<html lang>`, one title and one description,
+and half of what Warsha ships is unreachable from an Arabic query. (The tutorials add real indexable
+*content* on top of this — prerendered per lesson, see §"URL routing" — and grow the sitemap accordingly.)
 
 `warsha:locale-entries` (also in `vite.config.ts`) emits `dist/en/index.html` and `dist/ar/index.html`
 in `closeBundle`, by rewriting the *built* `dist/index.html` rather than re-templating a second copy of
 the head — that is what stops the three pages drifting apart. Per copy it swaps `lang`/`dir`, title,
-description, the og/twitter pair, `og:locale`(+`:alternate`), the self-canonical, the JSON-LD
-(`url`/`name`/`description`/`inLanguage`, parsed and re-serialised, not regexed), and rewrites `="./`
-to `="../`. The hreflang cluster is authored once in `index.html` and inherited verbatim, because it is
-identical on all three pages by design — hreflang is only honoured when reciprocal, and a page missing
-its own entry drops out of the set.
+description, the og/twitter pair, `og:locale`(+`:alternate`), the self-canonical, and the JSON-LD
+(`url`/`name`/`description`/`inLanguage`, parsed and re-serialised, not regexed). No asset-path rewrite
+is needed: under `base: '/'` the built HTML is already root-absolute, so a copy one directory deep at
+`/en/` points at the same files. The home hreflang cluster is authored once in `index.html` and inherited
+verbatim by the `/en/` `/ar/` entries, because it is identical on all three by design — hreflang is only
+honoured when reciprocal, and a page missing its own entry drops out of the set.
 
 **One social card per locale.** `/ar/` serves `og-image-ar.png`, `/` and `/en/` serve `og-image.png` —
 an Arabic result previewing an English screenshot is half a translation, and the card is the one asset a
@@ -650,27 +654,59 @@ each PNG's real IHDR dimensions against what index.html declares, rather than tr
 an invariant that now spans two files.
 
 **They are entry points, not landing pages.** `/ar/` boots the same app from the same hashed bundle one
-directory up (`base: './'` is what makes a path rewrite sufficient), opens in Arabic, and then **takes
-the prefix back off the URL** — an inline script in `index.html` stashes it and `history.replaceState`s
-to the root before the module bundle loads. `src/i18n/locale.ts`'s `fromEntry()` reads it back.
+directory up, opens in Arabic, and — unlike before — **leaves the prefix in the path**, because the
+prefix is now a real, addressable part of the URL (see §"URL routing"). `src/i18n/locale.ts`'s
+`fromEntry()` reads the locale straight off the first path segment.
 
-That strip is not cosmetic. Everything the app fetches at runtime — the JVM, .NET and clang workers,
-`esbuild.wasm`, the React/Vue/Svelte bundles, `warsha-tailwind.js` — is resolved as
-`new URL(name, document.baseURI)`, and under a prefix that base is one directory too deep. `/ar/` asked
-for `/ar/warsha-jvm.worker.js`, got the SPA fallback, and every language with a worker failed to start.
-It cannot be fixed in module code: `src/runtime/index.ts` computes its worker URLs at import time, which
-is before any module body — and therefore before `initLocale()` — has run. Hence an inline script, and
-hence `sessionStorage` rather than a variable, to carry the prefix across coi-serviceworker's one
-first-visit reload. The pathname is still read as a fallback for a blocked `sessionStorage`.
+The prefix used to be stripped at boot, and that strip was not cosmetic: everything the app fetches at
+runtime — the JVM, .NET and clang workers, `esbuild.wasm`, the React/Vue/Svelte bundles,
+`warsha-tailwind.js`, the tree-sitter grammar (`src/actions/generate.ts`) — was resolved as
+`new URL(name, document.baseURI)`, and under a prefix that base was one directory too deep, so
+`/ar/warsha-jvm.worker.js` 404'd and every language with a worker failed to start. That is now fixed at
+the source instead of papered over: `src/runtime/assetUrl.ts` builds every such URL root-absolute
+(`new URL('/' + name, document.baseURI)`), so the current path depth can no longer push an asset off the
+origin root. With that, the inline prefix-strip script and its `sessionStorage` dance are both gone.
 
 The prefix ranks with `?lang=` — above the stored preference, below nothing — and like `?lang=` it is
 **not persisted**: a link that names a language describes the visit, not a new standing choice, so a
-student who has explicitly picked English still has that choice waiting at `/`. `setLocale()` clears the
-stash, or an explicit switch would be undone by the next reload.
+student who has explicitly picked English still has that choice waiting at `/`. Because the prefix now
+outranks the stored preference *and* stays in the URL, the language toggle must move the URL too:
+`switchLocale()` in `App.tsx` calls both `setLocale()` and `router.navigate(..., { locale })`, so the
+address and the active language never disagree (toggling always lands on an explicit `/en/` or `/ar/`).
 
 Two consequences worth knowing. The service worker keys cached navigations by their own pathname
 (`public/coi-serviceworker.js`); it used to key every one under `./index.html`, which would now hand the
 Arabic document to a later offline navigation to `/`. And the manifest is deliberately *not* per-locale
-— `../manifest.webmanifest` with `id`/`start_url` of `./` keeps one PWA identity, so installing from
-`/ar/` installs Warsha, not a second Arabic app, and the installed copy resolves its language the normal
-way.
+— `/manifest.webmanifest` with `id`/`start_url` of `./` (resolved against the manifest's own root URL)
+keeps one PWA identity, so installing from `/ar/` or a `/tutorials/<slug>` deep link installs Warsha, not
+a second app, and the installed copy resolves its language the normal way.
+
+### URL routing (`src/router.ts`)
+
+The screens — Home, the editor, the tutorials library — are addressable. `src/router.ts` is a small,
+hand-rolled router (the `useSyncExternalStore` shape of `locale.ts`, no dependency) that parses
+`location.pathname` into a route: `/` home, `/p/<projectId>` the editor with that project open,
+`/tutorials/` the lesson index, `/tutorials/<slug>/` one lesson — each also valid under an `/en/` or
+`/ar/` prefix. This is why moving to `base: '/'` (above) was necessary: under the old relative base a deep
+path like `/tutorials/x` resolved the bundle against the wrong directory and the app never booted.
+
+The screen stays **state-driven** in `App.tsx` (the create/open/delete flows are untouched); a small
+mirror effect projects `(view, openSlug, currentProject.id)` onto the address bar, and a `popstate`
+listener reflects back/forward the other way. Both are guarded on pathname equality so they never loop.
+The `/p/<id>` id is device-local (projects live in OPFS), so it is bookmarkable and reload-stable on this
+device but is **not** a cross-device share — sharing a whole project is still the `#share=` / `#room=`
+hash, which the router leaves entirely alone (those touch only `location.hash`; the router only the
+pathname). One trap worth naming: existence of a `/p/<id>` is checked against the **manifest**
+(`projects` list), never `snapshotOf()`, because `snapshotOf` lazily creates an OPFS directory and returns
+an empty-but-non-null snapshot for any id — so a bad `/p/<id>` bookmark falls back to Home instead of
+minting a phantom project.
+
+**Tutorials are prerendered for SEO.** The lesson content is compile-time data (`src/tutorials`), so
+`warsha:tutorial-pages` (in `vite.config.ts`, alongside `warsha:locale-entries`) emits static HTML for
+the index and every lesson — x-default, `/en/`, `/ar/` — each with a retargeted head (title, description,
+self-canonical, its own hreflang cluster, `TechArticle` JSON-LD) and `#root` filled with the real lesson
+text + screenshots. On mount `createRoot()` clears `#root` (a client render, not hydration) under the
+splash, and the router opens the same lesson the URL names, so a crawler and a no-JS reader get the
+content while a human sees the app. The build reads `TUTORIALS` once (rolldown bundles it with the React
+icon module stubbed) and feeds both these pages and the sitemap, so a new lesson lands in both
+automatically and they cannot drift.

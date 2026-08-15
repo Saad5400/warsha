@@ -86,7 +86,11 @@ export function buildShareUrl(name: string, entry: string | null, snapshot: FsSn
   }
   const data = toBase64Url(deflateSync(strToU8(JSON.stringify(payload)), { level: 9 }))
   if (data.length > LINK_LIMITS.MAX_ENCODED_CHARS) return null
-  return `${location.origin}${location.pathname}${PARAM}${data}`
+  // Anchored at the origin root, never the sharer's current path (`/p/<id>` is a
+  // device-local project id, `/en/` is the sharer's language) — the recipient
+  // opens in their own language and gets their own copy. The payload rides the
+  // fragment, so the path only decides the shell that boots, not the import.
+  return `${location.origin}/${PARAM}${data}`
 }
 
 /** Strict or nothing — see the module comment for why there is no skip-some. */

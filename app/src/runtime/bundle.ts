@@ -1,4 +1,5 @@
 import type { ProgressReport, SourceFile } from './types'
+import { assetUrl } from './assetUrl'
 
 /**
  * The in-browser bundler — esbuild-wasm, wrapped so the two JavaScript engines
@@ -26,7 +27,7 @@ import type { ProgressReport, SourceFile } from './types'
 let ready: Promise<typeof import('esbuild-wasm')> | null = null
 
 /** Where `npm run assets` stages the bundler wasm (see package.json / .gitignore). */
-const WASM_URL = new URL('warsha-esbuild.wasm', document.baseURI).href
+const WASM_URL = assetUrl('warsha-esbuild.wasm')
 
 /** Fetches the wasm with byte progress and compiles it — doing the fetch ourselves (not esbuild's `wasmURL`) is what enables a determinate progress bar. */
 async function fetchWasmModule(onProgress: (p: ProgressReport) => void): Promise<WebAssembly.Module> {
@@ -79,7 +80,7 @@ export function ensureBundler(onProgress: (p: ProgressReport) => void = () => {}
 }
 
 /** React, bundled first-party on-device (tools/prebuild-react.mjs) — keeps the preview one self-contained inlinable document, per the same COEP-driven never-link rule as Tailwind and the wasm. */
-const REACT_URL = new URL('warsha-react.json', document.baseURI).href
+const REACT_URL = assetUrl('warsha-react.json')
 
 /** Virtual dir for the injected React shim files; the leading dot avoids colliding with a real student path. */
 const REACT_DIR = '.warsha-react'
@@ -166,8 +167,8 @@ const VUE_SPECIFIERS: Record<string, string> = {
 }
 const FRAMEWORK_SPECIFIERS: Record<string, string> = { ...REACT_SPECIFIERS, ...SVELTE_SPECIFIERS, ...VUE_SPECIFIERS }
 
-const loadSvelteAssets = assetLoader(new URL('warsha-svelte.json', document.baseURI).href, 'Svelte')
-const loadVueAssets = assetLoader(new URL('warsha-vue.json', document.baseURI).href, 'Vue')
+const loadSvelteAssets = assetLoader(assetUrl('warsha-svelte.json'), 'Svelte')
+const loadVueAssets = assetLoader(assetUrl('warsha-vue.json'), 'Vue')
 
 /** SFC compilers, lazily imported (a Vite chunk, like esbuild) and cached; run inside the bundler's onLoad on the main thread. */
 let svelteCompiler: Promise<typeof import('svelte/compiler')> | null = null

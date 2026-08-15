@@ -16,7 +16,7 @@ const DEFAULT_ORIGIN = 'https://warsha.sb.sa'
 /**
  * The one place the deployed origin is written down.
  *
- * An SPA built with `base: './'` is otherwise entirely relative and has no
+ * An SPA built with `base: '/'` is otherwise entirely host-relative and has no
  * reason to know its own origin — except in the four places that cannot be
  * relative: `<link rel=canonical>`, `og:url`, `og:image` and `twitter:image`.
  * A social scraper does not resolve a relative image URL against the page it
@@ -73,18 +73,24 @@ function warshaSiteOrigin(): Plugin {
     // never sees them; deploy/nginx.conf pins that with an explicit =404 so a
     // future build that stops emitting them fails loudly instead of silently
     // serving HTML again.
-    generateBundle() {
+    async generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'robots.txt', source: robotsTxt(origin) })
-      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml(origin) })
+      const tutorials = await loadTutorials()
+      this.emitFile({
+        type: 'asset',
+        fileName: 'sitemap.xml',
+        source: sitemapXml(origin, tutorials.map((t) => t.id)),
+      })
     },
   }
 }
 
 const robotsTxt = (origin: string) => `# Warsha — ${origin}
 #
-# Three indexable URLs: / (x-default, picks the language from the browser),
-# /en/ and /ar/. They are the same app; the prefix is what gives each language
-# an address a search engine can rank. See the sitemap for the hreflang set.
+# Indexable URLs: / (x-default, picks the language from the browser), /en/, /ar/,
+# and the tutorials — the index at /tutorials/ and one prerendered page per
+# lesson (each also under /en/ and /ar/). The sitemap lists them all with their
+# hreflang sets; the locale prefix is what gives each language a rankable address.
 #
 # Everything else this origin serves is a build product the student's browser
 # fetches on demand (the engine wasm, ecj.jar, the .NET _framework bundle) and
@@ -98,38 +104,47 @@ Sitemap: ${origin}/sitemap.xml
 `
 
 /**
- * The three indexable URLs. `/` is x-default — it resolves the language itself,
- * from the student's own browser — and `/en/` `/ar/` are the two addresses a
- * search engine can actually attach a language to.
+ * The three prefixed variants of one indexable path. `${origin}/${path}` is
+ * x-default — it resolves the language itself, from the student's own browser —
+ * and `/en/${path}` `/ar/${path}` are the two addresses a search engine can
+ * attach a language to. `path` is relative to the origin root with no locale
+ * prefix and a trailing slash (`''` for home, `'tutorials/<slug>/'` for a
+ * lesson).
  *
  * Every page in the cluster carries the whole cluster (including a link to
  * itself); hreflang is only honoured when it is reciprocal, and a page that
  * omits its own entry is dropped from the set.
  */
-const hreflangCluster = (origin: string) => [
-  { hreflang: 'x-default', href: `${origin}/` },
-  { hreflang: 'en', href: `${origin}/en/` },
-  { hreflang: 'ar', href: `${origin}/ar/` },
+const hreflangCluster = (origin: string, path = '') => [
+  { hreflang: 'x-default', href: `${origin}/${path}` },
+  { hreflang: 'en', href: `${origin}/en/${path}` },
+  { hreflang: 'ar', href: `${origin}/ar/${path}` },
 ]
 
 /**
+ * Every indexable page, each as three reciprocal hreflang URLs: the home shell,
+ * the tutorials index, and one per lesson (slugs passed in from the real
+ * TUTORIALS registry, so a new lesson lands in the sitemap automatically).
+ *
  * Deliberately no <lastmod>: it would either be the build timestamp (which
  * changes on every deploy and claims a freshness the content does not have) or
  * a hand-maintained date (which rots). Google discounts unreliable lastmod
  * anyway, and an omitted field costs nothing. Add one per-URL when there are
  * real content pages whose dates mean something.
  */
-const sitemapXml = (origin: string) => {
-  const cluster = hreflangCluster(origin)
-  const alternates = cluster
-    .map((a) => `    <xhtml:link rel="alternate" hreflang="${a.hreflang}" href="${a.href}" />`)
-    .join('\n')
-  // The alternates are repeated inside every <url>, which looks redundant and is
-  // not: the sitemap protocol treats each <url> independently, so a block listed
-  // once would annotate one URL and leave the other two unlinked.
-  const urls = cluster
-    .map((a) => `  <url>\n    <loc>${a.href}</loc>\n${alternates}\n  </url>`)
-    .join('\n')
+const sitemapXml = (origin: string, tutorialSlugs: string[] = []) => {
+  const paths = ['', 'tutorials/', ...tutorialSlugs.map((s) => `tutorials/${s}/`)]
+  const block = (path: string) => {
+    const cluster = hreflangCluster(origin, path)
+    const alternates = cluster
+      .map((a) => `    <xhtml:link rel="alternate" hreflang="${a.hreflang}" href="${a.href}" />`)
+      .join('\n')
+    // The alternates repeat inside every <url>, which looks redundant and is not:
+    // the sitemap protocol treats each <url> independently, so a block listed once
+    // would annotate one URL and leave the other two unlinked.
+    return cluster.map((a) => `  <url>\n    <loc>${a.href}</loc>\n${alternates}\n  </url>`).join('\n')
+  }
+  const urls = paths.map(block).join('\n')
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset
   xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -138,6 +153,59 @@ const sitemapXml = (origin: string) => {
 ${urls}
 </urlset>
 `
+}
+
+/**
+ * The tutorials registry, evaluated at build time so the sitemap and the
+ * prerendered pages both derive from the ONE source of truth (src/tutorials).
+ *
+ * It can't be `import`ed here: each lesson pulls in a React icon component, which
+ * would drag JSX/React into this Node config. So rolldown (Vite's own bundler)
+ * bundles the registry with the icon module stubbed to a Proxy whose every
+ * property is a `() => null` — a CJS stub, so rolldown's interop satisfies the
+ * lessons' named `import { IconX }` — then it is evaluated from a `data:` URL. The
+ * icons are UI-only; the prerender needs the text, not the glyphs. Cached so the
+ * sitemap plugin and the page plugin share one evaluation.
+ */
+interface TutorialStep {
+  title: { en: string; ar: string }
+  body: { en: string; ar: string }
+  shot: string
+  alt: { en: string; ar: string }
+}
+interface TutorialData {
+  id: string
+  title: { en: string; ar: string }
+  summary: { en: string; ar: string }
+  steps: TutorialStep[]
+}
+let tutorialsCache: Promise<TutorialData[]> | null = null
+function loadTutorials(): Promise<TutorialData[]> {
+  if (!tutorialsCache) tutorialsCache = evalTutorials()
+  return tutorialsCache
+}
+async function evalTutorials(): Promise<TutorialData[]> {
+  const { rolldown } = await import('rolldown')
+  const bundle = await rolldown({
+    input: resolve(__dirname, 'src/tutorials/index.ts'),
+    plugins: [
+      {
+        name: 'stub-icons',
+        resolveId(id) {
+          return /components\/ui\/(Icons|LangIcons)$/.test(id) ? '\0stub-icons' : null
+        },
+        load(id) {
+          return id === '\0stub-icons' ? 'module.exports = new Proxy({}, { get: () => () => null })' : null
+        },
+      },
+    ],
+  })
+  const { output } = await bundle.generate({ format: 'esm' })
+  await bundle.close()
+  const mod = (await import(`data:text/javascript,${encodeURIComponent(output[0].code)}`)) as {
+    TUTORIALS: TutorialData[]
+  }
+  return mod.TUTORIALS
 }
 
 /**
@@ -319,12 +387,11 @@ function localiseHtml(root: string, loc: string, meta: LocaleMeta, origin: strin
   )
   html = setMeta(html, 'property="og:url"', self)
 
-  // Every relative reference is one directory deeper now. `base: './'` is what
-  // makes this a rewrite rather than a rebuild: the bundle, the fonts, the
-  // icons, the manifest and coi-serviceworker.js are all still the same files at
-  // the origin root, and registering the worker from `../` still gives it scope
-  // `/`, so one service worker continues to serve all three pages.
-  html = html.replace(/="\.\//g, '="../')
+  // No asset-path rewrite needed: under `base: '/'` every reference in the built
+  // index.html is already root-absolute (`/assets/…`, `/favicon.svg`,
+  // `/coi-serviceworker.js`), so a copy one directory deep at `/en/` points at
+  // exactly the same files, and the service worker registered from `/` still has
+  // scope `/` and serves all three pages.
 
   // JSON-LD is parsed rather than patched by regex — it is the one block where a
   // near-miss would ship as silently invalid structured data instead of as a
@@ -342,6 +409,208 @@ function localiseHtml(root: string, loc: string, meta: LocaleMeta, origin: strin
       return `${open}\n      ${JSON.stringify(data, null, 2).split('\n').join('\n      ')}\n    ${close}`
     },
   )
+
+  return html
+}
+
+/** The tutorials index's own heading + lead, per content language (the lessons
+ *  themselves carry their titles/summaries). Kept in step with COPY.tutorialsTitle
+ *  / tutorialsSubtitle in src/i18n. */
+const TUTORIALS_INDEX_META = {
+  en: { title: 'Tutorials', subtitle: 'Short, illustrated walkthroughs of everything you can do in Warsha.' },
+  ar: { title: 'الدروس', subtitle: 'شروحات قصيرة مصوّرة لكل ما يمكنك فعله في ورشة.' },
+} as const
+
+type PageVariant = { prefix: '' | 'en' | 'ar'; loc: 'en' | 'ar' }
+
+/** The three variants every tutorial page ships as, mirroring the /en/ /ar/ home
+ *  entries: x-default (English at the unprefixed URL), en, and ar. */
+const PAGE_VARIANTS: PageVariant[] = [
+  { prefix: '', loc: 'en' },
+  { prefix: 'en', loc: 'en' },
+  { prefix: 'ar', loc: 'ar' },
+]
+
+/**
+ * Prerenders the tutorials index and every lesson as static HTML, so search
+ * engines index them and a no-JS crawler still reads them.
+ *
+ * Each page is the built index.html with its <head> retargeted (title,
+ * description, canonical, og/twitter, hreflang cluster, JSON-LD) and #root filled
+ * with the lesson's real text + screenshots. It boots the same hashed bundle; on
+ * mount createRoot() clears #root (a client render, not hydration — no mismatch
+ * to reconcile) under the full-screen splash, so a reader never sees the swap,
+ * and the router opens the same lesson the URL names. Everything derives from the
+ * evaluated TUTORIALS, so the pages and the sitemap cannot drift.
+ */
+function warshaTutorialPages(): Plugin {
+  const origin = resolveOrigin()
+  return {
+    name: 'warsha:tutorial-pages',
+    apply: 'build',
+    async closeBundle() {
+      const distDir = resolve(__dirname, 'dist')
+      let root: string
+      try {
+        root = readFileSync(resolve(distDir, 'index.html'), 'utf8')
+      } catch {
+        return // No HTML in this output (a library build); nothing to prerender.
+      }
+      const tutorials = await loadTutorials()
+      const write = (path: string, html: string) => {
+        const dir = resolve(distDir, path)
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(resolve(dir, 'index.html'), html)
+      }
+      for (const v of PAGE_VARIANTS) {
+        const dirPrefix = v.prefix ? `${v.prefix}/` : ''
+        write(`${dirPrefix}tutorials`, renderTutorialsIndex(root, origin, v, tutorials))
+        for (const t of tutorials) {
+          write(`${dirPrefix}tutorials/${t.id}`, renderLessonPage(root, origin, v, t))
+        }
+      }
+    },
+  }
+}
+
+/** The self URL of a page under a variant — `${origin}/`, `${origin}/en/`, plus
+ *  the path (e.g. `tutorials/getting-started/`). */
+const pageUrl = (origin: string, v: PageVariant, path: string) =>
+  `${origin}/${v.prefix ? `${v.prefix}/` : ''}${path}`
+
+function renderTutorialsIndex(root: string, origin: string, v: PageVariant, tutorials: TutorialData[]): string {
+  const m = TUTORIALS_INDEX_META[v.loc]
+  const linkBase = v.prefix ? `/${v.prefix}` : ''
+  const items = tutorials
+    .map(
+      (t) =>
+        `        <li><a href="${linkBase}/tutorials/${t.id}/">${escapeHtml(t.title[v.loc])}</a> — ${escapeHtml(t.summary[v.loc])}</li>`,
+    )
+    .join('\n')
+  const body =
+    `      <main>\n` +
+    `        <h1>${escapeHtml(m.title)}</h1>\n` +
+    `        <p>${escapeHtml(m.subtitle)}</p>\n` +
+    `        <ul>\n${items}\n        </ul>\n` +
+    `      </main>`
+  const url = pageUrl(origin, v, 'tutorials/')
+  return renderPrerendered(root, origin, {
+    ...v,
+    path: 'tutorials/',
+    title: `${m.title} — Warsha`,
+    description: m.subtitle,
+    body,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      name: `${m.title} — Warsha`,
+      description: m.subtitle,
+      inLanguage: v.loc,
+      url,
+    },
+  })
+}
+
+function renderLessonPage(root: string, origin: string, v: PageVariant, t: TutorialData): string {
+  const title = t.title[v.loc]
+  const summary = t.summary[v.loc]
+  const steps = t.steps
+    .map(
+      (s) =>
+        `        <li>\n` +
+        `          <h2>${escapeHtml(s.title[v.loc])}</h2>\n` +
+        `          <p>${escapeHtml(s.body[v.loc])}</p>\n` +
+        `          <img src="/tutorials/${s.shot}.${v.loc}.png" alt="${escapeHtml(s.alt[v.loc])}" width="1280" height="800" loading="lazy" />\n` +
+        `        </li>`,
+    )
+    .join('\n')
+  const body =
+    `      <main>\n` +
+    `        <h1>${escapeHtml(title)}</h1>\n` +
+    `        <p>${escapeHtml(summary)}</p>\n` +
+    `        <ol>\n${steps}\n        </ol>\n` +
+    `      </main>`
+  const url = pageUrl(origin, v, `tutorials/${t.id}/`)
+  return renderPrerendered(root, origin, {
+    ...v,
+    path: `tutorials/${t.id}/`,
+    title: `${title} — Warsha`,
+    description: summary,
+    body,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'TechArticle',
+      headline: title,
+      description: summary,
+      inLanguage: v.loc,
+      image: `${origin}/${LOCALE_META[v.loc].image}`,
+      url,
+      isPartOf: { '@type': 'WebSite', name: 'Warsha', url: `${origin}/` },
+    },
+  })
+}
+
+interface Prerendered extends PageVariant {
+  path: string
+  title: string
+  description: string
+  body: string
+  jsonLd: object
+}
+
+/** The shared head/body rewrite — the tutorials analogue of localiseHtml, reusing
+ *  the same setMeta/escapeHtml machinery, but retargeting the hreflang cluster and
+ *  the #root body per page rather than inheriting the home copy. */
+function renderPrerendered(root: string, origin: string, m: Prerendered): string {
+  const meta = LOCALE_META[m.loc]
+  const self = pageUrl(origin, m, m.path)
+  const image = `${origin}/${meta.image}`
+  let html = root
+
+  html = html.replace(/<html[^>]*>/i, `<html lang="${m.loc}" dir="${meta.dir}">`)
+
+  html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(m.title)}</title>`)
+  html = setMeta(html, 'name="description"', m.description)
+  html = setMeta(html, 'property="og:title"', m.title)
+  html = setMeta(html, 'property="og:description"', m.description)
+  html = setMeta(html, 'name="twitter:title"', m.title)
+  html = setMeta(html, 'name="twitter:description"', m.description)
+
+  // The card stays the locale card (og-image[-ar].png): the lesson screenshots are
+  // 1280x800, but og:image is declared 1200x630 and assertCardSize() enforces that
+  // — a bespoke per-lesson card is a clean future enhancement, not a regression risk.
+  html = setMeta(html, 'property="og:image"', image)
+  html = setMeta(html, 'name="twitter:image"', image)
+  html = setMeta(html, 'property="og:image:alt"', meta.imageAlt)
+  html = setMeta(html, 'name="twitter:image:alt"', meta.imageAlt)
+
+  html = setMeta(html, 'property="og:locale"', meta.ogLocale)
+  html = setMeta(html, 'property="og:locale:alternate"', m.loc === 'ar' ? LOCALE_META.en.ogLocale : LOCALE_META.ar.ogLocale)
+
+  html = html.replace(/(<link rel="canonical" href=")[^"]*(")/i, (_m, open: string, close: string) => open + self + close)
+  html = setMeta(html, 'property="og:url"', self)
+
+  // Retarget the hreflang cluster: index.html carries the HOME cluster, but this
+  // page's three variants must point at this page's URLs (reciprocal, or Google
+  // drops the set).
+  const cluster = hreflangCluster(origin, m.path)
+  html = html.replace(
+    /<link rel="alternate" hreflang="x-default"[^>]*>\s*<link rel="alternate" hreflang="en"[^>]*>\s*<link rel="alternate" hreflang="ar"[^>]*>/i,
+    cluster.map((a) => `<link rel="alternate" hreflang="${a.hreflang}" href="${a.href}" />`).join('\n    '),
+  )
+
+  // JSON-LD swapped for this page's node — stringified (not regex-patched) so a
+  // malformed node would be a build error, not silently-invalid structured data.
+  html = html.replace(
+    /(<script type="application\/ld\+json">)([\s\S]*?)(<\/script>)/i,
+    (_m, open: string, _json: string, close: string) =>
+      `${open}\n      ${JSON.stringify(m.jsonLd, null, 2).split('\n').join('\n      ')}\n    ${close}`,
+  )
+
+  // The crawlable body replaces #root's loading mark. createRoot() clears #root on
+  // mount (a client render — no hydration mismatch), under the opaque splash, so a
+  // human never sees this; a crawler and a no-JS reader do.
+  html = html.replace(/<div id="root">[\s\S]*?<\/div>\s*<\/div>/i, `<div id="root">\n${m.body}\n    </div>`)
 
   return html
 }
@@ -387,12 +656,19 @@ function warshaServiceWorkerPrecache(): Plugin {
 }
 
 export default defineConfig({
-  base: './',
+  // Root-absolute asset paths (`/assets/…`, `/warsha-*`), so the app boots
+  // correctly at any URL depth — `/`, `/en/`, `/tutorials/<slug>`. The former
+  // `base: './'` made every reference relative to the current path, which 404s
+  // at a deep route and is why the `/en//ar/` entries once stripped their prefix
+  // before the bundle loaded. Absolute paths retire that whole class of bug; the
+  // app is only ever served from the origin root (see resolveOrigin).
+  base: '/',
   plugins: [
     react(),
     tailwind(),
     warshaSiteOrigin(),
     warshaLocaleEntries(),
+    warshaTutorialPages(),
     warshaServiceWorkerPrecache(),
   ],
   build: {

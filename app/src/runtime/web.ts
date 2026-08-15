@@ -1,4 +1,5 @@
 import { bundleProject, ensureBundler, needsBundle } from './bundle'
+import { assetUrl } from './assetUrl'
 import type { ProgressReport, RunContext, RunIO, RunSession, Runtime, SourceFile } from './types'
 
 /**
@@ -58,7 +59,7 @@ const MARK = '__warsha_preview__'
 
 /** Warsha's first-party, on-device Tailwind build (staged by `npm run assets`,
  *  see package.json / .gitignore). */
-const TAILWIND_URL = new URL('warsha-tailwind.js', document.baseURI).href
+const TAILWIND_URL = assetUrl('warsha-tailwind.js')
 
 /**
  * Fetches and caches the Tailwind build once. Inlined, never linked — the

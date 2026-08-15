@@ -7,7 +7,7 @@ import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
 import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, rememberOwnedRoom, rememberProjectOwner, rememberRoomMapping, setPrefs } from './fs/prefs'
-import { nextProjectName } from './fs/projects'
+import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
 import { type Template } from './templates'
@@ -104,7 +104,8 @@ import {
 } from './components/ui/Icons'
 import { COPY } from './copy'
 import { DirectionProvider } from '@radix-ui/react-direction'
-import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale } from './i18n/locale'
+import { LOCALES, LOCALE_NAMES, dirOf, locale, setLocale, useLocale, type Locale } from './i18n/locale'
+import { currentPrefix, currentRoute, navigate, routePath, type Route } from './router'
 import pkg from '../package.json'
 
 /** Below this, the sidebar becomes a drawer and keyboard compaction applies —
@@ -148,6 +149,16 @@ function slug(name: string | undefined): string {
 /** langForPath's id, narrowed to the five that own a LangIcon glyph (js folds into web). */
 function toIconLang(l: ReturnType<typeof langForPath>): IconLang | null {
   return l === 'js' ? 'web' : l
+}
+
+/** Two routes point at the same screen (same lesson / same project), so the URL
+ *  mirror is only refining the current entry — replace it rather than push a new
+ *  history step. */
+function routesEqual(a: Route, b: Route): boolean {
+  if (a.name !== b.name) return false
+  if (a.name === 'editor' && b.name === 'editor') return a.projectId === b.projectId
+  if (a.name === 'lesson' && b.name === 'lesson') return a.slug === b.slug
+  return true
 }
 
 export function App() {
@@ -461,6 +472,21 @@ function Ide({ report }: { report: CapabilityReport }) {
   const currentProjectIdRef = useRef<string | null>(null)
   currentProjectIdRef.current = currentProject?.id ?? null
 
+  // The live manifest, readable from the boot/popstate handlers below. Existence
+  // is decided against THIS, never snapshotOf(): snapshotOf lazily creates an
+  // OPFS dir and returns an empty (non-null) snapshot for any id, so it would
+  // mint a phantom project for every bad `/p/<id>` URL.
+  const projectsRef = useRef<ProjectMeta[]>([])
+  projectsRef.current = projects
+
+  // Opens the project a `/p/<id>` URL names — a cold boot into that URL, or a
+  // back/forward landing on it. A ref (assigned each render, like enterRoomRef)
+  // so the boot-time effect and the popstate handler both reach the live
+  // switchToProject without threading it through their deps. Falls back to Home
+  // when the id isn't a project on this device (a stale bookmark, another
+  // device's id). Defined for real further down, next to switchToProject.
+  const openProjectByIdRef = useRef<(id: string) => void>(() => {})
+
   /** Ends any live session — flushing its durable store — BEFORE the workspace
    *  points at another project. Every project switch/delete path awaits this: a
    *  still-attached bridge would otherwise diff the NEW project's files against
@@ -572,10 +598,85 @@ function Ide({ report }: { report: CapabilityReport }) {
   if (pendingRoomRef.current === undefined) pendingRoomRef.current = peekRoomFromUrl()
 
   // Cold start lands on the projects Home (founder ruling); a #share= or #room=
-  // link opens straight into the project instead. Entering/creating one flips to 'editor'.
-  const [view, setView] = useState<'home' | 'editor' | 'tutorials'>(() =>
-    (pendingShareRef.current && pendingShareRef.current !== 'broken') || pendingRoomRef.current ? 'editor' : 'home',
-  )
+  // link opens straight into the project, and a bookmarked /p/<id> or /tutorials
+  // URL opens that screen (router.ts). Entering/creating a project flips to 'editor'.
+  const [view, setView] = useState<'home' | 'editor' | 'tutorials'>(() => {
+    if ((pendingShareRef.current && pendingShareRef.current !== 'broken') || pendingRoomRef.current) return 'editor'
+    const r = currentRoute()
+    return r.name === 'editor' ? 'editor' : r.name === 'tutorials' || r.name === 'lesson' ? 'tutorials' : 'home'
+  })
+  // Which lesson the tutorials library is showing (null = the index). Lifted out
+  // of TutorialsPage so it is URL-addressable — `/tutorials/<slug>/` ↔ this —
+  // seeded from the boot URL and kept in step with the address bar by the mirror
+  // effect below. The step index within a lesson stays local to TutorialsPage.
+  const [openSlug, setOpenSlug] = useState<string | null>(() => {
+    const r = currentRoute()
+    return r.name === 'lesson' ? r.slug : null
+  })
+
+  // --- URL mirror (router.ts) ---------------------------------------------
+  // The screen stays state-driven (snappy, and the create/open/delete flows are
+  // untouched); this projects that state onto the address bar. Guarded on
+  // pathname equality so it never loops with the popstate reader below and never
+  // stacks a duplicate entry. Replace (not push) when only refining the same
+  // screen — normalizing a bookmarked `/tutorials/x` to `/tutorials/x/` — and
+  // push on a real screen change so Back returns to the previous screen. Skips
+  // the editor while it has no project yet (a create flow mid-flight) so the URL
+  // waits for the id rather than flashing Home.
+  useEffect(() => {
+    let desired: Route | null
+    if (view === 'tutorials') desired = openSlug ? { name: 'lesson', slug: openSlug } : { name: 'tutorials' }
+    else if (view === 'editor') desired = currentProject ? { name: 'editor', projectId: currentProject.id } : null
+    else desired = { name: 'home' }
+    if (!desired) return
+    if (routePath(desired, currentPrefix()) === location.pathname) return
+    navigate(desired, { replace: routesEqual(currentRoute(), desired) })
+  }, [view, openSlug, currentProject?.id])
+
+  // Back/forward moved the URL — reflect it back into the screen. A pushState
+  // from the mirror above never fires popstate, so this runs only for a real
+  // history navigation and the two never chase each other.
+  useEffect(() => {
+    const onPop = () => {
+      const r = currentRoute()
+      if (r.name === 'lesson') { setView('tutorials'); setOpenSlug(r.slug) }
+      else if (r.name === 'tutorials') { setView('tutorials'); setOpenSlug(null) }
+      else if (r.name === 'editor') { setOpenSlug(null); setView('editor'); openProjectByIdRef.current(r.projectId) }
+      else { setView('home'); setOpenSlug(null) }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // A `/p/<id>` cold-boot URL opens that project once the store is ready (so the
+  // manifest existence check is populated) — the mirror handles in-app
+  // transitions; this handles arriving directly at the URL.
+  const bootHandledRef = useRef(false)
+  useEffect(() => {
+    if (!ready || bootHandledRef.current) return
+    bootHandledRef.current = true
+    const r = currentRoute()
+    if (r.name === 'editor') openProjectByIdRef.current(r.projectId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
+
+  // The language control: switch the interface language AND rewrite the URL's
+  // locale prefix (router.navigate), so the address stays an honest, reload-safe
+  // statement of the language — the prefix outranks the stored preference (see
+  // i18n/locale.ts), so the URL must move with the choice. No-op if unchanged.
+  const switchLocale = (next: Locale) => {
+    if (next === locale()) return
+    setLocale(next)
+    navigate(currentRoute(), { replace: true, locale: next })
+  }
+  const toggleLocale = () => switchLocale(locale() === 'ar' ? 'en' : 'ar')
+
+  /** Open the tutorials library at its index — clearing any lesson the back-stack
+   *  left selected, so the menu/Home entry always lands on the index. */
+  const openTutorials = () => {
+    setOpenSlug(null)
+    setView('tutorials')
+  }
   // Home's pinned projects (persisted). A per-device preference, so it lives in prefs, not the manifest.
   const [pinned, setPinned] = useState<string[]>(() => prefs().pinnedProjectIds ?? [])
 
@@ -1420,6 +1521,20 @@ function Ide({ report }: { report: CapabilityReport }) {
     adoptProject(leaving)
   }
 
+  // The real body of openProjectByIdRef (declared up by currentProjectIdRef so
+  // the boot/popstate effects can reach it). Opens the /p/<id> the URL names, or
+  // falls back to Home when it isn't a project on this device.
+  openProjectByIdRef.current = (id: string) => {
+    if (id === currentProjectIdRef.current) return
+    // Existence against the manifest, not snapshotOf() (which would create it).
+    // Callers run only once the store is ready, so projectsRef is populated.
+    if (projectsRef.current.some((p) => p.id === id)) void switchToProject(id)
+    else {
+      setView('home')
+      navigate({ name: 'home' }, { replace: true })
+    }
+  }
+
   // Opens the project a #room= link joins into (contract §5): the one already mapped
   // to this room (host reload / returning guest) if it still exists, else a fresh
   // empty project the live session then fills. Runs once per room id; the gated
@@ -1874,7 +1989,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     icon: <IconGlobe size={18} />,
     hint: l === locale() ? '✓' : undefined,
     disabled: l === locale(),
-    onSelect: () => setLocale(l),
+    onSelect: () => switchLocale(l),
   }))
 
   const explorerVisible = narrow ? drawerOpen : explorerDocked
@@ -2204,7 +2319,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     {
       id: 'view.language',
       title: COPY.cmdViewLanguage,
-      run: () => setLocale(locale() === 'ar' ? 'en' : 'ar'),
+      run: toggleLocale,
     },
     {
       id: 'view.commandPalette',
@@ -2474,7 +2589,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       ),
     },
     { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows, startsGroup: true },
-    { label: COPY.tutorialsTitle, icon: <IconLightbulb size={18} />, startsGroup: true, onSelect: () => setView('tutorials') },
+    { label: COPY.tutorialsTitle, icon: <IconLightbulb size={18} />, startsGroup: true, onSelect: openTutorials },
     { label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout },
   ]
 
@@ -2533,13 +2648,13 @@ function Ide({ report }: { report: CapabilityReport }) {
           locale={locale()}
           onOpen={openFromHome}
           onNewProject={() => setPickerOpen(true)}
-          onToggleLocale={() => setLocale(locale() === 'ar' ? 'en' : 'ar')}
+          onToggleLocale={toggleLocale}
           onTogglePin={togglePin}
           onRename={(id) => void homeRename(id)}
           onDuplicate={(id) => void homeDuplicate(id)}
           onDelete={(id) => void homeDelete(id)}
           onExport={homeExport}
-          onOpenTutorials={() => setView('tutorials')}
+          onOpenTutorials={openTutorials}
           // Phase C accounts-as-cloud: the account affordance (gated on a configured
           // backend, `authApi != null`) + the unified local/cloud list.
           signedIn={signedInNow}
@@ -2555,8 +2670,11 @@ function Ide({ report }: { report: CapabilityReport }) {
       ) : view === 'tutorials' ? (
         <TutorialsPage
           locale={locale()}
+          openSlug={openSlug}
+          onOpenLesson={setOpenSlug}
+          onCloseLesson={() => setOpenSlug(null)}
           onHome={() => setView('home')}
-          onToggleLocale={() => setLocale(locale() === 'ar' ? 'en' : 'ar')}
+          onToggleLocale={toggleLocale}
         />
       ) : (
     <div className={SHELL}>
