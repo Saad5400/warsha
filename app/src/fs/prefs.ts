@@ -46,6 +46,12 @@ export interface Prefs {
    *  persisted (contract §7). It is the no-account principal's bearer — the
    *  fallback when there is no session token. Null until first minted. */
   deviceToken: string | null
+  /** The account id whose docs the `projectRooms` mappings currently belong to
+   *  (Phase C, chunk 5). Set the first time auto-sync reconciles for an account;
+   *  a later sign-in as a DIFFERENT account (id mismatch) is what triggers orphaning
+   *  the previous account's mappings so they re-seed fresh. Null before any sign-in
+   *  reconcile — the first sign-in is the claim-device carry-over path, not a switch. */
+  syncAccountId: string | null
 }
 
 /** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
@@ -69,6 +75,7 @@ const defaults: Omit<Prefs, 'fontSize'> = {
   sessionToken: null,
   sessionUser: null,
   deviceToken: null,
+  syncAccountId: null,
 }
 
 let cache: Prefs | null = null

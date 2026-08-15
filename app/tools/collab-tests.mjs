@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const names = ['doc', 'blobSync', 'materialize', 'auth']
+const names = ['doc', 'blobSync', 'materialize', 'auth', 'headlessSync']
 const out = mkdtempSync(join(tmpdir(), 'warsha-collab-'))
 const esbuild = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild')
 

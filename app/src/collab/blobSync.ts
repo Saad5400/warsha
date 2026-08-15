@@ -60,11 +60,16 @@ export type SyncStatus =
   | 'offline'
   /** Terminal: the token was rejected (401) — durable sync is off for this session. */
   | 'auth'
-  /** Not authorized to write (403): this principal may read but not push durably (a
-   *  viewer). Quiet — no error toast — while live (WebRTC) + local (IndexedDB) work. */
+  /** Not authorized to write (403 forbidden): this principal may read but not push
+   *  durably (a viewer). Quiet — no error toast — while live (WebRTC) + local (IndexedDB) work. */
   | 'read-only'
   /** The encoded doc exceeds the per-PUT cap; pushes park until it shrinks. */
   | 'too-large'
+  /** The owner is out of cloud quota (403 quota_exceeded, §7.3): pushes PARK until
+   *  space frees, exactly like 'too-large'. Distinct from the terminal 'read-only'
+   *  stop — a permission 403 is a role boundary (quiet, never heals mid-session), a
+   *  quota 403 is transient and recoverable, so the provider is NOT stopped. */
+  | 'out-of-space'
 
 export interface BlobSyncOptions {
   debounceMs?: number
@@ -320,11 +325,22 @@ export class BlobSyncProvider {
           settled = true
           break
         }
-        // 403 is the EXPECTED viewer/authorization signal (probeRole leans on it):
-        // this principal may read but not write. Stop durable PUSHING quietly — no
-        // error toast, no retry thrash — consistent with read-only mode; live + IDB
-        // keep working. A viewer session therefore never spams PUTs or alarms (M4).
+        // 403 splits two ways (contract §5). A QUOTA 403 (§7.3: the owner is out of
+        // cloud space) is TRANSIENT and recoverable — the doc may shrink or space may
+        // free — so PARK the push like the over-cap path with an 'out-of-space' status,
+        // WITHOUT the terminal `stopped` latch: `dirty` was cleared at the top of the
+        // loop so nothing reschedules, and the NEXT local change re-checks (mirroring
+        // 'too-large'). A PERMISSION 403 (a viewer, `probeRole` leans on it) is a role
+        // boundary that never heals mid-session — stop durable PUSHING quietly, no error
+        // toast, no retry thrash, consistent with read-only mode; live + IDB keep working
+        // so a viewer session never spams PUTs or alarms (M4). Keeping these apart is the
+        // whole point: a full account must not be mislabelled a demoted viewer.
         if (res.status === 403) {
+          if (res.quota) {
+            this.onStatus?.('out-of-space')
+            settled = true
+            break
+          }
           this.stopped = true
           this.onStatus?.('read-only')
           settled = true

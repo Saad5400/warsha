@@ -55,8 +55,13 @@ export type DocPutResult =
   | { ok: true; version: number }
   /** 409: the version the client sent was stale — merge `blob`, bump to `version`, retry. */
   | { ok: false; conflict: true; version: number; blob: Uint8Array | null }
-  /** 401/404/413/network — not a conflict; caller keeps the change pending. */
-  | { ok: false; conflict: false; status: number }
+  /** 401/403/404/413/network — not a conflict; caller keeps the change pending.
+   *  `quota` marks a 403 that is an out-of-space quota block (§7.3), NOT a permission
+   *  denial: the two 403s mean very different things to the client (contract §5) — a
+   *  quota 403 is transient (park + retry when the doc shrinks / space frees), a
+   *  permission 403 is a role boundary (the quiet read-only stop). Absent `quota`,
+   *  `status === 403` is the permission case, exactly as before. */
+  | { ok: false; conflict: false; status: number; quota?: true; usage?: Usage }
 
 // ---- Phase 2: accounts, sharing, quotas (§7) --------------------------------
 
@@ -230,6 +235,18 @@ export function createApi(
             version: typeof body.version === 'number' ? body.version : version,
             blob: body.blob ? base64ToBytes(body.blob) : null,
           }
+        }
+        // 403 is two different failures the client must tell apart (contract §5). Parse
+        // the body: `quota_exceeded` (§7.3) is an out-of-space block — recoverable, so
+        // flag it `quota` and hand back the server's usage/limits for the UI; anything
+        // else (`forbidden`) is the permission boundary a viewer hits, left as the plain
+        // non-conflict 403 so the caller keeps today's quiet read-only stop (M4).
+        if (res.status === 403) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string; usage?: Usage }
+          if (body.error === 'quota_exceeded') {
+            return { ok: false, conflict: false, status: 403, quota: true, usage: body.usage }
+          }
+          return { ok: false, conflict: false, status: 403 }
         }
         return { ok: false, conflict: false, status: res.status }
       } catch {

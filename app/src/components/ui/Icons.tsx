@@ -205,6 +205,25 @@ export const IconCheck = (p: IconProps) => (
 )
 
 /**
+ * A plain cloud — "in your account", the mark on Home's cloud-only cards and the
+ * account-sync affordances (Phase C). Same 20px grid / 1.6px stroke as the set.
+ */
+export const IconCloud = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 15.5a3.5 3.5 0 0 1-.4-6.98 4.5 4.5 0 0 1 8.63-1.2A3.25 3.25 0 0 1 14.5 15.5H6Z" />
+  </Icon>
+)
+
+/** A cloud with a check — "backed up to your account", the synced glyph on a
+ *  local card whose durable doc has reached the cloud. */
+export const IconCloudCheck = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 15.5a3.5 3.5 0 0 1-.4-6.98 4.5 4.5 0 0 1 8.63-1.2A3.25 3.25 0 0 1 14.5 15.5H6Z" />
+    <path d="M7.75 11.25 9.4 12.9l3-3.3" />
+  </Icon>
+)
+
+/**
  * "Install Warsha" — arrow landing INSIDE a device, not a tray (that's
  * IconImport, one row away in the same chrome) — installing puts the app
  * on the phone, so the phone is the container.

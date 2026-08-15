@@ -8,6 +8,8 @@ import { Button, IconButton } from './ui/Button'
 import {
   IconArrowRight,
   IconChevronDown,
+  IconCloud,
+  IconCloudCheck,
   IconCopy,
   IconExport,
   IconFolderOpen,
@@ -20,7 +22,9 @@ import {
   IconStar,
   IconStarFilled,
   IconTrash,
+  IconUser,
 } from './ui/Icons'
+import type { CloudDocStatus } from '../collab'
 import { LangIcon, type IconLang } from './ui/LangIcons'
 import { Logo, LogoLockup } from './Logo'
 import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
@@ -29,6 +33,17 @@ import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
 type ProjectFacts = { lang: IconLang | null; files: number }
 
 type SortMode = 'recent' | 'name' | 'created'
+
+/** A project that lives in the signed-in account but not (yet) on this device —
+ *  the cross-device open target (Chunk 4). `role` decides whether opening it also
+ *  claims ownership of the doc. */
+export interface CloudOnlyEntry {
+  /** The cloud docId (`prefs.projectRooms` value once opened locally). */
+  id: string
+  /** The doc's name, already defaulted by the App (never empty). */
+  name: string
+  role: 'owner' | 'editor' | 'viewer'
+}
 
 export interface HomeProps {
   /** Every project, most recently opened first. */
@@ -51,6 +66,24 @@ export interface HomeProps {
   onExport(id: string): void
   /** Open the Tutorials page — the illustrated, searchable how-to library. */
   onOpenTutorials(): void
+  // ---- Phase C: accounts-as-cloud (Chunks 2 + 4) ----
+  /** Whether a real account session is active — flips the header affordance from
+   *  "Sign in" to the account email. */
+  signedIn?: boolean
+  /** The signed-in account's email, shown on the account button. */
+  email?: string
+  /** Opens the account panel / sign-in dialog. Absent (App passes it only when a
+   *  backend is configured, `authApi != null`) → no account affordance is rendered. */
+  onAccount?(): void
+  /** Local project ids whose durable doc is backed up to the account — drives the
+   *  per-card "synced" glyph. */
+  cloudSyncedIds?: string[]
+  /** Per-project durable-sync status (keyed by PROJECT id) for the card status pill. */
+  cloudStatus?: Record<string, CloudDocStatus>
+  /** Cloud-only projects — in the account but not on this device. Openable. */
+  cloudOnly?: CloudOnlyEntry[]
+  /** Materialize a cloud-only project into a fresh local project and open it. */
+  onOpenCloud?(docId: string, name: string, role: 'owner' | 'editor' | 'viewer'): void
 }
 
 // Full-viewport surface, scrolls on its own. Height + /ui-scale mirror the shell
@@ -130,6 +163,13 @@ export function Home({
   onDelete,
   onExport,
   onOpenTutorials,
+  signedIn,
+  email,
+  onAccount,
+  cloudSyncedIds,
+  cloudStatus,
+  cloudOnly,
+  onOpenCloud,
 }: HomeProps) {
   const [facts, setFacts] = useState<Record<string, ProjectFacts>>({})
   const [query, setQuery] = useState('')
@@ -153,6 +193,19 @@ export function Home({
   const q = query.trim()
   const searching = q.length > 0
   const pinned = new Set(pinnedIds)
+  const syncedSet = new Set(cloudSyncedIds ?? [])
+
+  // Cloud-only projects (in the account, not on this device) share the grid with the
+  // local cards. Searching ranks them by the same fuzzy score; otherwise they trail
+  // the local list in the order the account returned them.
+  const cloudList = cloudOnly ?? []
+  const cloudOrdered = searching
+    ? cloudList
+        .map((c) => ({ c, s: fuzzyMatch(q, c.name)?.score ?? null }))
+        .filter((x): x is { c: CloudOnlyEntry; s: number } => x.s !== null)
+        .sort((a, b) => b.s - a.s)
+        .map((x) => x.c)
+    : cloudList
 
   // Searching ranks by fuzzy score and ignores sort/pins; otherwise sort, then float pinned to the top.
   const ordered = searching
@@ -181,6 +234,28 @@ export function Home({
             <IconButton label={COPY.tutorialsTitle} onClick={onOpenTutorials}>
               <IconLightbulb />
             </IconButton>
+            {/* Account affordance — only when a backend is configured (App passes
+                `onAccount` iff `authApi != null`). Signed in shows the email and opens
+                the account panel; signed out is a plain "Sign in". Models the in-editor
+                gear entry (App's Manage menu, IconUser + COPY.menuSignIn). */}
+            {onAccount ? (
+              signedIn && email ? (
+                <Button
+                  variant="ghost"
+                  onClick={onAccount}
+                  aria-label={COPY.homeAccount(email)}
+                  className="max-w-[13rem]"
+                >
+                  <IconUser size={16} />
+                  <span className="min-w-0 truncate">{email}</span>
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={onAccount}>
+                  <IconUser size={16} />
+                  {COPY.homeSignIn}
+                </Button>
+              )
+            ) : null}
             <IconButton label={COPY.menuLanguage} onClick={onToggleLocale}>
               <IconGlobe />
             </IconButton>
@@ -191,7 +266,7 @@ export function Home({
           </span>
         </header>
 
-        {projects.length === 0 ? (
+        {projects.length === 0 && cloudList.length === 0 ? (
           <EmptyState onNewProject={onNewProject} />
         ) : (
           <>
@@ -203,7 +278,7 @@ export function Home({
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-baseline gap-2">
                   <h2 className="m-0 text-btn leading-[1.3] font-semibold text-text-2">{COPY.homeAll}</h2>
-                  <span className="text-meta tabular-nums text-text-3">{projects.length}</span>
+                  <span className="text-meta tabular-nums text-text-3">{projects.length + cloudList.length}</span>
                 </div>
                 <div className="ms-auto flex items-center gap-2">
                   <div className="relative">
@@ -223,7 +298,7 @@ export function Home({
                 </div>
               </div>
 
-              {searching && ordered.length === 0 ? (
+              {searching && ordered.length === 0 && cloudOrdered.length === 0 ? (
                 <p className="m-0 py-6 text-center text-meta text-text-3">{COPY.homeNoMatches(q)}</p>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
@@ -236,6 +311,8 @@ export function Home({
                       locale={locale}
                       isOpen={p.id === currentId}
                       pinned={pinned.has(p.id)}
+                      synced={syncedSet.has(p.id)}
+                      status={cloudStatus?.[p.id]}
                       onOpen={onOpen}
                       onTogglePin={onTogglePin}
                       onRename={onRename}
@@ -244,6 +321,9 @@ export function Home({
                       onExport={onExport}
                     />
                   ))}
+                  {onOpenCloud
+                    ? cloudOrdered.map((c) => <CloudCard key={c.id} entry={c} onOpenCloud={onOpenCloud} />)
+                    : null}
                 </div>
               )}
             </section>
@@ -294,12 +374,23 @@ function ContinueCard({
   )
 }
 
+/** A card's durable-sync pill, or null for states that need no chrome (idle/saved/…):
+ *  only the two the student should notice — a first-time backup in flight, and the
+ *  account being out of space (this project stayed local). */
+function cloudPill(status: CloudDocStatus | undefined): { text: string; warn: boolean } | null {
+  if (status === 'seeding' || status === 'saving') return { text: COPY.homeCloudSeeding, warn: false }
+  if (status === 'out-of-space') return { text: COPY.homeCloudFull, warn: true }
+  return null
+}
+
 function ProjectCard({
   project,
   facts,
   locale,
   isOpen,
   pinned,
+  synced,
+  status,
   onOpen,
   onTogglePin,
   onRename,
@@ -312,6 +403,8 @@ function ProjectCard({
   locale: Locale
   isOpen: boolean
   pinned: boolean
+  synced: boolean
+  status: CloudDocStatus | undefined
   onOpen(id: string): void
   onTogglePin(id: string): void
   onRename(id: string): void
@@ -319,6 +412,7 @@ function ProjectCard({
   onDelete(id: string): void
   onExport(id: string): void
 }) {
+  const pill = cloudPill(status)
   const items: MenuItem[] = [
     {
       label: pinned ? COPY.homeUnpin : COPY.homePin,
@@ -351,13 +445,56 @@ function ProjectCard({
               <IconStarFilled size={13} className="flex-none text-text-2" aria-label={COPY.a11yPinned} />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
+            {/* Backed-up glyph: this project's durable doc has reached the account. */}
+            {synced ? (
+              <IconCloudCheck size={14} className="flex-none text-text-3" aria-label={COPY.homeCloudSynced} />
+            ) : null}
           </span>
           <span className="pointer-events-auto -me-1 -mt-1 flex-none">
             <CardMenu items={items} />
           </span>
         </div>
-        <span className="mt-auto truncate text-meta leading-normal text-text-3">
-          {isOpen ? COPY.menuProjectOpenHint : metaLine(facts, project.lastOpenedAt, locale)}
+        <span className="mt-auto flex items-center gap-1.5 truncate text-meta leading-normal text-text-3">
+          {pill ? (
+            <span className={pill.warn ? 'text-warn' : 'text-text-3'}>{pill.text}</span>
+          ) : isOpen ? (
+            COPY.menuProjectOpenHint
+          ) : (
+            metaLine(facts, project.lastOpenedAt, locale)
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A cloud-only project (Chunk 4) — present in the signed-in account but not on this
+ * device. Reuses the ProjectCard chrome, minus the pin/manage menu it has no local
+ * state for. Clicking it materializes the doc into a fresh local project (App's
+ * `onOpenCloud`) and enters the editor; the durable engine then attaches.
+ */
+function CloudCard({ entry, onOpenCloud }: { entry: CloudOnlyEntry; onOpenCloud: NonNullable<HomeProps['onOpenCloud']> }) {
+  return (
+    <div className={CARD}>
+      <button
+        type="button"
+        aria-label={`${COPY.homeOpen} — ${entry.name}`}
+        onClick={() => onOpenCloud(entry.id, entry.name, entry.role)}
+        className="absolute inset-0 z-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--focus-ring)"
+      />
+      <div className="pointer-events-none relative z-10 flex flex-1 flex-col gap-3 p-4">
+        <div className="flex items-start gap-3">
+          <span className={GLYPH}>
+            <IconCloud size={20} />
+          </span>
+          <span className="mt-0.5 flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
+          </span>
+        </div>
+        <span className="mt-auto inline-flex items-center gap-1.5 truncate text-meta leading-normal text-text-3">
+          <IconCloud size={13} className="flex-none" />
+          {COPY.homeCloudOnly}
         </span>
       </div>
     </div>

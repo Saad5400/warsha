@@ -6,7 +6,7 @@ import { langOfEntry, track } from './analytics'
 import { checkCapabilities, type CapabilityReport } from './capabilities'
 import { ConsoleBuffer } from './console/buffer'
 import { splitPath } from './fs/project'
-import { forgetRoomsForProject, prefs, rememberRoomMapping, setPrefs } from './fs/prefs'
+import { forgetRoomsForProject, prefs, rememberOwnedRoom, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
@@ -15,8 +15,8 @@ import { exportZip } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
-import { useCollab, CollabControl, peekRoomFromUrl, type Peer, type CollabBinding } from './collab'
-import { createApi } from './collab/api'
+import { useCollab, useCloudSync, materializeCloudDoc, CollabControl, peekRoomFromUrl, type Peer, type CollabBinding } from './collab'
+import { createApi, type DocListEntry, type DocRole } from './collab/api'
 import { currentToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
@@ -49,7 +49,7 @@ import { Tabs } from './components/Tabs'
 import { TopBar } from './components/TopBar'
 import type { MenuBarMenu } from './components/MenuBar'
 import { WelcomePanel } from './components/WelcomePanel'
-import { Home } from './components/Home'
+import { Home, type CloudOnlyEntry } from './components/Home'
 import { TutorialsPage } from './components/TutorialsPage'
 import { Logo } from './components/Logo'
 import type { IconLang } from './components/ui/LangIcons'
@@ -332,6 +332,25 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }, [authApi])
 
+  // ---- Phase C: accounts-as-cloud auto-sync (collab/useCloudSync.ts) ----
+  // While signed in, every project auto-backs-up to the cloud and the OPEN project
+  // keeps a headless durable engine. No-op when signed out (anonymous work is
+  // explicit-only, exactly as before). Gated on collab.active so the headless engine
+  // and a live CollabSession never both own the open project's doc (single-engine
+  // invariant); the imperative suspend/resume below close the start-window precisely.
+  const cloud = useCloudSync({
+    project,
+    currentProjectId: currentProject?.id ?? null,
+    projects,
+    snapshotOf,
+    whenReady,
+    signedIn: auth.token !== null && auth.user !== null,
+    collabActive: collab.active,
+    onOutOfSpace: () => notify(COPY.cloudOutOfSpace, 'error'),
+  })
+  const cloudRef = useRef(cloud)
+  cloudRef.current = cloud
+
   // A file opened before its room's doc has synced (a guest joins with the file
   // already on screen) gets a plain, non-collab EditorState: its Y.Text does not
   // exist yet, so `isCollab` is false and yCollab is never attached. Remote edits
@@ -394,18 +413,34 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  still-attached bridge would otherwise diff the NEW project's files against
    *  the room doc and wipe the room (and every guest's OPFS with it). */
   const stopCollabBeforeSwitch = useCallback(async () => {
-    if (collabRef.current.active) await collabRef.current.stop()
+    if (collabRef.current.active) {
+      await collabRef.current.stop()
+      // Clear any collab suspension so the ambient headless engine can re-attach to
+      // whichever project the workspace lands on next (the reconcile keys on the new
+      // currentProjectId). Also flush the open engine's last window before we move.
+      cloudRef.current.resumeAfterCollab()
+    }
+    await cloudRef.current.flushOpen()
   }, [])
 
   /** Start/stop collaboration; on start the join link goes to the clipboard. */
   const toggleCollab = useCallback(async () => {
     if (collab.active) {
       await collab.stop()
+      // Live session gone — let the ambient headless engine re-own the doc (§ single-engine).
+      cloudRef.current.resumeAfterCollab()
       notify(COPY.collabStopped)
       return
     }
+    // ★ Single-engine invariant: flush+destroy this project's headless cloud engine
+    // BEFORE the live session opens its own IndexeddbPersistence+BlobSyncProvider on
+    // the SAME docId (a re-collaborated project reuses its room id == cloud doc id).
+    // suspendForCollab latches the engine off until resumeAfterCollab, so the reconcile
+    // can't re-attach in the window before collab.active flips true.
+    await cloudRef.current.suspendForCollab()
     const url = await collab.start()
     if (!url) {
+      cloudRef.current.resumeAfterCollab()
       notify(COPY.collabStartFailed, 'error')
       return
     }
@@ -449,6 +484,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (collab.status === lastCollabStatus.current) return
     lastCollabStatus.current = collab.status
     if (collab.status === 'too-large') notify(COPY.collabTooLarge, 'error')
+    else if (collab.status === 'out-of-space') notify(COPY.collabOutOfSpace, 'error')
     else if (collab.status === 'auth') notify(COPY.collabAuthFailed, 'error')
   }, [collab.active, collab.status, notify])
 
@@ -1460,6 +1496,79 @@ function Ide({ report }: { report: CapabilityReport }) {
     return name
   }
 
+  // ---- Chunk 4: the unified Home list (local + cloud) ----------------------------
+  // The account's docs (owned + shared), for the "synced" glyph on local cards and the
+  // cloud-only cards a different device can open. `null` = we don't know yet (never
+  // fetched / offline / a failed GET) — the list then degrades to local-only, no crash.
+  const [cloudDocs, setCloudDocs] = useState<DocListEntry[] | null>(null)
+  const signedInNow = auth.token !== null && auth.user !== null
+
+  /** GET /v1/docs and cache it. No-op (and clears) when signed out / no backend. */
+  const refreshCloudDocs = useCallback(async () => {
+    if (!authApi || !(auth.token && auth.user)) {
+      setCloudDocs(null)
+      return
+    }
+    const docs = await authApi.listDocs() // null on offline/failure → keep local-only
+    setCloudDocs(docs)
+  }, [authApi, auth.token, auth.user])
+
+  // Fetch on Home mount, on sign-in, and as backfill lands (cloud.statuses ticks each
+  // seed) so a freshly-mapped doc drops out of the cloud-only set. Only while on Home —
+  // the editor never shows this list, so we don't poll listDocs behind it.
+  useEffect(() => {
+    if (view !== 'home') return
+    void refreshCloudDocs()
+  }, [view, signedInNow, cloud.statuses, refreshCloudDocs])
+
+  // Reconcile local ⇄ cloud by docId (`prefs.projectRooms`). A local project whose
+  // mapped docId matches a cloud entry renders ONCE (from its local card) with a
+  // synced glyph; a cloud entry with no local mapping becomes a cloud-only card.
+  const cloudView = useMemo(() => {
+    const rooms = prefs().projectRooms ?? {}
+    const cloudById = new Map((cloudDocs ?? []).map((d) => [d.id, d]))
+    const mappedDocIds = new Set<string>()
+    const cloudSyncedIds: string[] = []
+    for (const p of projects) {
+      const docId = rooms[p.id]
+      if (!docId) continue
+      mappedDocIds.add(docId)
+      // Show the glyph when the mapping is confirmed present in the account — or, when
+      // we couldn't fetch the list (offline), trust the local mapping rather than blank it.
+      if (cloudDocs === null || cloudById.has(docId)) cloudSyncedIds.push(p.id)
+    }
+    const cloudOnly: CloudOnlyEntry[] = (cloudDocs ?? [])
+      .filter((d) => !mappedDocIds.has(d.id))
+      .map((d) => ({ id: d.id, name: d.name?.trim() || COPY.homeCloudUntitled, role: d.role }))
+    return { cloudSyncedIds, cloudOnly }
+    // `prefs().projectRooms` is read imperatively; `cloud.statuses` (a dep of the fetch
+    // effect above) changing is what re-runs this after a backfill remaps a project.
+  }, [projects, cloudDocs, cloud.statuses])
+
+  /** Open a cloud-only project on THIS device: materialize its doc into a fresh local
+   *  project, map it, claim ownership only if we own it, then enter the editor. Mirrors
+   *  `newProject`'s create+adopt path (createProject already opens the new project) —
+   *  the cloud-sync manager attaches its durable engine once the project is mapped. */
+  const openCloudDoc = (docId: string, name: string, role: DocRole) => {
+    void (async () => {
+      if (!authApi) return
+      const snap = await materializeCloudDoc(docId, authApi)
+      if (!snap) return notify(COPY.noteCloudOpenFailed, 'error')
+      stopIfRunning()
+      await stopCollabBeforeSwitch()
+      const leaving = tabs
+      const meta = await createProject(uniqueAllNames(name), snap)
+      if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
+      // Map BOTH directions so the manager's reconcile attaches its engine; own the doc
+      // only when the account is the owner (a shared editor/viewer must not claim it).
+      rememberRoomMapping(docId, meta.id)
+      if (role === 'owner') rememberOwnedRoom(docId)
+      adoptProject(leaving)
+      setView('editor')
+      void refreshCloudDocs() // it's local now — drop it from the cloud-only set
+    })()
+  }
+
   const homeRename = async (id: string) => {
     const target = projects.find((p) => p.id === id)
     if (!target) return
@@ -1623,6 +1732,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       // The room's durable snapshot mirrors project.saveAll() here — otherwise
       // closing the tab dropped up to a debounce-window of collab edits.
       void collabRef.current.flush()
+      // Same for the ambient Phase-C headless engine (open project, signed-in).
+      void cloudRef.current.flushOpen()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush()
@@ -2352,6 +2463,15 @@ function Ide({ report }: { report: CapabilityReport }) {
           onDelete={(id) => void homeDelete(id)}
           onExport={homeExport}
           onOpenTutorials={() => setView('tutorials')}
+          // Phase C accounts-as-cloud: the account affordance (gated on a configured
+          // backend, `authApi != null`) + the unified local/cloud list.
+          signedIn={signedInNow}
+          email={auth.user?.email}
+          onAccount={authApi ? () => setAccountOpen(true) : undefined}
+          cloudSyncedIds={cloudView.cloudSyncedIds}
+          cloudStatus={cloud.statuses}
+          cloudOnly={cloudView.cloudOnly}
+          onOpenCloud={authApi ? openCloudDoc : undefined}
         />
       ) : view === 'tutorials' ? (
         <TutorialsPage

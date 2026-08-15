@@ -214,6 +214,15 @@ export const AR: Bundle = {
   homePin: 'تثبيت في الأعلى',
   homeUnpin: 'إلغاء التثبيت',
   a11yPinned: 'مثبَّت',
+  // ---- زر الحساب في الرئيسية (المقطع 2) + شارات المزامنة السحابية على البطاقات (المقطع 4) ----
+  homeSignIn: 'تسجيل الدخول',
+  homeAccount: (email: string) => `الحساب — ${email}`,
+  homeCloudSynced: 'محفوظ في حسابك',
+  homeCloudOnly: 'في حسابك',
+  homeCloudSeeding: 'يجري الحفظ…',
+  homeCloudFull: 'المساحة ممتلئة',
+  homeCloudUntitled: 'مشروع بلا اسم',
+  noteCloudOpenFailed: 'تعذّر فتح هذا المشروع من حسابك. تحقق من اتصالك وحاول مرة أخرى.',
 
   // ---- the New-project template picker ----
   pickerTitle: 'مشروع جديد',
@@ -642,6 +651,8 @@ export const AR: Bundle = {
   collabNobodyYet: 'لا أحد هنا بعد — أبقِ هذا التبويب مفتوحًا، وسيظهر المشروع عند اتصال المضيف.',
   collabTooLarge: 'هذا المشروع أكبر من حد المزامنة عبر الإنترنت — تبقى التعديلات على هذا الجهاز ومع المتصلين مباشرة.',
   collabAuthFailed: 'تعذّر تسجيل الدخول للمزامنة — لا يجري نسخ التغييرات احتياطيًا إلى الخادم.',
+  collabOutOfSpace: 'مساحة التخزين عبر الإنترنت ممتلئة — لا يجري نسخ التغييرات احتياطيًا. حرّر مساحة أو رقِّ الخطة للاستئناف.',
+  cloudOutOfSpace: 'مساحة التخزين السحابية ممتلئة — تعذّر نسخ بعض المشاريع احتياطيًا. حرّر مساحة أو رقِّ الخطة.',
   collabRoomName: 'جلسة مشتركة',
   a11yCollab: 'التعاون',
   collabViewOnly: 'عرض فقط',

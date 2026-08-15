@@ -135,7 +135,15 @@ transport).
      go clean **without** retrying; otherwise retry with the merged snapshot.
    - failure taxonomy: `401` is terminal for the session (stop pushing, surface it);
      `413` / over-cap parks pushes until the doc shrinks; network/5xx retries with capped
-     exponential backoff + jitter. Never a bare fixed-interval retry loop.
+     exponential backoff + jitter. Never a bare fixed-interval retry loop. **The `403`
+     splits into two cases the client must not conflate** — the server distinguishes them
+     by body: a **permission** 403 (`{error:"forbidden"}` — a viewer / revoked share) stops
+     durable pushing **quietly** (`read-only` status, no toast; it never heals mid-session),
+     while a **quota** 403 (`{error:"quota_exceeded", usage}`, §7.3 — the owner is out of
+     cloud space) is **transient**: it **parks** the push like over-cap with an `out-of-space`
+     status (NOT the terminal read-only stop), and the next shrinking / local change re-checks.
+     `putDoc` carries the split as a `quota` flag on its result; `getDoc`'s 403 stays a plain
+     `forbidden` (GET is never quota-gated).
    - **client-side size cap**: the encoded snapshot is checked against the server's 5 MB
      per-PUT cap *before* the request. Over-cap → no PUT, a visible "project too large to
      sync" state; the IndexedDB + WebRTC layers keep working.
@@ -288,6 +296,12 @@ every PUT (bytes, computed as the sum of stored blob sizes — tracked per doc i
 grows), whoever performs the write; shrinking writes always pass. Limits from env:
 `QUOTA_DEVICE_DOCS` / `QUOTA_DEVICE_BYTES` / `QUOTA_ACCOUNT_DOCS` / `QUOTA_ACCOUNT_BYTES`.
 Legacy Phase-1 rows carry `size_bytes = 0` until their next PUT (dev-only data, accepted).
+
+**Client handling of a quota 403:** the client treats `quota_exceeded` as a *recoverable*
+park, not a stop (see §5.3) — the `BlobSyncProvider` surfaces `out-of-space` and retries on
+the next change; a live room raises `collabOutOfSpace`, and Phase-C auto-backfill aborts the
+remaining queue once and raises `cloudOutOfSpace` (already-written project↔doc mappings are
+kept). This is deliberately distinct from the quiet `forbidden` read-only path.
 
 ### 7.4 Client
 

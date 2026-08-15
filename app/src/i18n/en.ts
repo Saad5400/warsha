@@ -182,6 +182,23 @@ export const EN = {
   homePin: 'Pin to top',
   homeUnpin: 'Unpin',
   a11yPinned: 'Pinned',
+  // ---- Home account affordance (Chunk 2) + per-card cloud-sync badges (Chunk 4) ----
+  /** Signed-out button in Home's header — opens the sign-in dialog. */
+  homeSignIn: 'Sign in',
+  /** Signed-in button: the account email opens the account panel. Its a11y label. */
+  homeAccount: (email: string) => `Account — ${email}`,
+  /** Tooltip on a local card's "backed up to your account" glyph. */
+  homeCloudSynced: 'Backed up to your account',
+  /** A cloud-only project — in your account but not yet on this device. Glyph tooltip. */
+  homeCloudOnly: 'In your account',
+  /** Card status pill while a project is being backed up for the first time. */
+  homeCloudSeeding: 'Backing up…',
+  /** Card status pill when the account is out of cloud space (this one stayed local). */
+  homeCloudFull: 'Storage full',
+  /** A cloud-only doc with no name yet (the host never renamed it). */
+  homeCloudUntitled: 'Untitled project',
+  /** materializeCloudDoc came back empty (missing / forbidden / offline). */
+  noteCloudOpenFailed: 'Could not open that project from your account. Check your connection and try again.',
 
   // ---- the New-project template picker (languages.ts + TemplatePicker) ----
   // One entry point for every starter — step one picks the language, step two
@@ -682,6 +699,12 @@ export const EN = {
   collabTooLarge: 'This project is too large to sync online — edits stay on this device and with connected peers.',
   /** The backend rejected our token — durable backup is off for this session. */
   collabAuthFailed: 'Online sync sign-in failed — changes are not being backed up to the server.',
+  /** The owner's cloud storage is full (a quota 403, §7.3) — durable backup is PAUSED
+   *  for this live room; local + live layers keep working and it resumes once space frees. */
+  collabOutOfSpace: 'Your online storage is full — changes are not being backed up. Free up space or upgrade to resume.',
+  /** Auto-sync (Phase C) hit the account's cloud quota while backing projects up; some
+   *  projects stay local-only until space frees. Surfaced once per backfill run. */
+  cloudOutOfSpace: 'Your cloud storage is full — some projects could not be backed up. Free up space or upgrade.',
   /** Placeholder name for a guest's project before the host's own name syncs in. */
   collabRoomName: 'Shared session',
   a11yCollab: 'Collaboration',

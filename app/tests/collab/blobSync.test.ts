@@ -246,6 +246,92 @@ test('client-side size cap: an oversized doc never PUTs, surfaces too-large', as
   p.destroy()
 })
 
+test('a QUOTA 403 parks as out-of-space (recoverable) — NOT the terminal read-only stop', async () => {
+  // The chunk-1 split: quota_exceeded is transient, so the provider parks (like
+  // too-large) and stays alive — a later change re-attempts, unlike a permission 403.
+  let calls = 0
+  const statuses: SyncStatus[] = []
+  const api: WarshaApi = {
+    baseUrl: 'mock',
+    async getDoc() {
+      return { error: 'not-found' as const }
+    },
+    async putDoc(): Promise<DocPutResult> {
+      calls++
+      return { ok: false, conflict: false, status: 403, quota: true }
+    },
+    async createDoc() {
+      return null
+    },
+    async getIce() {
+      return null
+    },
+    signalingUrl() {
+      return 'ws://mock/v1/signal'
+    },
+    async health() {
+      return true
+    },
+  }
+  const doc = new Y.Doc()
+  const p = new BlobSyncProvider('doc1', doc, api, { debounceMs: 5, onStatus: (s) => statuses.push(s) })
+  await p.whenSynced
+  set(doc, 'a', '1')
+  await p.flush()
+  assert.equal(calls, 1)
+  assert.ok(statuses.includes('out-of-space'), 'a quota 403 surfaces out-of-space')
+  assert.ok(!statuses.includes('read-only'), 'a quota 403 is NOT the viewer read-only signal')
+
+  // NOT stopped: a later local change re-attempts (space may have freed / doc shrunk).
+  set(doc, 'b', '2')
+  await p.flush()
+  assert.equal(calls, 2, 'a parked quota push retries on the next change — not a terminal stop')
+  p.destroy()
+})
+
+test('a PERMISSION 403 stays the quiet read-only stop (unchanged)', async () => {
+  // The other side of the split: a forbidden 403 (a viewer) still stops durable pushing
+  // quietly and permanently — no out-of-space, no toast, exactly as before (M4).
+  let calls = 0
+  const statuses: SyncStatus[] = []
+  const api: WarshaApi = {
+    baseUrl: 'mock',
+    async getDoc() {
+      return { error: 'not-found' as const }
+    },
+    async putDoc(): Promise<DocPutResult> {
+      calls++
+      return { ok: false, conflict: false, status: 403 } // no quota flag = permission
+    },
+    async createDoc() {
+      return null
+    },
+    async getIce() {
+      return null
+    },
+    signalingUrl() {
+      return 'ws://mock/v1/signal'
+    },
+    async health() {
+      return true
+    },
+  }
+  const doc = new Y.Doc()
+  const p = new BlobSyncProvider('doc1', doc, api, { debounceMs: 5, onStatus: (s) => statuses.push(s) })
+  await p.whenSynced
+  set(doc, 'a', '1')
+  await p.flush()
+  assert.equal(calls, 1)
+  assert.ok(statuses.includes('read-only'), 'a permission 403 is the quiet viewer stop')
+  assert.ok(!statuses.includes('out-of-space'), 'a permission 403 is not an out-of-space park')
+
+  // Terminal: later edits neither schedule nor flush (the role will not heal mid-session).
+  set(doc, 'b', '2')
+  await p.flush()
+  assert.equal(calls, 1, 'a viewer 403 stops pushing entirely')
+  p.destroy()
+})
+
 test('a server 413 parks the push the same way (no retry loop)', async () => {
   let calls = 0
   const statuses: SyncStatus[] = []
