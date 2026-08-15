@@ -50,6 +50,7 @@ import { TopBar } from './components/TopBar'
 import type { MenuBarMenu } from './components/MenuBar'
 import { WelcomePanel } from './components/WelcomePanel'
 import { Home } from './components/Home'
+import { TutorialsPage } from './components/TutorialsPage'
 import { Logo } from './components/Logo'
 import type { IconLang } from './components/ui/LangIcons'
 import { ImportZipDialog } from './components/ImportZipDialog'
@@ -483,7 +484,7 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   // Cold start lands on the projects Home (founder ruling); a #share= or #room=
   // link opens straight into the project instead. Entering/creating one flips to 'editor'.
-  const [view, setView] = useState<'home' | 'editor'>(() =>
+  const [view, setView] = useState<'home' | 'editor' | 'tutorials'>(() =>
     (pendingShareRef.current && pendingShareRef.current !== 'broken') || pendingRoomRef.current ? 'editor' : 'home',
   )
   // Home's pinned projects (persisted). A per-device preference, so it lives in prefs, not the manifest.
@@ -2285,7 +2286,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       ),
     },
     { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows, startsGroup: true },
-    { label: COPY.menuAbout, icon: <IconInfo size={18} />, startsGroup: true, onSelect: showAbout },
+    { label: COPY.tutorialsTitle, icon: <IconLightbulb size={18} />, startsGroup: true, onSelect: () => setView('tutorials') },
+    { label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout },
   ]
 
   // Tab-strip "⋯": file rows first, then the share family (image/link/PDF) grouped as
@@ -2349,6 +2351,13 @@ function Ide({ report }: { report: CapabilityReport }) {
           onDuplicate={(id) => void homeDuplicate(id)}
           onDelete={(id) => void homeDelete(id)}
           onExport={homeExport}
+          onOpenTutorials={() => setView('tutorials')}
+        />
+      ) : view === 'tutorials' ? (
+        <TutorialsPage
+          locale={locale()}
+          onHome={() => setView('home')}
+          onToggleLocale={() => setLocale(locale() === 'ar' ? 'en' : 'ar')}
         />
       ) : (
     <div className={SHELL}>

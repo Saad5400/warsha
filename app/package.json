@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:collab": "node tools/collab-tests.mjs",
+    "tutorials:shots": "node tools/tutorials-shots.mjs",
     "prebuild": "npm run assets",
     "predev": "npm run assets",
     "assets": "mkdir -p public/fonts && cp node_modules/@fontsource-variable/readex-pro/files/readex-pro-latin-wght-normal.woff2 node_modules/@fontsource-variable/readex-pro/files/readex-pro-arabic-wght-normal.woff2 public/fonts/ && cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && cp ../runtimes/clang/src/clang.worker.js public/warsha-clang.worker.js && cp node_modules/esbuild-wasm/esbuild.wasm public/warsha-esbuild.wasm && cp node_modules/prettier-plugin-java/dist/tree-sitter-java_orchard.wasm public/warsha-tree-sitter-java.wasm && cp node_modules/@tailwindcss/browser/dist/index.global.js public/warsha-tailwind.js && node tools/prebuild-react.mjs && node tools/prebuild-svelte.mjs && node tools/prebuild-vue.mjs && ../runtimes/java/fetch-compiler.sh public && ../runtimes/java/build-bootstrap.sh public && ../runtimes/csharp/build.sh public/warsha-dotnet"
