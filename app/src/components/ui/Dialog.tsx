@@ -29,7 +29,7 @@ export function Modal({
   onEnterOutsideButton?: () => void
   /** Gallery-width (template picker) instead of the prompt's column; still caps at the viewport on phone. */
   wide?: boolean
-  /** Drives the exit animation. A caller that just unmounts (ImportZipDialog) skips it entirely — DialogHost flips this instead of unmounting. */
+  /** Drives the exit animation. A caller that just unmounts (ImportDialog) skips it entirely — DialogHost flips this instead of unmounting. */
   open?: boolean
 }) {
   const cardRef = useRef<HTMLDialogElement>(null)
@@ -100,7 +100,7 @@ export function Modal({
 }
 
 /* `.dlg-title` etc. still exist in index.css only for 4 call sites outside this
- * refactor's scope (ImportZipDialog, CapabilityScreens, CrashScreen, Explorer's
+ * refactor's scope (ImportDialog, CapabilityScreens, CrashScreen, Explorer's
  * rename); these consts mirror them as utilities so those sites can convert later
  * with one search-and-delete. */
 const TITLE = 'mb-2 text-dlg-title leading-[1.3] font-semibold text-text-1'

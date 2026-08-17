@@ -245,11 +245,13 @@ function makeZip(entries) {
   return Buffer.concat([...chunks, cdBuf, eocd])
 }
 
-/** Open the import dialog and hand it a buffer as a .zip. */
+/** Open the import dialog and hand it a buffer as a .zip. The dialog now takes loose files
+ *  and folders too, so it carries two file inputs — the flat one (no webkitdirectory) is the
+ *  .zip path. */
 async function importBuffer(page, name, buffer) {
-  await page.getByRole('button', { name: /Import a \.zip|Import \.zip/ }).first().click()
+  await page.getByRole('button', { name: /Import/ }).first().click()
   await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 5000 })
-  await page.locator('input[type="file"]').setInputFiles({ name, mimeType: 'application/zip', buffer })
+  await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles({ name, mimeType: 'application/zip', buffer })
   // Ready-line or error settles quickly, except the deliberately oversized
   // cases — hence the timeout.
   await page.waitForTimeout(2500)
@@ -637,14 +639,14 @@ await scenario('zip import edge cases', {
     // --- an oversized archive, refused before a byte is read ---
     await page.reload({ waitUntil: 'load' })
     await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
-    await page.getByRole('button', { name: /Import a \.zip|Import \.zip/ }).first().click()
+    await page.getByRole('button', { name: /Import/ }).first().click()
     await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 5000 })
     // Path, not buffer — Playwright refuses in-memory files over 50MB, which
     // is the limit under test.
     const bigPath = join(mkdtempSync(join(tmpdir(), 'warsha-big-')), 'huge.zip')
     writeFileSync(bigPath, Buffer.alloc(55 * 1024 * 1024))
     const bigT0 = Date.now()
-    await page.locator('input[type="file"]').setInputFiles(bigPath)
+    await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles(bigPath)
     await page.waitForTimeout(2000)
     const bigMs = Date.now() - bigT0
     const bigText = (await problem().count()) ? await problem().innerText() : ''

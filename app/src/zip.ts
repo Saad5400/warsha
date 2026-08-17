@@ -88,6 +88,134 @@ function looksBinary(data: Uint8Array): boolean {
   return false
 }
 
+/** A .zip by name or MIME — the one file we unpack rather than import verbatim. */
+export const isZipFile = (f: File): boolean => /\.zip$/i.test(f.name) || f.type === 'application/zip'
+
+/** A file the student picked or dropped, with the path it should take in the project. */
+export interface PickedFile {
+  /** Folder-relative when a folder was chosen/dropped (`webkitRelativePath` or the walk),
+   *  else the bare file name. Sanitised by `safePath` before it lands. */
+  path: string
+  file: File
+}
+
+/**
+ * The unified entry the import dialog calls. A lone .zip is unpacked (the original path);
+ * anything else — one loose file, a multi-select, a dropped folder — is imported verbatim.
+ * A stray .zip sitting among loose files is imported as a file, not nested-unzipped: unpacking
+ * only what was dropped on its own keeps "what you gave me is what you get" true.
+ */
+export async function readImport(picked: PickedFile[]): Promise<ZipImportResult> {
+  if (picked.length === 1 && isZipFile(picked[0].file)) return importZip(picked[0].file)
+  return importFiles(picked)
+}
+
+/**
+ * Import loose files straight into a snapshot, under the same guards as a .zip: unsafe paths and
+ * binary/oversized files are left out and named (never silently dropped), and the archive-wide
+ * caps still apply so a folder of a thousand images can't freeze the tab.
+ */
+export async function importFiles(picked: PickedFile[]): Promise<ZipImportResult> {
+  const files: FsSnapshot['files'] = []
+  const dirs = new Set<string>()
+  const skipped: ZipImportResult['skipped'] = []
+  let total = 0
+  let count = 0
+
+  for (const { path: raw, file } of picked) {
+    if (SKIP.test(raw)) continue
+    if (++count > ZIP_LIMITS.MAX_ENTRIES) {
+      throw new ZipImportError(
+        'too-many',
+        `That is more than ${ZIP_LIMITS.MAX_ENTRIES} files. Warsha is for projects, not archives.`,
+      )
+    }
+    const path = safePath(raw)
+    if (path === null) {
+      skipped.push({ path: raw, reason: 'unsafe-path' })
+      continue
+    }
+    // Checked on the File's own size — before reading it, the same as the archive guard.
+    if (file.size > ZIP_LIMITS.MAX_FILE_BYTES) {
+      skipped.push({ path, reason: 'too-large' })
+      continue
+    }
+    let data: Uint8Array
+    try {
+      data = new Uint8Array(await file.arrayBuffer())
+    } catch (error) {
+      throw new ZipImportError('unreadable', String((error as Error).message ?? error))
+    }
+    if (looksBinary(data)) {
+      skipped.push({ path, reason: 'binary' })
+      continue
+    }
+    total += data.length
+    if (total > ZIP_LIMITS.MAX_TOTAL_BYTES) {
+      throw new ZipImportError(
+        'too-big',
+        `Those files add up to more than ${ZIP_LIMITS.MAX_TOTAL_BYTES / 1024 / 1024} MB. Warsha will not open them all at once.`,
+      )
+    }
+    files.push({ path, content: strFromU8(data) })
+    const parts = path.split('/')
+    parts.pop()
+    let acc = ''
+    for (const p of parts) {
+      acc = acc ? `${acc}/${p}` : p
+      dirs.add(acc)
+    }
+  }
+
+  return { snapshot: { files, dirs: [...dirs] }, skipped }
+}
+
+/**
+ * Turn a drop into loose files. On browsers that expose the entries API (every desktop one),
+ * folders are walked so their structure survives; elsewhere we fall back to the flat file list,
+ * which is what a phone hands us anyway.
+ */
+export async function pickedFromDataTransfer(dt: DataTransfer): Promise<PickedFile[]> {
+  const entries = Array.from(dt.items ?? [])
+    .map((it) => (it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+    .filter((e): e is FileSystemEntry => e !== null)
+  if (entries.length > 0) {
+    const out: PickedFile[] = []
+    for (const entry of entries) await walkEntry(entry, '', out)
+    return out
+  }
+  return Array.from(dt.files ?? []).map((file) => ({ file, path: file.name }))
+}
+
+/** Depth-first walk of a dropped entry; bounded by the same entry cap the import applies. */
+async function walkEntry(entry: FileSystemEntry, prefix: string, out: PickedFile[]): Promise<void> {
+  if (out.length > ZIP_LIMITS.MAX_ENTRIES) return
+  const here = prefix ? `${prefix}/${entry.name}` : entry.name
+  if (entry.isFile) {
+    const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej))
+    out.push({ file, path: here })
+    return
+  }
+  if (entry.isDirectory) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader()
+    // readEntries returns one batch per call and [] when exhausted — loop until it dries up.
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej))
+      if (batch.length === 0) break
+      for (const child of batch) await walkEntry(child, here, out)
+    }
+  }
+}
+
+/** Loose files from an `<input type="file">` change, keeping any folder structure the picker gave us. */
+export function pickedFromFileList(list: FileList | null): PickedFile[] {
+  return Array.from(list ?? []).map((file) => ({
+    file,
+    // `webkitRelativePath` is set for a folder pick ("proj/src/main.py"); a plain multi-select leaves it empty.
+    path: file.webkitRelativePath || file.name,
+  }))
+}
+
 export async function importZip(file: File): Promise<ZipImportResult> {
   if (file.size > ZIP_LIMITS.MAX_ARCHIVE_BYTES) {
     throw new ZipImportError(
