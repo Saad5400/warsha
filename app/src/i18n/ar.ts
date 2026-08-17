@@ -243,7 +243,7 @@ export const AR: Bundle = {
   pickerBlank: 'أو ابدأ بملف فارغ',
   pickerOr: 'أو',
   pickerImport: `استيراد ملفات أو ملف ${ZIP}`,
-  pickerImportHint: `أدخِل مجلّدًا، أو ملفات مفردة، أو ملف ${ZIP} أعطاك إياه معلّمك.`,
+  pickerImportHint: `ملفات، أو مجلّد، أو ملف ${ZIP} أُعطيته.`,
   pickerSignInHint: 'لديك مشاريع محفوظة في حساب؟',
   levelBeginner: 'مبتدئ',
   levelIntermediate: 'متوسّط',
