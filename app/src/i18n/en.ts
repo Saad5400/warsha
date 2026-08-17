@@ -235,7 +235,7 @@ export const EN = {
   // The other two ways to start a project, beside the starters — an "or" row under the grid.
   pickerOr: 'or',
   pickerImport: 'Import files or a .zip',
-  pickerImportHint: 'Bring in a folder, loose files, or a .zip a teacher gave you.',
+  pickerImportHint: 'Files, a folder, or a .zip.',
   pickerSignInHint: 'Already have projects saved to an account?',
   levelBeginner: 'Beginner',
   levelIntermediate: 'Intermediate',
