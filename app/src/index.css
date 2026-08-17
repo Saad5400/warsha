@@ -1616,8 +1616,8 @@
   }
   /* What survives of the dialog recipe, and only this: the four classes that
      CONSUMERS outside components/ui still write by hand — `.dlg-title` in
-     CapabilityScreens/CrashScreen/ImportZipDialog, `.dlg-msg` and `.dlg-actions`
-     in ImportZipDialog, `.dlg-input` in Explorer's inline rename. The card, its
+     CapabilityScreens/CrashScreen/ImportDialog, `.dlg-msg` and `.dlg-actions`
+     in ImportDialog, `.dlg-input` in Explorer's inline rename. The card, its
      scrim, the prompt's label and error line and the whole toast recipe have
      moved into components/ui as Tailwind utilities; these four follow the day
      those four call sites do, and nothing else should start using them.

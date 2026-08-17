@@ -34,7 +34,7 @@ export interface WelcomePanelProps {
  * no language gate: the IDE (explorer, tabs, console, Run) is fully real behind this panel,
  * which just occupies the canvas until a file exists, then is gone for good. "New from a
  * starter" is the one card-shaped choice and primary way in (opens TemplatePicker); "New
- * file" and "Import a .zip" are quiet secondary actions below it.
+ * file" and "Import" (files, a folder, or a .zip) are quiet secondary actions below it.
  */
 export function WelcomePanel({ onNewFile, onNewProject, onImportZip, recent, onOpenProject }: WelcomePanelProps) {
   // Read here rather than threaded down from App: this is a fact about the

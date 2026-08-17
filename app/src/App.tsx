@@ -53,7 +53,7 @@ import { Home, type CloudOnlyEntry } from './components/Home'
 import { TutorialsPage } from './components/TutorialsPage'
 import { Logo } from './components/Logo'
 import type { IconLang } from './components/ui/LangIcons'
-import { ImportZipDialog } from './components/ImportZipDialog'
+import { ImportDialog } from './components/ImportDialog'
 import { AccountDialog } from './components/AccountDialog'
 import { ShareDialog } from './components/ShareDialog'
 import { QuickInput, type QuickCommand, type QuickInputMode } from './components/QuickInput'
@@ -235,7 +235,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   // One sidebar, two views (Explorer/Search); visibility still tracked by explorerDocked/drawerOpen above.
   const [sideView, setSideView] = useState<SideView>('explorer')
-  const [importOpen, setImportOpen] = useState(false)
+  // The import dialog's target: 'replace' overwrites the open project (File ▸ Import),
+  // 'new' starts a fresh one (New Project ▸ Import); null is closed.
+  const [importMode, setImportMode] = useState<'replace' | 'new' | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   // Phase-2 account + share dialogs (COLLAB-SYNC-CONTRACT §7.4).
   const [accountOpen, setAccountOpen] = useState(false)
@@ -1427,13 +1429,37 @@ function Ide({ report }: { report: CapabilityReport }) {
     await replaceProject({ files: [], dirs: [] }, null, COPY.noteProjectEmptied)
   }
 
-  const onZipImported = async (snapshot: FsSnapshot, fileName: string) => {
-    setImportOpen(false)
+  const onImported = async (snapshot: FsSnapshot, name: string) => {
+    const mode = importMode
+    setImportMode(null)
     const entry = entryCandidates(snapshot.files)[0] ?? snapshot.files[0]?.path ?? null
-    // The zip's own name is the teacher's assignment title — not ours to count.
+    // The import's own name is the teacher's assignment title — not ours to count.
     // Only its entry file's language, and only as one of the fixed ids.
     track('project_created', { source: 'zip', lang: entry ? langOfEntry(entry) : 'none' })
-    await replaceProject(snapshot, entry, COPY.imported(fileName, snapshot.files.length))
+    if (mode === 'new') return importAsNewProject(snapshot, entry, name)
+    await replaceProject(snapshot, entry, COPY.imported(name, snapshot.files.length))
+  }
+
+  /** Import as a fresh project (New Project ▸ Import) — the non-destructive twin of the File ▸ Import
+   *  above. Mirrors applyTemplate: fill the open empty project, or create the first one on a fresh
+   *  device, or make a new one beside a project already in progress. */
+  const importAsNewProject = async (snapshot: FsSnapshot, entry: string | null, name: string) => {
+    const projectName = uniqueProjectName(name.replace(/\.zip$/i, '').trim() || COPY.importDefaultName)
+    const done = COPY.imported(name, snapshot.files.length)
+    if (project.isEmpty() && currentProject) {
+      await replaceProject(snapshot, entry, done)
+      await renameProject(currentProject.id, projectName)
+      claimForBackup(currentProject.id)
+      return
+    }
+    stopIfRunning()
+    if (currentProject) await stopCollabBeforeSwitch()
+    const leaving = tabs
+    const meta = await createProject(projectName, snapshot)
+    if (!meta) return notify(COPY.noteProjectCreateFailed, 'error')
+    adoptProject(leaving)
+    claimForBackup(meta.id)
+    notify(done, 'success')
   }
 
   const exportProject = () => {
@@ -2312,7 +2338,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       enabled: () => activePath !== null,
       run: () => void shareActiveFile(),
     },
-    { id: 'file.import', title: COPY.cmdFileImport, run: () => setImportOpen(true) },
+    { id: 'file.import', title: COPY.cmdFileImport, run: () => setImportMode('replace') },
     {
       id: 'file.closeEditor',
       title: COPY.cmdFileCloseEditor,
@@ -2517,7 +2543,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
         { label: COPY.menuOpenRecent, icon: <IconClock size={18} />, items: projectRows },
-        { label: COPY.menuImportZip, icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportOpen(true) },
+        { label: COPY.menuImportZip, icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportMode('replace') },
         { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
         { label: COPY.menuShareLink, icon: <IconLink size={18} />, disabled: empty, onSelect: () => void shareLink() },
         { label: COPY.menuSharePdf, icon: <IconFileLines size={18} />, disabled: empty, onSelect: () => void sharePdf() },
@@ -2865,7 +2891,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             <WelcomePanel
               onNewFile={() => void newFile('')}
               onNewProject={() => setPickerOpen(true)}
-              onImportZip={() => setImportOpen(true)}
+              onImportZip={() => setImportMode('replace')}
               // Same MRU ordering as projectRows; the open (empty) project is excluded as a dead link.
               recent={projects.filter((p) => p.id !== currentProject?.id).map((p) => ({ id: p.id, name: p.name }))}
               onOpenProject={(id) => void switchToProject(id)}
@@ -3086,11 +3112,12 @@ function Ide({ report }: { report: CapabilityReport }) {
         />
       ) : null}
 
-      {importOpen ? (
-        <ImportZipDialog
+      {importMode ? (
+        <ImportDialog
+          mode={importMode}
           currentFileCount={project.paths().length}
-          onCancel={() => setImportOpen(false)}
-          onImport={(snapshot, name) => void onZipImported(snapshot, name)}
+          onCancel={() => setImportMode(null)}
+          onImport={(snapshot, name) => void onImported(snapshot, name)}
         />
       ) : null}
 
@@ -3098,6 +3125,17 @@ function Ide({ report }: { report: CapabilityReport }) {
         <TemplatePicker
           onPick={pickStarter}
           onBlank={startBlank}
+          // Import into a fresh project (non-destructive), not the open one.
+          onImport={() => {
+            setPickerOpen(false)
+            setView('editor')
+            setImportMode('new')
+          }}
+          // Only when a backend is configured (same gate as Home's account affordance).
+          onSignIn={authApi ? () => {
+            setPickerOpen(false)
+            setAccountOpen(true)
+          } : undefined}
           onCancel={() => setPickerOpen(false)}
         />
       ) : null}

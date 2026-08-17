@@ -12,44 +12,44 @@ export const importProject: Tutorial = {
   icon: IconImport({ size: 22 }),
   title: { en: 'Import a project', ar: 'استورد مشروعًا' },
   summary: {
-    en: 'Open a .zip you exported before, or one a teacher shared, as a new project.',
-    ar: 'افتح ملف .zip صدّرته من قبل، أو أرسله معلّمك، كمشروع جديد.',
+    en: 'Bring in loose files, a whole folder, or a .zip — from this device or one a teacher shared.',
+    ar: 'أدخِل ملفات مفردة، أو مجلّدًا كاملًا، أو ملف .zip — من جهازك أو أرسله معلّمك.',
   },
   keywords: {
-    en: 'import open zip upload restore teacher assignment move device',
-    ar: 'استيراد فتح zip رفع استعادة معلّم واجب نقل جهاز',
+    en: 'import open zip upload files folder restore teacher assignment move device',
+    ar: 'استيراد فتح zip رفع ملفات مجلد استعادة معلّم واجب نقل جهاز',
   },
   steps: [
     {
-      title: { en: 'File → Import .zip', ar: 'ملف ← استيراد .zip' },
+      title: { en: 'File → Import', ar: 'ملف ← استيراد' },
       body: {
-        en: 'Open the File menu and choose Import .zip. This is how work made on another device — or handed out by a teacher — comes into Warsha.',
-        ar: 'افتح قائمة File واختر Import .zip. بهذه الطريقة يدخل إلى ورشة عملٌ صُنع على جهاز آخر، أو أرسله المعلّم.',
+        en: 'Open the File menu and choose Import. This is how work made on another device — or handed out by a teacher — comes into Warsha. New Project offers the same Import beside the starters.',
+        ar: 'افتح قائمة File واختر Import. بهذه الطريقة يدخل إلى ورشة عملٌ صُنع على جهاز آخر، أو أرسله المعلّم. ويوفّر New Project الاستيراد نفسه بجانب القوالب.',
       },
       shot: 'import-menu',
       keywords: {
-        en: 'file menu import zip open upload',
-        ar: 'قائمة ملف استيراد zip فتح رفع',
+        en: 'file menu import zip files folder open upload',
+        ar: 'قائمة ملف استيراد zip ملفات مجلد فتح رفع',
       },
       alt: {
-        en: 'The File menu open with the Import .zip item highlighted.',
-        ar: 'قائمة File مفتوحة مع إبراز عنصر Import .zip.',
+        en: 'The File menu open with the Import item highlighted.',
+        ar: 'قائمة File مفتوحة مع إبراز عنصر Import.',
       },
     },
     {
-      title: { en: 'Pick the file, and it opens', ar: 'اختر الملف، فيُفتح' },
+      title: { en: 'Pick files, and they open', ar: 'اختر الملفات، فتُفتح' },
       body: {
-        en: 'Choose a .zip from your device (or drop it onto the dialog). Warsha shows you what is inside, then opens it as a new project — your other projects stay untouched.',
-        ar: 'اختر ملف .zip من جهازك (أو أفلته على النافذة). تعرض لك ورشة ما بداخله، ثم تفتحه كمشروع جديد — وتبقى مشاريعك الأخرى كما هي.',
+        en: 'Choose files or a folder from your device — or drop them onto the dialog, a .zip included. Warsha shows you what is inside, then opens it. Import from New Project starts a fresh project and leaves your others untouched.',
+        ar: 'اختر ملفات أو مجلّدًا من جهازك — أو أفلتها على النافذة، وملف .zip من بينها. تعرض لك ورشة ما بداخلها، ثم تفتحها. والاستيراد من New Project يبدأ مشروعًا جديدًا ويترك مشاريعك الأخرى كما هي.',
       },
       shot: 'import-dialog',
       keywords: {
-        en: 'choose drop file preview new project confirm',
-        ar: 'اختيار إفلات ملف معاينة مشروع جديد تأكيد',
+        en: 'choose drop files folder zip preview new project confirm',
+        ar: 'اختيار إفلات ملفات مجلد zip معاينة مشروع جديد تأكيد',
       },
       alt: {
-        en: 'The Import dialog, where you pick or drop a .zip file to open it.',
-        ar: 'نافذة الاستيراد، حيث تختار ملف .zip أو تفلته لفتحه.',
+        en: 'The Import dialog, where you pick or drop files, a folder, or a .zip to open them.',
+        ar: 'نافذة الاستيراد، حيث تختار أو تفلت ملفات أو مجلّدًا أو ملف .zip لفتحها.',
       },
     },
   ],

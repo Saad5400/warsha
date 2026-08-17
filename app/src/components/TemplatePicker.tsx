@@ -11,7 +11,7 @@ import { templates, type Template, type TemplateLevel } from '../templates'
 import { badgeClass } from './FileBadge'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
-import { IconArrowRight, IconChevronRight } from './ui/Icons'
+import { IconArrowRight, IconChevronRight, IconImport, IconUser } from './ui/Icons'
 import { LangIcon, type IconLang } from './ui/LangIcons'
 
 /**
@@ -24,6 +24,10 @@ import { LangIcon, type IconLang } from './ui/LangIcons'
 export interface TemplatePickerProps {
   onPick(t: Template): void
   onBlank(): void
+  /** Start a project by importing files / a folder / a .zip instead of from a starter. */
+  onImport(): void
+  /** Open the account dialog. Absent (no backend configured) → the sign-in row isn't shown. */
+  onSignIn?(): void
   onCancel(): void
 }
 
@@ -40,7 +44,7 @@ const levelLabel = (level: TemplateLevel): string =>
     advanced: COPY.levelAdvanced,
   })[level]
 
-export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProps) {
+export function TemplatePicker({ onPick, onBlank, onImport, onSignIn, onCancel }: TemplatePickerProps) {
   const [langId, setLangId] = useState<string | null>(null)
   const titleId = useId()
   const language = langId ? languageById(langId) : null
@@ -55,7 +59,7 @@ export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProp
           onPick={onPick}
         />
       ) : (
-        <LanguageStep titleId={titleId} onChoose={setLangId} />
+        <LanguageStep titleId={titleId} onChoose={setLangId} onImport={onImport} onSignIn={onSignIn} />
       )}
 
       <div className="mt-4 flex items-center justify-between gap-2">
@@ -77,7 +81,17 @@ export function TemplatePicker({ onPick, onBlank, onCancel }: TemplatePickerProp
 
 /* ---- step one: the language grid ---------------------------------------- */
 
-function LanguageStep({ titleId, onChoose }: { titleId: string; onChoose(id: string): void }) {
+function LanguageStep({
+  titleId,
+  onChoose,
+  onImport,
+  onSignIn,
+}: {
+  titleId: string
+  onChoose(id: string): void
+  onImport(): void
+  onSignIn?(): void
+}) {
   return (
     <div>
       <h2 id={titleId} className="mb-1 text-dlg-title leading-[1.3] font-semibold text-text-1">
@@ -101,7 +115,64 @@ function LanguageStep({ titleId, onChoose }: { titleId: string; onChoose(id: str
           ))}
         </div>
       </Section>
+
+      {/* Two other ways to start, beside the starters — a hairline "or" divides them from the grid. */}
+      <div className="mt-4 flex items-center gap-2" aria-hidden="true">
+        <span className="h-px flex-1 bg-border-subtle" />
+        <span className="text-micro uppercase tracking-[0.08em] text-text-3">{COPY.pickerOr}</span>
+        <span className="h-px flex-1 bg-border-subtle" />
+      </div>
+      <div className="mt-3 grid gap-2 min-[560px]:grid-cols-2">
+        <AltTile
+          icon={<IconImport size={18} />}
+          title={COPY.pickerImport}
+          blurb={COPY.pickerImportHint}
+          onPick={onImport}
+        />
+        {onSignIn ? (
+          <AltTile
+            icon={<IconUser size={18} />}
+            title={COPY.homeSignIn}
+            blurb={COPY.pickerSignInHint}
+            onPick={onSignIn}
+          />
+        ) : null}
+      </div>
     </div>
+  )
+}
+
+const ALT_TILE =
+  'group flex items-center gap-2.5 min-h-touch p-2.5 text-start border border-border-control rounded-lg ' +
+  'bg-surface-2 cursor-pointer touch-manipulation transition-[background-color,border-color,transform] ' +
+  'duration-(--dur-fast) ease-standard hover:bg-surface-3 hover:border-text-3 active:bg-surface-3 active:scale-99'
+
+/** A non-language way into a project — Import or Sign in — sharing the tile shape of the language grid. */
+function AltTile({
+  icon,
+  title,
+  blurb,
+  onPick,
+}: {
+  icon: React.ReactNode
+  title: string
+  blurb: string
+  onPick(): void
+}) {
+  return (
+    <button type="button" onClick={onPick} className={ALT_TILE}>
+      <span aria-hidden="true" className="grid place-items-center flex-none size-9 rounded-md bg-surface-4 text-text-2">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-btn leading-[1.2] font-semibold text-text-1">{title}</span>
+        <span className="block truncate text-micro leading-[1.3] text-text-3">{blurb}</span>
+      </span>
+      <IconChevronRight
+        size={16}
+        className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
+      />
+    </button>
   )
 }
 

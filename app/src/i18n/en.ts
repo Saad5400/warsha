@@ -152,12 +152,12 @@ export const EN = {
 
   // ---- the start panel (§7.7, adapted: there is no welcome page) ----
   // Empty project shows this instead of a blank canvas — starter is the
-  // primary way in (founder ruling 2026-08-05); New file / Import .zip stay
+  // primary way in (founder ruling 2026-08-05); New file / Import stay
   // secondary, and the app never asks "which language?" (the extension answers that).
   welcomeNewFile: 'New file',
   welcomeNewProject: 'New from a starter',
   welcomeNewProjectBlurb: 'Pick a language, then a starter for your level.',
-  welcomeImport: 'Import a .zip',
+  welcomeImport: 'Import…',
   welcomeStartProject: 'Start a project',
   welcomeRecent: 'Recent',
   welcomeRecentEmpty: 'Projects you create appear here.',
@@ -232,6 +232,11 @@ export const EN = {
   // Blank is still one tap from the picker — the old "New project…" default,
   // folded in rather than kept as a second menu row.
   pickerBlank: 'Start with an empty file instead',
+  // The other two ways to start a project, beside the starters — an "or" row under the grid.
+  pickerOr: 'or',
+  pickerImport: 'Import files or a .zip',
+  pickerImportHint: 'Bring in a folder, loose files, or a .zip a teacher gave you.',
+  pickerSignInHint: 'Already have projects saved to an account?',
   levelBeginner: 'Beginner',
   levelIntermediate: 'Intermediate',
   levelAdvanced: 'Advanced',
@@ -250,23 +255,30 @@ export const EN = {
   installIos:
     'On iPhone and iPad: tap Share, then Add to Home Screen. Warsha then opens like any other app.',
 
-  // ---- zip import / export ----
-  importIntro: 'Pick a .zip of a project — one you exported from Warsha, or one a teacher gave you.',
-  importDropHint: 'Drop a .zip here, or',
+  // ---- import / export ----
+  // One flow for loose files, a whole folder, or a .zip — chosen through the OS picker (phone)
+  // or dropped on (laptop). A lone .zip is unpacked; everything else lands verbatim.
+  importTitle: 'Import files or a .zip',
+  importIntro:
+    'Bring in loose files, a whole folder, or a .zip you exported from Warsha — everything stays on this device.',
+  importDropHint: 'Drop files, a folder, or a .zip here, or',
   importReplaces: (n: number) =>
     `This replaces the ${count(n, 'file')} you have now. Export a .zip first if you want to keep them.`,
-  importEmptyZip: 'That .zip has no files in it. Try another one.',
-  importNotZip: 'That one is not a .zip. Pick a file whose name ends in .zip.',
-  importUnreadable: (detail: string) => `That .zip could not be opened. (${detail})`,
+  /** Nothing usable came in — an empty .zip, or files that were all pictures/binaries. */
+  importEmpty: 'Nothing to import — no text files in what you picked. Try again.',
+  importUnreadable: (detail: string) => `That could not be opened. (${detail})`,
   /** Pictures, .class files, anything oversized, anything with a strange path. */
   importSkipped: (n: number) => `${count(n, 'item')} left out — Warsha only imports text files.`,
   imported: (name: string, n: number) => `Imported ${name} — ${count(n, 'file')}.`,
   exported: (name: string, n: number) => `Exported ${name} — ${count(n, 'file')}.`,
   importReading: 'Reading…',
-  importChooseZip: 'Choose a .zip',
+  importChooseFiles: 'Choose files',
+  importChooseFolder: 'Choose a folder',
+  /** Suggested project name when a multi-file/mixed pick has no single folder to borrow from. */
+  importDefaultName: 'Imported files',
   importReplaceFiles: 'Replace files',
   importAction: 'Import',
-  /** Follows the picked file's name: "starter.zip — 4 files ready to import." */
+  /** Follows the picked name: "starter.zip — 4 files ready to import." */
   importPicked: (n: number) => `${count(n, 'file')} ready to import.`,
 
   // ---- accessible names for the chrome (LAYOUT-VSCODE) ----
@@ -586,7 +598,7 @@ export const EN = {
   menuNewFile: 'New File…',
   menuNewProject: 'New Project…',
   menuOpenRecent: 'Open Recent',
-  menuImportZip: 'Import .zip…',
+  menuImportZip: 'Import…',
   menuExportZip: 'Export as .zip',
   menuShareLink: 'Share as link…',
   menuSharePdf: 'Share as PDF…',
@@ -645,7 +657,7 @@ export const EN = {
   cmdFileSaveAll: 'File: Save All',
   cmdFileFormat: 'File: Format Document',
   cmdFileShareImage: 'File: Share as Image…',
-  cmdFileImport: 'File: Import .zip…',
+  cmdFileImport: 'File: Import…',
   cmdFileCloseEditor: 'File: Close Editor',
   cmdEditFind: 'Edit: Find',
   cmdSearchInFiles: 'Search: Find in Files',
