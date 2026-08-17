@@ -239,7 +239,7 @@ export function Home({
   return (
     <div className={PAGE} role="region" aria-label={COPY.homeTitle}>
       <div className="mx-auto flex w-full max-w-[64rem] flex-col gap-6 px-5 py-6">
-        <header className="flex items-center gap-3">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="inline-flex items-center gap-2">
             <Logo size={26} />
             <span className="text-[17px] leading-none font-semibold tracking-[-0.01em] text-text-1">Warsha</span>
@@ -252,7 +252,9 @@ export function Home({
             {/* Account affordance — only when a backend is configured (App passes
                 `onAccount` iff `authApi != null`). Signed in shows the email and opens
                 the account panel; signed out is a plain "Sign in". Models the in-editor
-                gear entry (App's Manage menu, IconUser + COPY.menuSignIn). */}
+                gear entry (App's Manage menu, IconUser + COPY.menuSignIn). The label
+                collapses to icon-only below 560px so the header never overflows on a
+                narrow phone (same breakpoint that hides the title). */}
             {onAccount ? (
               signedIn && email ? (
                 <Button
@@ -262,21 +264,21 @@ export function Home({
                   className="max-w-[13rem]"
                 >
                   <IconUser size={16} />
-                  <span className="min-w-0 truncate">{email}</span>
+                  <span className="hidden min-w-0 truncate min-[560px]:inline">{email}</span>
                 </Button>
               ) : (
-                <Button variant="ghost" onClick={onAccount}>
+                <Button variant="ghost" onClick={onAccount} aria-label={COPY.homeSignIn}>
                   <IconUser size={16} />
-                  {COPY.homeSignIn}
+                  <span className="hidden min-[560px]:inline">{COPY.homeSignIn}</span>
                 </Button>
               )
             ) : null}
             <IconButton label={COPY.menuLanguage} onClick={onToggleLocale}>
               <IconGlobe />
             </IconButton>
-            <Button variant="primary" onClick={onNewProject}>
+            <Button variant="primary" onClick={onNewProject} aria-label={COPY.dlgNewProjectTitle}>
               <IconPlus size={16} />
-              {COPY.dlgNewProjectTitle}
+              <span className="hidden min-[560px]:inline">{COPY.dlgNewProjectTitle}</span>
             </Button>
           </span>
         </header>
