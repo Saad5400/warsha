@@ -8,15 +8,17 @@
  * same review — hold them to that bar before treating them as final.
  *
  * Every language in languages.ts that is `ready` should own one starter per
- * level here; a `soon` language owns none, and the picker shows it as a dimmed
- * tile until an engine and its starters land together.
+ * level here — including one `empty` skeleton, which is the first card the
+ * picker shows. A `soon` language owns none, and the picker shows it as a
+ * dimmed tile until an engine and its starters land together.
  */
 
 import type { FsSnapshot } from './fs/types'
 
-/** Beginner → intermediate → advanced. The picker groups a language's starters
- *  by this, and orders the groups in this order. */
-export type TemplateLevel = 'beginner' | 'intermediate' | 'advanced'
+/** Empty → beginner → intermediate → advanced. The picker sorts a language's
+ *  starters by this and chips each card with its level; `empty` is the bare
+ *  skeleton — no lesson in it — and always leads the list. */
+export type TemplateLevel = 'empty' | 'beginner' | 'intermediate' | 'advanced'
 
 export interface Template {
   id: string
@@ -1221,7 +1223,118 @@ double rectangle_perimeter(Rectangle r) {
 }
 `
 
+/* ---- the `empty` starters: the smallest file each language can still run ----
+ * Byte-identical to content/templates/<lang>-empty/, like every string above.
+ * They carry no lesson and no output on purpose — a student who wants the blank
+ * page still gets the right filename, the right entry, and a program that
+ * compiles the moment they press Run. Python's is genuinely a zero-byte file;
+ * the others are the smallest skeleton their compiler will accept (Java and C#
+ * need a class with a main, C an int main, the web preview a document).
+ */
+
+const PY_EMPTY_MAIN_PY = ``
+
+const JAVA_EMPTY_MAIN_JAVA = `public class Main {
+    public static void main(String[] args) {
+
+    }
+}
+`
+
+const CSHARP_EMPTY_PROGRAM_CS = `using System;
+
+class Program
+{
+    static void Main()
+    {
+
+    }
+}
+`
+
+const C_EMPTY_MAIN_C = `#include <stdio.h>
+
+int main(void) {
+
+    return 0;
+}
+`
+
+const WEB_EMPTY_INDEX_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My page</title>
+  </head>
+  <body>
+  </body>
+</html>
+`
+
 export const templates: Template[] = [
+  /* The five `empty` starters lead the array, one per ready language, so the
+   * picker's first card is always "start from nothing in this language". */
+  {
+    id: 'python-empty',
+    name: 'Python (empty)',
+    lang: 'python',
+    level: 'empty',
+    blurb: 'An empty main.py. Nothing to delete first.',
+    entry: 'main.py',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'main.py', content: PY_EMPTY_MAIN_PY }],
+    },
+  },
+  {
+    id: 'java-empty',
+    name: 'Java (empty)',
+    lang: 'java',
+    level: 'empty',
+    blurb: 'Just Main.java with an empty main() — no imports, no packages.',
+    entry: 'Main.java',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'Main.java', content: JAVA_EMPTY_MAIN_JAVA }],
+    },
+  },
+  {
+    id: 'web-empty',
+    name: 'Web page (empty)',
+    lang: 'web',
+    level: 'empty',
+    blurb: 'A blank HTML document with an empty body, ready to preview.',
+    entry: 'index.html',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'index.html', content: WEB_EMPTY_INDEX_HTML }],
+    },
+  },
+  {
+    id: 'csharp-empty',
+    name: 'C# (empty)',
+    lang: 'csharp',
+    level: 'empty',
+    blurb: 'Just Program.cs with an empty Main() — the smallest console app.',
+    entry: 'Program.cs',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'Program.cs', content: CSHARP_EMPTY_PROGRAM_CS }],
+    },
+  },
+  {
+    id: 'c-empty',
+    name: 'C (empty)',
+    lang: 'c',
+    level: 'empty',
+    blurb: 'Just main.c with an empty main() and stdio.h included.',
+    entry: 'main.c',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'main.c', content: C_EMPTY_MAIN_C }],
+    },
+  },
   {
     id: 'python-basics',
     name: 'Python basics',

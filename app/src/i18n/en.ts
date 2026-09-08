@@ -237,6 +237,8 @@ export const EN = {
   pickerImport: 'Import files or a .zip',
   pickerImportHint: 'Files, a folder, or a .zip.',
   pickerSignInHint: 'Already have projects saved to an account?',
+  /** The `empty` tier: a language's bare skeleton, first card in the picker. */
+  levelEmpty: 'Empty',
   levelBeginner: 'Beginner',
   levelIntermediate: 'Intermediate',
   levelAdvanced: 'Advanced',

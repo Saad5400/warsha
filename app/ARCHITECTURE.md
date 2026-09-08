@@ -38,7 +38,7 @@ WARSHA_ORIGIN=https://example.org npm run build   # deploying to a new origin �
 | `src/fs/opfs.ts` | `OpfsStore` (default) and `MemoryStore` (fallback); `createStore()` picks. |
 | `src/fs/project.ts` | `Project` — in-memory source of truth, tree building, debounced persistence, change events. |
 | `src/fs/prefs.ts` | UI state in `localStorage` (font size, console height/collapsed, open tabs, entry, handedness). |
-| `src/templates.ts` | **Generated** from `content/templates/` — see §5. Each starter carries a `level` (beginner / intermediate / advanced); a ready language owns one per level. |
+| `src/templates.ts` | **Generated** from `content/templates/` — see §5. Each starter carries a `level` (empty / beginner / intermediate / advanced); a ready language owns one per level, the `empty` one being its bare skeleton. |
 | `src/languages.ts` | The language catalogue the picker projects: which languages exist, which are `ready` (an engine is wired in runtime/index.ts) vs `soon` (a dimmed, unpickable promise). Grows as engines land. |
 | `src/zip.ts` | Export/import `.zip` via fflate. |
 | `src/hooks/useProject.ts` | Binds `Project`'s events to a React revision counter. |
@@ -509,7 +509,12 @@ ids, `level`s and entry paths are Warsha's own metadata and live only in the gen
 Two review tiers coexist: the `advanced` starters (`java-oop`, `python-starter`) are Education's
 reviewed, compiled, stdin-tested originals; the `beginner`/`intermediate` starters are later drafts
 that compile and run with piped stdin but have not been through that review. Each `ready` language
-(languages.ts) should own one starter per level so the picker's three groups are never empty.
+(languages.ts) should own one starter per level.
+
+The fourth level, `empty` (`<lang>-empty`), is the language's bare skeleton — no lesson, no output,
+the smallest file its compiler still accepts (Python's is a zero-byte `main.py`). The picker shows
+it first, full width and dashed, above the lesson cards; it is the "I just want to start typing"
+answer that does not cost a student the right filename and entry. A `ready` language should own one.
 
 ---
 
