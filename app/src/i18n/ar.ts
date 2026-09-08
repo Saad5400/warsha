@@ -245,6 +245,7 @@ export const AR: Bundle = {
   pickerImport: `استيراد ملفات أو ملف ${ZIP}`,
   pickerImportHint: `ملفات، أو مجلّد، أو ملف ${ZIP}.`,
   pickerSignInHint: 'لديك مشاريع محفوظة في حساب؟',
+  levelEmpty: 'فارغ',
   levelBeginner: 'مبتدئ',
   levelIntermediate: 'متوسّط',
   levelAdvanced: 'متقدّم',
@@ -752,6 +753,28 @@ export const AR: Bundle = {
   // say `methods`, Python/C say functions/«الدوالّ» — the student meets it
   // spelled that way in the file the card opens.
   templates: {
+    // The `empty` skeletons lead the picker: no lesson in them, so the blurb only
+    // has to name the one file and say what is (not) inside it.
+    'python-empty': {
+      name: `مشروع ${iso('Python')} فارغ`,
+      blurb: `ملف ${iso('main.py')} فارغ تمامًا — ابدأ من الصفر.`,
+    },
+    'java-empty': {
+      name: `مشروع ${iso('Java')} فارغ`,
+      blurb: `ملف ${iso('Main.java')} فيه ${iso('main()')} فارغة — بلا ${iso('imports')} ولا ${iso('packages')}.`,
+    },
+    'web-empty': {
+      name: 'صفحة ويب فارغة',
+      blurb: `مستند ${iso('HTML')} فارغ، جاهز للمعاينة.`,
+    },
+    'csharp-empty': {
+      name: `مشروع ${CSHARP} فارغ`,
+      blurb: `ملف ${iso('Program.cs')} فيه ${iso('Main()')} فارغة — أصغر برنامج console ممكن.`,
+    },
+    'c-empty': {
+      name: `مشروع ${iso('C')} فارغ`,
+      blurb: `ملف ${iso('main.c')} فيه ${iso('main()')} فارغة و${iso('stdio.h')} مضمَّن.`,
+    },
     'python-basics': {
       name: 'أساسيات Python',
       blurb: `طباعة ومتغيّرات وحلقة و${iso('input()')} — ملف واحد لا غير.`,

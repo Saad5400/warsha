@@ -9,7 +9,9 @@
  *
  * Names, verbatim, as the picker renders them:
  *   lang:  'Python' | 'Java'            (the ready-language tiles)
- *   name:  'Python basics'              (beginner)
+ *   name:  'Python (empty)'             (the empty skeleton — FIRST card, so a
+ *                                        nameless call picks it, not a lesson)
+ *          'Python basics'              (beginner)
  *          'Python functions'           (intermediate)
  *          'Python (OOP starter)'       (advanced — two files, entry picker)
  *          'Java basics' / 'Java methods' / 'Java (OOP starter)'

@@ -11,15 +11,16 @@ import { templates, type Template, type TemplateLevel } from '../templates'
 import { badgeClass } from './FileBadge'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
-import { IconArrowRight, IconChevronRight, IconImport, IconUser } from './ui/Icons'
+import { IconArrowRight, IconChevronRight, IconFilePlus, IconImport, IconUser } from './ui/Icons'
 import { LangIcon, type IconLang } from './ui/LangIcons'
 
 /**
  * The single entry point for starting a project: a language grid, then that language's
- * starters grouped beginner → advanced. Exists because one menu row per template doesn't
- * survive twenty languages — everything here projects `languages`/`templates`, so it grows
- * by editing those, not this file. Never creates anything itself: resolves to `onPick` or
- * `onBlank` and lets App decide what that means for the current project.
+ * starters in one grid — the empty skeleton first, the rest chipped with their level.
+ * Exists because one menu row per template doesn't survive twenty languages — everything
+ * here projects `languages`/`templates`, so it grows by editing those, not this file.
+ * Never creates anything itself: resolves to `onPick` or `onBlank` and lets App decide
+ * what that means for the current project.
  */
 export interface TemplatePickerProps {
   onPick(t: Template): void
@@ -31,7 +32,8 @@ export interface TemplatePickerProps {
   onCancel(): void
 }
 
-const LEVEL_ORDER: TemplateLevel[] = ['beginner', 'intermediate', 'advanced']
+/** Also the sort order of the one grid in step two, and the fill of the level meter. */
+const LEVEL_ORDER: TemplateLevel[] = ['empty', 'beginner', 'intermediate', 'advanced']
 /**
  * A function, not a constant — a module-scope object would read `COPY` at import time,
  * before main.tsx's `initLocale()` runs, freezing these labels in English on every load
@@ -39,6 +41,7 @@ const LEVEL_ORDER: TemplateLevel[] = ['beginner', 'intermediate', 'advanced']
  */
 const levelLabel = (level: TemplateLevel): string =>
   ({
+    empty: COPY.levelEmpty,
     beginner: COPY.levelBeginner,
     intermediate: COPY.levelIntermediate,
     advanced: COPY.levelAdvanced,
@@ -266,8 +269,20 @@ function SoonTile({ language }: { language: Language }) {
   )
 }
 
-/* ---- step two: a language's starters, by level -------------------------- */
+/* ---- step two: a language's starters ------------------------------------ */
 
+/**
+ * One flat grid, not one grid per level.
+ *
+ * Grouping by level meant a language with three starters drew three headings
+ * and three cards, each alone on a row of a two-column grid — half the dialog
+ * was blank space between headings. The level did not need a heading to
+ * survive: it is a chip on every card now, the cards pack two-up, and the
+ * order (empty → beginner → intermediate → advanced) still reads top to
+ * bottom. The `empty` starter leads, full width, in the same row shape step
+ * one uses for Import and Sign in, because "start from nothing" is a different
+ * kind of choice from "start from a lesson".
+ */
 function TemplateStep({
   language,
   titleId,
@@ -280,38 +295,95 @@ function TemplateStep({
   onPick(t: Template): void
 }) {
   const forLang = templates.filter((t) => t.lang === language.id)
-  const byLevel = LEVEL_ORDER.map((level) => ({
-    level,
-    items: forLang.filter((t) => t.level === level),
-  })).filter((g) => g.items.length > 0)
+  const empty = forLang.find((t) => t.level === 'empty')
+  // Stable by spec, so two starters of one level keep templates.ts's order.
+  const starters = forLang
+    .filter((t) => t.level !== 'empty')
+    .sort((a, b) => LEVEL_ORDER.indexOf(a.level) - LEVEL_ORDER.indexOf(b.level))
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-1.5">
+      <div className="mb-2 flex items-center">
         <Button variant="ghost" onClick={onBack} className="gap-1 -ms-1">
           <IconChevronRight size={16} className="rotate-180 rtl:-scale-x-100" />
           {COPY.pickerBack}
         </Button>
       </div>
-      <h2 id={titleId} className="mb-3 text-dlg-title leading-[1.3] font-semibold text-text-1">
-        {COPY.pickerChooseTemplate(language.label)}
-      </h2>
+      {/* The language's own mark beside its title: the one thing the two steps share, so
+          the jump between them reads as a drill-down and not as a different dialog. */}
+      <div className="mb-3 flex items-center gap-2.5">
+        <LangMark language={language} />
+        <h2 id={titleId} className="min-w-0 flex-1 text-dlg-title leading-[1.3] font-semibold text-text-1">
+          {COPY.pickerChooseTemplate(language.label)}
+        </h2>
+      </div>
 
-      <div className="flex flex-col gap-4">
-        {byLevel.map((group) => (
-          <section key={group.level}>
-            <h3 className="mb-1.5 text-micro font-semibold uppercase tracking-[0.06em] text-text-3">
-              {levelLabel(group.level)}
-            </h3>
-            <div className="grid gap-2 min-[560px]:grid-cols-2">
-              {group.items.map((t) => (
-                <TemplateCard key={t.id} template={t} onPick={() => onPick(t)} />
-              ))}
-            </div>
-          </section>
+      <div className="grid gap-2 min-[560px]:grid-cols-2">
+        {empty ? <EmptyCard template={empty} onPick={() => onPick(empty)} /> : null}
+        {starters.map((t, i) => (
+          <TemplateCard
+            key={t.id}
+            template={t}
+            // An odd count would leave the last card beside a hole — the very gap this
+            // layout exists to close. It takes the whole row instead.
+            wide={i === starters.length - 1 && starters.length % 2 === 1}
+            onPick={() => onPick(t)}
+          />
         ))}
       </div>
     </div>
+  )
+}
+
+const BAR_HEIGHTS = ['h-[5px]', 'h-[8px]', 'h-[11px]']
+
+/** The level, as a three-bar meter plus its word. With the level headings gone this
+ *  is what tells two neighbouring cards apart, so it carries the word too — the
+ *  bars alone would be decoration a student has to decode. */
+function LevelChip({ level }: { level: TemplateLevel }) {
+  const filled = LEVEL_ORDER.indexOf(level)
+  return (
+    <span className="flex flex-none items-center gap-1.5 rounded-sm bg-surface-4 px-1.5 py-0.5 text-micro font-semibold leading-[1.4] text-text-3">
+      <span aria-hidden="true" className="flex items-end gap-px">
+        {BAR_HEIGHTS.map((h, i) => (
+          <span
+            key={h}
+            className={`w-[3px] rounded-[1px] ${h} ${i < filled ? 'bg-text-1' : 'bg-text-3/30'}`}
+          />
+        ))}
+      </span>
+      {levelLabel(level)}
+    </span>
+  )
+}
+
+const EMPTY_CARD =
+  'template-card group flex items-center gap-2.5 min-h-touch p-2.5 text-start border border-dashed ' +
+  'border-border-control rounded-lg bg-surface-2 cursor-pointer touch-manipulation min-[560px]:col-span-2 ' +
+  'transition-[background-color,border-color,transform] duration-(--dur-fast) ease-standard ' +
+  'hover:bg-surface-3 hover:border-text-3 active:bg-surface-3 active:scale-99'
+
+/** The `empty` starter: one full-width row above the lesson cards. A dashed edge and
+ *  the flatter surface-2 say "nothing in it" before the blurb has to. */
+function EmptyCard({ template, onPick }: { template: Template; onPick(): void }) {
+  return (
+    <button type="button" onClick={onPick} className={EMPTY_CARD}>
+      <span aria-hidden="true" className="grid place-items-center flex-none size-9 rounded-md bg-surface-3 text-text-2">
+        <IconFilePlus size={18} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-btn leading-[1.2] font-semibold text-text-1">
+          {COPY.templates[template.id]?.name ?? template.name}
+        </span>
+        <span className="block truncate text-micro leading-[1.3] text-text-3">
+          {COPY.templates[template.id]?.blurb ?? template.blurb}
+        </span>
+      </span>
+      <IconArrowRight
+        size={16}
+        className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
+      />
+    </button>
   )
 }
 
@@ -320,22 +392,40 @@ const TEMPLATE_CARD =
   'rounded-lg bg-surface-3 cursor-pointer touch-manipulation transition-[background-color,border-color,transform] ' +
   'duration-(--dur-fast) ease-standard hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
 
-function TemplateCard({ template, onPick }: { template: Template; onPick(): void }) {
+function TemplateCard({
+  template,
+  wide,
+  onPick,
+}: {
+  template: Template
+  /** Take both columns — the odd card at the end of the grid. */
+  wide?: boolean
+  onPick(): void
+}) {
   return (
-    <button type="button" onClick={onPick} className={TEMPLATE_CARD}>
+    <button type="button" onClick={onPick} className={TEMPLATE_CARD + (wide ? ' min-[560px]:col-span-2' : '')}>
       <span className="flex items-center gap-2">
         <span aria-hidden="true" className={badgeClass('sm', template.lang === 'java' ? 'java' : 'py')}>
           <LangIcon lang={template.lang} size={18} />
         </span>
-        <span className="min-w-0 flex-1 text-btn leading-[1.25] font-semibold text-text-1">{COPY.templates[template.id]?.name ?? template.name}</span>
+        <span className="min-w-0 flex-1 text-btn leading-[1.25] font-semibold text-text-1">
+          {COPY.templates[template.id]?.name ?? template.name}
+        </span>
         <IconArrowRight
           size={16}
           className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
         />
       </span>
-      <span className="text-meta leading-normal text-text-2">{COPY.templates[template.id]?.blurb ?? template.blurb}</span>
-      <span className="text-micro leading-[1.4] tabular-nums text-text-3">
-        {COPY.templateManifest(template.snapshot.files.length, template.entry)}
+      <span className="text-meta leading-normal text-text-2">
+        {COPY.templates[template.id]?.blurb ?? template.blurb}
+      </span>
+      {/* Manifest and level share the last row — the level chip fills the end of a line
+          that was otherwise a short count against empty space. */}
+      <span className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-micro leading-[1.4] tabular-nums text-text-3">
+          {COPY.templateManifest(template.snapshot.files.length, template.entry)}
+        </span>
+        <LevelChip level={template.level} />
       </span>
     </button>
   )
