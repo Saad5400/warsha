@@ -278,6 +278,35 @@ rows = await menuRows()
 if (rows.some((r) => /^Renamed project.*Open$/.test(r))) pass('rename persisted across a reload', 'Renamed project')
 else fail('rename persisted across a reload', JSON.stringify(rows))
 
+/* ============ 8. two projects, one filename: the new file must be on screen
+ * Regression: creating a project whose entry has the SAME path as the file open
+ * in the leaving project (two Java starters are both `Main.java`) left the editor
+ * blank and uncoloured until a reload — the workspace evicted the old file by path
+ * AFTER React had already opened the new one, and `activePath` never changed, so
+ * nothing re-opened it. Runs last: it adds projects, so it must not sit in front
+ * of the list/delete/rename checks above. */
+for (const [starter, projectName] of [['Java basics', 'Same name A'], ['Java (empty)', 'Same name B']]) {
+  await openFileMenu()
+  await page.getByRole('menuitem', { name: /New Project…/i }).click()
+  await page.waitForTimeout(400)
+  const p2 = page.locator('dialog[open]')
+  await p2.getByRole('button', { name: /^Java/ }).click()
+  await p2.locator('.template-card').filter({ hasText: starter }).first().click()
+  await dialogFill(projectName)
+  await dialogConfirm('Create')
+  await page.waitForTimeout(1600)
+}
+const collided = (await page.locator('.cm-content').first().innerText()).trim()
+info(`editor after the same-named entry: ${JSON.stringify(collided.slice(0, 60))}`)
+// The empty starter's skeleton, not the basics starter's text and not a blank doc.
+if (collided.includes('public class Main') && !collided.includes('Scanner'))
+  pass('a new project whose entry shares the open file\'s path shows its own content')
+else fail('a new project whose entry shares the open file\'s path shows its own content', JSON.stringify(collided.slice(0, 80)))
+// Blank meant no grammar either — the tell a student sees first is uncoloured code.
+const coloured = await page.locator('.cm-content span').count()
+if (coloured > 0) pass('and it is syntax-highlighted', `${coloured} tokens`)
+else fail('and it is syntax-highlighted', '0 tokens')
+
 const notable = errors.filter((e) => !/favicon/i.test(e) && !/404/.test(e) && !/Network error for null|Failed to fetch/.test(e))
 if (!notable.length) pass('no unexpected console errors', `${errors.length} total (favicon + CheerpJ probes ignored)`)
 else { fail('no unexpected console errors', `${notable.length}`); notable.slice(0, 6).forEach((e) => info(`  ! ${e.slice(0, 160)}`)) }

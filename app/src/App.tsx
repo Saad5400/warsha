@@ -206,6 +206,10 @@ function Ide({ report }: { report: CapabilityReport }) {
   const buffer = bufferRef.current
 
   const editorRef = useRef<EditorController | null>(null)
+  // `applyShared` is a useCallback declared long before `adoptProject`, and re-pointing
+  // the workspace is the same job in both — the ref lets it call the live one without
+  // taking a per-render function into its deps.
+  const adoptProjectRef = useRef<(leavingTabs: string[], preferredEntry?: string | null) => void>(() => {})
   // The editor's touch actions button, anchored to editor chrome (never the
   // caret) so the native selection bar can't cover it.
   const fabRef = useRef<HTMLButtonElement>(null)
@@ -712,13 +716,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       // Skip re-pointing to a project already open: reopening identical [path, content] doesn't
       // remount Editor, leaving it detached and silently swallowing keystrokes. Boot case still adopts.
       if (result.meta.id !== before || tabs.length === 0) {
-        // Same per-path eviction as any project switch — two projects can both have a "main.py".
-        for (const path of leaving) editorRef.current?.closeFile(path)
-        const entry = shared.entry ?? entryCandidates(shared.snapshot.files)[0] ?? shared.snapshot.files[0]?.path ?? null
-        setTabs(entry ? [entry] : [])
-        setActivePath(entry)
-        setEntryPath(entry)
-        buffer.clear()
+        // Same per-path eviction (and same re-open) as any project switch — two projects
+        // can both have a "main.py"; the share names its own entry rather than guessing one.
+        adoptProjectRef.current(
+          leaving,
+          shared.entry ?? entryCandidates(shared.snapshot.files)[0] ?? shared.snapshot.files[0]?.path ?? null,
+        )
       }
       notify(
         result.created
@@ -730,7 +733,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       setView('editor')
       return true
     },
-    [whenReady, runner, currentProject, tabs, adoptShared, notify, buffer, stopCollabBeforeSwitch],
+    [whenReady, runner, currentProject, tabs, adoptShared, notify, stopCollabBeforeSwitch],
   )
 
   useEffect(() => {
@@ -1472,17 +1475,27 @@ function Ide({ report }: { report: CapabilityReport }) {
   // ---- projects ----
   // Switch/create/delete all invalidate the workspace: tabs, console transcript, and
   // editor per-file state belong to the project being left.
-  const adoptProject = (leavingTabs: string[]) => {
+  const adoptProject = (leavingTabs: string[], preferredEntry?: string | null) => {
     // Old project's open paths are evicted from editor state by name — two projects can both have a "main.py".
     for (const path of leavingTabs) editorRef.current?.closeFile(path)
-    const entry = entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
+    const entry = preferredEntry ?? entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
     setTabs(entry ? [entry] : [])
     setActivePath(entry)
     setEntryPath(entry)
     buffer.clear()
+    // The eviction above can wipe the file the new project is about to show — when
+    // BOTH projects have that path (two Java starters are both `Main.java`), the
+    // store has already switched by the time we get here, so React has re-rendered
+    // and Editor's [path, content] effect has ALREADY opened the new content;
+    // closeFile then blanks it, and since `activePath` never changes that effect
+    // will not fire again. The result was an empty, unhighlighted editor that only
+    // a reload fixed. Re-open it here, after the eviction, so the on-screen file is
+    // the new project's — with a clean state, not the leaving project's undo history.
+    if (entry) editorRef.current?.open(entry, project.read(entry) ?? '')
     // Empty project hands its room back to the start panel, as on first visit.
     if (project.isEmpty()) setConsoleOpen(false)
   }
+  adoptProjectRef.current = adoptProject
 
   /** A program from the project being left must not outlive it. */
   const stopIfRunning = () => {
