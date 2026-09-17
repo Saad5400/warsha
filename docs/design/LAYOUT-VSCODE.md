@@ -169,3 +169,69 @@ phones it collapses", read this list instead:
 
 What "slight adjustments" means — the full sanctioned list, and the token
 metrics themselves — is DENSITY.md's job now; structure never forks.
+
+## Action placement (founder feedback, 2026-09-17)
+
+*"I find the actions and where to find each action confusing and not unified
+and kinda randomly placed … the standard things shared with vscode are fine
+but other features are not really thought about … the settings gear icon menu
+content is also weird."*
+
+VS Code's own furniture was already in VS Code's places; what had never been
+decided was where **Warsha's own** features go. They had accreted: the share
+family sat in File *and* in the tab strip's ⋯, under two different sets of
+words (`Share as link…` vs `Share project as link…`), so the same action read
+as two, and neither menu said which one touched the open file and which one
+touched the whole project. The gear had become the drawer for whatever fit
+nowhere else. The rules below settle it.
+
+### 1. Scope decides the home
+
+| Scope | Home |
+| --- | --- |
+| The open **file** | the tab strip's ⋯ (beside the file), the editor's right-click menu, and that file's row in the Explorer |
+| The **project** | the menu bar — File for its lifecycle, Share for getting it out |
+| The **app** | the rail's gear |
+
+The ⋯ carries file rows and nothing else: `Format File`, `Generate…`,
+`Share as image…`, `Download file`. Project-scoped rows are not "also"
+reachable there — a menu that mixes scopes is the thing that read as random.
+
+### 2. One action, one set of words, wherever it appears
+
+A row that appears twice (the two file-share rows ride both the Share menu and
+the ⋯; `Export as .zip` sits in File beside Import and in Share under *This
+project*) is the **same object**, built once in `App.tsx` (`fileShareItems` /
+`projectShareItems` / `liveShareItems`), so the labels cannot drift apart
+again. The one-off casing fork (`Format File` in the menu bar, `Format file`
+in the ⋯) is gone with the duplicate copy key that carried it.
+
+Where a menu still mixes scopes — the Share menu names all three — it says so
+in the menu: `MenuItem.groupLabel` draws a caps heading (*This file* / *This
+project* / *Live session*) over the group it introduces.
+
+### 3. Share is a top-level menu
+
+File · Edit · View · Run · **Share** · Help. Sharing is Warsha's own feature
+and the one students reach for most, so it gets a title rather than being
+sprinkled through two menus. It holds every way work leaves the device: as an
+image, a download, a link, a PDF, a .zip, or a live session. The collapse
+threshold moves 1050px → 1150px to fit the sixth title; below it, the ☰ menu
+drills into Share in place, as it does for every other title.
+
+The live-session rows follow the same vocabulary rule: `Start live session` /
+`Stop live session` / `Live session link…`, the word the rest of the copy
+already used while the menus still said "collaboration" and "room".
+
+### 4. The gear is settings, not the drawer
+
+VS Code's Manage gear is the palette, the account, and the settings. Warsha's
+now matches: `Command Palette…`, the account row, then one **Settings** group
+— the view-scale slider, an editor-text-size stepper beside it, Language, and
+the Run-button side. The two preferences that were stranded in View (Language,
+handedness) moved in; Tutorials and About moved out to **Help**, where a
+student looking for something to read would look.
+
+Contract: `tools/qa/menus-check.mjs` reads every one of these surfaces and
+fails if a row moves home or grows a second name. It needs no engine, so it
+runs in seconds.

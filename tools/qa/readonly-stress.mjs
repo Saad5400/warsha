@@ -67,8 +67,8 @@ const signUp = async (page) => {
   return email
 }
 const setLinkAccess = async (page, optionText) => {
-  await page.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Share room…' }).click()
+  await page.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Live session link…' }).click()
   const dlg = page.locator('dialog[open]')
   await dlg.waitFor({ timeout: 10000 })
   await dlg.getByRole('radio').filter({ hasText: optionText }).click()
@@ -97,8 +97,8 @@ try {
   await O.waitForSelector('.cm-content', { timeout: 30000 })
   await seesText(O, 'first Python program', 30000)
   await signUp(O)
-  await O.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await O.getByRole('menuitem', { name: 'Start collaboration' }).click()
+  await O.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await O.getByRole('menuitem', { name: 'Start live session' }).click()
   await O.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
   const roomUrl = await O.evaluate(() => location.href)
   if (!/#room=[0-9A-HJKMNP-TV-Z]{26}$/.test(roomUrl)) throw new Error('owner never started a room: ' + roomUrl)

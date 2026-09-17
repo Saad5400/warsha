@@ -81,10 +81,10 @@ const signUp = async (page) => {
   await dlg.waitFor({ state: 'detached', timeout: 15000 }).catch(() => {})
   return email
 }
-/** As the owner, open File > Share room… and set link access by its option text. */
+/** As the owner, open Share > Live session link… and set link access by its option text. */
 const setLinkAccess = async (page, optionText) => {
-  await page.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Share room…' }).click()
+  await page.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Live session link…' }).click()
   const dlg = page.locator('dialog[open]')
   await dlg.waitFor({ timeout: 10000 })
   await dlg.getByRole('radio').filter({ hasText: optionText }).click()
@@ -149,8 +149,8 @@ try {
   await O.waitForSelector('.cm-content', { timeout: 30000 })
   await seesText(O, 'first Python program', 30000)
   await signUp(O)
-  await O.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await O.getByRole('menuitem', { name: 'Start collaboration' }).click()
+  await O.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await O.getByRole('menuitem', { name: 'Start live session' }).click()
   await O.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
   const roomUrl = await O.evaluate(() => location.href)
   createdRooms.push(roomUrl)
@@ -287,8 +287,8 @@ try {
     await H2O.waitForSelector('.cm-content', { timeout: 30000 })
     await seesText(H2O, 'first Python program', 30000)
     await signUp(H2O) // owner signs in so the anonymous guest is a genuine link-peer
-    await H2O.getByRole('menuitem', { name: 'File', exact: true }).click()
-    await H2O.getByRole('menuitem', { name: 'Start collaboration' }).click()
+    await H2O.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await H2O.getByRole('menuitem', { name: 'Start live session' }).click()
     await H2O.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
     const h2url = await H2O.evaluate(() => location.href)
     createdRooms.push(h2url)

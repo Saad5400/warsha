@@ -1,4 +1,4 @@
-/* QA for tasks #24/#25 (top-right ⋯ menu): "Format file" (Java via prettier,
+/* QA for tasks #24/#25 (top-right ⋯ menu): "Format File" (Java via prettier,
  * Python via black-in-Pyodide) and "Share as image…" (offscreen PNG export).
  *
  * Drives LOCAL Chrome against a live `vite` dev server (not a production
@@ -108,12 +108,12 @@ await page.waitForSelector('.cm-content', { timeout: 20000 })
 
 // -------------------------------------------------- 1. menu wiring, both items
 await page.locator('button[aria-label="More"]').click()
-const formatItem = page.getByRole('menuitem', { name: 'Format file' })
+const formatItem = page.getByRole('menuitem', { name: 'Format File' })
 const shareItem = page.getByRole('menuitem', { name: 'Share as image…' })
-check('Format file item is in the ⋯ menu', await formatItem.count() === 1)
+check('Format File item is in the ⋯ menu', await formatItem.count() === 1)
 check('Share as image… item is in the ⋯ menu', await shareItem.count() === 1)
 // Boot.java is open (a real, formattable file), so both should be live.
-check('Format file is enabled with a .java file open', await formatItem.getAttribute('disabled') === null)
+check('Format File is enabled with a .java file open', await formatItem.getAttribute('disabled') === null)
 check('Share as image… is enabled with a file open', await shareItem.getAttribute('disabled') === null)
 await page.keyboard.press('Escape')
 await page.waitForTimeout(200)

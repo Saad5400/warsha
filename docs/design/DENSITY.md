@@ -74,7 +74,7 @@ sanctioned list — everything else renders identically:
   bar's Explorer item, the title-bar toggle, View > Toggle Explorer and Mod+B
   all drive it at every width.
 - **Menu bar collapses to one ☰** (`aria-label="Application Menu"`) below
-  1050px — VS Code's own behavior, width-based, not a touch fork.
+  1150px — VS Code’s own behavior, width-based, not a touch fork.
 - **Hover-reveal etiquette stands down on touch**: the tab close × is always
   visible on touch, hover/focus-revealed on desk; the pane-header action trio
   likewise. CSS-only (`desk:` / `:hover` rules) — the elements exist at every

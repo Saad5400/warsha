@@ -326,7 +326,7 @@ export const EN = {
   explorerNewFolder: 'New folder…',
   explorerOpen: 'Open',
   explorerRename: 'Rename…',
-  explorerDownload: 'Download',
+  explorerDownload: 'Download file',
   explorerDelete: 'Delete',
   explorerCopyPath: 'Copy path',
   explorerCollapse: 'Collapse folders',
@@ -600,10 +600,11 @@ export const EN = {
   menuNewFile: 'New File…',
   menuNewProject: 'New Project…',
   menuOpenRecent: 'Open Recent',
+  /** Back to the projects grid — sits with Open Recent, the other way to reach
+   *  another project, instead of leading the menu as a bare brand row. */
+  menuAllProjects: 'All Projects',
   menuImportZip: 'Import…',
   menuExportZip: 'Export as .zip',
-  menuShareLink: 'Share as link…',
-  menuSharePdf: 'Share as PDF…',
   menuSaveAll: 'Save All',
   menuRenameProject: 'Rename Project…',
   menuEmptyProject: 'Empty Project…',
@@ -639,10 +640,25 @@ export const EN = {
   menuAbout: 'About Warsha',
   menuCommandPalette: 'Command Palette…',
   menuViewScale: 'View scale',
-  menuFormatFileRow: 'Format file',
+  /** The editor's own type size, stepped from the gear's Settings group — the
+   *  same pref View > Bigger/Smaller Text moves. */
+  menuEditorTextSize: 'Editor text size',
+
+  // ---- the Share menu ----
+  // Every way work leaves Warsha, named once and shown with the same words
+  // wherever it appears (the menu bar's Share, the tab strip's ⋯). A row says
+  // WHAT it makes; the group heading above it says what it acts on.
+  menuShare: 'Share',
   menuShareImage: 'Share as image…',
-  menuShareProjectLink: 'Share project as link…',
-  menuShareProjectPdf: 'Share project as PDF…',
+  menuShareLink: 'Share as link…',
+  menuSharePdf: 'Share as PDF…',
+  menuDownloadFile: 'Download file',
+  /** Menu section headings (MenuItem.groupLabel). */
+  menuGroupThisFile: 'This file',
+  menuGroupThisProject: 'This project',
+  menuGroupLiveSession: 'Live session',
+  menuGroupAccount: 'Account',
+  menuGroupSettings: 'Settings',
   /** Marks the project you are already in, in Open Recent. */
   menuProjectOpenHint: 'Open',
   /** The language switch — a row per locale, each in its own language. */
@@ -658,7 +674,8 @@ export const EN = {
   cmdFileNewFile: 'File: New File…',
   cmdFileSaveAll: 'File: Save All',
   cmdFileFormat: 'File: Format Document',
-  cmdFileShareImage: 'File: Share as Image…',
+  cmdFileShareImage: 'Share: File as Image…',
+  cmdFileDownload: 'Share: Download File',
   cmdFileImport: 'File: Import…',
   cmdFileCloseEditor: 'File: Close Editor',
   cmdEditFind: 'Edit: Find',
@@ -681,9 +698,9 @@ export const EN = {
   cmdProjectsOpenRecent: 'Projects: Open Recent…',
   cmdProjectsNew: 'Projects: New Project…',
   cmdProjectsRename: 'Projects: Rename Project…',
-  cmdProjectsExport: 'Projects: Export as .zip',
-  cmdProjectsShareLink: 'Projects: Share as Link',
-  cmdProjectsSharePdf: 'Projects: Share as PDF',
+  cmdProjectsExport: 'Share: Project as .zip',
+  cmdProjectsShareLink: 'Share: Project as Link…',
+  cmdProjectsSharePdf: 'Share: Project as PDF…',
   cmdProjectsEmpty: 'Projects: Empty Project…',
   cmdProjectsDelete: 'Projects: Delete Project…',
   cmdViewLanguage: 'View: Switch Language',
@@ -711,13 +728,13 @@ export const EN = {
   // ---- live collaboration (collab/, COLLAB-SYNC-CONTRACT) ----
   // Opt-in and quiet: there is no collab UI until the student starts it, and the
   // only standing indicator is the "Live" pill, which is also the way out.
-  collabStart: 'Start collaboration',
-  collabStop: 'Stop collaboration',
+  collabStart: 'Start live session',
+  collabStop: 'Stop live session',
   /** The standing pill while a room is live; clicking it ends the session. */
   collabLive: 'Live',
-  collabStarted: 'Collaboration on — the invite link is on your clipboard.',
-  collabStopped: 'Collaboration ended.',
-  collabStartFailed: 'Collaboration could not start.',
+  collabStarted: 'Live session on — the invite link is on your clipboard.',
+  collabStopped: 'Live session ended.',
+  collabStartFailed: 'The live session could not start.',
   /** Peer-presence toasts: someone else arrived / left this room. */
   collabJoined: (name: string) => `${name} joined the session.`,
   collabLeft: (name: string) => `${name} left the session.`,
@@ -740,7 +757,7 @@ export const EN = {
   a11yCollab: 'Collaboration',
   /** The badge beside the Live pill when the local participant is a viewer. */
   collabViewOnly: 'View only',
-  collabViewOnlyHint: 'The room owner shared this with you as a viewer — editing is off.',
+  collabViewOnlyHint: 'The session owner shared this with you as a viewer — editing is off.',
 
   // ---- accounts (collab/auth.ts, §7.1) ----
   /** Account entry point in the Manage (gear) menu — label flips with sign-in state. */
@@ -783,8 +800,8 @@ export const EN = {
   authUsageStorage: 'Storage',
 
   // ---- share dialog (components/ShareDialog.tsx, §7.2) ----
-  /** The "Share room…" entry — enabled only while a room is live. */
-  menuShareRoom: 'Share room…',
+  /** The "Live session link…" entry — enabled only while a room is live. */
+  menuShareRoom: 'Live session link…',
   shareTitle: 'Share this session',
   shareIntro: 'Choose who can open the invite link.',
   shareLinkAccessLabel: 'Link access',

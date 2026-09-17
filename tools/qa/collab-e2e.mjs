@@ -2,7 +2,7 @@
  *
  * What the join flow must do — the bug this guards against was a guest opening a
  * #room= link landing on the Projects Home and never joining:
- *   1. Host: File > Start collaboration writes #room=<ULID> and shows "Live".
+ *   1. Host: Share > Start live session writes #room=<ULID> and shows "Live".
  *   2. A guest opening that link lands IN the editor (never stranded on Home).
  *   3. Same-browser second tab: live two-way sync over BroadcastChannel + presence.
  *   4. A fresh profile (a real remote device) opening the link cold joins the room
@@ -72,14 +72,14 @@ try {
   await A.waitForSelector('.cm-content', { timeout: 30000 })
   await seesText(A, 'first Python program', 30000) // the seeded main.py is really open
 
-  await A.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await A.getByRole('menuitem', { name: 'Start collaboration' }).click()
+  await A.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await A.getByRole('menuitem', { name: 'Start live session' }).click()
   await A.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
   roomUrl = await A.evaluate(() => location.href)
   createdRooms.push(roomUrl)
   const roomOk = /#room=[0-9A-HJKMNP-TV-Z]{26}$/.test(roomUrl)
   roomOk
-    ? pass('host: Start collaboration writes #room=', '#' + roomUrl.split('#')[1])
+    ? pass('host: Start live session writes #room=', '#' + roomUrl.split('#')[1])
     : fail('host: no #room= in URL', roomUrl)
   ;(await A.getByText('Live', { exact: true }).count()) > 0
     ? pass('host: "Live" pill shows while hosting')
@@ -166,8 +166,8 @@ try {
     await seed(C, { lang: 'Python', name: 'Python basics' })
     await C.waitForSelector('.cm-content', { timeout: 30000 })
     await seesText(C, 'first Python program', 30000)
-    await C.getByRole('menuitem', { name: 'File', exact: true }).click()
-    await C.getByRole('menuitem', { name: 'Start collaboration' }).click()
+    await C.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await C.getByRole('menuitem', { name: 'Start live session' }).click()
     await C.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
     const silentUrl = await C.evaluate(() => location.href)
     createdRooms.push(silentUrl)
@@ -201,8 +201,8 @@ try {
     await seesText(RH, 'first Python program', 30000)
 
     const startCollab = async () => {
-      await RH.getByRole('menuitem', { name: 'File', exact: true }).click()
-      await RH.getByRole('menuitem', { name: 'Start collaboration' }).click()
+      await RH.getByRole('menuitem', { name: 'Share', exact: true }).click()
+      await RH.getByRole('menuitem', { name: 'Start live session' }).click()
       await RH.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
       return RH.evaluate(() => location.href)
     }
@@ -212,8 +212,8 @@ try {
     await typeAtTop(RH, `# RESTART_PRE_1\n`)
     await RH.waitForTimeout(1500)
     // Stop.
-    await RH.getByRole('menuitem', { name: 'File', exact: true }).click()
-    await RH.getByRole('menuitem', { name: 'Stop collaboration' }).click()
+    await RH.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await RH.getByRole('menuitem', { name: 'Stop live session' }).click()
     await RH.waitForFunction(() => !location.hash.startsWith('#room='), null, { timeout: 8000 }).catch(() => {})
     await RH.waitForTimeout(500)
     // Start again — must reuse the same room id (contract §5 room-id reuse).

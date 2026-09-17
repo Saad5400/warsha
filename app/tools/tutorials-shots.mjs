@@ -52,7 +52,6 @@ let page
 const RUN_RE = /^(Run|تشغيل)/
 const NEWPROJ_RE = /(New project|مشروع جديد)/
 const NEWFILE_RE = /(New file|ملف جديد)/
-const MORE_RE = /^(More|المزيد)$/
 const CREATE_RE = /(Create|إنشاء)/
 
 async function ready() {
@@ -118,7 +117,12 @@ async function newProject(langTile) {
   await dialog.waitFor({ timeout: 8000 })
   await dialog.getByRole('button', { name: new RegExp('^' + langTile) }).first().click()
   await page.waitForTimeout(300)
-  await dialog.locator('.template-card').first().click()
+  // Skip the bare skeleton starter (added after these shots were first taken —
+  // it sorts first and left every screenshot showing an empty editor). A lesson
+  // shot wants real code on screen.
+  const cards = dialog.locator('.template-card')
+  const real = cards.filter({ hasNotText: /empty|فارغ/i })
+  await ((await real.count()) ? real.first() : cards.first()).click()
   await page.waitForTimeout(500)
   const create = page.getByRole('button', { name: CREATE_RE }).first()
   if (await create.count()) { await create.click().catch(() => {}) }
@@ -303,20 +307,17 @@ async function capture(lang) {
     return hl(page.getByRole('menuitem', { name: /(Export|تصدير)/ }).first())
   })
   await esc()
-  const openMore = async () => {
-    const more = page.getByRole('button', { name: MORE_RE }).first()
-    if ((await more.count()) === 0) return false
-    await more.click(); await page.waitForTimeout(400)
-    return true
-  }
+  // Both share shots come from the menu bar's Share menu — the one home of the
+  // family since the ⋯ was scoped back to the open file (it still carries the
+  // two file rows, but the project rows only live here).
   await shot('share-link', lang, async () => {
-    if (!(await openMore())) return false
-    return hl(page.getByRole('menuitem', { name: /(link|رابط)/i }).first())
+    if (!(await openMenuBar(/^(Share|مشاركة)$/))) return false
+    return hl(page.getByRole('menuitem', { name: /(as link|كرابط)/i }).first())
   })
   await esc()
   await shot('share-image', lang, async () => {
-    if (!(await openMore())) return false
-    return hl(page.getByRole('menuitem', { name: /(image|صورة|PDF)/i }).first())
+    if (!(await openMenuBar(/^(Share|مشاركة)$/))) return false
+    return hl(page.getByRole('menuitem', { name: /(as image|كصورة)/i }).first())
   })
   await esc()
 

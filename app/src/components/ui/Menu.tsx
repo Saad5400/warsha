@@ -58,6 +58,12 @@ export interface MenuItem {
   hint?: string
   /** Draws a divider above this item, so related actions read as one group. */
   startsGroup?: boolean
+  /** A caps heading above this item, naming what the rows under it act on
+   *  ("This file" / "This project"). Implies `startsGroup`: it is what a menu
+   *  that mixes scopes uses to say which row touches which — the thing the old
+   *  "Share as link…" (File) vs "Share project as link…" (⋯) split never said.
+   *  Presentational, so roving focus and type-ahead skip it. */
+  groupLabel?: string
   disabled?: boolean
   /** A submenu (File > Open Recent) — via Radix Sub/SubTrigger/SubContent, so
    *  hover/ArrowRight/ArrowLeft all come from Radix, not hand-rolled. */
@@ -167,6 +173,12 @@ const SUB_HINT = cx(
   'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
 const SEPARATOR = 'm-2 border-t border-border-subtle desk:border-(--menu-sep)'
+/** Section heading (MenuItem.groupLabel) — same caps treatment as the sidebar's
+ *  pane titles, so a menu's groups read like the panes do. */
+const GROUP_LABEL = cx(
+  'select-none px-3 pt-2 pb-1 text-micro font-semibold uppercase tracking-wide text-text-3',
+  'desk:pt-1.5 desk:pb-0.5 desk:text-[11px]',
+)
 
 /** Dropdown and context menus share the same Item/Sub/Separator contract, so rows are written once for either family. */
 interface RowParts {
@@ -220,7 +232,12 @@ function rows(items: MenuItem[], parts: RowParts, plain = false, drill?: (item: 
 
     return (
       <Fragment key={item.id ?? item.label}>
-        {i > 0 && (item.startsGroup || i === firstDanger) ? <Separator className={SEPARATOR} /> : null}
+        {i > 0 && (item.startsGroup || item.groupLabel || i === firstDanger) ? <Separator className={SEPARATOR} /> : null}
+        {item.groupLabel ? (
+          <div role="presentation" className={GROUP_LABEL}>
+            {item.groupLabel}
+          </div>
+        ) : null}
         {item.render ? (
           /* Custom control row (see MenuItem.render) — no Radix Item wrapper, so it can't select-and-close the menu. */
           item.render

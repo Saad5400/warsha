@@ -101,8 +101,8 @@ const signUp = async (page) => {
   return email
 }
 const setLinkAccess = async (page, optionText) => {
-  await page.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Share room…' }).click()
+  await page.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Live session link…' }).click()
   const dlg = page.locator('dialog[open]')
   await dlg.waitFor({ timeout: 10000 })
   await dlg.getByRole('radio').filter({ hasText: optionText }).click()
@@ -161,8 +161,8 @@ try {
   await createLocalProject(O, { lang: 'Python', name: 'Python basics' })
   await seesText(O, 'first Python program', 30000)
   await signUp(O) // owner account, so an anonymous guest is a genuine link-peer
-  await O.getByRole('menuitem', { name: 'File', exact: true }).click()
-  await O.getByRole('menuitem', { name: 'Start collaboration' }).click()
+  await O.getByRole('menuitem', { name: 'Share', exact: true }).click()
+  await O.getByRole('menuitem', { name: 'Start live session' }).click()
   await O.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
   const roomUrl = await O.evaluate(() => location.href)
   createdRooms.push(roomUrl)
