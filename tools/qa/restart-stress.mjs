@@ -2,7 +2,7 @@
  *
  * Repeats the exact scenario collab-e2e's H1 guards, N times in a row, ALL of
  * which must pass:
- *   Start collaboration → type PRE → Stop → Start again (REUSES the room id) →
+ *   Start live session → type PRE → Stop → Start again (REUSES the room id) →
  *   type POST → a FRESH guest joining after the restart must see POST.
  *
  * The prod failure was a race the localhost happy-path usually won, so this
@@ -80,8 +80,8 @@ for (let i = 1; i <= RUNS; i++) {
     await seesText(RH, 'first Python program', 30000)
 
     const startCollab = async () => {
-      await RH.getByRole('menuitem', { name: 'File', exact: true }).click()
-      await RH.getByRole('menuitem', { name: 'Start collaboration' }).click()
+      await RH.getByRole('menuitem', { name: 'Share', exact: true }).click()
+      await RH.getByRole('menuitem', { name: 'Start live session' }).click()
       await RH.waitForFunction(() => location.hash.startsWith('#room='), null, { timeout: 15000 }).catch(() => {})
       return RH.evaluate(() => location.href)
     }
@@ -90,8 +90,8 @@ for (let i = 1; i <= RUNS; i++) {
     await typeAtTop(RH, `# ${PRE}\n`)
     await RH.waitForTimeout(1500)
     // Stop.
-    await RH.getByRole('menuitem', { name: 'File', exact: true }).click()
-    await RH.getByRole('menuitem', { name: 'Stop collaboration' }).click()
+    await RH.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await RH.getByRole('menuitem', { name: 'Stop live session' }).click()
     await RH.waitForFunction(() => !location.hash.startsWith('#room='), null, { timeout: 8000 }).catch(() => {})
     await RH.waitForTimeout(500)
     // Start again — reuses the same room id.

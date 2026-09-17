@@ -23,8 +23,9 @@ npm run offline
 npm run sw-range
 npm run timings      # progress-continuity + cold/warm Java numbers, not pass/fail
 
-# two suites aren't wired into package.json — invoke node directly
+# three suites aren't wired into package.json — invoke node directly
 node share-check.mjs           # 11 checks: share-as-link + share-as-PDF (same WARSHA_URL/WARSHA_SHOTS/CHROME env vars as above)
+node menus-check.mjs           # 38 checks: where every action lives (engine-free, ~15s — reads WARSHA_URL/CHROME)
 CHROME=/usr/bin/google-chrome node measure-java-startup.mjs   # cold Run + reload->Run cache timings, not pass/fail (reads APP_URL, not WARSHA_URL)
 ```
 

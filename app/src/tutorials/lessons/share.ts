@@ -32,8 +32,8 @@ export const share: Tutorial = {
     {
       title: { en: 'Export the project as a .zip', ar: 'صدّر المشروع كملف ⁨.zip⁩' },
       body: {
-        en: 'Choose Export as .zip to save the whole project as a single file on your device. Carry it to another computer or hand it in, and open it again anytime with Import.',
-        ar: 'اختر Export as ⁨.zip⁩ لحفظ المشروع كله في ملف واحد على جهازك. انقله إلى حاسوب آخر أو سلّمه لمعلّمك، وافتحه متى شئت عبر Import.',
+        en: 'In the File menu, choose Export as .zip to save the whole project as a single file on your device. Carry it to another computer or hand it in, and open it again anytime with Import, right above it.',
+        ar: 'من قائمة File اختر Export as ⁨.zip⁩ لحفظ المشروع كله في ملف واحد على جهازك. انقله إلى حاسوب آخر أو سلّمه لمعلّمك، وافتحه متى شئت عبر Import فوقه مباشرة.',
       },
       shot: 'export-zip',
       keywords: {
@@ -41,15 +41,15 @@ export const share: Tutorial = {
         ar: 'تصدير zip تنزيل المشروع ملف تسليم استيراد',
       },
       alt: {
-        en: 'The project menu with Export as .zip highlighted.',
-        ar: 'قائمة المشروع مع إبراز خيار التصدير كملف ⁨.zip⁩.',
+        en: 'The File menu with Export as .zip highlighted.',
+        ar: 'قائمة File مع إبراز خيار التصدير كملف ⁨.zip⁩.',
       },
     },
     {
       title: { en: 'Share a link to the project', ar: 'شارك المشروع عبر link' },
       body: {
-        en: 'Share as link folds the whole project into a link you can send in a chat. Whoever opens it gets their own copy to edit — still with no account, and nothing ever travels through a server.',
-        ar: 'يطوي «شارك عبر link» المشروع كله داخل link يمكنك إرساله في محادثة. من يفتحه يحصل على نسخته الخاصة ليعدّلها — بلا حساب، ودون أن يمرّ شيء عبر أي خادم.',
+        en: 'Every way of sending your work lives in the Share menu, under a heading that says what each row acts on. Share as link, under This project, folds the whole project into a link you can send in a chat. Whoever opens it gets their own copy to edit — still with no account, and nothing ever travels through a server.',
+        ar: 'تجد كل طرق إرسال عملك في قائمة Share، تحت عنوان يوضّح ما الذي يعمل عليه كل خيار. ويطوي «مشاركة كرابط» — تحت «هذا المشروع» — المشروعَ كله داخل link يمكنك إرساله في محادثة. من يفتحه يحصل على نسخته الخاصة ليعدّلها — بلا حساب، ودون أن يمرّ شيء عبر أي خادم.',
       },
       shot: 'share-link',
       keywords: {
@@ -57,15 +57,15 @@ export const share: Tutorial = {
         ar: 'مشاركة رابط link نسخ إرسال المشروع بلا حساب بلا خادم',
       },
       alt: {
-        en: 'The share menu with Share as link highlighted.',
-        ar: 'قائمة المشاركة مع إبراز خيار المشاركة عبر link.',
+        en: 'The Share menu with Share as link highlighted under the This project heading.',
+        ar: 'قائمة Share مع إبراز خيار المشاركة كرابط تحت عنوان «هذا المشروع».',
       },
     },
     {
       title: { en: 'Share as an image or PDF', ar: 'شارك كصورة أو PDF' },
       body: {
-        en: "Share as image turns the file you're viewing into a clean picture of the code you can post anywhere. For the whole project, Share as PDF lays every file out as one document to read or print.",
-        ar: 'يحوّل «شارك كصورة» الملف الذي تعرضه إلى صورة أنيقة للكود يمكنك نشرها في أي مكان. ولمشاركة المشروع كله، يرتّب «شارك كـ PDF» جميع الملفات في مستند واحد تقرؤه أو تطبعه.',
+        en: "Share as image, under This file, turns the file you're viewing into a clean picture of the code you can post anywhere — it is also on the ⋯ button beside the file, with everything else that acts on it. For the whole project, Share as PDF lays every file out as one document to read or print.",
+        ar: 'يحوّل «مشاركة كصورة» — تحت «هذا الملف» — الملفَ الذي تعرضه إلى صورة أنيقة للكود يمكنك نشرها في أي مكان، وتجده أيضًا في زر ⋯ بجانب الملف مع بقية ما يخصّه. ولمشاركة المشروع كله، يرتّب «مشاركة كملف PDF» جميع الملفات في مستند واحد تقرؤه أو تطبعه.',
       },
       shot: 'share-image',
       keywords: {
@@ -73,8 +73,8 @@ export const share: Tutorial = {
         ar: 'مشاركة صورة png لقطة كود pdf طباعة مستند',
       },
       alt: {
-        en: 'The file menu with Share as image and Share as PDF highlighted.',
-        ar: 'قائمة الملف مع إبراز خياري المشاركة كصورة والمشاركة كـ PDF.',
+        en: 'The Share menu with Share as image highlighted under the This file heading.',
+        ar: 'قائمة Share مع إبراز خيار المشاركة كصورة تحت عنوان «هذا الملف».',
       },
     },
   ],

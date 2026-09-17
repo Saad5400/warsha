@@ -66,8 +66,10 @@ import {
   IconClear,
   IconClipboard,
   IconClock,
+  IconCloud,
   IconCommand,
   IconCopy,
+  IconDownload,
   IconExport,
   IconFileLines,
   IconFilePlus,
@@ -119,6 +121,14 @@ const SCALE_MAX = 1.3
 const SCALE_STEP = 0.05
 const clampScale = (v: number) =>
   Number.isFinite(v) ? Math.min(SCALE_MAX, Math.max(SCALE_MIN, Math.round(v * 20) / 20)) : 1
+
+/** The gear's text-size stepper buttons. Menu-row furniture, not IconButtons —
+ *  those carry a 44px hit box that would double the height of the row they sit in. */
+const MENU_STEPPER =
+  'grid size-[32px] flex-none place-items-center rounded-sm text-text-2 cursor-pointer touch-manipulation ' +
+  'transition-colors duration-(--dur-fast) ease-standard hover:bg-surface-4 hover:text-text-1 active:bg-surface-4 ' +
+  'disabled:cursor-not-allowed disabled:bg-transparent disabled:text-text-disabled ' +
+  'desk:size-[22px] desk:hover:bg-(--toolbar-hover-bg)'
 
 /* VS Code's floor plan (docs/design/LAYOUT-VSCODE.md): same grid at every
  * width — rail and status bar render on phones too, by design. Placement is
@@ -2351,6 +2361,16 @@ function Ide({ report }: { report: CapabilityReport }) {
       enabled: () => activePath !== null,
       run: () => void shareActiveFile(),
     },
+    {
+      // The Explorer row's Download, for the file already open — the palette
+      // carries every share row so none of them is menu-only.
+      id: 'file.download',
+      title: COPY.cmdFileDownload,
+      enabled: () => activePath !== null,
+      run: () => {
+        if (activePath) void downloadFile(activePath)
+      },
+    },
     { id: 'file.import', title: COPY.cmdFileImport, run: () => setImportMode('replace') },
     {
       id: 'file.closeEditor',
@@ -2542,28 +2562,87 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: c.run,
     }))
 
-  // VS Code's menu bar (collapses to the ☰ button below 1050px). Every row calls the same
+  /** Puts a section heading on a group's first row (see MenuItem.groupLabel). */
+  const titled = (heading: string, items: MenuItem[]): MenuItem[] =>
+    items.map((item, i) => (i === 0 ? { ...item, groupLabel: heading } : item))
+
+  // ---- the share family, defined once ----
+  // Every way work leaves Warsha. Written here and nowhere else, so the Share
+  // menu and the tab strip's ⋯ cannot drift apart the way "Share as link…"
+  // (File) and "Share project as link…" (⋯) did — one action, two names, two
+  // homes, and no way to tell which one you wanted.
+  //
+  // Scope decides the home: rows about the OPEN FILE also ride the ⋯ (the button
+  // that sits beside the file); rows about the project or the session live in
+  // the Share menu only. Nothing is named differently in the two places.
+  const fileShareItems: MenuItem[] = [
+    {
+      label: COPY.menuShareImage,
+      icon: <IconShare size={18} />,
+      disabled: !activePath,
+      onSelect: () => void shareActiveFile(),
+    },
+    {
+      label: COPY.menuDownloadFile,
+      icon: <IconDownload size={18} />,
+      disabled: !activePath,
+      onSelect: () => {
+        if (activePath) void downloadFile(activePath)
+      },
+    },
+  ]
+
+  const projectShareItems: MenuItem[] = [
+    { label: COPY.menuShareLink, icon: <IconLink size={18} />, disabled: empty, onSelect: () => void shareLink() },
+    { label: COPY.menuSharePdf, icon: <IconFileLines size={18} />, disabled: empty, onSelect: () => void sharePdf() },
+    // Also in File, beside Import — the round trip is a File job as much as a
+    // share one. Same label in both, so it reads as one action seen twice.
+    { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
+  ]
+
+  const liveShareItems: MenuItem[] = [
+    // Label flips Start/Stop with the room state; "live session" is the word the
+    // rest of the copy already used while the menus still said "collaboration".
+    {
+      label: collab.active ? COPY.collabStop : COPY.collabStart,
+      icon: <IconCloud size={18} />,
+      disabled: !currentProject,
+      onSelect: () => void toggleCollab(),
+    },
+    // Who may open the live link (owner) / copy it (guest) — only while a room is up.
+    { label: COPY.menuShareRoom, icon: <IconLink size={18} />, disabled: !collab.active, onSelect: () => setShareOpen(true) },
+  ]
+
+  /** The whole family, headed by what each group acts on. */
+  const shareItems: MenuItem[] = [
+    ...titled(COPY.menuGroupThisFile, fileShareItems),
+    ...titled(COPY.menuGroupThisProject, projectShareItems),
+    ...titled(COPY.menuGroupLiveSession, liveShareItems),
+  ]
+
+  // VS Code's menu bar (collapses to the ☰ button below 1150px). Every row calls the same
   // action its old home did; hints render from the command table so a shown shortcut always
-  // works. File also holds every project-scoped job the old touch drawer switcher carried;
-  // destructive rows sit last behind a divider, never near Save.
+  // works. Six titles now: Share is Warsha's own family, out of File and out of the ⋯
+  // (LAYOUT-VSCODE.md, "Action placement"). Destructive rows sit last behind a divider,
+  // never near Save.
   const menuBarMenus: MenuBarMenu[] = [
     {
+      // Lifecycle only — make it, open it, save it, name it, remove it. The five
+      // share rows that used to sit in the middle of this list (and made it the
+      // app's junk drawer) are the Share menu now.
       label: COPY.menuFile,
       items: [
-        { label: COPY.homeTitle, icon: <Logo size={16} />, onSelect: () => setView('home') },
-        { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, startsGroup: true, onSelect: () => void newFile('') },
+        { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, onSelect: () => void newFile('') },
         // Opens the picker regardless of list size; language and starter are chosen there.
         { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
-        { label: COPY.menuOpenRecent, icon: <IconClock size={18} />, items: projectRows },
+        { label: COPY.menuOpenRecent, icon: <IconClock size={18} />, startsGroup: true, items: projectRows },
+        // The projects grid: the other way to reach another project, so it sits
+        // with Open Recent instead of leading the menu as a bare brand row.
+        { label: COPY.menuAllProjects, icon: <Logo size={16} />, onSelect: () => setView('home') },
+        // In and out of the device, as a pair. Export is in Share too, same label.
         { label: COPY.menuImportZip, icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportMode('replace') },
         { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
-        { label: COPY.menuShareLink, icon: <IconLink size={18} />, disabled: empty, onSelect: () => void shareLink() },
-        { label: COPY.menuSharePdf, icon: <IconFileLines size={18} />, disabled: empty, onSelect: () => void sharePdf() },
-        // Same share family; label flips Start/Stop with the room state.
-        { label: collab.active ? COPY.collabStop : COPY.collabStart, icon: <IconShare size={18} />, disabled: !currentProject, onSelect: () => void toggleCollab() },
-        // Sharing controls for the live room (link access / copy link) — only while a room is up.
-        { label: COPY.menuShareRoom, icon: <IconLink size={18} />, disabled: !collab.active, onSelect: () => setShareOpen(true) },
         { label: COPY.menuSaveAll, icon: <IconSave size={18} />, hint: formatKeys('Mod+S'), startsGroup: true, onSelect: saveAllQuiet },
         {
           label: COPY.menuRenameProject,
@@ -2612,15 +2691,6 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: COPY.menuZoomIn, icon: <IconZoomIn size={18} />, hint: formatKeys('Mod+='), startsGroup: true, onSelect: () => changeScale(+SCALE_STEP) },
         { label: COPY.menuZoomOut, icon: <IconZoomOut size={18} />, hint: formatKeys('Mod+-'), onSelect: () => changeScale(-SCALE_STEP) },
         { label: COPY.menuResetZoom, icon: <IconZoomReset size={18} />, hint: formatKeys('Mod+0'), disabled: uiScale === 1, onSelect: () => setUiScale(1) },
-        {
-          // Handedness (html[data-hand]) mirrors the console header's Run side — one
-          // preference, one home, even though it matters most on touch.
-          label: hand === 'right' ? COPY.menuRunOnLeft : COPY.menuRunOnRight,
-          icon: <IconSwap size={18} />,
-          startsGroup: true,
-          onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
-        },
-        { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows },
       ],
     },
     {
@@ -2653,23 +2723,37 @@ function Ide({ report }: { report: CapabilityReport }) {
       ],
     },
     {
+      // Warsha's own feature, so it gets its own title rather than being sprinkled
+      // through File and the ⋯. Same rows as the ⋯ shows for the open file.
+      label: COPY.menuShare,
+      items: shareItems,
+    },
+    {
       label: COPY.menuHelp,
-      items: [{ label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout }],
+      items: [
+        // Tutorials were behind the gear, which is where settings live — a lesson
+        // library is help. The gear keeps the settings; this is the reading.
+        { label: COPY.tutorialsTitle, icon: <IconLightbulb size={18} />, onSelect: openTutorials },
+        { label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout },
+      ],
     },
   ]
 
-  // VS Code keeps the app-scoped odds and ends behind the rail's own gear; every row here is an action that already exists.
+  // The rail's gear, as VS Code means it: the palette on top, then the account,
+  // then the settings themselves under one heading. It is not the app's spare
+  // drawer any more — Tutorials and About moved to Help, where a student looking
+  // for reading would look, and the two preferences that were stranded in View
+  // (Language, Run button side) joined the ones already here.
   const manageItems: MenuItem[] = [
     { label: COPY.menuCommandPalette, icon: <IconCommand size={18} />, hint: formatKeys('Mod+Shift+P'), onSelect: () => setQuickPick('commands') },
     // Account: only when a backend is configured (authApi non-null). Label carries
-    // the email once signed in; opens the sign-in form otherwise. The rail gear is
-    // where the app's odds-and-ends live — no new nav pattern (§7.4).
+    // the email once signed in; opens the sign-in form otherwise (§7.4).
     ...(authApi
       ? [
           {
             label: auth.user ? auth.user.email : COPY.menuSignIn,
             icon: <IconUser size={18} />,
-            startsGroup: true,
+            groupLabel: COPY.menuGroupAccount,
             onSelect: () => setAccountOpen(true),
           } satisfies MenuItem,
         ]
@@ -2679,7 +2763,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       // closes the menu. Same pref as View > Zoom In/Out (not the editor's separate text-size stepper).
       id: 'view-scale',
       label: COPY.menuViewScale,
-      startsGroup: true,
+      groupLabel: COPY.menuGroupSettings,
       render: (
         <div
           className="flex min-h-touch items-center gap-3 px-3 desk:min-h-[26px]"
@@ -2710,17 +2794,62 @@ function Ide({ report }: { report: CapabilityReport }) {
         </div>
       ),
     },
-    { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows, startsGroup: true },
-    { label: COPY.tutorialsTitle, icon: <IconLightbulb size={18} />, startsGroup: true, onSelect: openTutorials },
-    { label: COPY.menuAbout, icon: <IconInfo size={18} />, onSelect: showAbout },
+    {
+      // The editor's own type size, stepped in place — the companion to the
+      // shell-wide slider above, so both live prefs read as one settings group.
+      // Same pref as View > Bigger/Smaller Text; a `render` row never closes the
+      // menu, so it can be tapped up and down while watching the code behind it.
+      id: 'editor-text-size',
+      label: COPY.menuEditorTextSize,
+      render: (
+        <div className="flex min-h-touch items-center gap-3 px-3 desk:min-h-[26px]">
+          <span aria-hidden="true" className="grid size-[20px] flex-none place-items-center text-text-3">
+            <IconTextBigger size={18} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-row text-text-1 desk:text-[13px]">{COPY.menuEditorTextSize}</span>
+          <button
+            type="button"
+            aria-label={COPY.menuSmallerText}
+            title={COPY.menuSmallerText}
+            disabled={fontSize <= 11}
+            onClick={() => setFontSize((v) => Math.max(11, v - 1))}
+            className={MENU_STEPPER}
+          >
+            <IconTextSmaller size={16} />
+          </button>
+          <span className="w-[3ch] flex-none text-center text-micro tabular-nums text-text-2 desk:text-[13px]">{fontSize}</span>
+          <button
+            type="button"
+            aria-label={COPY.menuBiggerText}
+            title={COPY.menuBiggerText}
+            disabled={fontSize >= 26}
+            onClick={() => setFontSize((v) => Math.min(26, v + 1))}
+            className={MENU_STEPPER}
+          >
+            <IconTextBigger size={16} />
+          </button>
+        </div>
+      ),
+    },
+    { label: COPY.menuLanguage, icon: <IconGlobe size={18} />, items: languageRows },
+    {
+      // Handedness (html[data-hand]) mirrors the console header's Run side. It is
+      // a preference, not a view — it sits with the other preferences now.
+      label: hand === 'right' ? COPY.menuRunOnLeft : COPY.menuRunOnRight,
+      icon: <IconSwap size={18} />,
+      onSelect: () => setHand((h) => (h === 'right' ? 'left' : 'right')),
+    },
   ]
 
-  // Tab-strip "⋯": file rows first, then the share family (image/link/PDF) grouped as
-  // one job despite differing scopes. App-scoped rows live in the menu bar above.
+  // Tab-strip "⋯": the open file, and nothing else. It sits beside the file, so
+  // it answers "what can I do with THIS?" — the project-scoped rows it used to
+  // carry (and named differently from the File menu's copies of them) are the
+  // Share menu's now. The two file-share rows below are the same objects that
+  // menu shows, so their labels can never disagree.
   // "Share as image…" is a QA-clicked string — keep it stable.
   const deskMoreItems: MenuItem[] = [
     {
-      label: COPY.menuFormatFileRow,
+      label: COPY.menuFormatFile,
       icon: <IconWand size={18} />,
       hint: formatKeys('Shift+Alt+F'),
       disabled: !canFormat(activePath),
@@ -2734,24 +2863,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       disabled: !canGenerate(activePath),
       onSelect: () => void openGenerate(),
     },
-    {
-      label: COPY.menuShareImage,
-      icon: <IconShare size={18} />,
-      disabled: !activePath,
-      onSelect: () => void shareActiveFile(),
-    },
-    {
-      label: COPY.menuShareProjectLink,
-      icon: <IconLink size={18} />,
-      disabled: empty,
-      onSelect: () => void shareLink(),
-    },
-    {
-      label: COPY.menuShareProjectPdf,
-      icon: <IconFileLines size={18} />,
-      disabled: empty,
-      onSelect: () => void sharePdf(),
-    },
+    { ...fileShareItems[0], startsGroup: true },
+    ...fileShareItems.slice(1),
   ]
 
   // Two faces: a page project (html/css) can show Preview or switch to Console; a script

@@ -66,7 +66,7 @@ export const files: Tutorial = {
         ar: 'إعادة تسمية تنزيل حذف نقل سحب قائمة إجراءات صف',
       },
       alt: {
-        en: "A file row's actions menu open, showing Rename, Download, and Delete.",
+        en: "A file row's actions menu open, showing Rename, Download file, and Delete.",
         ar: 'قائمة إجراءات أحد الملفات مفتوحة، تعرض إعادة التسمية والتنزيل والحذف.',
       },
     },

@@ -12,9 +12,10 @@ export interface MenuBarMenu {
   items: MenuItem[]
 }
 
-/** Below this width five titles no longer fit beside the centred window title,
- *  so the bar collapses to VS Code's single ☰ trigger. */
-const COLLAPSE = '(min-width: 1050px)'
+/** Below this width the six titles no longer fit beside the centred window
+ *  title, so the bar collapses to VS Code's single ☰ trigger. (1050px was the
+ *  five-title figure; Share made it six.) */
+const COLLAPSE = '(min-width: 1150px)'
 
 // --toolbar-hover-bg is shared with the toolbar-icon hover (global token dedupe).
 // Radix stamps data-state=open on the trigger, so the open menu's title stays filled.
@@ -24,7 +25,7 @@ const TITLE_BTN =
   'hover:bg-(--toolbar-hover-bg) data-[state=open]:bg-(--toolbar-hover-bg)'
 
 /**
- * VS Code's menu bar; collapses to a single ☰ trigger below 1050px (also the phone path).
+ * VS Code’s menu bar; collapses to a single ☰ trigger below 1150px (also the phone path).
  *
  * Keyboard: titles share one roving tabindex (Arrow/Home/End move between them);
  * Down/Enter/Space opens the focused title; while open, Arrow keys close and open the
@@ -55,7 +56,7 @@ export function MenuBar({ menus }: { menus: MenuBarMenu[] }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [anyOpen, menus.length])
 
-  // Below 1050px: single ☰ trigger; its dropdown lists the titles as submenus.
+  // Below 1150px: single ☰ trigger; its dropdown lists the titles as submenus.
   // Accessible name is a translated QA contract — suites pin English via ?lang=en (see fromUrl() in i18n/locale.ts).
   // kb class compacts this button with the title bar below 900px while the keyboard is up.
   if (!wide) {

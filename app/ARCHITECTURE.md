@@ -53,11 +53,11 @@ Small and boring on purpose — roughly one file per box on screen.
 
 | Component | Notes |
 | --- | --- |
-| `TopBar` | ONE composition at every size (founder ruling 2026-08-05): `MenuBar` leading (it collapses itself to the ☰ `aria-label="Application Menu"` below 1050px), the centred `● file — project — Warsha` window title (hidden while the software keyboard compacts the bar), sidebar/panel toggles + install control trailing. No logo, no wordmark anywhere in it (LAYOUT-VSCODE §1b) — brand lives on the welcome panel, the favicon and the OG image only. |
-| `MenuBar` | File / Edit / View / Run / Help, mapped to real app actions only. File owns every project-scoped job (New/Open Recent/Import/Export/Rename/Empty/Delete) — the old `ProjectSwitcher` component is deleted. |
-| `ActivityBar` | The 48px icon rail, rendered at all widths; below 900px its Explorer item drives the sidebar as an overlay drawer. |
+| `TopBar` | ONE composition at every size (founder ruling 2026-08-05): `MenuBar` leading (it collapses itself to the ☰ `aria-label="Application Menu"` below 1150px), the centred `● file — project — Warsha` window title (hidden while the software keyboard compacts the bar), sidebar/panel toggles + install control trailing. No logo, no wordmark anywhere in it (LAYOUT-VSCODE §1b) — brand lives on the welcome panel, the favicon and the OG image only. |
+| `MenuBar` | File / Edit / View / Run / Share / Help, mapped to real app actions only. File owns the project's lifecycle (New/Open Recent/All Projects/Import/Export/Save All/Rename/Empty/Delete) — the old `ProjectSwitcher` component is deleted. **Share** is the one home of the share family (image / download / link / PDF / .zip / live session), grouped under *This file* / *This project* / *Live session* headings. Collapses to ☰ below 1150px (six titles, not five). Placement rules: LAYOUT-VSCODE.md, "Action placement". |
+| `ActivityBar` | The 48px icon rail, rendered at all widths; below 900px its Explorer item drives the sidebar as an overlay drawer. Its foot gear (`aria-label="Manage"`) is settings, not the app's drawer: command palette, account, then one Settings group (view scale, editor text size, language, Run-button side). |
 | `Explorer` | Pane header (project label + New file / New folder / Collapse trio, hover-revealed at desk, always visible on touch) over the tree; long-press/⋯ menu, create/rename/delete. |
-| `Tabs` | Horizontal strip, dirty dot, close ×, plus the trailing editor-actions corner — `RunControl` and the ⋯ More menu — at every size. Run's only home. |
+| `Tabs` | Horizontal strip, dirty dot, close ×, plus the trailing editor-actions corner — `RunControl` and the ⋯ More menu — at every size. Run's only home. The ⋯ is the OPEN FILE's actions only (Format File / Generate… / Share as image… / Download file); its two share rows are the same objects the Share menu shows, so the labels cannot drift. |
 | `Breadcrumbs` | The path trail under the tab strip, all widths (`--bar-crumbs`: 28px touch / 22px desk). |
 | `Editor` | ~40-line shell around `editor/setup.ts`. |
 | `Console` | The transcript and the live stdin line inside it. (The old sticky status foot is gone — the status bar carries run state; see `RunBar`.) |
@@ -73,7 +73,7 @@ Small and boring on purpose — roughly one file per box on screen.
 | `ImportZipDialog` | One dialog for the whole import: drop zone or file picker, what the .zip contains, what it replaces, confirm. |
 | `CapabilityScreens` | Fatal screen + dismissible warning banner. |
 | `FileBadge`, `Logo` | Language badges; inlined logo that recolours via custom properties. |
-| `ui/Button`, `ui/Dialog`, `ui/DialogProvider`, `ui/Menu`, `ui/Toast` | shadcn-style primitives, hand-rolled on Tailwind. Native `<dialog>` for focus trapping and Escape. |
+| `ui/Button`, `ui/Dialog`, `ui/DialogProvider`, `ui/Menu`, `ui/Toast` | shadcn-style primitives, hand-rolled on Tailwind. Native `<dialog>` for focus trapping and Escape. `MenuItem.groupLabel` draws a caps section heading over a group, so a menu that spans scopes names them. |
 
 ---
 
@@ -401,10 +401,12 @@ target states without reading component code:
   path — the one stable way to reach a *specific* row (labels repeat; `Main.java` can exist twice).
 - **Menu system**: `aria-label="Application Menu"` names the menu root at EVERY size — the full
   `role="menubar"` when the window is wide, a single ☰ trigger (same label, titles as submenus)
-  below 1050px, phones included. The old touch-only drawer hamburger labelled `Files` is deleted;
+  below 1150px (1050px before Share made the titles six), phones included. The old touch-only drawer hamburger labelled `Files` is deleted;
   `Files` now names only the `aside` itself, and the drawer is opened via the activity bar's
   Explorer item, the title-bar toggle, View > Toggle Explorer or Mod+B.
-  `aria-label="Manage"` is the activity bar's gear.
+  `aria-label="Manage"` is the activity bar's gear. Which rows live behind which surface is a
+  contract of its own — `tools/qa/menus-check.mjs` reads all six titles, the ⋯, the gear and an
+  Explorer row menu, and fails on a row that moved home or grew a second label.
 - **Console maximize**: the panel-toolbar chevron's accessible names are **`Maximize output`** /
   **`Restore output`** verbatim, state told apart by name exactly like `Run` / `Stop`. Renders at
   every width (the desk-only gate is gone).

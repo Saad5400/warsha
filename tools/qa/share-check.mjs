@@ -63,8 +63,10 @@ async function projectCount(page) {
   return rows.filter((r) => r.trim()).length
 }
 
+/** The project-scoped share rows live in the menu bar's Share menu — the tab
+ *  strip's ⋯ is the open file's actions only. */
 async function shareRow(page, label) {
-  await page.getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Share', exact: true }).click()
   await page.waitForSelector('[role="menu"]', { timeout: 5000 })
   await page.getByRole('menuitem', { name: label }).click()
 }
@@ -78,7 +80,7 @@ try {
   await a.page.waitForSelector('.cm-content', { timeout: 30000 })
 
   // 1 — the link lands on the clipboard
-  await shareRow(a.page, /Share project as link/)
+  await shareRow(a.page, /Share as link/)
   await hasToast(a.page, 'Link copied')
   const link = await a.page.evaluate(() => navigator.clipboard.readText())
   if (link.includes('#share=') && link.startsWith('http')) pass('link: copied a #share= URL', `${link.length} chars`)
@@ -118,7 +120,7 @@ try {
 
   // 6 — the PDF is real and covers the project
   const dl = a.page.waitForEvent('download', { timeout: 120000 })
-  await shareRow(a.page, /Share project as PDF/)
+  await shareRow(a.page, /Share as PDF/)
   await hasToast(a.page, 'Making the PDF')
   const download = await dl
   const name = download.suggestedFilename()
