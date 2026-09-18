@@ -15,6 +15,14 @@
  * an engine fails to start on real devices — the R1/R3 risks in the PRD, which
  * today we can only measure by borrowing a phone.
  *
+ * Every counter below has its failure half. That is deliberate and it is the
+ * point of the catalogue: Warsha sees a handful of sessions a day, so an app
+ * that has broken for everyone and an app nobody opened this week produce the
+ * same graph unless the breakage is itself counted. `run_started` pairs with
+ * `run_finished`/`run_failed`, `account_auth` carries its own result, and
+ * `capability_blocked`, `app_crashed` and `cloud_backup_failed` exist only to
+ * make silent dead ends visible.
+ *
  * Transport is the self-hosted Umami tag in `index.html` (cookieless, no
  * identifier that survives a visit — see docs/legal/PRIVACY.md). It is loaded
  * `defer` and may be blocked outright, so `track()` buffers and gives up
@@ -32,6 +40,25 @@ export type RunResult = 'ok' | 'error' | 'stopped'
 
 /** The `RunFailure['kind']` values — a run that never started, bucketed by cause. */
 export type FailureKind = 'offline' | 'isolation' | 'storage' | 'engine'
+
+/** The capability ids from `capabilities.ts` — the four things a device can be missing. */
+export type CapabilityId = 'wasm' | 'opfs' | 'isolation' | 'workers'
+
+/** Which half of the account form was submitted. */
+export type AuthMode = 'signin' | 'signup'
+
+/**
+ * How an account attempt ended. The failure words are the API's own closed set
+ * (`AuthResult['error']`, collab/api.ts) — never the message shown to the
+ * student, and never the email that was typed.
+ */
+export type AuthResult = 'ok' | 'taken' | 'weak' | 'invalid' | 'network'
+
+/** Why a project failed to reach the cloud. Mirrors `SeedStatus` minus its success. */
+export type BackupFailure = 'quota' | 'too-large' | 'error'
+
+/** How opening a share link ended. */
+export type ShareOpenResult = 'ok' | 'broken' | 'save-failed'
 
 /**
  * The closed event catalogue. One entry per thing we are allowed to count; the
@@ -51,6 +78,43 @@ interface Events {
   project_shared: { via: 'zip' | 'pdf' | 'link' }
   /** A dimmed "Soon" tile was tapped. Pure roadmap demand — the tile does nothing, and still doesn't. */
   language_requested: { lang: EventLang }
+  /**
+   * The device is missing something Warsha needs — one event per failed check.
+   * This is the R1 risk (iPadOS/WebKit) made countable. A student who hits the
+   * fatal screen leaves a page view and nothing else today, so a browser that
+   * cannot run Warsha at all is currently indistinguishable from a bounce. The
+   * `reason` is the capability id, never the user agent: a UA string is a
+   * fingerprint, and Umami already records browser/OS/device on the visit.
+   */
+  capability_blocked: { level: 'fatal' | 'warn'; reason: CapabilityId }
+  /**
+   * The React error boundary caught a render throw — the white-screen failure.
+   * No message, no stack, no component name: a stack frame can carry a file
+   * path, and file names never leave the device (see `langOfEntry`). That it
+   * happened, and how often, is the whole signal.
+   */
+  app_crashed: Record<string, never>
+  /**
+   * An account sign-in or sign-up attempt resolved. Both halves on one event so
+   * the failure rate is the same number as the attempt count — a broken
+   * warsha-api shows up as `result: network` climbing, not as a quiet week with
+   * fewer successes.
+   */
+  account_auth: { mode: AuthMode; result: AuthResult }
+  /**
+   * A project could not be backed up to the account. The student is told only
+   * about `quota`; the other two are silent today, which is the worst kind of
+   * failure for a feature whose entire promise is that work is safe.
+   */
+  cloud_backup_failed: { kind: BackupFailure }
+  /**
+   * Someone opened a `#share=` link. Share links are how Warsha travels between
+   * devices without an account, so a link that arrives broken (truncated by a
+   * chat app, hand-edited) or that cannot be saved is a distribution failure we
+   * otherwise never hear about. Counted for the receiving student only; the
+   * sender is already counted by `project_shared`.
+   */
+  share_opened: { result: ShareOpenResult }
 }
 
 type EventName = keyof Events

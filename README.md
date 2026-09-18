@@ -57,12 +57,16 @@ care about.
   project needs one.
 - **Import and export.** Any project round-trips through a zip file, so work moves
   between devices without an account.
-- **Your code never leaves the device.** No backend, no account, no sign-in. A
-  self-hosted, cookieless Umami instance counts visits plus a short fixed list of
-  anonymous actions — which language a project starts in, whether a run finished or the
-  engine failed — so we can see that Warsha broke on a real phone without a support inbox.
-  Your files, keystrokes, output and errors are never sent anywhere. See
-  [PRIVACY](docs/legal/PRIVACY.md).
+- **Your code never leaves the device.** A self-hosted, cookieless Umami instance counts
+  visits, page-load timings, and a short fixed list of anonymous actions — which language
+  a project starts in, whether a run finished or the engine failed, whether the browser
+  was missing something Warsha needs — so we can see that Warsha broke on a real phone
+  without a support inbox. It also records anonymous session replays of the live site,
+  with text masked before it leaves the browser, capped at five minutes and deleted after
+  thirty days; replay is switched off entirely on a share-link load, because a share link
+  carries the project inside the URL. Your files, keystrokes, output and errors are never
+  sent anywhere. See [PRIVACY](docs/legal/PRIVACY.md), which also records a share-link
+  leak of exactly that kind that this wiring found and fixed.
 
 ## Browser support
 

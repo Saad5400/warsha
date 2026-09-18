@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { COPY } from '../copy'
+import { track } from '../analytics'
 import type { AuthResult, Usage, WarshaApi } from '../collab/api'
 import { clearSession, setSession, setUsage, useAuth } from '../collab/auth'
 import { Button } from './ui/Button'
@@ -101,16 +102,26 @@ function AuthForm({
     setError(null)
     if (!canSubmit || busy) return
     if (!api) {
+      // No backend configured or reachable at all. Counted as a network failure
+      // rather than skipped: a build shipped without VITE_WARSHA_API would
+      // otherwise look like an app nobody ever tried to sign into.
+      track('account_auth', { mode, result: 'network' })
       setError(COPY.authErrorNetwork)
       return
     }
     setBusy(true)
     const result = mode === 'signup' ? await api.signup(email.trim(), password) : await api.login(email.trim(), password)
     if (!result.ok) {
+      // The API's own closed set of reasons — never the email, never the
+      // message. `weak` and `invalid` are the student's own doing; `taken` is a
+      // returning student picking the wrong tab; `network` is ours to fix, and
+      // is the one that must not hide inside a quiet signup count.
+      track('account_auth', { mode, result: result.error })
       setBusy(false)
       setError(messageFor(result))
       return
     }
+    track('account_auth', { mode, result: 'ok' })
     // Land the session so every sync/sharing call now bears the account token.
     setSession(result.token, result.user)
     // Carrying anonymous work into the account (claim-device + tagging local projects

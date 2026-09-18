@@ -174,6 +174,18 @@ function routesEqual(a: Route, b: Route): boolean {
 export function App() {
   const report = useMemo(() => checkCapabilities(), [])
   useEffect(() => installViewport(), [])
+  // One event per missing capability. In an effect, not the render body: a render
+  // can run many times per mount, an effect once. (StrictMode still double-fires
+  // it in dev — which now never reaches Umami, because the tag is domain-gated.)
+  // A fatal report means the student is looking at CapabilityFatalScreen and will
+  // leave; without this, that visit is a page view with no events — the exact
+  // shape of a student who simply bounced. `report` is a `useMemo` with no deps,
+  // so this does not re-fire while the tab lives.
+  useEffect(() => {
+    for (const problem of report.problems) {
+      track('capability_blocked', { level: problem.severity, reason: problem.id })
+    }
+  }, [report])
   // Subscribed here, not in `Ide`, so the fatal capability screen is translated too.
   const locale = useLocale()
   // A missing hard requirement is a dead end — better to say so than spin forever.
@@ -696,10 +708,15 @@ function Ide({ report }: { report: CapabilityReport }) {
   // Home's pinned projects (persisted). A per-device preference, so it lives in prefs, not the manifest.
   const [pinned, setPinned] = useState<string[]>(() => prefs().pinnedProjectIds ?? [])
 
-  const shareBrokenNotice = useCallback(
-    () => notify(COPY.noteShareBroken, 'error'),
-    [notify],
-  )
+  const shareBrokenNotice = useCallback(() => {
+    // A link that arrived damaged — truncated by a chat app, hand-edited, or
+    // built by an older format. Share links are how Warsha moves between devices
+    // without an account, so this is a delivery failure in the one distribution
+    // channel the product has; counted here rather than at the two call sites so
+    // every path that shows the notice is also a path that counts it.
+    track('share_opened', { result: 'broken' })
+    notify(COPY.noteShareBroken, 'error')
+  }, [notify])
 
   /** Lands `shared` on this device: the untouched-copy project if one exists,
    *  a new one otherwise (adoptShared), then points the workspace at it. */
@@ -713,9 +730,16 @@ function Ide({ report }: { report: CapabilityReport }) {
       const leaving = tabs
       const result = await adoptShared(shared.name, shared.snapshot)
       if (!result) {
+        // The link was fine; storage would not take it. Distinct from 'broken'
+        // on purpose — one is the sender's link, the other is this device.
+        track('share_opened', { result: 'save-failed' })
         notify(COPY.noteShareSaveFailed, 'error')
         return false
       }
+      // Landed. Paired with the two failures above so the success rate of the
+      // share channel is readable without inferring it from `project_created`,
+      // which counts only the first landing of a given link on a device.
+      track('share_opened', { result: 'ok' })
       claimForBackup(result.meta.id) // signed in → the adopted copy is account-owned + backs up
       // Only a genuinely new copy counts — re-opening the same link on the same
       // device is one student returning, which the visit count already says.

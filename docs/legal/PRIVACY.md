@@ -1,12 +1,15 @@
 # Privacy
 
-**Short version: your code stays on your device. We don't have accounts, and we don't
-have a server that stores your work. We count anonymous visits, and a short list of
-anonymous actions — which language was started, whether a program ran. Never what you
-wrote.**
+**Short version: your code stays on your device. We count anonymous visits, a short list
+of anonymous actions — which language was started, whether a program ran — and how fast
+the page loaded. Never what you wrote. Warsha also records anonymous playbacks of visits
+to the website, with the text on the page masked before it leaves your browser, so a
+button that does nothing on a real tablet can be looked at rather than guessed at; see
+[Session replay](#what-we-collect). Signing in is optional, and everything above is true
+whether or not you do.**
 
 This page is written to be readable by students and parents, not just lawyers. Last
-updated 2026-08-09.
+updated 2026-09-18.
 
 ## What Warsha is
 
@@ -42,12 +45,39 @@ Anonymous counts. Never your work.
   | A program couldn't start | the language, and why (`offline`, `engine`…) | the technical failure text |
   | You exported or shared | `zip`, `pdf` or `link` | the files, the link |
   | A "Soon" language was tapped | which one | — |
+  | Your browser was missing something Warsha needs | which requirement (`wasm`, `opfs`…) | anything about your device beyond that |
+  | Warsha crashed | that it happened | the error, the file it happened in |
+  | A sign-in or sign-up finished | `signin`/`signup`, and `ok` or why not | your email address, your password |
+  | A project could not be backed up | why (`quota`, `too-large`, `error`) | the project, its name, its files |
+  | A share link was opened | whether it worked | the link, the files it carried |
 
   "The language" means one of a fixed set of names — `java`, `python`, `html` and so on.
   Nothing else about a file reaches it: not its name, not its size, not a line of it.
   Because nothing identifies you between visits, these counts cannot be assembled into a
   history of one student's work — they are only ever totals. See
   [Why we count these](#why-we-count-these) below.
+- **Loading speed.** Warsha measures how long the page took to become usable (the
+  standard browser timings: time to first byte, first paint, largest paint, layout
+  shift, and how quickly it responded to your first tap). These are numbers about the
+  page, not about you, and they are the only way to know whether Warsha is slow on a
+  cheap phone.
+- **Session replay, on the website only.** This is the one item on this page that is a
+  recording rather than a count, so it gets its own explanation. Warsha can record an
+  anonymous playback of a visit — where you clicked, what you scrolled, how the layout
+  reacted — so that "the Run button did nothing on my tablet" can actually be looked at
+  instead of guessed at. Three limits are worth stating plainly:
+  - **Text is masked.** The recorder is configured at the strictest setting, which
+    replaces the text on the page before the recording leaves your browser. Your code,
+    your file names, and your program's output are not readable in a replay.
+  - **It is capped and short-lived.** A recording stops after five minutes and is
+    deleted after thirty days.
+  - **It never runs on a shared link.** When you open a project someone sent you, the
+    project itself is inside the web address. Recording is switched off entirely for
+    that visit so that address can never end up inside a recording.
+
+  A replay still shows the shape of a session — the layout, where a finger went, which
+  buttons were pressed. We think that is worth being explicit about rather than
+  describing it as "anonymous usage data".
 - **No code uploads.** Your programs are never sent to us. Warsha itself is a set of
   static files, and no server ever receives your work. What you type, what your program
   prints, and the errors you get are never transmitted anywhere.
@@ -90,6 +120,21 @@ Two practical consequences worth knowing:
   never had a copy.
 - Your work does **not** follow you to another device or another browser. Use **Export**
   to download a `.zip` if you want to move it or keep a backup.
+
+## A mistake we found and fixed
+
+Between 2026-08-09 and the date of this update, opening a **share link** sent more than
+this page said it did. A share link carries the whole project inside the web address
+itself (everything after the `#`), and the analytics tool records the web address of each
+visit. It was therefore recording the project too — the exact thing the rest of this page
+promises never happens.
+
+Nobody reported it; it was found while adding the recording described above. It is now
+fixed: the part of the address after the `#` is discarded before anything is sent, which
+we have checked in a real browser both ways round. We are recording it here instead of
+correcting the page quietly, because a privacy page that only lists a project's successes
+is not worth reading. If you shared or opened a Warsha link in that period, the project in
+that link may be in our analytics database, and we will delete those records.
 
 ## Two more things we want to be honest about
 
@@ -152,6 +197,17 @@ promised here, and is recorded plainly rather than quietly corrected.
 The short list of anonymous actions ("What we collect", second bullet) was added on
 2026-08-09 as well. This time the page went live first and the measuring shipped after it,
 which is the order this section promises.
+
+Loading-speed measurements, the five extra counters in the table above (a missing browser
+requirement, a crash, a sign-in result, a failed backup, a share link opened), and
+**session replay** were added together in the same change as this update, and this page
+was written as part of that change rather than after it. Session replay is the largest
+single addition this page has ever had to describe, and it is the first thing Warsha
+collects that is not a count — read that bullet rather than this sentence.
+
+The share-link problem described under
+[A mistake we found and fixed](#a-mistake-we-found-and-fixed) was fixed in the same
+change.
 
 If Warsha ever starts collecting anything further, this page will say so before that
 version ships, and the change will be visible in the project's public commit history like
