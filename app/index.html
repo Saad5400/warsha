@@ -212,8 +212,80 @@
     <link rel="manifest" href="/manifest.webmanifest" />
   <!-- Analytics (self-hosted Umami, cookieless). `crossorigin` is load-bearing:
        under COEP require-corp a cross-origin script needs CORP or CORS, and Umami
-       sends `Access-Control-Allow-Origin: *` (no CORP), so it must load via CORS. -->
-  <script defer crossorigin="anonymous" src="https://analytics.sb.sa/script.js" data-website-id="e59f0211-4dc2-41a5-8448-e907af1b000a"></script>
+       sends `Access-Control-Allow-Origin: *` (no CORP), so it must load via CORS.
+
+       `data-domains` is not decoration. Without it this tag reports from every
+       host this file is ever served from — and it is served from every one of
+       them: `vite dev` on :8083, `vite preview`, and the ~26 Chrome-driven
+       suites in tools/qa/ that boot a real build on 127.0.0.1 and then press Run.
+       Measured over the 90 days to 2026-09-18, localhost + 127.0.0.1 had put 162
+       events across 6 "sessions" into the live numbers against 1721 real events —
+       and because a QA pass presses Run repeatedly, those few sessions carried
+       ~40 events each. On an app that sees ~5 real sessions a day that is not
+       noise, it is a second, louder app. The tracker drops anything from another
+       hostname before it leaves the browser, and the check sits in Umami's single
+       send path, so it gates custom `umami.track()` events too, not just views.
+
+       `data-exclude-hash` is the most important attribute on this tag, and it
+       fixes a live leak rather than preventing a future one. A Warsha share link
+       is `https://warsha.sb.sa/#share=<the entire project, deflated + base64>` —
+       every file, every line (sharelink.ts). Umami puts `location.href` in the
+       `url` field of every payload, hash included, unless this is set. So until
+       now, every student who opened a share link uploaded their whole project to
+       the analytics database on the first page view, which is the exact thing
+       PRIVACY.md and the README promise never happens. Verified before and after
+       in a real browser. `#room=` invite links leaked their room id the same way.
+       Nothing in Warsha routes on the hash (router.ts uses paths), so excluding
+       it costs no measurement at all.
+
+       `data-performance` turns on Core Web Vitals (TTFB, FCP, LCP, CLS, INP).
+       Verified against the served script.js: the collector is behind
+       `data-performance === "true"` and is simply OFF otherwise — nothing was
+       blocking it (no CSP on this app; see app/deploy/nginx.conf). Warsha is an
+       app whose whole first-visit story is cold-load cost on a cheap phone, so
+       this is the one page-level number worth having. It reads the standard
+       PerformanceObserver entries and flushes on hide; no student data. -->
+  <script defer crossorigin="anonymous" src="https://analytics.sb.sa/script.js" data-website-id="e59f0211-4dc2-41a5-8448-e907af1b000a" data-domains="warsha.sb.sa" data-exclude-hash="true" data-performance="true"></script>
+  <!-- Session replay + heatmaps. A SEPARATE script, never a replacement for the
+       one above: recorder.js does not define `window.umami` and posts only to
+       /api/record, so dropping script.js would silently kill every page view and
+       every custom event in src/analytics.ts. It fetches its own config from
+       /api/websites/<id>/recorder and does nothing while that says disabled, so
+       the toggle lives in Umami, not here.
+
+       Gated on the production host in JS because recorder.js — unlike script.js
+       above — has NO `data-domains` support (its only data-* attributes are
+       internal). An ungated recorder would film every developer's localhost
+       session; with replay sampling at 1.0 the four localhost sessions in the
+       figures above would each have become a full session recording.
+
+       `crossOrigin` for the same COEP reason as above — recorder.js is served
+       with `Access-Control-Allow-Origin: *` and no CORP, so without it the
+       cross-origin-isolated page refuses to load it.
+
+       Masking is `strict` server-side. That matters more here than on a normal
+       site: a replay of Warsha is a replay of an editor, and the text in it is
+       the student's own code. Replays land in tables with none of this app's
+       privacy posture (docs/legal/PRIVACY.md), so the recording must never be
+       able to carry what they typed. -->
+  <script>
+    // The second condition is the share-hash rule again, for the recorder. The
+    // tracker can be told to drop the hash with an attribute; the recorder has no
+    // such switch, and it captures the page URL as part of the recording. A replay
+    // of a share-link arrival would therefore carry the whole project in its own
+    // metadata, masking or no masking. Warsha clears the hash once the link has
+    // been adopted, so the student is recorded normally from their next load
+    // onward — we simply never start a recording on the one load where the URL is
+    // the student's source code.
+    if (location.hostname === 'warsha.sb.sa' && !location.hash.startsWith('#share=')) {
+      var warshaRecorder = document.createElement('script')
+      warshaRecorder.defer = true
+      warshaRecorder.crossOrigin = 'anonymous'
+      warshaRecorder.src = 'https://analytics.sb.sa/recorder.js'
+      warshaRecorder.setAttribute('data-website-id', 'e59f0211-4dc2-41a5-8448-e907af1b000a')
+      document.head.appendChild(warshaRecorder)
+    }
+  </script>
   </head>
   <body>
     <!-- COLD-LOAD SPLASH. Self-contained, dependency-free, and first in <body> so

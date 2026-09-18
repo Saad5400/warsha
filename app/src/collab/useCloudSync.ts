@@ -28,6 +28,7 @@
  * before the session opens its providers, then `resumeAfterCollab()` when it stops.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { track } from '../analytics'
 import type { Project } from '../fs/project'
 import type { ProjectMeta } from '../fs/projects'
 import type { FsSnapshot } from '../fs/types'
@@ -257,6 +258,13 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
         }
         const docId = newRoomId()
         const res: SeedStatus = (await seedOnce(docId, snap, api)).status
+        // A backup that did not happen. Only `quota` is ever shown to the student
+        // (the out-of-space notice below); `too-large` and `error` are deliberately
+        // silent in the UI, which makes them exactly the failures worth counting —
+        // the feature's whole promise is that work is safe, and a student whose
+        // project never left the device has no way to discover that. `SeedStatus`
+        // minus `ok` is `BackupFailure`, so the closed set is checked by the compiler.
+        if (res !== 'ok') track('cloud_backup_failed', { kind: res })
         if (res === 'ok') {
           // Success ONLY: record BOTH directions of the mapping and mark the doc owned by
           // this device (mirrors useCollab.start). This is what composes with claimDevice.

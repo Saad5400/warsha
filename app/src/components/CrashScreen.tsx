@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from './ui/Button'
 import { COPY } from '../copy'
+import { track } from '../analytics'
 
 /**
  * Last line of defence: without it, one thrown render blanks the whole React tree
@@ -22,6 +23,12 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // QA suites and a teacher on a bare iPad both rely on this console line.
     console.error('Warsha crashed:', error, info.componentStack)
+    // Counted, never described. The error and the component stack stay in the
+    // console: a stack frame carries file paths, and a message can quote a
+    // student's own content. That a crash happened is the signal — a white
+    // screen is otherwise the one failure that reports absolutely nothing,
+    // since the student cannot even reach a button to tell us.
+    track('app_crashed', {})
   }
 
   render() {
