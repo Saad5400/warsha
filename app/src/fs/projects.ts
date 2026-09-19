@@ -74,6 +74,21 @@ function parseMeta(text: string, fallbackId: string): ProjectMeta | null {
   }
 }
 
+/** Does this project directory hold anything at all — a manifest, files, folders? */
+async function hasContent(projectDir: FileSystemDirectoryHandle): Promise<boolean> {
+  try {
+    for await (const entry of projectDir.values()) {
+      if (entry.kind !== 'directory') return true
+      const sub = await projectDir.getDirectoryHandle(entry.name)
+      if (!(await sub.values().next()).done) return true
+    }
+  } catch {
+    // Unreadable is not empty — leave it alone rather than delete on a guess.
+    return true
+  }
+  return false
+}
+
 class OpfsProjects implements ProjectsStore {
   readonly kind = 'opfs'
 
@@ -119,8 +134,20 @@ class OpfsProjects implements ProjectsStore {
       const projectDir = await dir.getDirectoryHandle(id).catch(() => null)
       if (!projectDir) continue
       const meta = await this.readMeta(projectDir, id)
-      // No readable manifest doesn't mean no work — adopt under its own id, don't hide or delete it.
-      metas.push(meta ?? { id, name: 'Untitled project', createdAt: Date.now(), lastOpenedAt: 0 })
+      if (meta) {
+        metas.push(meta)
+        continue
+      }
+      // No readable manifest doesn't mean no work — adopt under its own id, don't
+      // hide or delete it. But a manifest-less directory with NOTHING in it holds
+      // no work by definition: it is the husk a read used to leave behind (see
+      // OpfsStore.root), and listing it put an "Untitled project" on Home that no
+      // amount of deleting could remove. Drop the husk, and take its folder with it.
+      if (await hasContent(projectDir)) {
+        metas.push({ id, name: 'Untitled project', createdAt: Date.now(), lastOpenedAt: 0 })
+      } else {
+        await dir.removeEntry(id, { recursive: true }).catch(() => {})
+      }
     }
     return sortByRecent(metas)
   }
@@ -151,7 +178,18 @@ class OpfsProjects implements ProjectsStore {
   async remove(id: string): Promise<void> {
     const dir = await this.projectsDir(false)
     if (!dir) return
-    await dir.removeEntry(id, { recursive: true }).catch(() => {})
+    try {
+      await dir.removeEntry(id, { recursive: true })
+    } catch (error) {
+      // Already gone is the outcome we wanted. Anything else — a locked file, a
+      // storage fault — is a delete that did NOT happen, and the shell has to hear
+      // about it rather than tell the student their project is gone.
+      const stillThere = await dir
+        .getDirectoryHandle(id)
+        .then(() => true)
+        .catch(() => false)
+      if (stillThere) throw error
+    }
   }
 
   async touch(id: string): Promise<void> {

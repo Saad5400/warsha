@@ -142,7 +142,31 @@ export interface AlertRequest {
   resolve: () => void
 }
 
-export type DialogRequest = PromptRequest | ConfirmRequest | AlertRequest
+/** One pickable answer: a value, what it reads as, and an optional glyph in front of it. */
+export interface ChoiceOption {
+  value: string
+  label: string
+  /** Drawn before the label. The dialog knows nothing about what it means — the caller brings the icon. */
+  icon?: ReactNode
+}
+
+/**
+ * A short menu of answers instead of yes/no — for a question where "no" is a
+ * real answer but "yes" has several shapes (which ending does this file want?).
+ * The first option is the recommendation: it draws as the primary button and
+ * takes focus, so Enter picks it.
+ */
+export interface ChoiceRequest {
+  kind: 'choice'
+  title: string
+  message?: string
+  options: ChoiceOption[]
+  /** The way out that picks nothing — "Keep “Main”", not "Cancel". */
+  cancelLabel?: string
+  resolve: (value: string | null) => void
+}
+
+export type DialogRequest = PromptRequest | ConfirmRequest | AlertRequest | ChoiceRequest
 
 /** Long enough for the 90ms exit plus a frame; short enough a double-press of Create can't land between them. */
 const EXIT_MS = 130
@@ -169,6 +193,8 @@ export function DialogHost({ request }: { request: DialogRequest | null }) {
     <PromptDialog key="prompt" request={shown} open={open} />
   ) : shown.kind === 'alert' ? (
     <AlertDialog key="alert" request={shown} open={open} />
+  ) : shown.kind === 'choice' ? (
+    <ChoiceDialog key="choice" request={shown} open={open} />
   ) : (
     <ConfirmDialog key="confirm" request={shown} open={open} />
   )
@@ -333,6 +359,52 @@ function AlertDialog({ request, open }: { request: AlertRequest; open: boolean }
           </Button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+function ChoiceDialog({ request, open }: { request: ChoiceRequest; open: boolean }) {
+  const firstRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+
+  // The recommendation takes focus, so Enter picks it and Escape keeps what the student typed.
+  useEffect(() => {
+    firstRef.current?.focus()
+  }, [])
+
+  return (
+    <Modal
+      open={open}
+      onCancel={() => request.resolve(null)}
+      dismissible
+      labelledBy={titleId}
+      onEnterOutsideButton={() => request.resolve(request.options[0]?.value ?? null)}
+    >
+      <h2 id={titleId} className={TITLE}>
+        {request.title}
+      </h2>
+      {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
+      {/* Wraps rather than scrolls: six chips fit two rows on the narrowest phone, and a
+          row that scrolls sideways hides the options a student most needs to see. */}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {request.options.map((option, i) => (
+          <Button
+            key={option.value}
+            ref={i === 0 ? firstRef : undefined}
+            variant={i === 0 ? 'primary' : 'ghost'}
+            onClick={() => request.resolve(option.value)}
+          >
+            {option.icon}
+            {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
+            <span className="font-code">{option.label}</span>
+          </Button>
+        ))}
+      </div>
+      <div className={ACTIONS}>
+        <Button variant="ghost" large onClick={() => request.resolve(null)}>
+          {request.cancelLabel ?? COPY.dlgCancel}
+        </Button>
+      </div>
     </Modal>
   )
 }

@@ -22,15 +22,36 @@ export class OpfsStore implements ProjectStore {
     return !opfsDisabled && typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
   }
 
-  private async root(): Promise<FileSystemDirectoryHandle> {
+  /**
+   * Resolving this store's path. **Reading is not a reason to create it.**
+   *
+   * This used to pass `create: true` unconditionally, which made `snapshot()` —
+   * a read — rebuild `warsha/projects/<id>/files/` for a project that had just
+   * been deleted. The resurrected directory had no manifest beside it, so
+   * `projects.ts` listed it as "Untitled project", and the student's delete
+   * appeared to do nothing. The cloud backfill snapshots projects by id across
+   * awaits, which is why an account made it happen on almost every delete.
+   *
+   * `create: false` answers null when the store is not there; a read then reports
+   * an empty project rather than inventing one.
+   */
+  private async root(create: boolean): Promise<FileSystemDirectoryHandle | null> {
     let dir = await navigator.storage.getDirectory()
-    for (const segment of this.segments) dir = await dir.getDirectoryHandle(segment, { create: true })
+    for (const segment of this.segments) {
+      if (create) {
+        dir = await dir.getDirectoryHandle(segment, { create: true })
+        continue
+      }
+      const next = await dir.getDirectoryHandle(segment).catch(() => null)
+      if (!next) return null
+      dir = next
+    }
     return dir
   }
 
   private async dirFor(path: string, create: boolean): Promise<FileSystemDirectoryHandle | null> {
-    let dir = await this.root()
-    if (!path) return dir
+    let dir = await this.root(create)
+    if (!dir || !path) return dir
     for (const part of path.split('/')) {
       if (!part) continue
       try {
@@ -59,7 +80,10 @@ export class OpfsStore implements ProjectStore {
         }
       }
     }
-    await walk(await this.root(), '')
+    const root = await this.root(false)
+    // Nothing on disk is an empty project, not a reason to make one.
+    if (!root) return { files: [], dirs: [] }
+    await walk(root, '')
     return { files, dirs }
   }
 

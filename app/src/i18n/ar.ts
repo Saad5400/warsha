@@ -445,6 +445,10 @@ export const AR: Bundle = {
   nameTaken: (name) => `هنا «${iso(name)}» بالفعل.`,
   pathExists: (path) => `${iso(path)} موجود بالفعل.`,
 
+  dlgNoExtTitle: (name) => `${iso(`«${name}»`)} بلا نوع`,
+  dlgNoExtBody: 'لن يعمل، وسيبقى نصًّا عاديًا. أتضيف نوعًا؟',
+  dlgNoExtKeep: (name) => `أبقِ ${iso(`«${name}»`)}`,
+
   // ---- dialogs ----
   dlgNewFileTitle: 'ملف جديد',
   dlgNewFolderTitle: 'مجلّد جديد',
@@ -534,6 +538,7 @@ export const AR: Bundle = {
   noteProjectNameTaken: 'عندك مشروع بهذا الاسم بالفعل.',
   noteProjectCreateFailed: 'لم يُنشأ هذا المشروع.',
   noteProjectDeleted: (name) => `حُذف «${iso(name)}».`,
+  noteProjectDeleteFailed: (name) => `لم يُحذف «${iso(name)}». ما زال موجودًا، فأعد المحاولة.`,
   noteTemplateReady: (name, fileCount) => `${iso(name)} جاهز — ${files(fileCount)}.`,
   noteMigrated: (fileCount) => `أصبح ${files(fileCount)} في مشروع يمكنك تسميته والتنقّل بينه وبين غيره.`,
   noteMigrationKept: 'لم يكتمل نقل ملفاتك إلى مشروع، فتُركت كما هي تمامًا.',

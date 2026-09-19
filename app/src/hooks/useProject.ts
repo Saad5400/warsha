@@ -50,8 +50,8 @@ export interface ProjectView {
   adoptShared(name: string, snapshot: FsSnapshot): Promise<{ meta: ProjectMeta; created: boolean } | null>
   openProject(id: string): Promise<void>
   renameProject(id: string, name: string): Promise<void>
-  /** Deletes a project; if it was open, the next most recent one opens. */
-  deleteProject(id: string): Promise<void>
+  /** Deletes a project; if it was open, the next most recent one opens. False when storage refused and the project is still there. */
+  deleteProject(id: string): Promise<boolean>
   /** Read-only snapshot of any project's files — the Home cards' previews. Null if storage is down. */
   snapshotOf(id: string): Promise<FsSnapshot | null>
   /** Copies a project into a new one without opening it — the Home "Duplicate". */
@@ -252,14 +252,18 @@ export function useProject(): ProjectView {
   )
 
   const deleteProject = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const store = storeRef.current
-      if (!store) return
+      if (!store) return false
       await guard(() => store.remove(id), undefined)
       const remaining = await guard(() => store.list(), [])
+      // The listing is the verdict, not the call: a removal that threw (or half-ran)
+      // leaves the project here, and the shell must not announce a delete that a
+      // refresh will contradict.
+      const gone = !remaining.some((p) => p.id === id)
       if (id !== current?.id) {
         setProjects(remaining)
-        return
+        return gone
       }
       // Deleted project was open — fall back to the next survivor, else leave the app
       // project-less (current = null) so the shell can return to Home's empty state.
@@ -270,6 +274,7 @@ export function useProject(): ProjectView {
         setProjects([])
         setPrefs({ currentProjectId: null })
       }
+      return gone
     },
     [current, open, guard],
   )

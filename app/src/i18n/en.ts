@@ -494,6 +494,11 @@ export const EN = {
   nameTaken: (name: string) => `There is already a “${name}” here.`,
   pathExists: (path: string) => `${path} already exists.`,
 
+  /** A name with no ending — offered a fix, never blocked (App.nameWithExtension). */
+  dlgNoExtTitle: (name: string) => `“${name}” has no file type`,
+  dlgNoExtBody: 'It will not run, and it stays plain text. Add one?',
+  dlgNoExtKeep: (name: string) => `Keep “${name}”`,
+
   // ---- dialogs (DialogProvider) ----
   dlgNewFileTitle: 'New file',
   dlgNewFolderTitle: 'New folder',
@@ -586,6 +591,8 @@ export const EN = {
   noteProjectNameTaken: 'You already have a project with that name.',
   noteProjectCreateFailed: 'Warsha could not create that project.',
   noteProjectDeleted: (name: string) => `“${name}” deleted.`,
+  /** Storage refused the removal — the project is still here, and saying otherwise would be a lie the next refresh exposes. */
+  noteProjectDeleteFailed: (name: string) => `“${name}” could not be deleted. It is still here — try again.`,
   noteTemplateReady: (name: string, files: number) => `${name} ready — ${count(files, 'file')}.`,
   noteMigrated: (files: number) =>
     `Your ${count(files, 'file')} are now in a project you can name and switch between.`,

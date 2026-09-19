@@ -10,6 +10,7 @@ import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, remembe
 import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
+import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
 import { exportZip } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
@@ -52,7 +53,7 @@ import { WelcomePanel } from './components/WelcomePanel'
 import { Home, type CloudOnlyEntry } from './components/Home'
 import { TutorialsPage } from './components/TutorialsPage'
 import { Logo } from './components/Logo'
-import type { IconLang } from './components/ui/LangIcons'
+import { FileIcon, type IconLang } from './components/ui/LangIcons'
 import { ImportDialog } from './components/ImportDialog'
 import { AccountDialog } from './components/AccountDialog'
 import { ShareDialog } from './components/ShareDialog'
@@ -1096,6 +1097,40 @@ function Ide({ report }: { report: CapabilityReport }) {
     return ''
   }
 
+  /**
+   * A name with no ending, answered once instead of silently obeyed.
+   *
+   * Warsha reads the ending and nothing else (naming.ts), so `Main` is a file
+   * that will never colour, complete or run — and a student who typed it almost
+   * always meant `Main.java`. So the endings worth offering are put on screen,
+   * with the icons the explorer will draw beside the file, best guess first and
+   * focused. Offered, never imposed: "Keep" — and Escape, and a tap outside —
+   * makes exactly what was typed.
+   */
+  const nameWithExtension = async (name: string, dir: string, clues: (string | null)[], self?: string): Promise<string> => {
+    if (hasExtension(name) || isWholeWithoutExtension(name)) return name
+    const choices = extensionChoices({
+      paths: project.paths(),
+      preferred: clues,
+      unusable: (ext) => {
+        const candidate = `${name}.${ext}`
+        const path = dir ? `${dir}/${candidate}` : candidate
+        // `self` is the file being renamed: putting its own ending back is a no-op, not a clash.
+        if (path === self) return false
+        return !!validName(candidate) || project.has(path) || project.hasDir(path)
+      },
+    })
+    if (!choices.length) return name
+    const leaf = leafOf(name)
+    const ext = await dialogs.choose({
+      title: COPY.dlgNoExtTitle(leaf),
+      message: COPY.dlgNoExtBody,
+      options: choices.map((e) => ({ value: e, label: `.${e}`, icon: <FileIcon ext={e} size={16} aria-hidden="true" /> })),
+      cancelLabel: COPY.dlgNoExtKeep(leaf),
+    })
+    return ext ? `${name}.${ext}` : name
+  }
+
   // `presetName` arrives from the explorer's inline create row; without one we
   // fall back to the prompt dialog. Validation stays here either way.
   const newFile = async (dir: string, presetName?: string) => {
@@ -1111,7 +1146,8 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!name) return
     const problem = validName(name)
     if (problem) return notify(problem, 'error')
-    const path = dir ? `${dir}/${name}` : name
+    const named = await nameWithExtension(name, dir, [activePath, entryPath])
+    const path = dir ? `${dir}/${named}` : named
     if (project.has(path)) return notify(COPY.pathExists(path), 'error')
     try {
       // Same startup race as `replaceProject` — the explorer's New file is also
@@ -1161,8 +1197,12 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!next || next === name) return
     const problem = validName(next)
     if (problem) return notify(problem, 'error')
+    // The inline rename field select-alls, so the ending is the easiest thing in
+    // the app to drop by accident. Same offer as a new file, the old ending first.
+    const renamed = isDir ? next : await nameWithExtension(next, dir, [path, activePath, entryPath], path)
+    if (renamed === name) return
     try {
-      const mapping = await project.move(path, dir ? `${dir}/${next}` : next)
+      const mapping = await project.move(path, dir ? `${dir}/${renamed}` : renamed)
       for (const [from, to] of mapping) editorRef.current?.renamePath(from, to)
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1698,8 +1738,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     const gone = currentProject.name
     const goneId = currentProject.id
     const willBeEmpty = projects.length <= 1
-    await deleteOwnedCloudDoc(goneId) // owner: remove the account copy too, BEFORE the mapping is forgotten
-    await deleteProject(goneId)
+    // The local copy goes first: it is the one the student is looking at, and if
+    // storage refuses there is nothing to answer for in the account either. The
+    // mapping is forgotten last — deleteOwnedCloudDoc reads it.
+    if (!(await deleteProject(goneId))) return notify(COPY.noteProjectDeleteFailed(gone), 'error')
+    await deleteOwnedCloudDoc(goneId)
     forgetProjectRoomState(goneId)
     unpin(goneId)
     if (willBeEmpty) {
@@ -1791,9 +1834,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       const docId = (prefs().projectRooms ?? {})[projectId]
       if (!docId || projectOwner(projectId) !== accountOwnerRef.current) return
       setCloudDocs((prev) => (prev ? prev.filter((d) => d.id !== docId) : prev))
-      await authApi.deleteDoc(docId)
+      // A doc that survives its project reappears on Home as a cloud-only card, so a
+      // failure here is the student's business — and the list is re-read rather than
+      // left showing the optimistic removal.
+      if (!(await authApi.deleteDoc(docId))) {
+        notify(COPY.noteCloudDeleteFailed, 'error')
+        void refreshCloudDocs()
+      }
     },
-    [authApi],
+    [authApi, notify, refreshCloudDocs],
   )
 
   // Self-heal older owned docs that were seeded before the name was stamped: when the
@@ -1956,8 +2005,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       await stopCollabBeforeSwitch()
     }
     const leaving = tabs
-    await deleteOwnedCloudDoc(id) // owner: remove the account copy too, BEFORE the mapping is forgotten
-    await deleteProject(id)
+    if (!(await deleteProject(id))) return notify(COPY.noteProjectDeleteFailed(target.name), 'error')
+    await deleteOwnedCloudDoc(id) // the account copy follows the local one; the mapping it reads is forgotten below
     forgetProjectRoomState(id)
     unpin(id)
     if (willBeEmpty) {

@@ -247,6 +247,10 @@ export function useCloudSync(opts: UseCloudSyncOptions): CloudSyncState {
         const pid = targets[i]
         // A concurrent useCollab.start() may have mapped it since we snapshotted; re-check.
         if ((prefs().projectRooms ?? {})[pid]) continue
+        // `targets` was taken before these awaits, so a project deleted since is not a
+        // target any more — seeding one would back up a project the student just threw
+        // away (and, before OpfsStore stopped creating on read, recreate it on disk).
+        if (!projectsRef.current.some((p) => p.id === pid)) continue
 
         setStatus(pid, 'seeding')
         // The OPEN project is snapshotted LIVE (captures unsaved edits); others read
