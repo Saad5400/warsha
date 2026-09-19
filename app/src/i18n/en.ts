@@ -494,6 +494,11 @@ export const EN = {
   nameTaken: (name: string) => `There is already a “${name}” here.`,
   pathExists: (path: string) => `${path} already exists.`,
 
+  /** A name with no ending — offered a fix, never blocked (App.nameWithExtension). */
+  dlgNoExtTitle: (name: string) => `“${name}” has no file type`,
+  dlgNoExtBody: 'It will not run, and it stays plain text. Add one?',
+  dlgNoExtKeep: (name: string) => `Keep “${name}”`,
+
   // ---- dialogs (DialogProvider) ----
   dlgNewFileTitle: 'New file',
   dlgNewFolderTitle: 'New folder',

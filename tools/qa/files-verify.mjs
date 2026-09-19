@@ -187,6 +187,40 @@ await page.locator('[role="tree"] input').press('Escape')
 await page.waitForTimeout(200)
 check((await page.locator('[role="tree"] input').count()) === 0, 'Escape abandons the rename')
 
+/* ------------------------------------- 5b. a name with no file type is asked */
+// `Helper` is inert in Warsha — no grammar, no engine, never an entry — and is
+// almost always a slip for `Helper.java`. Every runnable ending is offered,
+// best guess first, and nothing is imposed (App.nameWithExtension).
+await page.locator('aside[aria-label="Files"]').getByRole('button', { name: 'New file' }).click()
+const noExt = page.locator('[role="tree"] input')
+await noExt.fill('Helper')
+await noExt.press('Enter')
+await page.waitForTimeout(400)
+const extDialog = page.locator('dialog[open]')
+check(await extDialog.isVisible(), 'a name with no ending asks before the file is made')
+const firstChoice = extDialog.getByRole('button').first()
+check(
+  (await firstChoice.innerText()).trim() === '.java',
+  "the Java project's own ending leads the offer",
+  (await extDialog.innerText()).replace(/\n+/g, ' · '),
+)
+await shot('explorer-no-extension-1280')
+// The recommendation holds focus, so Enter takes it — the slip is the common case.
+await page.keyboard.press('Enter')
+await page.waitForTimeout(500)
+check(await rowByName('Helper.java').isVisible(), 'picking an ending creates the file with it')
+check(/public class Helper/.test(await page.locator('.cm-content').innerText()), 'and the Java starter body follows the name')
+
+// Keeping the name as typed is one tap, and it makes exactly what was typed.
+await page.locator('aside[aria-label="Files"]').getByRole('button', { name: 'New file' }).click()
+const keptName = page.locator('[role="tree"] input')
+await keptName.fill('data')
+await keptName.press('Enter')
+await page.waitForTimeout(400)
+await page.locator('dialog[open]').getByRole('button', { name: /^Keep/ }).click()
+await page.waitForTimeout(500)
+check(await rowByName('data').isVisible(), 'Keep makes the extensionless file exactly as typed')
+
 /* ----------------------------------------------------- 6. inline new folder */
 await page.locator('aside[aria-label="Files"]').getByRole('button', { name: 'New folder' }).click()
 const folderDraft = page.locator('[role="tree"] input')

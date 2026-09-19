@@ -445,6 +445,10 @@ export const AR: Bundle = {
   nameTaken: (name) => `هنا «${iso(name)}» بالفعل.`,
   pathExists: (path) => `${iso(path)} موجود بالفعل.`,
 
+  dlgNoExtTitle: (name) => `${iso(`«${name}»`)} بلا نوع`,
+  dlgNoExtBody: 'لن يعمل، وسيبقى نصًّا عاديًا. أتضيف نوعًا؟',
+  dlgNoExtKeep: (name) => `أبقِ ${iso(`«${name}»`)}`,
+
   // ---- dialogs ----
   dlgNewFileTitle: 'ملف جديد',
   dlgNewFolderTitle: 'مجلّد جديد',
