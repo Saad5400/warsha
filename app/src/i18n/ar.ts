@@ -538,6 +538,7 @@ export const AR: Bundle = {
   noteProjectNameTaken: 'عندك مشروع بهذا الاسم بالفعل.',
   noteProjectCreateFailed: 'لم يُنشأ هذا المشروع.',
   noteProjectDeleted: (name) => `حُذف «${iso(name)}».`,
+  noteProjectDeleteFailed: (name) => `لم يُحذف «${iso(name)}». ما زال موجودًا، فأعد المحاولة.`,
   noteTemplateReady: (name, fileCount) => `${iso(name)} جاهز — ${files(fileCount)}.`,
   noteMigrated: (fileCount) => `أصبح ${files(fileCount)} في مشروع يمكنك تسميته والتنقّل بينه وبين غيره.`,
   noteMigrationKept: 'لم يكتمل نقل ملفاتك إلى مشروع، فتُركت كما هي تمامًا.',

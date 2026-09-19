@@ -267,6 +267,33 @@ rows = await menuRows()
 if (!rows.some((r) => /^Python \(OOP starter\)/.test(r))) pass('deletion survived a reload (really removed from OPFS)')
 else fail('deletion survived a reload', JSON.stringify(rows))
 
+// A delete that leaves `warsha/projects/<id>/` behind is the husk regression: a read
+// used to recreate the directory (OpfsStore.root created every segment), and a
+// manifest-less directory lists as an "Untitled project" the student cannot delete.
+// The menu check above cannot see it — the husk comes back under a different name —
+// so assert at the source.
+if (!rows.some((r) => /^Untitled project/.test(r))) pass('no manifest-less husk was left on the list')
+else fail('no manifest-less husk was left on the list', JSON.stringify(rows))
+const husks = await page.evaluate(async () => {
+  const root = await navigator.storage.getDirectory()
+  const out = []
+  try {
+    const projects = await (await root.getDirectoryHandle('warsha')).getDirectoryHandle('projects')
+    for await (const entry of projects.values()) {
+      if (entry.kind !== 'directory') continue
+      const dir = await projects.getDirectoryHandle(entry.name)
+      const names = []
+      for await (const kid of dir.values()) names.push(kid.name)
+      if (!names.includes('manifest.json')) out.push(entry.name)
+    }
+  } catch {
+    return ['<no projects directory>']
+  }
+  return out
+})
+if (husks.length === 0) pass('every project directory on disk still has its manifest')
+else fail('every project directory on disk still has its manifest', husks.join(', '))
+
 // ===================================== 7. rename, so the name is really stored
 await runProjectCommand('Projects: Rename Project…', /^Rename Project…/)
 await dialogFill('Renamed project')

@@ -1738,8 +1738,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     const gone = currentProject.name
     const goneId = currentProject.id
     const willBeEmpty = projects.length <= 1
-    await deleteOwnedCloudDoc(goneId) // owner: remove the account copy too, BEFORE the mapping is forgotten
-    await deleteProject(goneId)
+    // The local copy goes first: it is the one the student is looking at, and if
+    // storage refuses there is nothing to answer for in the account either. The
+    // mapping is forgotten last — deleteOwnedCloudDoc reads it.
+    if (!(await deleteProject(goneId))) return notify(COPY.noteProjectDeleteFailed(gone), 'error')
+    await deleteOwnedCloudDoc(goneId)
     forgetProjectRoomState(goneId)
     unpin(goneId)
     if (willBeEmpty) {
@@ -1831,9 +1834,15 @@ function Ide({ report }: { report: CapabilityReport }) {
       const docId = (prefs().projectRooms ?? {})[projectId]
       if (!docId || projectOwner(projectId) !== accountOwnerRef.current) return
       setCloudDocs((prev) => (prev ? prev.filter((d) => d.id !== docId) : prev))
-      await authApi.deleteDoc(docId)
+      // A doc that survives its project reappears on Home as a cloud-only card, so a
+      // failure here is the student's business — and the list is re-read rather than
+      // left showing the optimistic removal.
+      if (!(await authApi.deleteDoc(docId))) {
+        notify(COPY.noteCloudDeleteFailed, 'error')
+        void refreshCloudDocs()
+      }
     },
-    [authApi],
+    [authApi, notify, refreshCloudDocs],
   )
 
   // Self-heal older owned docs that were seeded before the name was stamped: when the
@@ -1996,8 +2005,8 @@ function Ide({ report }: { report: CapabilityReport }) {
       await stopCollabBeforeSwitch()
     }
     const leaving = tabs
-    await deleteOwnedCloudDoc(id) // owner: remove the account copy too, BEFORE the mapping is forgotten
-    await deleteProject(id)
+    if (!(await deleteProject(id))) return notify(COPY.noteProjectDeleteFailed(target.name), 'error')
+    await deleteOwnedCloudDoc(id) // the account copy follows the local one; the mapping it reads is forgotten below
     forgetProjectRoomState(id)
     unpin(id)
     if (willBeEmpty) {
