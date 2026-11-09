@@ -30,6 +30,11 @@ jobs:
     name: Java bootstrap self-test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The production image has no UTF-8 locale, so JDK 17's javac reads sources
+    # as US-ASCII there. Same here, so a stray non-ASCII byte fails in CI too.
+    env:
+      LC_ALL: C
+      LANG: C
     steps:
       - uses: actions/checkout@v4
 

@@ -153,7 +153,7 @@ public final class Workspace {
             return null;
         }
         if (text.indexOf('\0') >= 0) return null;
-        if (!text.isEmpty() && text.charAt(0) == '﻿') text = text.substring(1);
+        if (!text.isEmpty() && text.charAt(0) == '\uFEFF') text = text.substring(1);
         return text;
     }
 
