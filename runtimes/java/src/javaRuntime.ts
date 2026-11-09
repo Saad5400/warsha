@@ -8,6 +8,7 @@ type FromWorker =
   | { type: 'diag'; text: string }
   | { type: 'stdin-request' }
   | { type: 'compile-failed'; code: number; compileMs: number }
+  | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; exit: number; compileMs: number; runMs: number; tainted: boolean }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
   | { type: 'internal'; level: string; text: string; noise: boolean }
@@ -160,7 +161,6 @@ export class JavaRuntime implements Runtime {
     if (!entry.endsWith('.java')) {
       throw new Error(`Entry file ${entryPath} is not a .java file.`)
     }
-    const sources = payload.filter((file) => file.path.endsWith('.java'))
 
     // A JVM that a previous program exited cannot run anything else.
     if (this.tainted) this.replaceWorker()
@@ -187,7 +187,10 @@ export class JavaRuntime implements Runtime {
       this.progressListeners.add(forward)
     }
 
-    worker.postMessage({ type: 'run', runId, files: sources, entryPath: entry })
+    // Every project file: the .java ones are compiled, the rest are mirrored into
+    // the program's working directory (bootstrap/Workspace.java), so
+    // new Scanner(new File("data.txt")) finds the file beside Main.java.
+    worker.postMessage({ type: 'run', runId, files: payload, entryPath: entry })
 
     const session: JavaRunSession = {
       kill: () => this.killSession(active),
@@ -282,6 +285,11 @@ export class JavaRuntime implements Runtime {
         // Compiler diagnostics, on stderr like a real javac invocation. Paths
         // are rewritten to the student's own file names first.
         this.active?.io.onStderr(studentPaths(message.text, this.active.runId))
+        return
+
+      case 'files':
+        // Always strictly before 'done' (the worker posts them in that order).
+        this.active?.io.onFilesChanged?.({ written: message.written, deleted: message.deleted, skipped: message.skipped })
         return
 
       case 'stdin-request':

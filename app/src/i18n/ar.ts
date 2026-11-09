@@ -115,6 +115,12 @@ export const AR: Bundle = {
   runOk: 'انتهى البرنامج. (exit code 0)',
   runFailed: (code) => `توقّف برنامجك قبل أن يكمل — exit code ${code}. السبب في الأسطر الحمراء أعلاه.`,
   runStopped: 'توقّف البرنامج. وملفاتك كلها محفوظة.',
+  runFilesWritten: (paths) =>
+    paths.length === 1 ? `حفظ برنامجك الملف ${paths[0]}.` : `حفظ برنامجك هذه الملفات: ${paths.join('، ')}.`,
+  runFilesDeleted: (paths) =>
+    paths.length === 1 ? `حذف برنامجك الملف ${paths[0]}.` : `حذف برنامجك هذه الملفات: ${paths.join('، ')}.`,
+  runFilesSkipped: (paths) =>
+    `كتب برنامجك ${paths.join('، ')}، لكن المشروع لا يحتفظ إلا بالملفات النصية حتى 1 MB.`,
 
   // ---- console ----
   consoleEmpty: 'شغّل كودك وستظهر مخرجاته هنا.',

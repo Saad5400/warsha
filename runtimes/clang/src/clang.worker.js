@@ -27,11 +27,19 @@
  *   { type: "ready", version, bootMs }
  *   { type: "stdout" | "stderr", text }
  *   { type: "stdin-request" }
+ *   { type: "files", written, deleted, skipped }   sent before "done"; see below
  *   { type: "done", code, ms }
  *   { type: "fatal", text, duringBoot? }
  */
 import { init, Wasmer, Directory } from 'https://unpkg.com/@wasmer/sdk@0.10.0/dist/index.mjs'
-import { WASI, Fd, wasi as wasiDefs } from 'https://unpkg.com/@bjorn3/browser_wasi_shim@0.4.2/dist/index.js'
+import {
+  WASI,
+  Fd,
+  File as WasiFile,
+  Directory as WasiDirectory,
+  PreopenDirectory,
+  wasi as wasiDefs,
+} from 'https://unpkg.com/@bjorn3/browser_wasi_shim@0.4.2/dist/index.js'
 
 // --- stdin shared-memory protocol (identical layout to the Python/C# workers) ---
 // ctrl[0]: 0 = no data (worker parks), 1 = line ready, 2 = EOF
@@ -120,6 +128,79 @@ class StdinFd extends Fd {
   }
 }
 
+// --- the program's files ------------------------------------------------------------
+// The project is the program's working directory: every project file is mounted in an
+// in-memory WASI directory, preopened as "/" (wasi-libc resolves a relative path
+// against its cwd, which starts at "/"), so fopen("data.txt", "r") reads the file the
+// student sees beside main.c and fopen("out.txt", "w") creates one. After the run the
+// tree is diffed against what went in, and the difference is posted back so the shell
+// can write it into the project — otherwise output files would die with the run.
+// The project is text-only: a binary or oversized file is reported as skipped.
+
+const WRITE_BACK_LIMIT_BYTES = 1024 * 1024
+const textEncoder = new TextEncoder()
+const strictDecoder = new TextDecoder('utf-8', { fatal: true })
+
+/** { "a/b.txt": "…" } -> nested WASI Directory contents. */
+function buildProjectTree(files) {
+  const root = new Map()
+  for (const [path, content] of Object.entries(files)) {
+    const parts = path.split('/').filter(Boolean)
+    let dir = root
+    for (let i = 0; i < parts.length - 1; i++) {
+      let next = dir.get(parts[i])
+      if (!(next instanceof WasiDirectory)) {
+        next = new WasiDirectory(new Map())
+        dir.set(parts[i], next)
+      }
+      dir = next.contents
+    }
+    dir.set(parts[parts.length - 1], new WasiFile(textEncoder.encode(content)))
+  }
+  return root
+}
+
+function walkTree(contents, prefix, out) {
+  for (const [name, entry] of contents) {
+    const rel = prefix ? `${prefix}/${name}` : name
+    if (entry instanceof WasiDirectory) walkTree(entry.contents, rel, out)
+    else if (entry instanceof WasiFile) out.set(rel, entry.data)
+  }
+  return out
+}
+
+function collectFileChanges(sent, contents) {
+  const written = []
+  const skipped = []
+  const now = walkTree(contents, '', new Map())
+  for (const [rel, bytes] of now) {
+    let text = null
+    if (bytes.byteLength <= WRITE_BACK_LIMIT_BYTES) {
+      try {
+        text = strictDecoder.decode(bytes)
+        if (text.includes('\u0000')) text = null
+      } catch {
+        text = null
+      }
+    }
+    if (text === null) skipped.push(rel)
+    else if (sent[rel] !== text) written.push({ path: rel, content: text })
+  }
+  const deleted = Object.keys(sent).filter((p) => !now.has(p))
+  return { written, deleted, skipped }
+}
+
+function postFileChanges(sent, contents) {
+  try {
+    const change = collectFileChanges(sent, contents)
+    if (change.written.length || change.deleted.length || change.skipped.length) {
+      self.postMessage({ type: 'files', ...change })
+    }
+  } catch (e) {
+    self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your program wrote: ${e}]\n` })
+  }
+}
+
 // --- WASIX binary helpers --------------------------------------------------------
 
 /** Parse the first imported memory's limits from a wasm binary's import section. */
@@ -149,13 +230,15 @@ function memoryImportLimits(bytes) {
 }
 
 /** Run a compiled WASIX module to completion on THIS thread. Blocks in fd_read via
- *  Atomics.wait when the program reads stdin; a Stop is the worker being terminated. */
-function runWasm(wasmBytes) {
+ *  Atomics.wait when the program reads stdin; a Stop is the worker being terminated.
+ *  `projectDir` (a Map from buildProjectTree) is preopened as the program's cwd and
+ *  mutated in place by the program's file writes. */
+function runWasm(wasmBytes, projectDir) {
   const out = new OutFd('stdout')
   const err = new OutFd('stderr')
   const flushAll = () => { out.flush(); err.flush() }
   const stdin = new StdinFd(flushAll)
-  const wasi = new WASI(['program'], [], [stdin, out, err], { debug: false })
+  const wasi = new WASI(['program'], [], [stdin, out, err, new PreopenDirectory('/', projectDir)], { debug: false })
 
   const mod = new WebAssembly.Module(wasmBytes)
   const imports = WebAssembly.Module.imports(mod)
@@ -165,8 +248,26 @@ function runWasm(wasmBytes) {
   if (wasixNames.length) {
     importObj.wasix_32v1 = {}
     for (const n of wasixNames) importObj.wasix_32v1[n] = () => 0
+    // WASIX libc may ask the host for its cwd instead of tracking it itself. A stub
+    // that "succeeds" without writing anything would hand it garbage, and every
+    // relative fopen() would then miss the project dir. Answer "/" — the preopen.
+    if (wasixNames.includes('getcwd')) {
+      importObj.wasix_32v1.getcwd = (bufPtr, lenPtr) => {
+        const memory = instanceMemory()
+        if (!memory) return wasiDefs.ERRNO_NOSYS ?? 52
+        const view = new DataView(memory.buffer)
+        const cap = view.getUint32(lenPtr, true)
+        const cwd = textEncoder.encode('/')
+        view.setUint32(lenPtr, cwd.byteLength, true)
+        if (cap < cwd.byteLength) return wasiDefs.ERRNO_RANGE ?? 68
+        new Uint8Array(memory.buffer, bufPtr, cwd.byteLength).set(cwd)
+        return 0
+      }
+    }
   }
 
+  let instance = null
+  const instanceMemory = () => mem || (instance && instance.exports.memory) || null
   const memImp = imports.find((i) => i.module === 'env' && i.name === 'memory')
   let mem = null
   if (memImp) {
@@ -183,7 +284,7 @@ function runWasm(wasmBytes) {
     }
   }
 
-  const instance = new WebAssembly.Instance(mod, importObj)
+  instance = new WebAssembly.Instance(mod, importObj)
   if (!(instance.exports.memory instanceof WebAssembly.Memory) && mem) {
     Object.defineProperty(instance.exports, 'memory', { value: mem, configurable: true })
   }
@@ -314,10 +415,14 @@ self.onmessage = (ev) => {
         return
       }
       if (!wasm) { self.postMessage({ type: 'done', code: 1, ms: Math.round(performance.now() - t0) }); return }
+      const projectDir = buildProjectTree(msg.files)
       try {
-        const code = runWasm(wasm)
+        const code = runWasm(wasm, projectDir)
+        postFileChanges(msg.files, projectDir)
         self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
       } catch (e) {
+        // A trap (segfault, abort) still keeps whatever the program wrote before it.
+        postFileChanges(msg.files, projectDir)
         self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
       }
     })()

@@ -61,6 +61,14 @@ export const EN = {
   runFailed: (code: number) =>
     `Your program stopped early — exit code ${code}. The red lines above say why.`,
   runStopped: 'Stopped. Your files are all saved.',
+  /** The program created or changed files in the project (its working directory is the project root). */
+  runFilesWritten: (paths: string[]) =>
+    paths.length === 1 ? `Your program saved ${paths[0]}.` : `Your program saved ${paths.length} files: ${paths.join(', ')}.`,
+  runFilesDeleted: (paths: string[]) =>
+    paths.length === 1 ? `Your program deleted ${paths[0]}.` : `Your program deleted ${paths.length} files: ${paths.join(', ')}.`,
+  /** Files the program wrote that the editor cannot hold — binary data, or over 1 MB. */
+  runFilesSkipped: (paths: string[]) =>
+    `Your program wrote ${paths.join(', ')}, but only text files up to 1 MB can be kept in the project.`,
 
   // ---- console (§8) ----
   consoleEmpty: 'Output will appear here when you run your code.',

@@ -208,6 +208,32 @@ async function Java_warsha_Bridge_nextCommand() {
   })
 }
 
+/* What the student's program did to its working directory (bootstrap/Workspace),
+ * reported by the Server after the program returns and before phaseDone("run"),
+ * so collecting them here and posting them just ahead of 'done' keeps the
+ * runtime's ordering promise: files first, then the exit. */
+let fileChanges = { written: [], deleted: [], skipped: [] }
+
+async function Java_warsha_Bridge_fileWritten(lib, path, content) {
+  fileChanges.written.push({ path: String(path), content: String(content) })
+}
+
+async function Java_warsha_Bridge_fileDeleted(lib, path) {
+  fileChanges.deleted.push(String(path))
+}
+
+async function Java_warsha_Bridge_fileSkipped(lib, path) {
+  fileChanges.skipped.push(String(path))
+}
+
+function flushFileChanges() {
+  const change = fileChanges
+  fileChanges = { written: [], deleted: [], skipped: [] }
+  if (change.written.length || change.deleted.length || change.skipped.length) {
+    post({ type: 'files', ...change })
+  }
+}
+
 async function Java_warsha_Bridge_writeInternal(lib, text) {
   post({ type: 'internal', level: 'log', text: String(text), noise: false })
 }
@@ -310,6 +336,9 @@ async function boot(cdnBase) {
       Java_warsha_Bridge_phaseDone,
       Java_warsha_Bridge_nextCommand,
       Java_warsha_Bridge_writeInternal,
+      Java_warsha_Bridge_fileWritten,
+      Java_warsha_Bridge_fileDeleted,
+      Java_warsha_Bridge_fileSkipped,
     },
   })
   const initMs = performance.now() - started
@@ -560,8 +589,11 @@ async function compileAndRun({ runId, files, entryPath }) {
   // stdin design is required to prevent, so the queue is per-run.
   stdinQueue.length = 0
   stdinWaiter = null
+  fileChanges = { written: [], deleted: [], skipped: [] }
 
-  // 1. Sources into /str/, the only mount JS can write.
+  // 1. Every project file into /str/, the only mount JS can write. Build
+  //    compiles the .java ones; Workspace mirrors the rest into the program's
+  //    working directory.
   //
   // /str/ is a FLAT namespace: "/str/models/Person.java" appears to be accepted
   // but Java cannot open it. So each file gets an opaque unique name and a
@@ -621,6 +653,8 @@ async function compileAndRun({ runId, files, entryPath }) {
   ])
   const runMs = performance.now() - runStarted
 
+  // System.exit() reports through the Server's shutdown hook, if CheerpJ ran it.
+  flushFileChanges()
   if (typeof runStatus === 'object') {
     post({ type: 'done', exit: runStatus.code, compileMs, runMs, tainted: true })
     return

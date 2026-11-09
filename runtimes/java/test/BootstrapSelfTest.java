@@ -52,6 +52,12 @@ public final class BootstrapSelfTest {
         ecj_reportsDiagnosticsOnAKnownChannel();
         ecj_compilesTwoPackagesWithInheritance();
 
+        workspace_stagesOnlyWhatDiffers();
+        workspace_diffReportsWritesDeletesAndSkips();
+        workspace_decodeRejectsBinary();
+        // Last: it re-points this JVM's working directory.
+        workspace_enterRedirectsNioRelativePaths();
+
         if (failures > 0) {
             System.out.println("FAIL: " + failures + " check(s) failed");
             // No System.exit inside the bootstrap classes themselves; this is a
@@ -443,6 +449,91 @@ public final class BootstrapSelfTest {
     private static StackTraceElement frame(String cls, String method) {
         // File null / line 0 is exactly what CheerpJ reports for every frame.
         return new StackTraceElement(cls, method, null, 0);
+    }
+
+    // --- warsha.Workspace -------------------------------------------------------
+
+    private static File tempRoot() throws Exception {
+        File root = java.nio.file.Files.createTempDirectory("warsha-ws").toFile();
+        root.deleteOnExit();
+        return root;
+    }
+
+    private static Map<String, String> files(String... pairs) {
+        Map<String, String> map = new java.util.LinkedHashMap<String, String>();
+        for (int i = 0; i < pairs.length; i += 2) map.put(pairs[i], pairs[i + 1]);
+        return map;
+    }
+
+
+    private static void workspace_stagesOnlyWhatDiffers() throws Exception {
+        File root = tempRoot();
+        Map<String, String> first = files("data.txt", "1 2 3\n", "input/names.txt", "Sara\n");
+        check("workspace: first stage writes every file", 2, Workspace.stage(root, first));
+        check("workspace: nested file staged", "Sara\n", read(new File(root, "input/names.txt")));
+        check("workspace: unchanged project writes nothing", 0, Workspace.stage(root, first));
+
+        // A program left out.txt behind and the student deleted input/ meanwhile.
+        FileOutputStream stray = new FileOutputStream(new File(root, "out.txt"));
+        stray.write("old".getBytes("UTF-8"));
+        stray.close();
+        Map<String, String> next = files("data.txt", "4 5\n");
+        check("workspace: one changed file, one write", 1, Workspace.stage(root, next));
+        check("workspace: stray output removed", false, new File(root, "out.txt").exists());
+        check("workspace: removed folder pruned", false, new File(root, "input").exists());
+        check("workspace: changed content", "4 5\n", read(new File(root, "data.txt")));
+        check("workspace: isDataFile(.java)", false, Workspace.isDataFile("app/Main.java"));
+        check("workspace: isDataFile(.txt)", true, Workspace.isDataFile("data.txt"));
+    }
+
+    private static void workspace_diffReportsWritesDeletesAndSkips() throws Exception {
+        File root = tempRoot();
+        Map<String, String> staged = files("data.txt", "1\n", "keep.txt", "same", "gone.txt", "bye");
+        Workspace.stage(root, staged);
+        // What a student program might do.
+        FileOutputStream append = new FileOutputStream(new File(root, "data.txt"), true);
+        append.write("2\n".getBytes("UTF-8"));
+        append.close();
+        new File(root, "results").mkdirs();
+        FileOutputStream out = new FileOutputStream(new File(root, "results/out.txt"));
+        out.write("\u0645\u0631\u062d\u0628\u0627\n".getBytes("UTF-8"));
+        out.close();
+        FileOutputStream bin = new FileOutputStream(new File(root, "image.bin"));
+        bin.write(new byte[] { 0, (byte) 0xFF, 1 });
+        bin.close();
+        new File(root, "gone.txt").delete();
+
+        Workspace.Changes changes = Workspace.diff(root, staged);
+        check("workspace diff: written", "{data.txt=1\n2\n, results/out.txt=\u0645\u0631\u062d\u0628\u0627\n}",
+            changes.written.toString());
+        check("workspace diff: deleted", "[gone.txt]", changes.deleted.toString());
+        check("workspace diff: skipped", "[image.bin]", changes.skipped.toString());
+    }
+
+    private static void workspace_decodeRejectsBinary() throws Exception {
+        check("decodeText: utf-8", "caf\u00e9", Workspace.decodeText("caf\u00e9".getBytes("UTF-8")));
+        check("decodeText: BOM dropped", "x", Workspace.decodeText(new byte[] { (byte) 0xEF, (byte) 0xBB, (byte) 0xBF, 'x' }));
+        check("decodeText: invalid utf-8", null, Workspace.decodeText(new byte[] { (byte) 0xC3, 0x28 }));
+        check("decodeText: NUL", null, Workspace.decodeText(new byte[] { 'a', 0, 'b' }));
+        check("decodeText: too large", null, Workspace.decodeText(new byte[Workspace.WRITE_BACK_LIMIT_BYTES + 1]));
+    }
+
+    private static void workspace_enterRedirectsNioRelativePaths() throws Exception {
+        File root = tempRoot();
+        Workspace.stage(root, files("data.txt", "42\n"));
+        String report = Workspace.enter(root);
+        checkContains("enter: user.dir set", report, "prop=ok");
+        checkContains("enter: java.io cached dir patched", report, " io=ok");
+        checkContains("enter: nio default dir patched", report, "nio=ok");
+        check("enter: user.dir", root.getAbsolutePath(), System.getProperty("user.dir"));
+        check("enter: File.getAbsolutePath", new File(root, "data.txt").getAbsolutePath(),
+            new File("data.txt").getAbsolutePath());
+        check("enter: Path.toAbsolutePath", root.toPath().resolve("data.txt").toString(),
+            java.nio.file.Paths.get("data.txt").toAbsolutePath().toString());
+        check("enter: Files.readString(relative)", "42\n",
+            new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("data.txt")), "UTF-8"));
+        java.nio.file.Files.write(java.nio.file.Paths.get("nio-out.txt"), "ok".getBytes("UTF-8"));
+        check("enter: Files.write(relative) lands in the workspace", true, new File(root, "nio-out.txt").isFile());
     }
 
     private static void check(String what, Object expected, Object actual) {

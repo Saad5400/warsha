@@ -27,6 +27,16 @@ export interface RunIO {
   onStdout(text: string): void
   onStderr(text: string): void
   onStdinRequest(): void          // console should focus its input line
+  /**
+   * OPTIONAL — what the program did to the project's files, reported once,
+   * strictly BEFORE onExit. The program's working directory is the project
+   * root, so `open("out.txt", "w")` / `new FileWriter("out.txt")` /
+   * `File.WriteAllText("out.txt", …)` / `fopen("out.txt", "w")` land here and
+   * the shell writes them back into the project. `written` holds new and
+   * modified text files; `deleted` holds project paths the program removed.
+   * `skipped` names files that could not come back (binary, or too large).
+   */
+  onFilesChanged?(change: FilesChange): void
   onExit(code: number | null): void
   /** OPTIONAL — only `kind: 'preview'` runtimes call this, handing the shell a full HTML document for the iframe, rebuilt every run. Console runtimes (Java, Python) ignore it; the preview's console output still flows through `onStdout`/`onStderr`. */
   onRender?(srcdoc: string): void
@@ -72,4 +82,11 @@ export interface RunContext {
 /** Accepts either shape, so an engine may report a plain string. */
 export function normalizeProgress(p: ProgressReport): LoadProgress {
   return typeof p === 'string' ? { phase: 'boot', message: p } : p
+}
+
+/** Files a run created, modified or removed — see `RunIO.onFilesChanged`. */
+export interface FilesChange {
+  written: SourceFile[]
+  deleted: string[]
+  skipped: string[]
 }

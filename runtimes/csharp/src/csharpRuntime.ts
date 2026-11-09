@@ -15,6 +15,7 @@ type FromWorker =
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
   | { type: 'stdin-request' }
+  | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
 
@@ -107,10 +108,11 @@ export class CSharpRuntime implements Runtime {
 
     const entry = normalizePath(entryPath)
     const payload: Record<string, string> = {}
-    for (const file of files) {
-      if (file.path.endsWith('.cs')) payload[normalizePath(file.path)] = file.content
-    }
-    if (!(entry in payload)) {
+    // Every project file: the .cs ones are compiled, and the whole set becomes the
+    // program's working directory, so File.ReadAllText("data.txt") finds the data
+    // file sitting beside Program.cs.
+    for (const file of files) payload[normalizePath(file.path)] = file.content
+    if (!entry.endsWith('.cs') || !(entry in payload)) {
       throw new Error(`Entry file ${entryPath} is not a .cs file in the set.`)
     }
 
@@ -212,6 +214,11 @@ export class CSharpRuntime implements Runtime {
 
       case 'stdout':
         this.active?.io.onStdout(msg.text)
+        return
+
+      case 'files':
+        // Always strictly before 'done' (the worker posts them in that order).
+        this.active?.io.onFilesChanged?.({ written: msg.written, deleted: msg.deleted, skipped: msg.skipped })
         return
 
       case 'stderr':

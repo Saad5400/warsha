@@ -199,6 +199,53 @@ export class Project {
     this.emitStructure()
   }
 
+  /**
+   * Applies what a finished run did to its working directory (the project root):
+   * new and changed files are written, removed ones are deleted. Unlike an editor
+   * keystroke this lands in storage immediately — the run is over, there is no
+   * burst to coalesce. Returns the paths actually applied; a path that is unsafe
+   * (absolute, `..`) or collides with a folder of the same name is left alone.
+   */
+  async applyProgramChanges(change: { written: SourceFile[]; deleted: string[] }): Promise<{
+    written: string[]
+    deleted: string[]
+  }> {
+    const written: string[] = []
+    const deleted: string[] = []
+    for (const file of change.written) {
+      const path = safeProjectPath(file.path)
+      if (!path || this.dirs.has(path) || ancestors(path).some((d) => this.files.has(d))) continue
+      const existing = this.timers.get(path)
+      if (existing) {
+        clearTimeout(existing)
+        this.timers.delete(path)
+      }
+      this.files.set(path, file.content)
+      for (const d of ancestors(path)) this.dirs.add(d)
+      if (await this.attempt(() => this.store.writeFile(path, file.content), path)) this.dirty.delete(path)
+      else this.dirty.add(path)
+      written.push(path)
+    }
+    for (const raw of change.deleted) {
+      const path = safeProjectPath(raw)
+      if (!path || !this.files.has(path)) continue
+      this.files.delete(path)
+      this.dirty.delete(path)
+      const pending = this.timers.get(path)
+      if (pending) {
+        clearTimeout(pending)
+        this.timers.delete(path)
+      }
+      await this.attempt(() => this.store.remove(path), path)
+      deleted.push(path)
+    }
+    if (written.length || deleted.length) {
+      this.emitStructure()
+      this.emitDirty()
+    }
+    return { written, deleted }
+  }
+
   async createFolder(path: string): Promise<void> {
     if (this.dirs.has(path)) throw new Error(`"${path}" already exists`)
     this.dirs.add(path)
@@ -323,4 +370,11 @@ function remap(path: string, from: string, to: string): string {
   if (path === from) return to
   if (path.startsWith(from + '/')) return to + path.slice(from.length)
   return path
+}
+
+/** A project-relative path a program reported, or null if it could escape the project or is malformed. */
+function safeProjectPath(path: string): string | null {
+  const parts = path.replace(/\\/g, '/').split('/').filter((p) => p !== '' && p !== '.')
+  if (parts.length === 0 || parts.some((p) => p === '..')) return null
+  return parts.join('/')
 }
