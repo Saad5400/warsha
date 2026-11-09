@@ -122,7 +122,8 @@ gitignored build products. See `runtimes/java/INTEGRATION.md` §2–§3.
   skipped })` once, **before** `onExit`; the shell applies it with `Project.applyProgramChanges`, so
   `out.txt` appears in the explorer (and an open tab shows the new content). The project is text
   only: a binary or >1 MB file is reported in `skipped` and not imported. A killed run (Stop)
-  reports nothing. Per engine: Python — the Pyodide FS dir `/home/pyodide/project`; C — an
+  reports nothing. Per engine: Python — the Pyodide FS dir `/home/pyodide/project`, and files the
+  program left open are flushed and closed at the end of the run, as interpreter exit would; C — an
   in-memory WASI directory preopened as `/`; C# — an in-memory `/warsha-project` set as
   `Directory.SetCurrentDirectory`; Java — the persistent `/files/warsha-work` (IndexedDB), staged
   write-only-what-differs by `bootstrap/Workspace.java`, which also points `user.dir`, java.io's

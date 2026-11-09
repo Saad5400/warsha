@@ -425,7 +425,49 @@ def _warsha_run(entry):
 
     sys.stdout.flush()
     sys.stderr.flush()
+    _warsha_close_open_files(proj)
     return status
+
+
+def _warsha_close_open_files(proj):
+    """Flush and close every file the program left open in the project dir.
+
+    Real Python does this at interpreter exit, so f = open("out.txt", "w");
+    f.write(...) with no close() still produces out.txt. This interpreter never
+    exits, and a crash keeps the file object alive through the traceback, so
+    without this the file came back EMPTY (its buffer never reached the FS).
+    """
+    import gc, io
+    # Never the console streams: their "names" (<stdout>...) are not paths, and
+    # closing one breaks every later run in this interpreter.
+    std = {id(s) for s in (sys.stdin, sys.stdout, sys.stderr, sys.__stdin__, sys.__stdout__, sys.__stderr__)}
+    found = []
+    for obj in gc.get_objects():
+        try:
+            if not isinstance(obj, io.IOBase) or id(obj) in std or obj.closed:
+                continue
+            name = getattr(obj, "name", None)
+            if not isinstance(name, str):
+                continue
+            full = os.path.normpath(name if os.path.isabs(name) else os.path.join(proj, name))
+            if full.startswith(proj + "/") and os.path.isfile(full):
+                found.append(obj)
+        except Exception:
+            pass
+    # Outermost layer first: a text wrapper flushes into its buffer, the buffer
+    # into the raw file. Closing the buffer first would drop the text still
+    # waiting in the wrapper.
+    def layer(obj):
+        if isinstance(obj, io.TextIOBase):
+            return 0
+        if isinstance(obj, io.BufferedIOBase):
+            return 1
+        return 2
+    for obj in sorted(found, key=layer):
+        try:
+            obj.close()
+        except Exception:
+            pass
 `
 
 // --- formatting (black) ------------------------------------------------------
