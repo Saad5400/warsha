@@ -214,6 +214,9 @@ public class Build {
             }
         });
         for (String[] entry : manifest) {
+            // Data files never change what compiles, so editing data.txt must not
+            // cost an ECJ run (they reach the program through Workspace instead).
+            if (Workspace.isDataFile(entry[1])) continue;
             digest.update(entry[1].getBytes("UTF-8"));
             digest.update((byte) 0);
             digest.update(readAll(new File("/str/" + entry[0])).getBytes("UTF-8"));
@@ -244,6 +247,7 @@ public class Build {
         for (String[] entry : manifest) {
             String flatName = entry[0];
             String relativePath = entry[1];
+            if (Workspace.isDataFile(relativePath)) continue; // staged by Workspace, not compiled
             String content = readAll(new File("/str/" + flatName));
 
             File target = new File(src, relativePath);
@@ -482,7 +486,7 @@ public class Build {
     // --- manifest -------------------------------------------------------------
 
     /** Lines of "<flat name in /str/>\t<relative path in the project>". */
-    private static List<String[]> readManifest(String runId) throws IOException {
+    static List<String[]> readManifest(String runId) throws IOException {
         String text = readAll(new File("/str/warsha-manifest-" + runId + ".tsv"));
         List<String[]> entries = new ArrayList<String[]>();
         for (String line : text.split("\n")) {
@@ -497,7 +501,7 @@ public class Build {
 
     // --- filesystem helpers ---------------------------------------------------
 
-    private static String readAll(File file) throws IOException {
+    static String readAll(File file) throws IOException {
         BufferedReader reader = new BufferedReader(
                 new InputStreamReader(new java.io.FileInputStream(file), "UTF-8"));
         try {

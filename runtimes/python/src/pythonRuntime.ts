@@ -15,6 +15,7 @@ type FromWorker =
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
   | { type: 'stdin-request' }
+  | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
   | { type: 'formatted'; id: number; code: string }
@@ -266,6 +267,11 @@ export class PythonRuntime implements Runtime {
 
       case 'stdout':
         this.active?.io.onStdout(msg.text)
+        return
+
+      case 'files':
+        // Always strictly before 'done' (the worker posts them in that order).
+        this.active?.io.onFilesChanged?.({ written: msg.written, deleted: msg.deleted, skipped: msg.skipped })
         return
 
       case 'stderr':

@@ -51,6 +51,10 @@ care about.
   `print("Name: ")` prompt shows up before the newline that never comes; what you type
   lands on the same line as the prompt; output auto-scrolls with a jump-to-bottom pill
   when you scroll away; and long output is capped and says so when it drops the head.
+- **Programs can read and write files.** The project is the program's working directory in
+  Java, Python, C#, and C: a program reads `data.txt` from beside its source, and a file it
+  writes (or deletes) shows up in the explorer when it finishes. Text files only — a program's
+  binary output is reported, not imported.
 - **A live preview for Web projects.** HTML/CSS/JS/TS/React/Vue/Svelte render directly in a
   sandboxed iframe beside the console. Plain HTML/CSS/JS needs nothing downloaded; TypeScript,
   cross-file imports, and the supported frameworks pull an in-browser bundler the first time a

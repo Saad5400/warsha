@@ -13,6 +13,7 @@
  *   { type: "ready", version, bootMs }
  *   { type: "stdout" | "stderr", text }
  *   { type: "stdin-request" }
+ *   { type: "files", written, deleted, skipped }   sent before "done" (Runner.Changes)
  *   { type: "done", code, ms }
  *   { type: "fatal", text, duringBoot? }
  */
@@ -160,6 +161,32 @@ async function boot() {
   })
 }
 
+// --- file write-back ----------------------------------------------------------
+// Runner.Run makes the project its working directory (an in-memory folder), so a
+// student's File.WriteAllText("out.txt", …) lands there. Runner.Changes() is the
+// diff against what went in, flattened for interop: groups of three strings
+// [kind, path, content] where kind is "w" (written), "d" (deleted) or "s"
+// (skipped: binary or too large; content empty).
+function postFileChanges() {
+  try {
+    const flat = exports.Runner.Changes() || []
+    const written = []
+    const deleted = []
+    const skipped = []
+    for (let i = 0; i + 2 < flat.length; i += 3) {
+      const [kind, path, content] = [flat[i], flat[i + 1], flat[i + 2]]
+      if (kind === 'w') written.push({ path, content })
+      else if (kind === 'd') deleted.push(path)
+      else skipped.push(path)
+    }
+    if (written.length || deleted.length || skipped.length) {
+      self.postMessage({ type: 'files', written, deleted, skipped })
+    }
+  } catch (e) {
+    self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your program wrote: ${e}]\n` })
+  }
+}
+
 // --- messages ---------------------------------------------------------------
 
 self.onmessage = (ev) => {
@@ -178,6 +205,7 @@ self.onmessage = (ev) => {
       const contents = paths.map((p) => msg.files[p])
       const t0 = performance.now()
       const code = exports.Runner.Run(paths, contents, msg.entry)
+      postFileChanges()
       self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
     } catch (e) {
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })

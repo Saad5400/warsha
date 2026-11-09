@@ -2,6 +2,8 @@ package warsha;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * The resident command loop: one Server.main outlives every run in a session.
@@ -41,6 +43,7 @@ public class Server {
             Class.forName("warsha.Launcher");
             Class.forName("warsha.Platform");
             Class.forName("warsha.Traces");
+            Class.forName("warsha.Workspace");
         } catch (Throwable t) {
             // Bridge itself may be the broken class, so report nothing: the
             // settling of main is the signal the worker acts on.
@@ -56,6 +59,7 @@ public class Server {
             return;
         }
 
+        installExitReporter();
         Bridge.phaseDone("server", "0");
 
         while (true) {
@@ -97,8 +101,78 @@ public class Server {
         // result.runId, not runId: an unchanged project reuses the previous
         // run's compiled output, and the launcher must read main.txt and
         // classes.tsv from the directory that actually exists.
+        //
+        // The workspace is staged from THIS run's manifest even on a reuse hit:
+        // the data files may have changed while the sources did not.
+        Map<String, String> staged = stageWorkspace(runId);
         int status = Launcher.launch(result.runId);
+        reportWorkspace(staged);
         Bridge.phaseDone("run", String.valueOf(status));
+    }
+
+    // --- the program's files (see Workspace) ---------------------------------------
+
+    /** What the running program's workspace was staged with; null between runs. */
+    private static volatile Map<String, String> activeStaged = null;
+
+    /** Mirrors the project's data files into the workspace and makes it the cwd. Never fatal. */
+    private static Map<String, String> stageWorkspace(String runId) {
+        Map<String, String> staged = new LinkedHashMap<String, String>();
+        try {
+            for (String[] entry : Build.readManifest(runId)) {
+                if (Workspace.isDataFile(entry[1])) {
+                    staged.put(entry[1], Build.readAll(new java.io.File("/str/" + entry[0])));
+                }
+            }
+            long started = System.currentTimeMillis();
+            int writes = Workspace.stage(Workspace.ROOT, staged);
+            Bridge.writeInternal("warsha-workspace: staged " + staged.size() + " file(s), wrote " + writes
+                    + " in " + (System.currentTimeMillis() - started) + "ms");
+        } catch (Throwable t) {
+            // The program can still run; it just may not find its data files.
+            Bridge.writeInternal("warsha-workspace: staging failed: " + t);
+        }
+        Bridge.writeInternal(Workspace.enter(Workspace.ROOT) + " " + Workspace.probeRelative(Workspace.ROOT, staged));
+        activeStaged = staged;
+        return staged;
+    }
+
+    /** Sends the program's file changes to the worker. At most once per run. */
+    private static void reportWorkspace(Map<String, String> staged) {
+        synchronized (Server.class) {
+            if (activeStaged != staged) return; // already reported (exit hook)
+            activeStaged = null;
+        }
+        try {
+            Workspace.Changes changes = Workspace.diff(Workspace.ROOT, staged);
+            for (Map.Entry<String, String> written : changes.written.entrySet()) {
+                Bridge.fileWritten(written.getKey(), written.getValue());
+            }
+            for (String path : changes.deleted) Bridge.fileDeleted(path);
+            for (String path : changes.skipped) Bridge.fileSkipped(path);
+        } catch (Throwable t) {
+            Bridge.writeInternal("warsha-workspace: diff failed: " + t);
+        }
+    }
+
+    /**
+     * A student's System.exit() takes this whole JVM down before launch() can
+     * return, and their output files are exactly what they expect to survive
+     * that. A shutdown hook still runs on exit, so it reports for the run in
+     * flight, if any. Best effort: the JVM is going away.
+     */
+    private static void installExitReporter() {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    Map<String, String> staged = activeStaged;
+                    if (staged != null) reportWorkspace(staged);
+                }
+            }, "warsha-files"));
+        } catch (Throwable ignored) {
+            // Only the System.exit case loses its files.
+        }
     }
 
     private static String kindOf(String command) {

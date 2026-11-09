@@ -60,10 +60,22 @@ public partial class Runner
     [JSExport]
     internal static int Run(string[] paths, string[] contents, string entryPath)
     {
+        // Every project file arrives (so the program can read its data files);
+        // only the .cs ones are source.
+        _sent = null;
         var parse = new CSharpParseOptions(LanguageVersion.Latest);
-        var trees = new List<SyntaxTree>(paths.Length);
+        var trees = new List<SyntaxTree>(paths.Length + 1)
+        {
+            // The implicit usings `dotnet new console` gives every project, so
+            // File.ReadAllText / List<T> / .Where(...) work exactly as they do in
+            // the textbook's project without `using System.IO;`. A student file
+            // that repeats one is still fine: a duplicate is a hidden diagnostic,
+            // never an error.
+            CSharpSyntaxTree.ParseText(ImplicitUsings, parse, path: "__WarshaImplicitUsings.cs"),
+        };
         for (var i = 0; i < paths.Length; i++)
-            trees.Add(CSharpSyntaxTree.ParseText(contents[i], parse, path: paths[i]));
+            if (paths[i].EndsWith(".cs", StringComparison.Ordinal))
+                trees.Add(CSharpSyntaxTree.ParseText(contents[i], parse, path: paths[i]));
 
         var options = new CSharpCompilationOptions(
             OutputKind.ConsoleApplication,
@@ -105,6 +117,8 @@ public partial class Runner
                 return 1;
             }
 
+            PrepareWorkspace(paths, contents);
+
             Console.SetOut(new CallbackWriter(WriteOut));
             Console.SetError(new CallbackWriter(WriteErr));
             Console.SetIn(new CallbackReader());
@@ -136,6 +150,89 @@ public partial class Runner
             Console.SetError(savedErr);
             alc.Unload();
         }
+    }
+
+    // --- the program's files ------------------------------------------------------
+    //
+    // The project is the program's working directory: before the entry point runs,
+    // every project file is written into a fresh in-memory folder and that folder
+    // becomes the current directory, so File.ReadAllText("data.txt") and
+    // new StreamWriter("out.txt") behave as they would beside a real Program.cs.
+    // Changes() diffs the folder against what went in after the run; the worker
+    // posts that to the shell, which writes it back into the project.
+
+    private const string ImplicitUsings =
+        "global using System;\n" +
+        "global using System.Collections.Generic;\n" +
+        "global using System.IO;\n" +
+        "global using System.Linq;\n" +
+        "global using System.Threading;\n" +
+        "global using System.Threading.Tasks;\n";
+
+    private const string ProjectRoot = "/warsha-project";
+    private const int WriteBackLimitBytes = 1024 * 1024;
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>What the run started with (project path -> content); null until a run got that far.</summary>
+    private static Dictionary<string, string>? _sent;
+
+    private static void PrepareWorkspace(string[] paths, string[] contents)
+    {
+        Directory.SetCurrentDirectory("/");
+        if (Directory.Exists(ProjectRoot)) Directory.Delete(ProjectRoot, recursive: true);
+        Directory.CreateDirectory(ProjectRoot);
+        var sent = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < paths.Length; i++)
+        {
+            var full = Path.Combine(ProjectRoot, paths[i]);
+            var dir = Path.GetDirectoryName(full);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(full, contents[i], new UTF8Encoding(false));
+            sent[paths[i]] = contents[i];
+        }
+        Directory.SetCurrentDirectory(ProjectRoot);
+        _sent = sent;
+    }
+
+    /// <summary>
+    /// The last run's effect on its working directory, flattened for JS interop
+    /// as [kind, path, content] triples: "w" written (new or changed text file),
+    /// "d" deleted, "s" skipped (binary or over 1 MB — the project holds text).
+    /// Empty when the run never reached its entry point (a compile error).
+    /// </summary>
+    [JSExport]
+    internal static string[] Changes()
+    {
+        var sent = _sent;
+        _sent = null;
+        if (sent is null || !Directory.Exists(ProjectRoot)) return Array.Empty<string>();
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var full in Directory.EnumerateFiles(ProjectRoot, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(ProjectRoot, full).Replace('\\', '/');
+            seen.Add(rel);
+            string? text = null;
+            try
+            {
+                var bytes = File.ReadAllBytes(full);
+                if (bytes.Length <= WriteBackLimitBytes)
+                {
+                    text = StrictUtf8.GetString(bytes);
+                    if (text.Length > 0 && text[0] == '\uFEFF') text = text.Substring(1);
+                    if (text.Contains('\0')) text = null;
+                }
+            }
+            catch (Exception)
+            {
+                text = null;
+            }
+            if (text is null) result.AddRange(new[] { "s", rel, "" });
+            else if (!sent.TryGetValue(rel, out var before) || before != text) result.AddRange(new[] { "w", rel, text });
+        }
+        foreach (var path in sent.Keys)
+            if (!seen.Contains(path)) result.AddRange(new[] { "d", path, "" });
+        return result.ToArray();
     }
 
     /// <summary>Unbuffered writer: every write is pushed straight to JS, so a

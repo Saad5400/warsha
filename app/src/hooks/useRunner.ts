@@ -320,6 +320,22 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           focusStdin.current?.()
           void afterViewportSettles()
         },
+        // The program's working directory is the project root, so files it wrote
+        // (or deleted) come back here, just before onExit. Applied even if the
+        // student pressed Run again meanwhile: the files were really written, and
+        // dropping them would lose a program's output silently.
+        onFilesChanged: (change) => {
+          const current = token.current === mine
+          if (current) {
+            buffer.catchUp()
+            if (change.written.length) buffer.line(COPY.runFilesWritten(change.written.map((f) => f.path)), 'meta')
+            if (change.deleted.length) buffer.line(COPY.runFilesDeleted(change.deleted), 'meta')
+            if (change.skipped.length) buffer.line(COPY.runFilesSkipped(change.skipped), 'meta')
+          }
+          void project.applyProgramChanges(change).catch(() => {
+            /* storage trouble surfaces through Project's own storage-problem banner */
+          })
+        },
         onExit: (code) => {
           if (token.current !== mine) return
           clearTimers()

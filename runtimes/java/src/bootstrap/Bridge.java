@@ -56,6 +56,19 @@ public class Bridge {
      */
     public static native void writeInternal(String s);
 
+    /**
+     * What the student's program did to its working directory (see Workspace),
+     * reported once per run, after the program returns and before
+     * phaseDone("run"). The worker collects them into one message for the shell,
+     * which writes them back into the project.
+     */
+    public static native void fileWritten(String path, String content);
+
+    public static native void fileDeleted(String path);
+
+    /** A file the program wrote that cannot come back: binary, or too large. */
+    public static native void fileSkipped(String path);
+
     public static void installStdin() {
         System.setIn(new InputStream() {
             private byte[] buf = new byte[0];

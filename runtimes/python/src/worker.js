@@ -17,6 +17,8 @@
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
  *   { type: "stdout" | "stderr", text }     one message per Python write
  *   { type: "stdin-request" }               parked in input()
+ *   { type: "files", written, deleted, skipped }  what the program did to the
+ *                                           project's files; sent before "done"
  *   { type: "done", code, ms }              run finished; code 0 = clean
  *   { type: "fatal", text }                 runtime-level failure
  *   { type: "formatted", id, code }         format succeeded
@@ -492,6 +494,83 @@ async function formatPython(id, code) {
 
 // --- messages ---------------------------------------------------------------
 
+/* --- file write-back ---------------------------------------------------------
+ *
+ * The program runs with the project dir as its working directory, so a student's
+ * open("scores.txt", "w") lands in PROJECT_DIR. Without this the file existed
+ * only for the life of the run: resetFs() wiped it before the next one, and it
+ * never reached the explorer. After every run the dir is diffed against what was
+ * sent in and the difference goes back to the shell, which writes it into the
+ * project -- the same thing a desktop IDE shows when a program writes a file.
+ *
+ * The project is text-only, so a file that is not valid UTF-8 (or is huge) is
+ * reported as skipped rather than mangled into the editor. __pycache__ is the
+ * interpreter's own litter, never the student's.
+ */
+const WRITE_BACK_LIMIT_BYTES = 1024 * 1024
+const IGNORED_DIRS = new Set(['__pycache__'])
+const strictDecoder = new TextDecoder('utf-8', { fatal: true })
+
+function decodeText(bytes) {
+  if (bytes.byteLength > WRITE_BACK_LIMIT_BYTES) return null
+  try {
+    const text = strictDecoder.decode(bytes)
+    return text.includes('\u0000') ? null : text
+  } catch {
+    return null
+  }
+}
+
+function listProjectFiles(dir, prefix, out) {
+  const FS = pyodide.FS
+  let names
+  try {
+    names = FS.readdir(dir)
+  } catch {
+    return out
+  }
+  for (const name of names) {
+    if (name === '.' || name === '..') continue
+    const full = `${dir}/${name}`
+    const rel = prefix ? `${prefix}/${name}` : name
+    let stat
+    try {
+      stat = FS.stat(full)
+    } catch {
+      continue
+    }
+    if (FS.isDir(stat.mode)) {
+      if (!IGNORED_DIRS.has(name)) listProjectFiles(full, rel, out)
+    } else if (FS.isFile(stat.mode)) {
+      out.push(rel)
+    }
+  }
+  return out
+}
+
+function collectFileChanges(sent) {
+  const written = []
+  const skipped = []
+  const seen = new Set()
+  for (const rel of listProjectFiles(PROJECT_DIR, '', [])) {
+    seen.add(rel)
+    let bytes
+    try {
+      bytes = pyodide.FS.readFile(`${PROJECT_DIR}/${rel}`)
+    } catch {
+      continue
+    }
+    const text = decodeText(bytes)
+    if (text === null) {
+      skipped.push(rel)
+      continue
+    }
+    if (sent[rel] !== text) written.push({ path: rel, content: text })
+  }
+  const deleted = Object.keys(sent).filter((p) => !seen.has(p))
+  return { written, deleted, skipped }
+}
+
 function writeProjectFiles(files) {
   for (const [path, content] of Object.entries(files)) {
     const full = `${PROJECT_DIR}/${path}`
@@ -523,6 +602,16 @@ self.onmessage = (ev) => {
       writeProjectFiles(msg.files)
       const t0 = performance.now()
       const status = runEntry(msg.entry)
+      // Even a crashed program keeps whatever it wrote before the crash, exactly
+      // like a real disk. Best effort: a failure here must not eat the exit code.
+      try {
+        const change = collectFileChanges(msg.files)
+        if (change.written.length || change.deleted.length || change.skipped.length) {
+          self.postMessage({ type: 'files', ...change })
+        }
+      } catch (e) {
+        self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your program wrote: ${e}]\n` })
+      }
       self.postMessage({
         type: 'done',
         code: Number(status) | 0,

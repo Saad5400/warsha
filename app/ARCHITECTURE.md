@@ -114,6 +114,22 @@ gitignored build products. See `runtimes/java/INTEGRATION.md` §2–§3.
   (`System.out.print("Your name: ")` puts the live input on the same visual line as the prompt).
 - `onExit(code)`: `0`/`n` for a real exit, `null` for killed. The shell shows *Finished*, *Stopped
   early* or *Stopped by you* accordingly — and "stopped by you" is deliberately neutral, not an error.
+- **Files: the project root is the program's working directory.** Every engine gets the whole
+  project (not only its sources) and mounts it as the cwd, so `open("data.txt")`,
+  `new Scanner(new File("data.txt"))`, `File.ReadAllText("data.txt")` and `fopen("data.txt", "r")`
+  read the file beside the entry, and writes land there too. After the program returns, the engine
+  diffs that directory against what it was given and calls `onFilesChanged({ written, deleted,
+  skipped })` once, **before** `onExit`; the shell applies it with `Project.applyProgramChanges`, so
+  `out.txt` appears in the explorer (and an open tab shows the new content). The project is text
+  only: a binary or >1 MB file is reported in `skipped` and not imported. A killed run (Stop)
+  reports nothing. Per engine: Python — the Pyodide FS dir `/home/pyodide/project`; C — an
+  in-memory WASI directory preopened as `/`; C# — an in-memory `/warsha-project` set as
+  `Directory.SetCurrentDirectory`; Java — the persistent `/files/warsha-work` (IndexedDB), staged
+  write-only-what-differs by `bootstrap/Workspace.java`, which also points `user.dir`, java.io's
+  cached copy of it and NIO's default directory there. Plain `java.io` streams opened with a
+  *relative* name still resolve against CheerpJ's own native cwd; the run logs
+  `warsha-workdir: … relative=ok|MISSES …` on the internal channel, which is the thing to check in
+  the browser harness. Standalone JavaScript has no file system (no `fs`), by design.
 - After `kill()`, send exactly one `onExit(null)`. Output from a superseded run is discarded by a run
   token, so you need not be perfect about it.
 

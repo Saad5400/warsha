@@ -15,6 +15,7 @@ type FromWorker =
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
   | { type: 'stdin-request' }
+  | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
 
@@ -108,10 +109,11 @@ export class ClangRuntime implements Runtime {
 
     const entry = normalizePath(entryPath)
     const payload: Record<string, string> = {}
-    for (const file of files) {
-      if (/\.(c|h)$/.test(file.path)) payload[normalizePath(file.path)] = file.content
-    }
-    if (!(entry in payload)) {
+    // Every project file, not only .c/.h: the sources are compiled, and the whole
+    // set is also the program's working directory, so fopen("data.txt", "r")
+    // finds the data file sitting beside main.c.
+    for (const file of files) payload[normalizePath(file.path)] = file.content
+    if (!/\.(c|h)$/.test(entry) || !(entry in payload)) {
       throw new Error(`Entry file ${entryPath} is not a .c/.h file in the set.`)
     }
 
@@ -209,6 +211,11 @@ export class ClangRuntime implements Runtime {
 
       case 'stdout':
         this.active?.io.onStdout(msg.text)
+        return
+
+      case 'files':
+        // Always strictly before 'done' (the worker posts them in that order).
+        this.active?.io.onFilesChanged?.({ written: msg.written, deleted: msg.deleted, skipped: msg.skipped })
         return
 
       case 'stderr':
