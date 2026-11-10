@@ -63,7 +63,7 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
 echo "==> javac --release 17 -Werror  (src/bootstrap, -cp $ECJ)"
-"$JAVAC" --release 17 -Xlint:all -Werror \
+"$JAVAC" --release 17 -encoding UTF-8 -Xlint:all -Werror \
   -cp "$ECJ" -d "$OUT" "$here"/src/bootstrap/*.java
 
 echo "==> jar"

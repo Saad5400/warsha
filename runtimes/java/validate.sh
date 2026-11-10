@@ -24,10 +24,10 @@ if [ ! -f ecj.jar ]; then
 fi
 
 echo "==> javac --release 17 -Werror  (src/bootstrap)"
-javac --release 17 -Xlint:all -Werror -cp ecj.jar -d "$OUT/classes" src/bootstrap/*.java
+javac --release 17 -encoding UTF-8 -Xlint:all -Werror -cp ecj.jar -d "$OUT/classes" src/bootstrap/*.java
 
 echo "==> javac (test/BootstrapSelfTest)"
-javac --release 17 -Xlint:all -cp "ecj.jar:$OUT/classes" -d "$OUT/classes" test/BootstrapSelfTest.java
+javac --release 17 -encoding UTF-8 -Xlint:all -cp "ecj.jar:$OUT/classes" -d "$OUT/classes" test/BootstrapSelfTest.java
 
 echo "==> run BootstrapSelfTest"
 java -cp "ecj.jar:$OUT/classes" warsha.BootstrapSelfTest
