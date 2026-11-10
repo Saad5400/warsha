@@ -1,5 +1,6 @@
 import type { RunStatus } from '../hooks/useRunner'
 import { COPY } from '../copy'
+import { useDebugState } from '../debug/store'
 
 /**
  * Spec §7.3: every state pairs its colour with a glyph and a word — red/green are easy
@@ -69,8 +70,10 @@ export function StatusPill({
    */
   variant?: 'pill' | 'bar'
 }) {
-  const label = pillLabel(status)
-  const glyph = GLYPHS[status]
+  // Parked in the debugger: still a live run (data-state stays, a QA contract), but say so.
+  const paused = useDebugState().phase === 'paused' && (status === 'running' || status === 'waiting')
+  const label = paused ? COPY.debugPaused : pillLabel(status)
+  const glyph = paused ? '‖' : GLYPHS[status]
   const detail = status === 'failed' && exitCode !== null ? ` · exit ${exitCode}` : null
   return (
     // aria-label carries the exit code even when the visual suffix is dropped by a breakpoint.

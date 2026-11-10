@@ -1,4 +1,5 @@
 import { Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { debugOwnsHover } from './debugExt'
 import {
   closeHoverTooltips,
   EditorView,
@@ -425,6 +426,8 @@ export function hoverDocs(lang: CompletionLang | null): Extension {
         // lastTouchAt) and not on top of a manual card already showing.
         if (Date.now() - lastTouchAt < TOUCH_QUIET_MS) return null
         if (view.state.field(manualDocsField, false)) return null
+        // Paused in the debugger: hovering shows values (debugExt.ts), not docs.
+        if (debugOwnsHover()) return null
         const hit = docsAt(view, pos, lang)
         if (!hit) return null
         return { pos: hit.from, end: hit.to, above: true, create: () => cardView(hit) }

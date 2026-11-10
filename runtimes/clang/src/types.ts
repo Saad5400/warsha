@@ -20,7 +20,7 @@ export interface LoadProgress {
 
 export type ProgressReport = LoadProgress | string
 
-export interface RunIO {
+export interface RunIO extends DebugIO {
   onStdout(text: string): void
   onStderr(text: string): void
   onStdinRequest(): void
@@ -41,6 +41,7 @@ export interface RunIO {
 export interface RunSession {
   kill(): void
   writeStdin(line: string): void
+  debug?: DebugSession
 }
 
 export type RuntimeKind = 'console' | 'preview'
@@ -49,7 +50,8 @@ export interface Runtime {
   readonly id: string
   readonly kind?: RuntimeKind
   load(onProgress: (p: ProgressReport) => void): Promise<void>
-  run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession>
+  run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession>
+  canDebug?(entryPath: string): boolean
   dispose?(): void
   format?(code: string): Promise<string>
   isReady?(): boolean
@@ -60,4 +62,65 @@ export interface FilesChange {
   written: SourceFile[]
   deleted: string[]
   skipped: string[]
+}
+
+// --- debug protocol (mirror of app/src/runtime/debug.ts) ----------------------
+
+export interface DebugBreakpoint {
+  path: string
+  line: number
+}
+
+export interface DebugOptions {
+  breakpoints: DebugBreakpoint[]
+  stopOnEntry?: boolean
+}
+
+export type DebugStopReason = 'entry' | 'breakpoint' | 'step' | 'pause' | 'exception'
+
+export interface DebugValue {
+  name: string
+  value: string
+  type?: string
+  ref?: number
+  children?: DebugValue[]
+}
+
+export interface DebugScope {
+  name: string
+  variables: DebugValue[]
+  expensive?: boolean
+}
+
+export interface DebugFrame {
+  name: string
+  path: string
+  line: number
+  column?: number
+  scopes: DebugScope[]
+}
+
+export interface DebugStopped {
+  reason: DebugStopReason
+  description?: string
+  frames: DebugFrame[]
+}
+
+export type DebugStepCommand = 'continue' | 'stepOver' | 'stepInto' | 'stepOut'
+
+export interface DebugSession {
+  resume(cmd: DebugStepCommand): void
+  pause(): void
+  setBreakpoints(bps: DebugBreakpoint[]): void
+  variables(ref: number): Promise<DebugValue[]>
+  evaluate?(expr: string, frameIndex: number): Promise<DebugValue>
+}
+
+export interface DebugIO {
+  onDebugStop?(stopped: DebugStopped): void
+  onDebugResume?(): void
+}
+
+export interface RunOptions {
+  debug?: DebugOptions
 }

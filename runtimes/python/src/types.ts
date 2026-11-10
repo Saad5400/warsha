@@ -28,7 +28,7 @@ export interface LoadProgress {
 
 export type ProgressReport = LoadProgress | string
 
-export interface RunIO {
+export interface RunIO extends DebugIO {
   /** One call per Python-level write. Partial lines arrive as partial chunks. */
   onStdout(text: string): void
   onStderr(text: string): void
@@ -51,13 +51,17 @@ export interface RunIO {
 export interface RunSession {
   kill(): void
   writeStdin(line: string): void
+  /** Present when the run was started with `opts.debug`. */
+  debug?: DebugSession
 }
 
 export interface Runtime {
   readonly id: 'java' | 'python'
   /** Heavy engine bootstrap. Idempotent; safe to call concurrently. */
   load(onProgress: (p: ProgressReport) => void): Promise<void>
-  run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession>
+  run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession>
+  /** True when `entryPath` can run under the debugger. */
+  canDebug?(entryPath: string): boolean
 }
 
 /** Files a run created, modified or removed — see `RunIO.onFilesChanged`. */
@@ -65,4 +69,69 @@ export interface FilesChange {
   written: SourceFile[]
   deleted: string[]
   skipped: string[]
+}
+
+/* --- Debug protocol ---------------------------------------------------------
+ *
+ * MIRROR of app/src/runtime/debug.ts (read its header for the lifecycle). Kept
+ * structurally identical so PythonRuntime satisfies the app's Runtime type.
+ */
+
+export interface DebugBreakpoint {
+  path: string
+  line: number
+}
+
+export interface DebugOptions {
+  breakpoints: DebugBreakpoint[]
+  stopOnEntry?: boolean
+}
+
+export type DebugStopReason = 'entry' | 'breakpoint' | 'step' | 'pause' | 'exception'
+
+export interface DebugValue {
+  name: string
+  value: string
+  type?: string
+  ref?: number
+  children?: DebugValue[]
+}
+
+export interface DebugScope {
+  name: string
+  variables: DebugValue[]
+  expensive?: boolean
+}
+
+export interface DebugFrame {
+  name: string
+  path: string
+  line: number
+  column?: number
+  scopes: DebugScope[]
+}
+
+export interface DebugStopped {
+  reason: DebugStopReason
+  description?: string
+  frames: DebugFrame[]
+}
+
+export type DebugStepCommand = 'continue' | 'stepOver' | 'stepInto' | 'stepOut'
+
+export interface DebugSession {
+  resume(cmd: DebugStepCommand): void
+  pause(): void
+  setBreakpoints(bps: DebugBreakpoint[]): void
+  variables(ref: number): Promise<DebugValue[]>
+  evaluate?(expr: string, frameIndex: number): Promise<DebugValue>
+}
+
+export interface DebugIO {
+  onDebugStop?(stopped: DebugStopped): void
+  onDebugResume?(): void
+}
+
+export interface RunOptions {
+  debug?: DebugOptions
 }

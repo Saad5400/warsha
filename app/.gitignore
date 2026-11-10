@@ -15,6 +15,13 @@ public/warsha-dotnet/
 # The C worker, a verbatim copy of runtimes/clang/src/clang.worker.js (same
 # arrangement as the Java worker above — the source lives with its runtime).
 public/warsha-clang.worker.js
+# The C debugger (runtimes/clang): the source instrumenter (verbatim copy of
+# runtimes/clang/src/instrument.js), the web-tree-sitter runtime and the
+# tree-sitter-c grammar it parses with. Staged by `npm run assets`.
+public/warsha-clang-instrument.js
+public/warsha-web-tree-sitter.js
+public/warsha-web-tree-sitter.wasm
+public/warsha-tree-sitter-c.wasm
 # The esbuild bundler wasm, a verbatim copy of node_modules/esbuild-wasm/
 # esbuild.wasm (used to transpile/bundle TypeScript and cross-file JS/TS modules
 # in the browser). ~12 MB build product, never a source of truth.

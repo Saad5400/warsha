@@ -22,7 +22,7 @@ export PATH="$DOTNET_ROOT:$PATH"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 # Content stamp over the inputs that affect the bundle.
-stamp_now="$(cat "$worker" "$here/harness/Program.cs" "$here/harness/Warsha.CSharp.csproj" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+stamp_now="$(cat "$worker" "$here"/harness/*.cs "$here/harness/Warsha.CSharp.csproj" 2>/dev/null | sha256sum | cut -d' ' -f1)"
 stamp_file="$dest/.engine-stamp"
 
 if [ -f "$dest/_framework/dotnet.js" ] && [ -f "$stamp_file" ] && [ "$(cat "$stamp_file")" = "$stamp_now" ]; then

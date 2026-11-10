@@ -1,5 +1,6 @@
 import { RangeSetBuilder } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { displayedLevel, drawnColumns, storedLevel } from './indentDisplay'
 
 /**
  * Indent Rainbow — a faint tint behind each indentation level, cycling three
@@ -22,11 +23,12 @@ const LINE_PAD = '6px'
 
 const cache = new Map<string, Decoration>()
 
-function decoFor(depth: number, hang: number): Decoration {
-  const key = `${depth}:${hang}`
+function decoFor(depth: number, hang: number, unit: number): Decoration {
+  const key = `${unit}:${depth}:${hang}`
   let deco = cache.get(key)
   if (!deco) {
-    let style = `--cm-rainbow:${depth}`
+    // `unit` is the DISPLAYED level width (indentDisplay.ts).
+    let style = `--cm-rainbow:${depth};--cm-rainbow-step:${unit}ch`
     // Same hanging-indent trick as the guides, so bands line up under wrapped
     // code instead of column 0 when both features are on.
     if (hang > 0) style += `;padding-left:calc(${LINE_PAD} + ${hang}ch);text-indent:-${hang}ch`
@@ -47,9 +49,11 @@ function leadingColumns(text: string, tabSize: number): number {
   return n
 }
 
-function build(view: EditorView, unit: number): DecorationSet {
+function build(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
   const { doc, tabSize } = view.state
+  const stored = storedLevel(view.state)
+  const unit = displayedLevel(view.state)
   for (const range of view.visibleRanges) {
     // A blank line inside a block inherits the level above it, or the bands
     // break into gaps down a function body.
@@ -59,9 +63,10 @@ function build(view: EditorView, unit: number): DecorationSet {
       const line = doc.lineAt(pos)
       const blank = line.text.trim().length === 0
       const cols = blank ? 0 : leadingColumns(line.text, tabSize)
-      const depth = blank ? carried : Math.floor(cols / unit)
+      const depth = blank ? carried : Math.floor(cols / stored)
       if (!blank) carried = depth
-      if (depth > 0) builder.add(line.from, line.from, decoFor(depth, Math.min(cols, MAX_HANG)))
+      const hang = Math.min(drawnColumns(cols, stored, unit), MAX_HANG)
+      if (depth > 0) builder.add(line.from, line.from, decoFor(depth, hang, unit))
       if (line.to + 1 <= pos) break
       pos = line.to + 1
     }
@@ -69,15 +74,16 @@ function build(view: EditorView, unit: number): DecorationSet {
   return builder.finish()
 }
 
-export function indentRainbow(unit = 4) {
+export function indentRainbow() {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
       constructor(view: EditorView) {
-        this.decorations = build(view, unit)
+        this.decorations = build(view)
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) this.decorations = build(update.view, unit)
+        if (update.docChanged || update.viewportChanged || update.transactions.some((tr) => tr.reconfigured))
+          this.decorations = build(update.view)
       }
     },
     { decorations: (value) => value.decorations },
@@ -90,14 +96,14 @@ export function indentRainbow(unit = 4) {
     '.cm-indentRainbow': {
       backgroundImage:
         `repeating-linear-gradient(to right,` +
-        ` ${band('--code-bracket-1')} 0 ${unit}ch,` +
-        ` ${band('--code-bracket-2')} ${unit}ch ${2 * unit}ch,` +
-        ` ${band('--code-bracket-3')} ${2 * unit}ch ${3 * unit}ch)`,
+        ` ${band('--code-bracket-1')} 0 var(--cm-rainbow-step),` +
+        ` ${band('--code-bracket-2')} var(--cm-rainbow-step) calc(2 * var(--cm-rainbow-step)),` +
+        ` ${band('--code-bracket-3')} calc(2 * var(--cm-rainbow-step)) calc(3 * var(--cm-rainbow-step)))`,
       backgroundRepeat: 'no-repeat',
       // Padding-box so the hanging indent moves content but not the bands.
       backgroundOrigin: 'padding-box',
       backgroundPositionX: LINE_PAD,
-      backgroundSize: `calc(var(--cm-rainbow, 0) * ${unit}ch) 100%`,
+      backgroundSize: 'calc(var(--cm-rainbow, 0) * var(--cm-rainbow-step, 4ch)) 100%',
     },
   })
 

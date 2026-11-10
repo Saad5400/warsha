@@ -1,4 +1,18 @@
-import type { ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
+import type {
+  DebugBreakpoint,
+  DebugFrame,
+  DebugSession,
+  DebugStepCommand,
+  DebugStopReason,
+  DebugValue,
+  ProgressReport,
+  RunIO,
+  RunOptions,
+  RunSession,
+  Runtime,
+  SourceFile,
+} from './types'
+import { instrumentJava, type JavaParserLike } from './instrument'
 
 type FromWorker =
   | { type: 'progress'; phase: 'download' | 'unpack' | 'boot' | 'compile'; message: string; loaded?: number; total?: number }
@@ -8,6 +22,9 @@ type FromWorker =
   | { type: 'diag'; text: string }
   | { type: 'stdin-request' }
   | { type: 'compile-failed'; code: number; compileMs: number }
+  | { type: 'compiled' }
+  | { type: 'debug-stop'; json: string }
+  | { type: 'debug-vars'; json: string }
   | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; exit: number; compileMs: number; runMs: number; tainted: boolean }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
@@ -37,6 +54,13 @@ export interface JavaRuntimeOptions {
   bootJarPath?: string
   /** CheerpJ loader directory. Pinned to 4.3; overriding it is untested. */
   cdnBase?: string
+  /**
+   * Loads a web-tree-sitter Parser with the Java grammar set. Needed only for a
+   * debug run (the sources are instrumented before compiling, see
+   * instrument.ts); called lazily, at most once per successful load. Without
+   * it a debug run degrades to a plain run with a note on stderr.
+   */
+  loadJavaParser?: () => Promise<JavaParserLike>
   /** Receives CheerpJ's console chatter (incl. its JIT-failure noise) for debugging. */
   onInternalLog?(entry: { level: string; text: string; noise: boolean }): void
 }
@@ -53,6 +77,32 @@ interface Active {
   ended: boolean
   awaitingStdin: boolean
   progressListener?: (report: ProgressReport) => void
+  debug?: DebugState
+}
+
+/** Per-run debugger state, main-thread side. */
+interface DebugState {
+  /** Project path -> file id the instrumented code reports frames under. */
+  fileIds: Map<string, number>
+  paths: string[]
+  parked: boolean
+  /** FIFO: the JVM answers variables requests strictly in order. */
+  varWaiters: { resolve: (v: DebugValue[]) => void; reject: (e: Error) => void }[]
+  /** The uninstrumented sources, for the compile-error fallback. */
+  original: SourceFile[]
+  entry: string
+  /** Compiler output of the instrumented sources: held back, see onMessage 'compile-failed'. */
+  diags: string[]
+  /** True once this run gave up on debugging and is running the original sources. */
+  fallback: boolean
+}
+
+interface RawFrame {
+  name: string
+  file: number
+  line: number
+  locals: DebugValue[]
+  this?: DebugValue[]
 }
 
 /**
@@ -80,6 +130,8 @@ export class JavaRuntime implements Runtime {
   private readonly onInternalLog: JavaRuntimeOptions['onInternalLog']
 
   private worker: Worker | null = null
+  private readonly loadJavaParser: JavaRuntimeOptions['loadJavaParser']
+  private parser: Promise<JavaParserLike> | null = null
 
   /** In-flight or settled boot of the current worker. null = no worker yet. */
   private booting: Promise<void> | null = null
@@ -111,6 +163,12 @@ export class JavaRuntime implements Runtime {
     this.bootJarPath = options.bootJarPath ?? '/app/warsha-boot.jar'
     this.cdnBase = options.cdnBase
     this.onInternalLog = options.onInternalLog
+    this.loadJavaParser = options.loadJavaParser
+  }
+
+  /** Every .java entry can run under the debugger (see instrument.ts). */
+  canDebug(entryPath: string): boolean {
+    return entryPath.endsWith('.java')
   }
 
   /**
@@ -134,7 +192,7 @@ export class JavaRuntime implements Runtime {
     }
   }
 
-  async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
+  async run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession> {
     // `starting` closes a window that `active` alone cannot: this method awaits
     // load(), and on a cold start that await lasts ~20 seconds during which
     // `active` is still null. Two run() calls in that window would both get past
@@ -146,13 +204,13 @@ export class JavaRuntime implements Runtime {
     }
     this.starting = true
     try {
-      return await this.startRun(files, entryPath, io)
+      return await this.startRun(files, entryPath, io, opts)
     } finally {
       this.starting = false
     }
   }
 
-  private async startRun(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
+  private async startRun(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession> {
     const entry = normalizePath(entryPath)
     const payload = files.map((file) => ({ path: normalizePath(file.path), content: file.content }))
     if (!payload.some((file) => file.path === entry)) {
@@ -165,12 +223,24 @@ export class JavaRuntime implements Runtime {
     // A JVM that a previous program exited cannot run anything else.
     if (this.tainted) this.replaceWorker()
 
+    // Debug run: rewrite the sources (same lines, extra calls) before they go
+    // to the worker. The parser loads alongside the engine.
+    let debug: DebugState | undefined
+    let sent = payload
+    let debugNote: string | null = null
+    if (opts?.debug) {
+      const prepared = await Promise.all([this.load(() => {}), this.instrument(payload, entry)])
+      const result = prepared[1]
+      if (typeof result === 'string') debugNote = result
+      else ({ debug, sent } = result)
+    }
+
     await this.load(() => {})
     const worker = this.worker
     if (!worker) throw new Error('Java runtime is not ready.')
 
     const runId = `${Date.now().toString(36)}${(this.runCounter++).toString(36)}`
-    const active: Active = { io, runId, ended: false, awaitingStdin: false }
+    const active: Active = { io, runId, ended: false, awaitingStdin: false, debug }
     this.active = active
     this.lastRun = null
 
@@ -190,14 +260,144 @@ export class JavaRuntime implements Runtime {
     // Every project file: the .java ones are compiled, the rest are mirrored into
     // the program's working directory (bootstrap/Workspace.java), so
     // new Scanner(new File("data.txt")) finds the file beside Main.java.
-    worker.postMessage({ type: 'run', runId, files: payload, entryPath: entry })
+    if (debugNote) io.onStderr(debugNote)
+    worker.postMessage({
+      type: 'run',
+      runId,
+      files: sent,
+      entryPath: entry,
+      debug: debug ? { bps: breakpointSpec(debug, opts?.debug?.breakpoints ?? []), entry: !!opts?.debug?.stopOnEntry } : undefined,
+    })
 
     const session: JavaRunSession = {
       kill: () => this.killSession(active),
       writeStdin: (line: string) => this.writeStdin(active, line),
       writeEof: () => this.writeEof(active),
     }
+    if (debug) session.debug = this.debugSession(active, debug)
     return session
+  }
+
+  // --- debugger ---------------------------------------------------------------
+
+  /** Instrumented payload, or a student-facing note explaining why this run cannot be debugged. */
+  private async instrument(
+    payload: SourceFile[],
+    entry: string,
+  ): Promise<{ debug: DebugState; sent: SourceFile[] } | string> {
+    const unavailable = '[debugger] Breakpoints are unavailable for this run; it runs normally.\n'
+    if (!this.loadJavaParser) return unavailable
+    let parser: JavaParserLike
+    try {
+      if (!this.parser) this.parser = this.loadJavaParser()
+      parser = await this.parser
+    } catch (error) {
+      this.parser = null
+      this.onInternalLog?.({ level: 'error', text: `java debugger: parser failed to load: ${String(error)}`, noise: false })
+      return unavailable
+    }
+    const debug: DebugState = {
+      fileIds: new Map(),
+      paths: [],
+      parked: false,
+      varWaiters: [],
+      original: payload,
+      entry,
+      diags: [],
+      fallback: false,
+    }
+    try {
+      const sent = payload.map((file) => {
+        if (!file.path.endsWith('.java')) return file
+        const id = debug.paths.length
+        debug.paths.push(file.path)
+        debug.fileIds.set(file.path, id)
+        return { path: file.path, content: instrumentJava(parser, file.content, id) }
+      })
+      return { debug, sent }
+    } catch (error) {
+      this.onInternalLog?.({ level: 'error', text: `java debugger: instrumentation failed: ${String(error)}`, noise: false })
+      return unavailable
+    }
+  }
+
+  private debugSession(active: Active, debug: DebugState): DebugSession {
+    const post = (message: unknown) => {
+      if (!active.ended && this.active === active) this.worker?.postMessage(message)
+    }
+    return {
+      resume: (cmd: DebugStepCommand) => {
+        if (active.ended || !debug.parked) return
+        debug.parked = false
+        // Anything still waiting on this stop's values will never be answered.
+        for (const waiter of debug.varWaiters.splice(0)) waiter.reject(new Error('The program is running.'))
+        post({ type: 'debug-cmd', cmd })
+        active.io.onDebugResume?.()
+      },
+      pause: () => {
+        if (active.ended || debug.parked || debug.fallback) return
+        post({ type: 'debug-pause' })
+      },
+      setBreakpoints: (bps: DebugBreakpoint[]) => {
+        if (active.ended) return
+        post({ type: 'debug-bps', bps: breakpointSpec(debug, bps) })
+      },
+      variables: (ref: number) => {
+        if (active.ended || !debug.parked) return Promise.reject(new Error('The program is not paused.'))
+        return new Promise<DebugValue[]>((resolve, reject) => {
+          debug.varWaiters.push({ resolve, reject })
+          post({ type: 'debug-cmd', cmd: `variables:${Math.floor(ref)}` })
+        })
+      },
+    }
+  }
+
+  private onDebugStop(json: string): void {
+    const active = this.active
+    const debug = active?.debug
+    if (!active || !debug || active.ended) return
+    let raw: { reason: DebugStopReason; description?: string; frames: RawFrame[] }
+    try {
+      raw = JSON.parse(json)
+    } catch {
+      // Never strand a parked program over a malformed stop.
+      this.worker?.postMessage({ type: 'debug-cmd', cmd: 'continue' })
+      return
+    }
+    const frames: DebugFrame[] = raw.frames.map((frame) => ({
+      name: frame.name,
+      path: debug.paths[frame.file] ?? debug.entry,
+      line: frame.line,
+      scopes: [
+        { name: 'Locals', variables: frame.locals },
+        ...(frame.this ? [{ name: 'this', variables: frame.this }] : []),
+      ],
+    }))
+    debug.parked = true
+    active.io.onDebugStop?.({
+      reason: raw.reason,
+      ...(raw.description ? { description: raw.description } : {}),
+      frames,
+    })
+  }
+
+  /**
+   * The instrumented sources did not compile. Usually the student's own error;
+   * either way the diagnostics must quote THEIR code, not ours. So compile the
+   * original sources instead, as a plain run: a genuine error is reported
+   * exactly as a normal Run would, and if the originals do compile (an
+   * instrumentation bug) the program still runs, just without breakpoints.
+   */
+  private debugFallback(active: Active, debug: DebugState): void {
+    debug.fallback = true
+    this.onInternalLog?.({
+      level: 'warn',
+      text: `java debugger: instrumented compile failed:\n${debug.diags.join('')}`,
+      noise: false,
+    })
+    const runId = `${Date.now().toString(36)}${(this.runCounter++).toString(36)}`
+    active.runId = runId
+    this.worker?.postMessage({ type: 'run', runId, files: debug.original, entryPath: debug.entry })
   }
 
   /**
@@ -283,9 +483,35 @@ export class JavaRuntime implements Runtime {
 
       case 'diag':
         // Compiler diagnostics, on stderr like a real javac invocation. Paths
-        // are rewritten to the student's own file names first.
+        // are rewritten to the student's own file names first. A debug run's
+        // are held back: they quote the instrumented source (see debugFallback).
+        if (this.active?.debug && !this.active.debug.fallback) {
+          this.active.debug.diags.push(message.text)
+          return
+        }
         this.active?.io.onStderr(studentPaths(message.text, this.active.runId))
         return
+
+      case 'compiled':
+        if (this.active?.debug?.fallback) {
+          this.active.io.onStderr('[debugger] Warsha could not prepare this program for debugging, so it runs without breakpoints.\n')
+        }
+        return
+
+      case 'debug-stop':
+        this.onDebugStop(message.json)
+        return
+
+      case 'debug-vars': {
+        const waiter = this.active?.debug?.varWaiters.shift()
+        if (!waiter) return
+        try {
+          waiter.resolve(JSON.parse(message.json) as DebugValue[])
+        } catch {
+          waiter.resolve([])
+        }
+        return
+      }
 
       case 'files':
         // Always strictly before 'done' (the worker posts them in that order).
@@ -300,6 +526,10 @@ export class JavaRuntime implements Runtime {
         return
 
       case 'compile-failed':
+        if (this.active?.debug && !this.active.debug.fallback && !this.active.ended) {
+          this.debugFallback(this.active, this.active.debug)
+          return
+        }
         this.lastRun = { compileMs: message.compileMs, runMs: 0 }
         this.finish(message.code === 0 ? 1 : message.code)
         return
@@ -359,6 +589,10 @@ export class JavaRuntime implements Runtime {
     if (!active || active.ended) return
     active.ended = true
     active.awaitingStdin = false
+    if (active.debug) {
+      active.debug.parked = false
+      for (const waiter of active.debug.varWaiters.splice(0)) waiter.reject(new Error('The program has ended.'))
+    }
     if (active.progressListener) this.progressListeners.delete(active.progressListener)
     this.active = null
     if (stderrNote) active.io.onStderr(stderrNote)
@@ -413,6 +647,22 @@ function studentPaths(text: string, runId: string): string {
     // Defensive: any run directory, and the flat /str/ staging mount.
     .replace(/\/files\/warsha-run-[A-Za-z0-9]+\/src\//g, '')
     .replace(/\/str\//g, '')
+}
+
+/** "fileId:line,fileId:line" for Dbg; breakpoints in files that were not instrumented are dropped. */
+function breakpointSpec(debug: DebugState, bps: DebugBreakpoint[]): string {
+  const out: string[] = []
+  for (const bp of bps) {
+    let path: string
+    try {
+      path = normalizePath(bp.path)
+    } catch {
+      continue
+    }
+    const id = debug.fileIds.get(path)
+    if (id !== undefined && Number.isFinite(bp.line)) out.push(`${id}:${Math.floor(bp.line)}`)
+  }
+  return out.join(',')
 }
 
 /** "./a/B.java", "/a/B.java" and "a//B.java" all become "a/B.java"; ".." is rejected. */

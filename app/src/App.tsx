@@ -32,6 +32,21 @@ import { shareProjectAsPdf } from './actions/sharePdf'
 import { deliverFile, isCancelled, prefersShareSheet } from './actions/deliver'
 import { ActivityBar, type SideView } from './components/ActivityBar'
 import { SearchView } from './components/SearchView'
+import { DebugView } from './components/DebugView'
+import { DebugToolbar } from './components/DebugToolbar'
+import {
+  IconBreakpoint,
+  IconCloseAll,
+  IconDebugAlt,
+  IconDebugContinue,
+  IconDebugPause,
+  IconDebugRestart,
+  IconDebugStepInto,
+  IconDebugStepOut,
+  IconDebugStepOver,
+} from './components/ui/DebugIcons'
+import { debugStore, useDebugState } from './debug/store'
+import { toggleBreakpointAtCursor } from './editor/debugExt'
 import { ExtensionsView } from './components/ExtensionsView'
 import { isExtEnabled, setExtEnabled, type ExtId } from './extensions/registry'
 import { Breadcrumbs } from './components/Breadcrumbs'
@@ -63,8 +78,10 @@ import { useDialogs } from './components/ui/DialogProvider'
 import { useToast } from './components/ui/Toast'
 import { GenerateMenu } from './components/GenerateMenu'
 import { Menu, type MenuAnchor, type MenuItem } from './components/ui/Menu'
+import { INDENT_DISPLAY_CHOICES, type IndentDisplayPref } from './editor/indentDisplay'
 import {
   IconClear,
+  IconCheck,
   IconClipboard,
   IconClock,
   IconCloud,
@@ -246,6 +263,13 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [activePath, setActivePath] = useState<string | null>(null)
   const [entryPath, setEntryPath] = useState<string | null>(initial.entryPath)
   const [fontSize, setFontSize] = useState(initial.fontSize)
+  // How wide one indentation level is drawn (status bar "Spaces: N"). Visual only;
+  // a bad stored value falls back to auto. The editor reports what the open file shows.
+  const [indentPref, setIndentPref] = useState<IndentDisplayPref>(() =>
+    INDENT_DISPLAY_CHOICES.includes(initial.indentDisplay) ? initial.indentDisplay : 'auto',
+  )
+  const [indentInfo, setIndentInfo] = useState<{ tabs: boolean; size: number } | null>(null)
+  const [indentMenu, setIndentMenu] = useState<MenuAnchor | null>(null)
   // Clamped on read — a bad localStorage value must not strand the app at an unusable zoom.
   const [uiScale, setUiScale] = useState(() => clampScale(initial.uiScale))
   const [consoleOpen, setConsoleOpen] = useState(!initial.consoleCollapsed)
@@ -303,6 +327,11 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [project, revision])
 
   const runner = useRunner(project, buffer, entryPath)
+  // The debugger's state (src/debug/store.ts) — breakpoints are per project.
+  const debug = useDebugState()
+  useEffect(() => {
+    debugStore.setProject(currentProject?.id ?? null)
+  }, [currentProject?.id])
 
   // ---- live collaboration (collab/, COLLAB-SYNC-CONTRACT) ----
   // Keyed to the open project; owns the room lifecycle and presence. It reads a
@@ -896,6 +925,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     setHydrated(true)
   }, [ready, hydrated, shareHandled, project, initial])
 
+  useEffect(() => {
+    if (prefs().indentDisplay !== indentPref) setPrefs({ indentDisplay: indentPref })
+  }, [indentPref])
+
   // ---- persist UI state (only after restore, or we'd overwrite it with blanks)
   useEffect(() => {
     if (!hydrated) return
@@ -1203,7 +1236,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (renamed === name) return
     try {
       const mapping = await project.move(path, dir ? `${dir}/${renamed}` : renamed)
-      for (const [from, to] of mapping) editorRef.current?.renamePath(from, to)
+      for (const [from, to] of mapping) {
+        editorRef.current?.renamePath(from, to)
+        debugStore.renamePath(from, to)
+      }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
       setEntryPath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1220,7 +1256,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (to === path) return
     try {
       const mapping = await project.move(path, to)
-      for (const [from, dest] of mapping) editorRef.current?.renamePath(from, dest)
+      for (const [from, dest] of mapping) {
+        editorRef.current?.renamePath(from, dest)
+        debugStore.renamePath(from, dest)
+      }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
       setEntryPath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1239,6 +1278,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (!ok) return
     const affected = tabs.filter((t) => t === path || t.startsWith(path + '/'))
     await project.remove(path)
+    debugStore.dropPath(path)
     const next = tabs.filter((t) => !affected.includes(t))
     setTabs(next)
     if (activePath && affected.includes(activePath)) setActivePath(next[0] ?? null)
@@ -2232,6 +2272,61 @@ function Ide({ report }: { report: CapabilityReport }) {
     onStop: runner.stop,
   }
 
+  // ---- debugger ----
+  const canDebugEntry = !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
+  /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
+  const startDebugging = () => {
+    if (runner.busy || !canDebugEntry) return
+    setConsoleOpen(true)
+    // VS Code shows Run and Debug when a session starts — docked only; on a phone the
+    // drawer would cover the very line the program stops on.
+    if (!narrow) {
+      setSideView('debug')
+      setExplorerDocked(true)
+    }
+    void runner.run({ debug: true })
+  }
+  const restartPending = useRef(false)
+  const restartDebugging = () => {
+    if (!runner.busy) return startDebugging()
+    restartPending.current = true
+    runner.stop()
+  }
+  useEffect(() => {
+    if (runner.busy || !restartPending.current) return
+    restartPending.current = false
+    // useRunner ignores a Run within 250ms of the control swapping role.
+    const t = window.setTimeout(() => startDebugging(), 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the run ending
+  }, [runner.busy])
+  /** Open `path` with `line` at the caret (stack frames, breakpoint rows, every stop). */
+  const revealLine = (path: string, line: number) => {
+    const text = project.read(path)
+    if (text === undefined) return
+    let off = 0
+    for (let i = 1; i < line; i++) {
+      const n = text.indexOf('\n', off)
+      if (n < 0) break
+      off = n + 1
+    }
+    openAt(path, off, off)
+  }
+  const revealRef = useRef(revealLine)
+  revealRef.current = revealLine
+  useEffect(() => {
+    if (debug.phase !== 'paused') return
+    const f = debug.stopped?.frames[debug.frameIndex]
+    if (f) revealRef.current(f.path, f.line)
+  }, [debug.phase, debug.stopSeq, debug.frameIndex, debug.stopped])
+  const lineText = (path: string, line: number) => (project.read(path) ?? '').split('\n')[line - 1] ?? ''
+  /** F9 outside the editor (palette, menu): the caret's line in the open file. */
+  const toggleBreakpointHere = () => {
+    const dom = document.querySelector('.cm-editor')
+    const view = dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null
+    if (view) toggleBreakpointAtCursor(view, activePath)
+  }
+
   const projectName = currentProject?.name ?? ''
 
   /** DOM-reached (`EditorView.findFromDOM`), not a controller method — setup.ts is another
@@ -2537,6 +2632,20 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: toggleLocale,
     },
     {
+      id: 'view.indentDisplay',
+      title: COPY.cmdViewIndentDisplay,
+      enabled: () => !!activePath,
+      // Same menu as the status bar item, opened from it when it is on screen.
+      run: () => {
+        const r = document.querySelector('.status-indent')?.getBoundingClientRect()
+        setIndentMenu(
+          r
+            ? { x: r.right, y: r.top, fromRight: true }
+            : { x: window.innerWidth / 2, y: window.innerHeight / 3 },
+        )
+      },
+    },
+    {
       id: 'view.commandPalette',
       title: COPY.cmdViewPalette,
       // F1 is the always-works fallback: Firefox reserves Ctrl+Shift+P
@@ -2549,17 +2658,59 @@ function Ide({ report }: { report: CapabilityReport }) {
       title: COPY.cmdRunFile,
       // F5/Ctrl+F5 run (preventDefault cancels their normal browser-reload meaning); Mod+Enter is the
       // historic binding the console's idle line still quotes. Busy: same key stops instead.
-      keys: ['F5', 'Ctrl+F5', 'Mod+Enter'],
+      // F5 is VS Code's Start Debugging / Continue (debug.start below); Ctrl+F5 is
+      // Run Without Debugging, Mod+Enter the historic run binding. Busy: same key stops.
+      keys: ['Ctrl+F5', 'Mod+Enter'],
       enabled: () => runControl.canRun,
       run: () => {
         const r = runnerRef.current
-        if (r.busy) r.stop()
+        if (r.busy) {
+          if (debugStore.get().phase === 'inactive') r.stop()
+        } else {
+          setConsoleOpen(true)
+          void r.run()
+        }
+      },
+    },
+    {
+      id: 'debug.start',
+      title: COPY.cmdDebugStart,
+      // VS Code's F5: Continue while paused; otherwise debug when there is a
+      // breakpoint to stop at, else a plain run (no instrumentation cost for
+      // nothing). A plain run in flight keeps F5's old toggle-to-stop.
+      keys: ['F5'],
+      enabled: () => runControl.canRun || debugStore.get().phase !== 'inactive',
+      run: () => {
+        const r = runnerRef.current
+        const phase = debugStore.get().phase
+        if (phase === 'paused') return debugStore.resume('continue')
+        if (phase === 'running') return
+        if (r.busy) return r.stop()
+        if (canDebugEntry && debugStore.enabledBreakpoints().length) startDebugging()
         else {
           setConsoleOpen(true)
           void r.run()
         }
       },
     },
+    {
+      id: 'debug.runNoDebug',
+      title: COPY.cmdDebugRunNoDebug,
+      enabled: () => runControl.canRun && !runnerRef.current.busy,
+      run: () => {
+        setConsoleOpen(true)
+        void runnerRef.current.run()
+      },
+    },
+    { id: 'debug.continue', title: COPY.cmdDebugContinue, enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('continue') },
+    { id: 'debug.pause', title: COPY.cmdDebugPause, keys: ['F6'], enabled: () => debugStore.get().phase === 'running', run: () => debugStore.pause() },
+    { id: 'debug.stepOver', title: COPY.cmdDebugStepOver, keys: ['F10'], enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('stepOver') },
+    { id: 'debug.stepInto', title: COPY.cmdDebugStepInto, keys: ['F11'], enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('stepInto') },
+    { id: 'debug.stepOut', title: COPY.cmdDebugStepOut, keys: ['Shift+F11'], enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('stepOut') },
+    { id: 'debug.restart', title: COPY.cmdDebugRestart, keys: ['Mod+Shift+F5'], enabled: () => debugStore.get().phase !== 'inactive', run: restartDebugging },
+    { id: 'debug.toggleBreakpoint', title: COPY.cmdDebugToggleBreakpoint, keys: ['F9'], enabled: () => activePath !== null, run: toggleBreakpointHere },
+    { id: 'debug.removeAllBreakpoints', title: COPY.cmdDebugRemoveAllBreakpoints, enabled: () => debugStore.get().breakpoints.length > 0, run: () => debugStore.removeAll() },
+    { id: 'view.debug', title: COPY.cmdDebugView, keys: ['Mod+Shift+D'], run: () => showSideView('debug') },
     {
       id: 'run.stop',
       title: COPY.cmdRunStop,
@@ -2772,11 +2923,41 @@ function Ide({ report }: { report: CapabilityReport }) {
         {
           label: runControl.entry ? COPY.menuRunEntry(runControl.entry) : COPY.menuRun,
           icon: <IconPlay size={18} />,
-          hint: formatKeys('F5'),
+          hint: formatKeys('Ctrl+F5'),
           disabled: runControl.busy || !runControl.canRun,
           onSelect: runControl.onRun,
         },
+        {
+          label: COPY.debugStart,
+          icon: <IconDebugAlt size={18} />,
+          hint: formatKeys('F5'),
+          disabled: runControl.busy || !canDebugEntry,
+          onSelect: startDebugging,
+        },
         { label: COPY.menuStop, icon: <IconStop size={18} />, hint: formatKeys('Shift+F5'), disabled: !runControl.busy, onSelect: runControl.onStop },
+        { label: COPY.debugRestart, icon: <IconDebugRestart size={18} />, hint: formatKeys('Mod+Shift+F5'), disabled: debug.phase === 'inactive', onSelect: restartDebugging },
+        {
+          label: COPY.debugStepOver,
+          icon: <IconDebugStepOver size={18} />,
+          hint: formatKeys('F10'),
+          startsGroup: true,
+          disabled: debug.phase !== 'paused',
+          onSelect: () => debugStore.resume('stepOver'),
+        },
+        { label: COPY.debugStepInto, icon: <IconDebugStepInto size={18} />, hint: formatKeys('F11'), disabled: debug.phase !== 'paused', onSelect: () => debugStore.resume('stepInto') },
+        { label: COPY.debugStepOut, icon: <IconDebugStepOut size={18} />, hint: formatKeys('Shift+F11'), disabled: debug.phase !== 'paused', onSelect: () => debugStore.resume('stepOut') },
+        debug.phase === 'running'
+          ? { label: COPY.debugPause, icon: <IconDebugPause size={18} />, hint: formatKeys('F6'), onSelect: () => debugStore.pause() }
+          : { label: COPY.debugContinue, icon: <IconDebugContinue size={18} />, hint: formatKeys('F5'), disabled: debug.phase !== 'paused', onSelect: () => debugStore.resume('continue') },
+        {
+          label: COPY.debugToggleBreakpoint,
+          icon: <IconBreakpoint size={18} />,
+          hint: formatKeys('F9'),
+          startsGroup: true,
+          disabled: !activePath,
+          onSelect: toggleBreakpointHere,
+        },
+        { label: COPY.debugRemoveAllBreakpoints, icon: <IconCloseAll size={18} />, disabled: debug.breakpoints.length === 0, onSelect: () => debugStore.removeAll() },
         {
           label: COPY.menuFormatFile,
           icon: <IconWand size={18} />,
@@ -2996,6 +3177,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         // Search is a VIEW now — the editor's own find panel stays on Mod+F / Edit > Find.
         onShowSearch={() => showSideView('search')}
         onShowExtensions={() => showSideView('extensions')}
+        onShowDebug={() => showSideView('debug')}
         manageItems={manageItems}
       />
 
@@ -3037,7 +3219,16 @@ function Ide({ report }: { report: CapabilityReport }) {
                 : 'hidden')
           }
         >
-          {sideView === 'search' ? (
+          {sideView === 'debug' ? (
+            <DebugView
+              canDebug={canDebugEntry}
+              entry={runControl.entry}
+              busy={runner.busy}
+              onStartDebugging={startDebugging}
+              onReveal={revealLine}
+              lineText={lineText}
+            />
+          ) : sideView === 'search' ? (
             <SearchView project={project} revision={revision} onOpenMatch={openAt} />
           ) : sideView === 'extensions' ? (
             <ExtensionsView onToggle={toggleExtension} />
@@ -3107,6 +3298,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // Run + file-scoped "⋯" — VS Code's editor-actions corner; Run's one home now
                 // (left the title bar and console header).
                 runControl={runControl}
+                debugControl={{ can: canDebugEntry && !runner.busy, entry: runControl.entry, onDebug: startDebugging }}
                 moreItems={deskMoreItems}
               />
 
@@ -3155,7 +3347,11 @@ function Ide({ report }: { report: CapabilityReport }) {
                   projectWords={projectWords}
                   onCursor={(line, col) => setCursor({ line, col })}
                   onDiagnostics={setProblems}
+                  indentDisplay={indentPref}
+                  onIndent={setIndentInfo}
                 />
+                {/* VS Code's floating debug toolbar, over the editor while a session runs. */}
+                <DebugToolbar onRestart={restartDebugging} onStop={runner.stop} />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
                     menu. Quiet at rest, semi-transparent, above the home indicator. */}
                 {activePath ? (
@@ -3286,6 +3482,8 @@ function Ide({ report }: { report: CapabilityReport }) {
           // Ln/Col opens Go to Line — the quick input's ':' face, VS Code's
           // own behaviour for that status item.
           onGotoLine={() => setQuickPick('goto')}
+          indent={indentInfo}
+          onIndentMenu={setIndentMenu}
         />
       )}
     </div>
@@ -3368,6 +3566,25 @@ function Ide({ report }: { report: CapabilityReport }) {
           onExists={() => notify(COPY.noteGenerateExists)}
           onError={() => notify(COPY.noteGenerateFailed, 'error')}
           onClose={() => setGenMenu(null)}
+        />
+      ) : null}
+
+      {/* Indentation display size — from the status bar's "Spaces: N" or the palette. */}
+      {indentMenu ? (
+        <Menu
+          anchor={indentMenu}
+          label={COPY.indentMenuLabel}
+          onClose={() => {
+            setIndentMenu(null)
+            editorRef.current?.focus()
+          }}
+          items={INDENT_DISPLAY_CHOICES.map((choice, i) => ({
+            id: String(choice),
+            label: choice === 'auto' ? COPY.indentAuto : String(choice),
+            groupLabel: i === 0 ? COPY.indentMenuLabel : undefined,
+            icon: choice === indentPref ? <IconCheck size={16} /> : undefined,
+            onSelect: () => setIndentPref(choice),
+          }))}
         />
       ) : null}
 

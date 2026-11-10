@@ -3,6 +3,8 @@ import type { Project } from '../fs/project'
 import { splitPath } from '../fs/project'
 import { FileBadge } from './FileBadge'
 import { RunControl, type RunControlState } from './RunControl'
+import { IconDebugAlt } from './ui/DebugIcons'
+import { formatKeys } from '../ui/keys'
 import { IconButton } from './ui/Button'
 import { IconClose, IconMore } from './ui/Icons'
 import { Menu, type MenuAnchor, type MenuItem } from './ui/Menu'
@@ -21,6 +23,8 @@ export interface TabsProps {
   /** Run/Stop's one home: the strip's trailing group. Same state object as the console
    *  header's copy, so the two can never drift. */
   runControl?: RunControlState
+  /** The bug-play beside Run: Start Debugging for the entry. Rendered only while it can act. */
+  debugControl?: { can: boolean; entry: string | null; onDebug(): void }
   /**
    * The strip's "⋯" menu — file-scoped actions only (Format, Share as
    * image…). The app-scoped rows live in the menu bar.
@@ -82,7 +86,7 @@ const TAB_CLOSE_REVEAL =
  * unambiguous in greyscale and sunlight. Adds what was missing from a basic tab strip:
  * middle-click to close, Cmd/Ctrl+W, Close-others/-all, and a dirty dot that becomes a ×.
  */
-export function Tabs({ project, tabs, activePath, onSelect, onClose, onCloseMany, runControl, moreItems }: TabsProps) {
+export function Tabs({ project, tabs, activePath, onSelect, onClose, onCloseMany, runControl, debugControl, moreItems }: TabsProps) {
   const stripRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; path: string } | null>(null)
@@ -150,6 +154,15 @@ export function Tabs({ project, tabs, activePath, onSelect, onClose, onCloseMany
         }
       >
         {runControl ? <RunControl run={runControl} placement="tabs" /> : null}
+        {debugControl?.can ? (
+          <IconButton
+            label={COPY.debugStartWhat(debugControl.entry ?? '')}
+            title={`${COPY.debugStartWhat(debugControl.entry ?? '')} (${formatKeys('F5')})`}
+            onClick={debugControl.onDebug}
+          >
+            <IconDebugAlt size={18} />
+          </IconButton>
+        ) : null}
         {moreItems?.length ? (
           <IconButton
             label={COPY.tabsMore}

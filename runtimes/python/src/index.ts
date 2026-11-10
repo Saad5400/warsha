@@ -11,3 +11,14 @@
 export { PythonRuntime } from './pythonRuntime'
 export type { PythonRuntimeOptions, PythonRunSession } from './pythonRuntime'
 export type { RunIO, RunSession, Runtime, SourceFile } from './types'
+export type {
+  DebugBreakpoint,
+  DebugFrame,
+  DebugOptions,
+  DebugScope,
+  DebugSession,
+  DebugStepCommand,
+  DebugStopped,
+  DebugValue,
+  RunOptions,
+} from './types'

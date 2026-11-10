@@ -17,7 +17,7 @@ export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
  * see INTEGRATION.md §2.
  */
 const registry: Record<LangId, Runtime> = {
-  java: new JavaRuntime({ workerUrl: assetUrl('warsha-jvm.worker.js') }),
+  java: new JavaRuntime({ workerUrl: assetUrl('warsha-jvm.worker.js'), loadJavaParser: () => import('../actions/generate').then((m) => m.loadJavaParser()) }),
   python: new PythonRuntime(),
   // .NET-wasm + Roslyn; module worker loaded by URL (not bundled) so its relative
   // dotnet.js import resolves. See runtimes/csharp/INTEGRATION.md.

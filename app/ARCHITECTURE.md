@@ -214,6 +214,27 @@ disappears. A first visit costs one automatic reload while the service worker ac
 `capabilities.ts` treats missing isolation as a **warning, never fatal**. HTTPS is non-negotiable in
 production (localhost qualifies in dev); without a secure context the shim bails out silently.
 
+### 2.6 Debugging (`runtime/debug.ts`)
+
+A DAP-shaped contract, optional per engine. `canDebug(entryPath)` gates the UI; `run(…, { debug:
+{ breakpoints, stopOnEntry? } })` returns a session whose `debug` field is a `DebugSession`
+(`resume(continue|stepOver|stepInto|stepOut)`, `pause`, `setBreakpoints`, lazy `variables(ref)`,
+optional `evaluate`). Stops arrive on `io.onDebugStop({ reason, frames })`; each frame carries its
+scopes. Without `evaluate`, the shell resolves watch/hover paths (`a.b[2]`) itself.
+
+Every engine instruments the student's source (a hook before each statement, same line) and parks
+the program thread while stopped — Python `sys.settrace`; JS acorn (TS line-mapped via esbuild's
+sourcemap); Java tree-sitter + `warsha.Dbg` in `warsha-boot.jar`; C# a Roslyn rewriter + `WarshaDbg`;
+C tree-sitter-c + a shadow stack read out of linear memory. Parking is `Atomics.wait` on a
+SharedArrayBuffer (Java: an async CheerpJ native). A plain Run never pays for any of it.
+
+UI state lives in `debug/store.ts` (breakpoints + watches persisted per project in localStorage);
+`editor/debugExt.ts` draws the gutter, stop arrow, inline values and value hover;
+`DebugView` is the sidebar, `DebugToolbar` the floating bar. Keys follow VS Code (F5, F9, F10, F11,
+Shift+F11, Shift+F5; Ctrl+F5 runs without debugging). Engine limitations are listed in each
+`runtimes/<lang>/INTEGRATION.md`; suites are `tools/qa/debug-*.mjs` (dev server — they use the
+`window.__warshaRuntime` dev seam).
+
 ### Entry-point resolution
 
 `entryCandidates(files)` returns candidates best-first: Java files containing

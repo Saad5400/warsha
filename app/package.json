@@ -12,7 +12,7 @@
     "tutorials:shots": "node tools/tutorials-shots.mjs",
     "prebuild": "npm run assets",
     "predev": "npm run assets",
-    "assets": "mkdir -p public/fonts && cp node_modules/@fontsource-variable/readex-pro/files/readex-pro-latin-wght-normal.woff2 node_modules/@fontsource-variable/readex-pro/files/readex-pro-arabic-wght-normal.woff2 public/fonts/ && cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && cp ../runtimes/clang/src/clang.worker.js public/warsha-clang.worker.js && cp node_modules/esbuild-wasm/esbuild.wasm public/warsha-esbuild.wasm && cp node_modules/prettier-plugin-java/dist/tree-sitter-java_orchard.wasm public/warsha-tree-sitter-java.wasm && cp node_modules/@tailwindcss/browser/dist/index.global.js public/warsha-tailwind.js && node tools/prebuild-react.mjs && node tools/prebuild-svelte.mjs && node tools/prebuild-vue.mjs && ../runtimes/java/fetch-compiler.sh public && ../runtimes/java/build-bootstrap.sh public && ../runtimes/csharp/build.sh public/warsha-dotnet"
+    "assets": "mkdir -p public/fonts && cp node_modules/@fontsource-variable/readex-pro/files/readex-pro-latin-wght-normal.woff2 node_modules/@fontsource-variable/readex-pro/files/readex-pro-arabic-wght-normal.woff2 public/fonts/ && cp ../runtimes/java/src/jvm.worker.js public/warsha-jvm.worker.js && cp ../runtimes/clang/src/clang.worker.js public/warsha-clang.worker.js && cp node_modules/esbuild-wasm/esbuild.wasm public/warsha-esbuild.wasm && cp node_modules/prettier-plugin-java/dist/tree-sitter-java_orchard.wasm public/warsha-tree-sitter-java.wasm && cp node_modules/@tailwindcss/browser/dist/index.global.js public/warsha-tailwind.js && node tools/prebuild-react.mjs && node tools/prebuild-svelte.mjs && node tools/prebuild-vue.mjs && ../runtimes/java/fetch-compiler.sh public && ../runtimes/java/build-bootstrap.sh public && ../runtimes/csharp/build.sh public/warsha-dotnet && cp ../runtimes/clang/src/instrument.js public/warsha-clang-instrument.js && cp node_modules/web-tree-sitter/web-tree-sitter.js public/warsha-web-tree-sitter.js && cp node_modules/web-tree-sitter/web-tree-sitter.wasm public/warsha-web-tree-sitter.wasm && cp node_modules/tree-sitter-c/tree-sitter-c.wasm public/warsha-tree-sitter-c.wasm"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",
@@ -38,6 +38,7 @@
     "@radix-ui/react-tooltip": "^1.2.16",
     "@tailwindcss/browser": "^4.3.3",
     "@vue/compiler-sfc": "^3.5.41",
+    "acorn": "^8.19.0",
     "class-variance-authority": "^0.7.1",
     "esbuild-wasm": "^0.25.12",
     "fflate": "^0.8.2",
@@ -62,6 +63,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.5",
     "tailwindcss": "^4.3.3",
+    "tree-sitter-c": "^0.24.1",
     "typescript": "^5.7.3",
     "vite": "^8.2.0"
   }

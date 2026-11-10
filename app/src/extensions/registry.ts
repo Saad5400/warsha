@@ -57,8 +57,8 @@ export const EXTENSIONS: readonly ExtDescriptor[] = [
   // A `behavior` flag read by the linter (editor/lint.ts), not the editor
   // compartment — so setExtensions forces a re-lint to apply it live.
   { id: 'beginner-helper', category: 'diagnostics', kind: 'behavior', default: true },
-  { id: 'indent-guides', category: 'appearance', kind: 'editor', default: true, build: () => indentGuides(4) },
-  { id: 'indent-rainbow', category: 'appearance', kind: 'editor', default: false, build: () => indentRainbow(4) },
+  { id: 'indent-guides', category: 'appearance', kind: 'editor', default: true, build: () => indentGuides() },
+  { id: 'indent-rainbow', category: 'appearance', kind: 'editor', default: false, build: () => indentRainbow() },
   { id: 'rainbow-brackets', category: 'appearance', kind: 'editor', default: true, build: () => rainbowBrackets() },
   { id: 'format-on-save', category: 'formatting', kind: 'behavior', default: true },
 ]

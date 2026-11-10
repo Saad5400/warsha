@@ -40,6 +40,7 @@ public class Server {
         try {
             Class.forName("warsha.Bridge");
             Class.forName("warsha.Build");
+            Class.forName("warsha.Dbg");
             Class.forName("warsha.Launcher");
             Class.forName("warsha.Platform");
             Class.forName("warsha.Traces");

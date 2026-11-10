@@ -1,4 +1,17 @@
-import type { LoadPhase, ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
+import type {
+  DebugBreakpoint,
+  DebugSession,
+  DebugStepCommand,
+  DebugStopped,
+  DebugValue,
+  LoadPhase,
+  ProgressReport,
+  RunIO,
+  RunOptions,
+  RunSession,
+  Runtime,
+  SourceFile,
+} from './types'
 
 /** Bytes reserved in the shared buffer for one stdin line (matches the worker). */
 const STDIN_CAPACITY = 64 * 1024
@@ -9,6 +22,29 @@ const STATE_EMPTY = 0
 const STATE_LINE = 1
 const STATE_EOF = 2
 
+/**
+ * Debugger shared memory (layout documented in dotnet.worker.js): an Int32
+ * control header, the breakpoint text at D_BP, the pending command at D_CMD.
+ * Shared because the worker's event loop is blocked inside .NET for the whole
+ * run — a postMessage would never be read while the program runs or is parked.
+ */
+const D_BP = 64
+const D_BP_CAP = 256 * 1024
+const D_CMD = D_BP + D_BP_CAP
+const D_CMD_CAP = 64 * 1024
+const D_PAUSE = 0
+const D_BPGEN = 1
+const D_BPLEN = 2
+const D_CMDSTATE = 3
+const D_CMDLEN = 4
+
+const STEP_LETTER: Record<DebugStepCommand, string> = {
+  continue: 'c',
+  stepOver: 'o',
+  stepInto: 'i',
+  stepOut: 'u',
+}
+
 type FromWorker =
   | { type: 'progress'; phase: LoadPhase; message: string; loaded?: number; total?: number }
   | { type: 'ready'; version: string; bootMs: number; refs?: number }
@@ -16,6 +52,8 @@ type FromWorker =
   | { type: 'stderr'; text: string }
   | { type: 'stdin-request' }
   | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
+  | { type: 'debug-stop'; json: string }
+  | { type: 'debug-vars'; json: string }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
 
@@ -39,6 +77,17 @@ interface Active {
   io: RunIO
   ended: boolean
   awaitingStdin: boolean
+  debug: DebugState | null
+}
+
+interface DebugState {
+  parked: boolean
+  /** Commands not yet handed to the worker; one shared slot, so they go one at a time. */
+  queue: string[]
+  /** A "v" command is out and its debug-vars answer has not arrived yet. */
+  busy: boolean
+  nextId: number
+  pending: Map<number, { resolve: (v: DebugValue[]) => void; reject: (e: Error) => void }>
 }
 
 const NOT_ISOLATED =
@@ -63,6 +112,9 @@ export class CSharpRuntime implements Runtime {
   private sab: SharedArrayBuffer | null = null
   private ctrl: Int32Array | null = null
   private data: Uint8Array | null = null
+  private dsab: SharedArrayBuffer | null = null
+  private dctrl: Int32Array | null = null
+  private dbytes: Uint8Array | null = null
 
   private booting: Promise<void> | null = null
   private bootSettle: { resolve: () => void; reject: (e: Error) => void } | null = null
@@ -101,7 +153,12 @@ export class CSharpRuntime implements Runtime {
     }
   }
 
-  async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
+  /** Any .cs entry can run under the debugger (Roslyn instruments the whole project). */
+  canDebug(entryPath: string): boolean {
+    return /\.cs$/i.test(entryPath)
+  }
+
+  async run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession> {
     if (this.active && !this.active.ended) {
       throw new Error('A C# program is already running; kill() it before running another.')
     }
@@ -121,20 +178,139 @@ export class CSharpRuntime implements Runtime {
     const ctrl = this.ctrl
     if (!worker || !ctrl) throw new Error('C# runtime is not ready.')
 
-    const active: Active = { io, ended: false, awaitingStdin: false }
+    const debugOpts = opts?.debug
+    const active: Active = {
+      io,
+      ended: false,
+      awaitingStdin: false,
+      debug: debugOpts ? { parked: false, queue: [], busy: false, nextId: 1, pending: new Map() } : null,
+    }
     this.active = active
 
     // A line submitted after a previous kill may still be sitting in the buffer.
     Atomics.store(ctrl, 0, STATE_EMPTY)
+    if (this.dctrl) {
+      Atomics.store(this.dctrl, D_PAUSE, 0)
+      Atomics.store(this.dctrl, D_CMDSTATE, 0)
+    }
+    if (debugOpts) this.writeBreakpoints(debugOpts.breakpoints)
 
-    worker.postMessage({ type: 'run', files: payload, entry })
+    worker.postMessage({
+      type: 'run',
+      files: payload,
+      entry,
+      debug: debugOpts ? (debugOpts.stopOnEntry ? 2 : 1) : 0,
+    })
 
     const session: CSharpRunSession = {
       kill: () => this.killSession(active),
       writeStdin: (line: string) => this.writeStdin(active, line),
       writeEof: () => this.writeEof(active),
     }
+    if (active.debug) session.debug = this.debugSession(active, active.debug)
     return session
+  }
+
+  // --- debugger ---------------------------------------------------------------
+
+  private debugSession(active: Active, dbg: DebugState): DebugSession {
+    return {
+      resume: (cmd: DebugStepCommand) => {
+        if (active.ended || !dbg.parked) return
+        dbg.parked = false
+        this.sendCommand(dbg, STEP_LETTER[cmd] ?? 'c')
+        active.io.onDebugResume?.()
+      },
+      pause: () => {
+        if (active.ended || dbg.parked || !this.dctrl) return
+        Atomics.store(this.dctrl, D_PAUSE, 1)
+      },
+      setBreakpoints: (bps: DebugBreakpoint[]) => {
+        if (active.ended) return
+        this.writeBreakpoints(bps)
+      },
+      variables: (ref: number) => {
+        if (active.ended || !dbg.parked) {
+          return Promise.reject(new Error('The program is running; values are only available while it is paused.'))
+        }
+        const id = dbg.nextId++
+        return new Promise<DebugValue[]>((resolve, reject) => {
+          dbg.pending.set(id, { resolve, reject })
+          this.sendCommand(dbg, `v ${id} ${Math.trunc(ref)}`)
+        })
+      },
+    }
+  }
+
+  /** Replace the breakpoint set the program polls (generation bump = "re-read"). */
+  private writeBreakpoints(bps: DebugBreakpoint[]): void {
+    const dctrl = this.dctrl
+    const dbytes = this.dbytes
+    if (!dctrl || !dbytes) return
+    const rows: string[] = []
+    for (const bp of bps) {
+      try {
+        if (bp.line > 0) rows.push(`${normalizePath(bp.path)}\t${Math.trunc(bp.line)}`)
+      } catch {
+        /* a path outside the project can never be hit */
+      }
+    }
+    let bytes = this.encoder.encode(rows.join('\n'))
+    if (bytes.length > D_BP_CAP) bytes = bytes.subarray(0, D_BP_CAP)
+    dbytes.set(bytes, D_BP)
+    Atomics.store(dctrl, D_BPLEN, bytes.length)
+    Atomics.add(dctrl, D_BPGEN, 1)
+  }
+
+  private sendCommand(dbg: DebugState, cmd: string): void {
+    dbg.queue.push(cmd)
+    this.flushCommands(dbg)
+  }
+
+  private flushCommands(dbg: DebugState): void {
+    const dctrl = this.dctrl
+    const dbytes = this.dbytes
+    if (!dctrl || !dbytes || dbg.busy) return
+    const cmd = dbg.queue.shift()
+    if (cmd === undefined) return
+    const bytes = this.encoder.encode(cmd).subarray(0, D_CMD_CAP)
+    dbytes.set(bytes, D_CMD)
+    Atomics.store(dctrl, D_CMDLEN, bytes.length)
+    Atomics.store(dctrl, D_CMDSTATE, 1)
+    Atomics.notify(dctrl, D_CMDSTATE)
+    dbg.busy = cmd.startsWith('v ')
+  }
+
+  private onDebugStop(json: string): void {
+    const active = this.active
+    const dbg = active?.debug
+    if (!active || active.ended || !dbg) return
+    let stopped: DebugStopped
+    try {
+      stopped = JSON.parse(json) as DebugStopped
+    } catch {
+      stopped = { reason: 'pause', frames: [] }
+    }
+    dbg.parked = true
+    active.io.onDebugStop?.(stopped)
+  }
+
+  private onDebugVars(json: string): void {
+    const dbg = this.active?.debug
+    if (!dbg) return
+    dbg.busy = false
+    try {
+      const msg = JSON.parse(json) as { id: number; vars?: DebugValue[]; error?: string }
+      const waiter = dbg.pending.get(msg.id)
+      dbg.pending.delete(msg.id)
+      if (waiter) {
+        if (msg.vars) waiter.resolve(msg.vars)
+        else waiter.reject(new Error(msg.error || 'That value is no longer available.'))
+      }
+    } catch {
+      /* malformed answer: the waiter is rejected when the session ends */
+    }
+    this.flushCommands(dbg)
   }
 
   isReady(): boolean {
@@ -165,6 +341,11 @@ export class CSharpRuntime implements Runtime {
       this.ctrl = new Int32Array(this.sab, 0, 2)
       this.data = new Uint8Array(this.sab, HEADER_BYTES)
     }
+    if (!this.dsab) {
+      this.dsab = new SharedArrayBuffer(D_CMD + D_CMD_CAP)
+      this.dctrl = new Int32Array(this.dsab, 0, 8)
+      this.dbytes = new Uint8Array(this.dsab)
+    }
 
     this.lastProgress = null
 
@@ -187,7 +368,7 @@ export class CSharpRuntime implements Runtime {
     const promise = new Promise<void>((resolve, reject) => {
       this.bootSettle = { resolve, reject }
     })
-    worker.postMessage({ type: 'init', sab: this.sab })
+    worker.postMessage({ type: 'init', sab: this.sab, dsab: this.dsab })
     return promise
   }
 
@@ -232,6 +413,14 @@ export class CSharpRuntime implements Runtime {
         }
         return
 
+      case 'debug-stop':
+        this.onDebugStop(msg.json)
+        return
+
+      case 'debug-vars':
+        this.onDebugVars(msg.json)
+        return
+
       case 'done':
         this.finish(msg.code)
         return
@@ -271,6 +460,12 @@ export class CSharpRuntime implements Runtime {
     active.ended = true
     active.awaitingStdin = false
     this.active = null
+    if (active.debug) {
+      active.debug.parked = false
+      active.debug.queue = []
+      for (const waiter of active.debug.pending.values()) waiter.reject(new Error('The program has ended.'))
+      active.debug.pending.clear()
+    }
     if (stderrNote) active.io.onStderr(stderrNote)
     active.io.onExit(code)
   }

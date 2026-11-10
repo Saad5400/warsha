@@ -78,6 +78,43 @@ by URL. The worker currently imports `@wasmer/sdk` and `browser_wasi_shim` from 
 (CDN), which works under the app's COEP-credentialless isolation. Versions are pinned in
 the worker's import URLs.
 
+## Debugging (line-by-line)
+
+`run(files, entry, io, { debug })` implements the debug protocol in
+`app/src/runtime/debug.ts`; `canDebug(path)` is true for `.c`. There is no in-browser
+wasm debugger, so a debug run compiles an **instrumented copy** of the sources (plain
+runs are untouched: no parser load, `-O1`, no hooks):
+
+- `src/instrument.js` parses every `.c`/`.h` with tree-sitter (`tree-sitter-c` grammar
+  on `web-tree-sitter`, both loaded by the worker on the first debug run only) and
+  inserts, **always on the same line**, `__wd_line(file, line)` before each statement
+  and inside loop conditions, a cleanup-guarded shadow-frame `__wd_enter` per function,
+  `__wd_reg(name, &var, typeDescriptor, dims…)` after each declaration (cleanup-guarded
+  so leaving the block unregisters), and a per-TU constructor registering globals and
+  every visible struct's layout (`offsetof`/`sizeof`). The hooks are `warsha.*` wasm
+  imports declared in a prelude force-included with `-include`, so no line moves.
+- Build: a plain `-fsyntax-only` pass first (the student-facing diagnostics, with the
+  student's own columns), then the instrumented build at `-O0 -w`. If only the
+  struct-layout constructor fails it retries without layouts; if the instrumentation
+  still won't compile, the program runs **plainly** with a one-line console note.
+- The worker's `DebugEngine` serves the imports: breakpoints/steps/pause are decided in
+  `line`; a stop posts `dbg-stop` and **parks inside the import on `Atomics.wait`** over
+  a second SharedArrayBuffer, through which the main thread sends resume, pause,
+  breakpoint sets and `variables(ref)` requests (the worker's event loop is blocked for
+  the whole run). Values are decoded straight from wasm memory by type descriptor.
+- A trap (divide by zero, out-of-bounds, abort) becomes an `exception` stop with the
+  shadow call stack intact; resuming then ends the run as before.
+
+Known limits: one stop per line (several statements on a line, or a one-line loop, are
+one step); statements inside `#if`/`#ifdef` blocks *within* a function body, and lines
+the parser can't read cleanly (typically a statement-like macro such as
+`FOREACH(x) {`, plus the statement after it), get no hooks; `for`-loop variables
+declared over several lines aren't shown; in functions that use `goto` (or case labels
+inside nested blocks) an inner-block variable can linger in Locals after its block
+ends; `long double` shows as `<long double>`; function pointers aren't expandable; no
+`evaluate` (the shell resolves `a.b[2]` paths itself); warnings aren't repeated in a
+debug run's instrumented build (the syntax pass shows them).
+
 ## Known follow-ups
 
 - **Self-host the toolchain (M3).** Fetch `@wasmer/sdk`, the WASI shim, and the

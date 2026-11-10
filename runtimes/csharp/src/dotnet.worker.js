@@ -6,14 +6,17 @@
  * with Roslyn (see Program.cs `Runner`).
  *
  * Protocol (main -> worker):
- *   { type: "init", sab }
- *   { type: "run", files: { [path]: content }, entry: string }
+ *   { type: "init", sab, dsab }
+ *   { type: "run", files: { [path]: content }, entry: string, debug: 0 | 1 | 2 }
+ *     debug: 0 plain run, 1 under the debugger, 2 debugger + stop on entry
  * (worker -> main):
  *   { type: "progress", phase, message, loaded?, total? }
  *   { type: "ready", version, bootMs }
  *   { type: "stdout" | "stderr", text }
  *   { type: "stdin-request" }
  *   { type: "files", written, deleted, skipped }   sent before "done" (Runner.Changes)
+ *   { type: "debug-stop", json }    the program is parked (DebugStopped as JSON)
+ *   { type: "debug-vars", json }    {"id", "vars" | "error"} answering a "v" command
  *   { type: "done", code, ms }
  *   { type: "fatal", text, duringBoot? }
  */
@@ -27,6 +30,48 @@ let data = null
 const decoder = new TextDecoder()
 
 let exports = null
+
+// --- debugger shared-memory protocol (dsab) ---------------------------------
+// While the program runs, this worker's event loop is blocked inside .NET, so
+// everything the main thread says to a running/parked program goes through
+// shared memory, never postMessage:
+//   dctrl[0] pause flag (main sets 1; Dbg.Poll exchanges it back to 0)
+//   dctrl[1] breakpoint generation (main bumps it after rewriting the set)
+//   dctrl[2] byte length of the breakpoint text ("path\tline" lines) at D_BP
+//   dctrl[3] command state: 0 none, 1 a command is waiting at D_CMD
+//   dctrl[4] byte length of the command
+// Commands: "c" continue, "o" step over, "i" step into, "u" step out,
+// "v <id> <ref>" children of a value (answered with debug-vars, stays parked).
+const D_BP = 64
+const D_BP_CAP = 256 * 1024
+const D_CMD = D_BP + D_BP_CAP
+let dctrl = null
+let dbytes = null
+let lastBpGen = -1
+
+function debugPoll() {
+  let r = 0
+  if (Atomics.exchange(dctrl, 0, 0) !== 0) r |= 1
+  if (Atomics.load(dctrl, 1) !== lastBpGen) r |= 2
+  return r
+}
+
+function debugBreakpoints() {
+  lastBpGen = Atomics.load(dctrl, 1)
+  const len = Atomics.load(dctrl, 2)
+  return decoder.decode(dbytes.slice(D_BP, D_BP + len))
+}
+
+/** Park the thread until the main thread writes a command; returns it. */
+function debugWait() {
+  while (Atomics.load(dctrl, 3) === 0) {
+    Atomics.wait(dctrl, 3, 0, 250)
+  }
+  const len = Atomics.load(dctrl, 4)
+  const cmd = decoder.decode(dbytes.slice(D_CMD, D_CMD + len))
+  Atomics.store(dctrl, 3, 0)
+  return cmd
+}
 
 /** The curated reference set for typical student console code. Roslyn only binds
  *  what a program uses; netstandard + System.Runtime + CoreLib forward most
@@ -133,6 +178,14 @@ async function boot() {
       writeOut: (text) => self.postMessage({ type: 'stdout', text }),
       writeErr: (text) => self.postMessage({ type: 'stderr', text }),
       readLine: () => requestStdinLine(),
+      dbgPoll: () => debugPoll(),
+      dbgBreakpoints: () => debugBreakpoints(),
+      dbgStop: (json) => {
+        self.postMessage({ type: 'debug-stop', json })
+        return debugWait()
+      },
+      dbgWait: () => debugWait(),
+      dbgReply: (json) => self.postMessage({ type: 'debug-vars', json }),
     },
   })
 
@@ -151,6 +204,15 @@ async function boot() {
     } catch (e) {
       self.postMessage({ type: 'stderr', text: `[warsha] failed reference ${dll}: ${e}\n` })
     }
+  }
+
+  // The harness assembly itself, referenced only by debug compilations (the
+  // probes call __Warsha.Dbg in it). Missing → debug runs degrade to plain runs.
+  try {
+    const r = await fetch('./_framework/Warsha.CSharp.dll')
+    if (r.ok) exports.Runner.SetDebugReference(new Uint8Array(await r.arrayBuffer()))
+  } catch {
+    /* debugging unavailable; plain runs unaffected */
   }
 
   self.postMessage({
@@ -194,6 +256,10 @@ self.onmessage = (ev) => {
   if (msg.type === 'init') {
     ctrl = new Int32Array(msg.sab, 0, 2)
     data = new Uint8Array(msg.sab, 8)
+    if (msg.dsab) {
+      dctrl = new Int32Array(msg.dsab, 0, 8)
+      dbytes = new Uint8Array(msg.dsab)
+    }
     boot().catch((e) =>
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e), duringBoot: true }),
     )
@@ -204,7 +270,8 @@ self.onmessage = (ev) => {
       const paths = Object.keys(msg.files)
       const contents = paths.map((p) => msg.files[p])
       const t0 = performance.now()
-      const code = exports.Runner.Run(paths, contents, msg.entry)
+      lastBpGen = -1
+      const code = exports.Runner.Run(paths, contents, msg.entry, dctrl ? msg.debug | 0 : 0)
       postFileChanges()
       self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
     } catch (e) {

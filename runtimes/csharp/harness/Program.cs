@@ -49,6 +49,16 @@ public partial class Runner
     [JSExport]
     internal static int ReferenceCount() => References.Count;
 
+    /// <summary>This harness assembly (Warsha.CSharp.dll) as a reference for
+    /// debug runs only, under the extern alias the instrumented code uses — so
+    /// the probes bind to __Warsha.Dbg and nothing leaks into plain runs.</summary>
+    private static MetadataReference? DebugReference;
+
+    [JSExport]
+    internal static void SetDebugReference(byte[] peBytes)
+        => DebugReference = MetadataReference.CreateFromStream(new MemoryStream(peBytes))
+            .WithAliases(new[] { Instrumenter.Alias });
+
     // --- compile + run ---------------------------------------------------------
 
     /// <summary>
@@ -56,9 +66,10 @@ public partial class Runner
     /// entry point. Returns 0 on a clean exit, the program's exit code if it
     /// calls Environment.Exit, or 1 on a compile error / unhandled exception.
     /// Diagnostics and exceptions stream out through WriteErr.
+    /// `debugMode`: 0 plain run, 1 under the debugger, 2 debugger + stop on entry.
     /// </summary>
     [JSExport]
-    internal static int Run(string[] paths, string[] contents, string entryPath)
+    internal static int Run(string[] paths, string[] contents, string entryPath, int debugMode)
     {
         // Every project file arrives (so the program can read its data files);
         // only the .cs ones are source.
@@ -89,12 +100,34 @@ public partial class Runner
         var compilation = CSharpCompilation.Create("UserProgram", trees, References, options);
 
         using var peStream = new MemoryStream();
-        var emit = compilation.Emit(peStream);
-        if (!emit.Success)
+        var debug = debugMode != 0 && DebugReference != null;
+        string[] debugPaths = Array.Empty<string>();
+        if (debug)
         {
-            foreach (var d in emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
-                WriteErr(d.ToString() + "\n");
-            return 1;
+            // Errors come from the student's own trees, so every diagnostic's
+            // line is theirs; only a clean program is instrumented.
+            var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+            if (errors.Count > 0)
+            {
+                foreach (var d in errors) WriteErr(d.ToString() + "\n");
+                return 1;
+            }
+            debug = EmitInstrumented(compilation, trees, parse, peStream, out debugPaths);
+            if (!debug)
+            {
+                WriteErr("[Warsha: the debugger could not prepare this program, so it runs without stopping.]\n");
+                peStream.SetLength(0);
+            }
+        }
+        if (!debug)
+        {
+            var emit = compilation.Emit(peStream);
+            if (!emit.Success)
+            {
+                foreach (var d in emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+                    WriteErr(d.ToString() + "\n");
+                return 1;
+            }
         }
 
         peStream.Seek(0, SeekOrigin.Begin);
@@ -118,6 +151,11 @@ public partial class Runner
             }
 
             PrepareWorkspace(paths, contents);
+            if (debug)
+            {
+                __Warsha.Dbg.Reset(debugPaths, stopOnEntry: debugMode == 2);
+                __Warsha.Dbg.SetUserAssembly(assembly);
+            }
 
             Console.SetOut(new CallbackWriter(WriteOut));
             Console.SetError(new CallbackWriter(WriteErr));
@@ -146,9 +184,52 @@ public partial class Runner
         }
         finally
         {
+            if (debug) __Warsha.Dbg.End();
             Console.SetOut(savedOut);
             Console.SetError(savedErr);
             alc.Unload();
+        }
+    }
+
+    /// <summary>
+    /// Rewrite every student tree with probes (Instrumenter) and emit that
+    /// instead. File ids index `debugPaths` (the .cs paths, as the shell names
+    /// them). False — and the caller runs the plain program — if anything about
+    /// instrumentation fails; the reason goes to the browser console.
+    /// </summary>
+    private static bool EmitInstrumented(CSharpCompilation compilation, List<SyntaxTree> trees, CSharpParseOptions parse,
+        MemoryStream peStream, out string[] debugPaths)
+    {
+        debugPaths = Array.Empty<string>();
+        try
+        {
+            var t0 = DateTime.UtcNow;
+            var entry = compilation.GetEntryPoint(default);
+            var paths = new List<string>();
+            var rewritten = new List<SyntaxTree>(trees.Count);
+            foreach (var tree in trees)
+            {
+                if (tree.FilePath == "__WarshaImplicitUsings.cs") { rewritten.Add(tree); continue; }
+                var id = paths.Count;
+                paths.Add(tree.FilePath);
+                rewritten.Add(Instrumenter.Rewrite(tree, compilation.GetSemanticModel(tree), id, entry, parse));
+            }
+            var instrumented = compilation.RemoveAllSyntaxTrees().AddSyntaxTrees(rewritten).AddReferences(DebugReference!);
+            var emit = instrumented.Emit(peStream);
+            if (!emit.Success)
+            {
+                foreach (var d in emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(20))
+                    Console.WriteLine("[warsha-debug] instrumentation error: " + d);
+                return false;
+            }
+            Console.WriteLine($"[warsha-debug] instrumented in {(DateTime.UtcNow - t0).TotalMilliseconds:F0} ms");
+            debugPaths = paths.ToArray();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[warsha-debug] instrumentation failed: " + ex);
+            return false;
         }
     }
 

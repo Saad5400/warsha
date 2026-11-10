@@ -48,6 +48,7 @@ public class Launcher {
      */
     static int launch(String runId) {
         final Traces traces = Traces.forRun(runId);
+        Dbg.reset();
         installThreadHandler(traces);
 
         int status = 0;
