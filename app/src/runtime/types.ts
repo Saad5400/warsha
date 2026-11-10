@@ -1,3 +1,6 @@
+import type { DebugIO, DebugSession, RunOptions } from './debug'
+export type * from './debug'
+
 export interface SourceFile { path: string; content: string }        // path like "app/Main.java" or "main.py"
 
 /**
@@ -23,7 +26,7 @@ export interface LoadProgress {
  */
 export type ProgressReport = LoadProgress | string
 
-export interface RunIO {
+export interface RunIO extends DebugIO {
   onStdout(text: string): void
   onStderr(text: string): void
   onStdinRequest(): void          // console should focus its input line
@@ -43,7 +46,12 @@ export interface RunIO {
   /** OPTIONAL — progress from inside a run, not the boot before it. Java needs this: its compiler takes ~12s before any output, and without it the console sits on the empty-state placeholder the whole time. */
   onProgress?(report: ProgressReport): void
 }
-export interface RunSession { kill(): void; writeStdin(line: string): void }
+export interface RunSession {
+  kill(): void
+  writeStdin(line: string): void
+  /** Present when the run was started with `opts.debug` on an engine that supports it. */
+  debug?: DebugSession
+}
 
 /**
  * The output surface a runtime drives — 'console' streams stdout/stdin,
@@ -59,7 +67,9 @@ export interface Runtime {
   readonly kind?: RuntimeKind
   /** Heavy, idempotent bootstrap. `ctx` (see `RunContext`) is optional and ignored by every engine but JavaScript, so `load(onProgress)` alone still satisfies this type. */
   load(onProgress: (p: ProgressReport) => void, ctx?: RunContext): Promise<void>
-  run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession>
+  run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession>
+  /** OPTIONAL — true when this engine can run `entryPath` under the debugger (see ./debug.ts). Absent → not debuggable. */
+  canDebug?(entryPath: string): boolean
   /** OPTIONAL — discards the engine (kills any session, terminates the worker); the next load()/run() boots fresh. Called when the shell has lost faith (Stop with no onExit, or unload) since there's no 'worker died' event. */
   dispose?(): void
   /** OPTIONAL — engine-side reformat. Only `PythonRuntime` implements it (via lazily-installed black); Java formats through prettier off-thread instead. Callers must check `isReady()` first, or a format call would silently trigger the full engine download. */

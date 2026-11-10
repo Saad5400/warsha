@@ -146,3 +146,9 @@ function byDepthThenName(a: string, b: string) {
 function dedupe(xs: string[]) {
   return [...new Set(xs)]
 }
+
+// Dev/QA seam: lets tools/qa/debug-*.mjs drive an engine (incl. the debugger)
+// headlessly without clicking through the UI. Absent from production builds.
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  ;(window as unknown as { __warshaRuntime?: unknown }).__warshaRuntime = { runtimeFor, langForPath }
+}
