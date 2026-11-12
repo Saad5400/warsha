@@ -887,22 +887,28 @@ class _WarshaKernel:
             os.chdir(proj)
         self.count += 1
         n = self.count
-        self.labels[cell_path] = n
-        self.sources[cell_path] = source
+        # Every run of a cell compiles under its own filename, "<cell path>@<n>", with
+        # that run's source in linecache: a function defined by an earlier version of the
+        # cell keeps quoting the lines it was compiled from, not the cell's current text.
+        # The debugger strips the "@<n>" (user_path), so breakpoints and frames still
+        # speak the plain cell path.
+        fname = cell_path + "@" + str(n)
+        self.labels[fname] = n
+        self.sources[fname] = source
         self.register_sources()
         self.ns["In"].append(source)
         self.ns["_i" + str(n)] = source
         self.ns["_i"] = source
-        self.current = cell_path
+        self.current = fname
         _warsha_kernel_js.executeInput(n)
         dbg = None
         if debug is not None:
             dbg = _WarshaDebugger(proj, bool(_wkjson.loads(debug).get("stopOnEntry")))
         try:
             if magic is not None:
-                ok = self.cell_magic(_wkjson.loads(magic), code, cell_path, dbg)
+                ok = self.cell_magic(_wkjson.loads(magic), code, fname, dbg)
             else:
-                ok = self.run_code(code, cell_path, dbg, True)
+                ok = self.run_code(code, fname, dbg, True)
         except _WarshaUsageError as e:
             self.usage_error(e)
             ok = False
@@ -986,6 +992,10 @@ class _WarshaKernel:
     def label(self, match):
         path, line, func = match.group(1), match.group(2), match.group(3)
         n = self.labels.get(path)
+        if n is None:
+            # A cell of another notebook (a function it defined, called from here): its run number is in its name.
+            v = _wre.search(r"@(\d+)$", path)
+            n = int(v.group(1)) if v else None
         head = "Cell In[" + (str(n) if n is not None else " ") + "], line " + line
         return head + (", in " + func if func and func != "<module>" else "")
 

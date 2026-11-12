@@ -802,9 +802,10 @@ class _WarshaDebugger:
         elif fn and not fn.startswith("<") and not os.path.isabs(fn) and os.path.isfile(os.path.join(self.proj, fn)):
             p = fn
         elif fn and "#cell=" in fn and not fn.startswith("<") and not os.path.isabs(fn):
-            # A notebook cell ("nb.ipynb#cell=<id>"): no file on disk, but the
-            # student's code all the same; its lines are cell-local.
-            p = fn
+            # A notebook cell ("nb.ipynb#cell=<id>@<run>"): no file on disk, but the
+            # student's code all the same; its lines are cell-local. The "@<run>" that
+            # keeps each run's source apart in linecache is not part of its path.
+            p = fn.rsplit("@", 1)[0] if "@" in fn.rsplit("#cell=", 1)[-1] else fn
         self.paths[code] = p
         return p
 
