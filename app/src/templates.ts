@@ -1272,6 +1272,19 @@ const WEB_EMPTY_INDEX_HTML = `<!doctype html>
 </html>
 `
 
+
+/* Notebook starters: .ipynb is JSON, so these are JSON string literals rather than
+ * template literals — still byte-identical to content/templates/, with no escaping to get wrong. */
+const PY_NB_EMPTY_NOTEBOOK_IPYNB = "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c00\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": []\n  }\n ],\n \"metadata\": {\n  \"kernelspec\": {\n   \"display_name\": \"Python 3\",\n   \"language\": \"python\",\n   \"name\": \"python3\"\n  },\n  \"language_info\": {\n   \"name\": \"python\"\n  }\n },\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n"
+
+const PY_NB_BASICS_NOTEBOOK_IPYNB = "{\n \"cells\": [\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c00\",\n   \"metadata\": {},\n   \"source\": [\n    \"# Python basics, one cell at a time\\n\",\n    \"\\n\",\n    \"A notebook runs code in **cells**. Press **Shift+Enter** (or the ▶ button) to run a cell —\\n\",\n    \"its output appears right under it, and the variables it makes stay available to the cells below.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c01\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"name = \\\"Warsha\\\"\\n\",\n    \"year = 2026\\n\",\n    \"print(\\\"Hello from\\\", name)\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c02\",\n   \"metadata\": {},\n   \"source\": [\n    \"The last line of a cell is shown automatically — no `print` needed.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c03\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"year + 1\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c04\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Lists and loops\\n\",\n    \"\\n\",\n    \"Cells can be re-run in any order. Change the list and run it again.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c05\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"scores = [72, 88, 95, 61]\\n\",\n    \"for s in scores:\\n\",\n    \"    print(s, \\\"passed\\\" if s >= 70 else \\\"try again\\\")\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c06\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"average = sum(scores) / len(scores)\\n\",\n    \"round(average, 1)\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c07\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Functions\\n\",\n    \"\\n\",\n    \"A function defined in one cell can be called from any cell after it.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c08\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"def grade(score):\\n\",\n    \"    if score >= 90:\\n\",\n    \"        return \\\"A\\\"\\n\",\n    \"    if score >= 80:\\n\",\n    \"        return \\\"B\\\"\\n\",\n    \"    if score >= 70:\\n\",\n    \"        return \\\"C\\\"\\n\",\n    \"    return \\\"F\\\"\\n\",\n    \"\\n\",\n    \"[grade(s) for s in scores]\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c09\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Your turn\\n\",\n    \"\\n\",\n    \"`input()` works in a cell too: run this one and type your answer under it.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c0a\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"your_name = input(\\\"What is your name? \\\")\\n\",\n    \"print(f\\\"Nice to meet you, {your_name}!\\\")\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c0b\",\n   \"metadata\": {},\n   \"source\": [\n    \"Handy notebook commands: `%who` lists your variables, `%time` times a line, and `len?` shows help.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c0c\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"%who\"\n   ]\n  }\n ],\n \"metadata\": {\n  \"kernelspec\": {\n   \"display_name\": \"Python 3\",\n   \"language\": \"python\",\n   \"name\": \"python3\"\n  },\n  \"language_info\": {\n   \"name\": \"python\"\n  }\n },\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n"
+
+const PY_NB_PANDAS_NOTEBOOK_IPYNB = "{\n \"cells\": [\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c00\",\n   \"metadata\": {},\n   \"source\": [\n    \"# Data with pandas\\n\",\n    \"\\n\",\n    \"`scores.csv` sits next to this notebook. pandas reads it into a **DataFrame** — a table you can\\n\",\n    \"filter, sort and summarise. (The first run downloads pandas once; after that it is instant.)\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c01\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"import pandas as pd\\n\",\n    \"\\n\",\n    \"df = pd.read_csv(\\\"scores.csv\\\")\\n\",\n    \"df.head()\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c02\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Explore\\n\",\n    \"\\n\",\n    \"How big is it, and what does each column look like?\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c03\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"df.shape\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c04\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"df.describe()\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c05\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Filter and sort\\n\",\n    \"\\n\",\n    \"Rows where a condition holds, then the best scores first.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c06\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"passed = df[df[\\\"score\\\"] >= 70]\\n\",\n    \"passed.sort_values(\\\"score\\\", ascending=False)\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c07\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Group\\n\",\n    \"\\n\",\n    \"Average score per section.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c08\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"df.groupby(\\\"section\\\")[\\\"score\\\"].mean().round(1)\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c09\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Save a result\\n\",\n    \"\\n\",\n    \"Files a cell writes appear in the explorer.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c0a\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"passed.to_csv(\\\"passed.csv\\\", index=False)\\n\",\n    \"!ls\"\n   ]\n  }\n ],\n \"metadata\": {\n  \"kernelspec\": {\n   \"display_name\": \"Python 3\",\n   \"language\": \"python\",\n   \"name\": \"python3\"\n  },\n  \"language_info\": {\n   \"name\": \"python\"\n  }\n },\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n"
+
+const PY_NB_PANDAS_SCORES_CSV = "name,section,score\nLayla,A,92\nOmar,B,68\nSara,A,85\nYousef,B,74\nNoor,A,59\nAhmed,B,97\nHuda,A,81\nKhalid,B,77\n"
+
+const PY_NB_PLOTTING_NOTEBOOK_IPYNB = "{\n \"cells\": [\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c00\",\n   \"metadata\": {},\n   \"source\": [\n    \"# Plotting with matplotlib\\n\",\n    \"\\n\",\n    \"A plot drawn in a cell shows up under it. (matplotlib downloads once, the first time.)\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c01\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"import matplotlib.pyplot as plt\\n\",\n    \"\\n\",\n    \"x = list(range(10))\\n\",\n    \"y = [v * v for v in x]\\n\",\n    \"\\n\",\n    \"plt.plot(x, y, marker=\\\"o\\\")\\n\",\n    \"plt.title(\\\"Squares\\\")\\n\",\n    \"plt.xlabel(\\\"x\\\")\\n\",\n    \"plt.ylabel(\\\"x squared\\\")\\n\",\n    \"plt.show()\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c02\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Bar chart\\n\",\n    \"\\n\",\n    \"Compare a few values side by side.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c03\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"subjects = [\\\"Math\\\", \\\"Physics\\\", \\\"Programming\\\", \\\"English\\\"]\\n\",\n    \"hours = [6, 4, 8, 3]\\n\",\n    \"\\n\",\n    \"plt.bar(subjects, hours, color=\\\"#7FC4F5\\\")\\n\",\n    \"plt.title(\\\"Study hours this week\\\")\\n\",\n    \"plt.show()\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c04\",\n   \"metadata\": {},\n   \"source\": [\n    \"## Two lines on one plot\\n\",\n    \"\\n\",\n    \"numpy makes whole columns of numbers at once.\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"1a2b3c05\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"import numpy as np\\n\",\n    \"\\n\",\n    \"t = np.linspace(0, 2 * np.pi, 200)\\n\",\n    \"plt.plot(t, np.sin(t), label=\\\"sin\\\")\\n\",\n    \"plt.plot(t, np.cos(t), label=\\\"cos\\\")\\n\",\n    \"plt.legend()\\n\",\n    \"plt.grid(True, alpha=0.3)\\n\",\n    \"plt.show()\"\n   ]\n  },\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"1a2b3c06\",\n   \"metadata\": {},\n   \"source\": [\n    \"Try changing a color or a label above, then press **Shift+Enter** to redraw.\"\n   ]\n  }\n ],\n \"metadata\": {\n  \"kernelspec\": {\n   \"display_name\": \"Python 3\",\n   \"language\": \"python\",\n   \"name\": \"python3\"\n  },\n  \"language_info\": {\n   \"name\": \"python\"\n  }\n },\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n"
+
 export const templates: Template[] = [
   /* The five `empty` starters lead the array, one per ready language, so the
    * picker's first card is always "start from nothing in this language". */
@@ -1414,6 +1427,57 @@ export const templates: Template[] = [
         { path: 'helpers/shapes.py', content: PY_HELPERS_SHAPES_PY },
         { path: 'main.py', content: PY_MAIN_PY },
       ],
+    },
+  },
+  {
+    id: 'python-nb-empty',
+    name: 'Empty notebook',
+    lang: 'python',
+    level: 'empty',
+    blurb: 'One empty code cell. Run Python a cell at a time, like Colab.',
+    entry: 'notebook.ipynb',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'notebook.ipynb', content: PY_NB_EMPTY_NOTEBOOK_IPYNB }],
+    },
+  },
+  {
+    id: 'python-nb-basics',
+    name: 'Python basics notebook',
+    lang: 'python',
+    level: 'beginner',
+    blurb: 'Variables, lists, loops and functions, one runnable cell at a time.',
+    entry: 'notebook.ipynb',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'notebook.ipynb', content: PY_NB_BASICS_NOTEBOOK_IPYNB }],
+    },
+  },
+  {
+    id: 'python-nb-pandas',
+    name: 'Data with pandas',
+    lang: 'python',
+    level: 'intermediate',
+    blurb: 'Read a CSV into a DataFrame, then filter, sort and group it.',
+    entry: 'notebook.ipynb',
+    snapshot: {
+      dirs: [],
+      files: [
+        { path: 'notebook.ipynb', content: PY_NB_PANDAS_NOTEBOOK_IPYNB },
+        { path: 'scores.csv', content: PY_NB_PANDAS_SCORES_CSV },
+      ],
+    },
+  },
+  {
+    id: 'python-nb-plotting',
+    name: 'Plotting with matplotlib',
+    lang: 'python',
+    level: 'intermediate',
+    blurb: 'Line, bar and multi-line plots drawn right under the cell.',
+    entry: 'notebook.ipynb',
+    snapshot: {
+      dirs: [],
+      files: [{ path: 'notebook.ipynb', content: PY_NB_PLOTTING_NOTEBOOK_IPYNB }],
     },
   },
   {
