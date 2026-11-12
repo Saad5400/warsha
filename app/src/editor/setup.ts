@@ -87,7 +87,7 @@ import {
  * per-file local-only CRDT undo. Swallowing the isolated, benign error in our own
  * wiring is the clean, low-risk path. Documented in COLLAB-SYNC-CONTRACT §7.4.
  */
-function editorExceptionSink(err: unknown): void {
+export function editorExceptionSink(err: unknown): void {
   const stack = err instanceof Error && typeof err.stack === 'string' ? err.stack : ''
   const isBounds = err instanceof RangeError && /Invalid position \d+ in document of length \d+/.test(err.message)
   const fromRemoteSelections = /y-codemirror|YRemoteSelection|RemoteSelection/.test(stack)
@@ -106,7 +106,7 @@ function editorExceptionSink(err: unknown): void {
  * unparsable selector that fails as `not all` — desk chrome rules therefore
  * gate on the `.cm-desk` root class (an editorAttributes facet) instead.
  */
-const DESK_MEDIA = '(min-width:900px) and (hover:hover) and (pointer:fine)'
+export const DESK_MEDIA = '(min-width:900px) and (hover:hover) and (pointer:fine)'
 const DESK_KEY = `@media ${DESK_MEDIA}`
 
 /**
@@ -160,7 +160,7 @@ function completionLang(lang: EditorLang | null): CompletionLang | null {
  * colour is an editor-domain palette, not chrome — the chrome stays entirely
  * on Design's tokens via `chromeTheme` below.
  */
-const syntaxColors = HighlightStyle.define(
+export const syntaxColors = HighlightStyle.define(
   [
     { tag: [t.keyword, t.modifier, t.operatorKeyword, t.definitionKeyword], color: '#569CD6' },
     { tag: [t.controlKeyword, t.moduleKeyword], color: '#C586C0' },
@@ -232,7 +232,7 @@ const DANGER_SQUIGGLE = squiggle('#FF8A8F') // --danger
 const WARN_SQUIGGLE = squiggle('#E5B95C') // --warn
 const INFO_SQUIGGLE = squiggle('#7FC4F5') // --info
 
-const chromeTheme = EditorView.theme(
+export const chromeTheme = EditorView.theme(
   {
     '&.cm-editor': {
       backgroundColor: 'var(--code-bg)',
@@ -1252,7 +1252,7 @@ class FindPanel implements Panel {
 
 /** Lezer grammars are the bulk of the bundle, so they load on demand. */
 const langCache = new Map<EditorLang, LanguageSupport>()
-async function loadLanguage(lang: EditorLang): Promise<LanguageSupport> {
+export async function loadLanguage(lang: EditorLang): Promise<LanguageSupport> {
   const cached = langCache.get(lang)
   if (cached) return cached
   let support: LanguageSupport
@@ -1291,6 +1291,43 @@ async function loadLanguage(lang: EditorLang): Promise<LanguageSupport> {
   }
   langCache.set(lang, support)
   return support
+}
+
+/**
+ * Sizes that depend on the student's font-size preference, so they have to be
+ * recomputed rather than living in index.css.
+ *
+ * Two spec §3.1/§3.3 requirements ride on this: code carries an *explicit* px
+ * size on .cm-content (WebKit renders an unqualified `monospace` at ~81.25% of
+ * an inherited size, which shows up as "the code is a size too small, but only
+ * on iPad"), and the gutter's leading is stated in px rather than inherited —
+ * a unitless 1.6 against 13px line numbers is 20.8px against 24px code rows,
+ * and the gutter drifts a line by the bottom of a long file.
+ *
+ * Leading is density-split: 1.6 on touch (finger-height rows), VS Code's
+ * tighter 1.35 at desk. The gutter also drops its fixed 13px at desk — VS
+ * Code renders line numbers at the code size.
+ */
+export function codeFontTheme(px: number, opts: { fill?: boolean } = {}) {
+  const leading = `${Math.round(px * 1.6)}px`
+  const deskLeading = `${Math.round(px * 1.35)}px`
+  return EditorView.theme({
+    // `fill`: the file editor fills its pane; a notebook cell's editor is as tall as its code.
+    '&': { fontSize: `${px}px`, ...(opts.fill ? { height: '100%' } : {}) },
+    '.cm-content': {
+      fontSize: `${px}px`,
+      lineHeight: leading,
+      // Room to scroll the last line clear of the console and the keyboard.
+      ...(opts.fill ? { paddingBottom: '40vh' } : {}),
+    },
+    '.cm-gutters': { fontSize: '13px', lineHeight: leading },
+    '.cm-lineNumbers .cm-gutterElement': { lineHeight: leading },
+    [DESK_KEY]: {
+      '.cm-content': { lineHeight: deskLeading },
+      '.cm-gutters': { fontSize: `${px}px`, lineHeight: deskLeading },
+      '.cm-lineNumbers .cm-gutterElement': { lineHeight: deskLeading },
+    },
+  })
 }
 
 export interface EditorController {
@@ -1436,41 +1473,7 @@ export function createEditor(
     opts.onDiagnostics({ errors, warnings })
   }
 
-  /**
-   * Sizes that depend on the student's font-size preference, so they have to be
-   * recomputed rather than living in index.css.
-   *
-   * Two spec §3.1/§3.3 requirements ride on this: code carries an *explicit* px
-   * size on .cm-content (WebKit renders an unqualified `monospace` at ~81.25% of
-   * an inherited size, which shows up as "the code is a size too small, but only
-   * on iPad"), and the gutter's leading is stated in px rather than inherited —
-   * a unitless 1.6 against 13px line numbers is 20.8px against 24px code rows,
-   * and the gutter drifts a line by the bottom of a long file.
-   *
-   * Leading is density-split: 1.6 on touch (finger-height rows), VS Code's
-   * tighter 1.35 at desk. The gutter also drops its fixed 13px at desk — VS
-   * Code renders line numbers at the code size.
-   */
-  const themeFor = (px: number) => {
-    const leading = `${Math.round(px * 1.6)}px`
-    const deskLeading = `${Math.round(px * 1.35)}px`
-    return EditorView.theme({
-      '&': { fontSize: `${px}px`, height: '100%' },
-      '.cm-content': {
-        fontSize: `${px}px`,
-        lineHeight: leading,
-        // Room to scroll the last line clear of the console and the keyboard.
-        paddingBottom: '40vh',
-      },
-      '.cm-gutters': { fontSize: '13px', lineHeight: leading },
-      '.cm-lineNumbers .cm-gutterElement': { lineHeight: leading },
-      [DESK_KEY]: {
-        '.cm-content': { lineHeight: deskLeading },
-        '.cm-gutters': { fontSize: `${px}px`, lineHeight: deskLeading },
-        '.cm-lineNumbers .cm-gutterElement': { lineHeight: deskLeading },
-      },
-    })
-  }
+  const themeFor = (px: number) => codeFontTheme(px, { fill: true })
 
   /**
    * Everything that depends on which language a file is in: the Lezer grammar

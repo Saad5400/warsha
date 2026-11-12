@@ -206,7 +206,12 @@ function cellJson(nb: Notebook, cell: NbCell): Record<string, unknown> {
   out.source = asMultiline(cell.source, raw.source)
   if (cell.type === 'code') {
     out.execution_count = cell.executionCount
-    out.outputs = cell.outputs
+    // `transient` (a live display id) is session state; nbformat does not store it.
+    out.outputs = cell.outputs.map((o) => {
+      if (!('transient' in o)) return o
+      const { transient: _t, ...kept } = o
+      return kept as NbOutput
+    })
   } else {
     delete out.execution_count
     delete out.outputs

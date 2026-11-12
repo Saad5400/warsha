@@ -1,6 +1,6 @@
 import { syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import { linter, type Diagnostic, type Action } from '@codemirror/lint'
-import { StateEffect, type EditorState } from '@codemirror/state'
+import { Facet, StateEffect, type EditorState } from '@codemirror/state'
 import type { SyntaxNode, Tree } from '@lezer/common'
 import { COPY } from '../copy'
 import { isExtEnabled } from '../extensions/registry'
@@ -380,6 +380,16 @@ export function diagnostics(
  *  even though the document did not change. `needsRefresh` below picks it up. */
 export const refreshLint = StateEffect.define<null>()
 
+/**
+ * Lines of a document that are not written in its language — in a notebook
+ * cell, IPython's `%magic` / `!shell` lines — about which the linter says
+ * nothing: to the grammar `!pip install x` is an error node, to the kernel it
+ * is a perfectly good line. 1-based. Absent for every ordinary file.
+ */
+export const foreignLines = Facet.define<(state: EditorState) => ReadonlySet<number>, ((state: EditorState) => ReadonlySet<number>) | null>({
+  combine: (values) => values[0] ?? null,
+})
+
 export function linting(lang: EditorLang | null) {
   if (!lang || !LINTED.has(lang)) return []
   // `isExtEnabled` is read per lint pass (not captured), so toggling the
@@ -387,7 +397,11 @@ export function linting(lang: EditorLang | null) {
   // forceLinting cannot start that run (it only hurries a scheduled one), so a
   // `refreshLint` effect schedules the run and setExtensions then forces it.
   return linter(
-    (view) => diagnostics(view.state, lang, { beginnerHelper: isExtEnabled('beginner-helper') }),
+    (view) => {
+      const found = diagnostics(view.state, lang, { beginnerHelper: isExtEnabled('beginner-helper') })
+      const skip = view.state.facet(foreignLines)?.(view.state)
+      return skip?.size ? found.filter((d) => !skip.has(view.state.doc.lineAt(d.from).number)) : found
+    },
     {
       delay: LINT_DELAY,
       needsRefresh: (u) => u.transactions.some((tr) => tr.effects.some((e) => e.is(refreshLint))),

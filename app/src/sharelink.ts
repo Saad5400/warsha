@@ -1,6 +1,7 @@
 import { deflateSync, inflateSync, strToU8, strFromU8 } from 'fflate'
 import type { FsSnapshot } from './fs/types'
 import { ZIP_LIMITS, safePath } from './zip'
+import { isNotebookPath, withoutOutputs } from './notebook/nbformat'
 
 /**
  * "Share as link" — the whole project folded into the URL itself.
@@ -84,7 +85,13 @@ export function buildShareUrl(name: string, entry: string | null, snapshot: FsSn
     f: snapshot.files.map((f) => [f.path, f.content]),
     d: snapshot.dirs,
   }
-  const data = toBase64Url(deflateSync(strToU8(JSON.stringify(payload)), { level: 9 }))
+  let data = toBase64Url(deflateSync(strToU8(JSON.stringify(payload)), { level: 9 }))
+  if (data.length > LINK_LIMITS.MAX_ENCODED_CHARS && snapshot.files.some((f) => isNotebookPath(f.path))) {
+    // A notebook's outputs (plots are base64 PNGs) are what usually overflows a link. The
+    // recipient can re-run the cells; the code is the thing worth sharing.
+    payload.f = snapshot.files.map((f) => [f.path, isNotebookPath(f.path) ? withoutOutputs(f.content) : f.content])
+    data = toBase64Url(deflateSync(strToU8(JSON.stringify(payload)), { level: 9 }))
+  }
   if (data.length > LINK_LIMITS.MAX_ENCODED_CHARS) return null
   // Anchored at the origin root, never the sharer's current path (`/p/<id>` is a
   // device-local project id, `/en/` is the sharer's language) — the recipient

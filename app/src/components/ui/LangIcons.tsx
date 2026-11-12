@@ -244,6 +244,15 @@ const IconMarkdownMark = (p: IconProps) => (
   </Mark>
 )
 
+/** A notebook: stacked cells, the first one with a run arrow. */
+const IconNotebookMark = (p: IconProps) => (
+  <Mark {...p}>
+    <rect x="3.25" y="3.25" width="13.5" height="6" rx="1.2" />
+    <rect x="3.25" y="11.25" width="13.5" height="5.5" rx="1.2" />
+    <path d="M6.5 4.9v2.7l2.2-1.35z" fill="currentColor" />
+  </Mark>
+)
+
 /** The plain-document outline for txt and anything unrecognised. */
 const IconDocMark = (p: IconProps) => (
   <Mark {...p}>
@@ -269,6 +278,7 @@ const FILE_FILLS: Record<string, string> = {
   css: '#519aba',
   json: '#cbcb41',
   md: '#519aba',
+  ipynb: '#f37726',
 }
 
 /** txt and unknown extensions: the neutral document grey. */
@@ -306,6 +316,8 @@ export function FileIcon({ ext, size = 16, style, ...rest }: { ext: string } & I
       return <IconJsonMark {...props} />
     case 'md':
       return <IconMarkdownMark {...props} />
+    case 'ipynb':
+      return <IconNotebookMark {...props} />
     default:
       return <IconDocMark {...props} />
   }

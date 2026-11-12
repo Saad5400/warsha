@@ -1,3 +1,4 @@
+import { isNotebookPath } from '../notebook/nbformat'
 import type { RunStatus } from '../hooks/useRunner'
 import { langForPath } from '../runtime'
 import { extOf } from './FileBadge'
@@ -33,7 +34,7 @@ function languageLabel(path: string | null): string {
   if (!path) return COPY.langNone
   const lang = langForPath(path)
   if (lang === 'java') return COPY.langJava
-  if (lang === 'python') return COPY.langPython
+  if (lang === 'python' || isNotebookPath(path)) return COPY.langPython
   const ext = extOf(path)
   return ext ? ext.toUpperCase() : COPY.langPlain
 }

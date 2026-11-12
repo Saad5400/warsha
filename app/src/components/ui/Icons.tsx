@@ -492,3 +492,40 @@ export const IconLightbulb = (p: IconProps) => (
     <path d="M8.25 15.25h3.5M8.75 13h2.5" />
   </Icon>
 )
+/** Run all: the play glyph over a stack of cell lines. */
+export const IconRunAll = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 4.5h6M3.5 8.5h4.5M3.5 12.5h3" />
+    <path d="M11 9.3a.7.7 0 0 1 1.06-.6l4.4 2.7a.7.7 0 0 1 0 1.2l-4.4 2.7a.7.7 0 0 1-1.06-.6V9.3Z" fill="currentColor" strokeWidth="0" />
+  </Icon>
+)
+
+/** A code cell: angle brackets. */
+export const IconCode = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m7 6-4 4 4 4M13 6l4 4-4 4" />
+  </Icon>
+)
+
+/** A text (markdown) cell: a T over lines. */
+export const IconText = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 4.5h8M8 4.5v8M4 15.5h12M14.5 9.5H16" />
+  </Icon>
+)
+
+/** Restart: a circular arrow. */
+export const IconRestart = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M15.5 10a5.5 5.5 0 1 1-1.6-3.9" />
+    <path d="M14.2 3.5v2.9h-2.9" />
+  </Icon>
+)
+
+/** Duplicate: two stacked squares. */
+export const IconDuplicate = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6.5" y="6.5" width="9" height="9" rx="1.5" />
+    <path d="M4.5 12.5v-7a1 1 0 0 1 1-1h7" />
+  </Icon>
+)

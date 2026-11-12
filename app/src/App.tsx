@@ -9,7 +9,12 @@ import { splitPath } from './fs/project'
 import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, rememberOwnedRoom, rememberProjectOwner, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
+import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
+import { classifyRunFailure } from './hooks/useRunner'
+import { isNotebookPath, parseCellPath, parseNotebook, readableText } from './notebook/nbformat'
+import { closeNotebooksExcept, flushNotebooks, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
+import { notebookDebugOwner } from './notebook/session'
+import { NotebookView } from './components/notebook/NotebookView'
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
 import { exportZip } from './zip'
@@ -311,16 +316,23 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   // Recomputed on `revision`, not per keystroke — the active buffer is scanned separately by the editor.
   // Bounded so a full re-tokenise can't stall typing on a big project; completions just get less complete instead.
+  // Cell editors read words through a function (their views are never rebuilt for a new list).
+  const projectWordsRef = useRef<readonly string[]>([])
+  const notebookWords = useCallback(() => projectWordsRef.current, [])
   const projectWords = useMemo(() => {
     const words = new Set<string>()
     let budget = 2_000_000
     for (const file of project.sourceFiles()) {
-      budget -= file.content.length
+      // A notebook is read as its code: its JSON is mostly outputs (base64 images).
+      const text = readableText(file.path, file.content)
+      budget -= text.length
       if (budget < 0) break
-      for (const word of wordsInSource(file.content)) words.add(word)
+      for (const word of wordsInSource(text)) words.add(word)
     }
     return [...words]
   }, [project, revision])
+
+  projectWordsRef.current = projectWords
 
   // Module-level source, not a prop — the editor is a singleton mount; `revision` keys its lazy re-scan cache.
   useEffect(() => {
@@ -1128,6 +1140,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       return `${pkg}public class ${cls} {\n\n}\n`
     }
     if (name.endsWith('.py')) return `"""${name}"""\n\n`
+    // A new .ipynb starts empty; the notebook view writes a one-cell nbformat 4.5 notebook into it.
     return ''
   }
 
@@ -1240,6 +1253,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, to] of mapping) {
         editorRef.current?.renamePath(from, to)
         debugStore.renamePath(from, to)
+        renameNotebook(from, to)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1260,6 +1274,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, dest] of mapping) {
         editorRef.current?.renamePath(from, dest)
         debugStore.renamePath(from, dest)
+        renameNotebook(from, dest)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1407,7 +1422,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   const downloadFile = useCallback(
     async (path: string) => {
       const { name } = splitPath(path)
-      const file = new File([project.read(path) ?? ''], name, { type: 'text/plain' })
+      flushNotebooks()
+      const file = new File([project.read(path) ?? ''], name, { type: isNotebookPath(path) ? 'application/x-ipynb+json' : 'text/plain' })
       try {
         const result = await deliverFile(file)
         if (result === 'downloaded') notify(COPY.noteFileDownloaded(name))
@@ -1581,6 +1597,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const exportProject = () => {
+    flushNotebooks()
     const name = `${slug(currentProject?.name) || 'warsha-project'}.zip`
     exportZip(project.snapshot(), name)
     track('project_shared', { via: 'zip' })
@@ -1591,6 +1608,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   // Switch/create/delete all invalidate the workspace: tabs, console transcript, and
   // editor per-file state belong to the project being left.
   const adoptProject = (leavingTabs: string[], preferredEntry?: string | null) => {
+    // Notebooks are per project: their models and namespaces go with it.
+    closeNotebooksExcept(new Set())
     // Old project's open paths are evicted from editor state by name — two projects can both have a "main.py".
     for (const path of leavingTabs) editorRef.current?.closeFile(path)
     const entry = preferredEntry ?? entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
@@ -2259,6 +2278,37 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
 
+  // ---- notebooks ----
+  // A .ipynb opens in the notebook view unless the student asked for its text.
+  const [notebookAsText, setNotebookAsText] = useState<ReadonlySet<string>>(() => new Set())
+  const activeNotebook = activePath && isNotebookPath(activePath) && !notebookAsText.has(activePath) ? activePath : null
+  // Open notebooks follow the tabs: closing a notebook's tab closes it (and frees its namespace).
+  useEffect(() => {
+    closeNotebooksExcept(new Set(tabs))
+    setNotebookAsText((cur) => (Array.from(cur).every((p) => tabs.includes(p)) ? cur : new Set(Array.from(cur).filter((p) => tabs.includes(p)))))
+  }, [tabs])
+  const notebookIO = useMemo((): Record<string, DocumentIO> => ({}), [project])
+  const ioFor = (path: string): DocumentIO =>
+    (notebookIO[path] ??= {
+      read: () => project.read(path),
+      // A live-collab notebook lands in its shared doc as a minimal splice, like Format does.
+      write: (text) => {
+        if (!collabRef.current.binding?.replaceDoc(path, text)) project.setContent(path, text)
+      },
+      files: () => project.sourceFiles(),
+      onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
+      onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
+      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost }),
+    })
+  /** One cell's source, for the debugger's breakpoint rows. */
+  const cellSource = (notebook: string, cellId: string): string => {
+    try {
+      return parseNotebook(project.read(notebook) ?? '').cells.find((c) => c.id === cellId)?.source ?? ''
+    } catch {
+      return ''
+    }
+  }
+
   // Single state object so Run/Stop in the tab strip (Tabs.tsx), the Run menu, and
   // F5/Shift+F5 all share the same handlers and can't drift apart.
   const runControl: RunControlState = {
@@ -2303,6 +2353,13 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [runner.busy])
   /** Open `path` with `line` at the caret (stack frames, breakpoint rows, every stop). */
   const revealLine = (path: string, line: number) => {
+    const cell = parseCellPath(path)
+    if (cell) {
+      if (!project.has(cell.notebook)) return
+      openFile(cell.notebook)
+      revealCell(cell.notebook, cell.cellId, line)
+      return
+    }
     const text = project.read(path)
     if (text === undefined) return
     let off = 0
@@ -2320,7 +2377,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     const f = debug.stopped?.frames[debug.frameIndex]
     if (f) revealRef.current(f.path, f.line)
   }, [debug.phase, debug.stopSeq, debug.frameIndex, debug.stopped])
-  const lineText = (path: string, line: number) => (project.read(path) ?? '').split('\n')[line - 1] ?? ''
+  const lineText = (path: string, line: number) => {
+    const cell = parseCellPath(path)
+    const text = cell ? cellSource(cell.notebook, cell.cellId) : (project.read(path) ?? '')
+    return text.split('\n')[line - 1] ?? ''
+  }
   /** F9 outside the editor (palette, menu): the caret's line in the open file. */
   const toggleBreakpointHere = () => {
     const dom = document.querySelector('.cm-editor')
@@ -3317,10 +3378,31 @@ function Ide({ report }: { report: CapabilityReport }) {
                 onPointerDownCapture={(e) => {
                   lastPointerType.current = e.pointerType
                 }}
-                onContextMenu={onEditorContextMenu}
+                onContextMenu={activeNotebook ? undefined : onEditorContextMenu}
               >
+                {activeNotebook ? (
+                  <NotebookView
+                    key={activeNotebook}
+                    path={activeNotebook}
+                    content={activeContent}
+                    kernel={kernelFor(activeNotebook)!}
+                    io={ioFor(activeNotebook)}
+                    fontSize={fontSize}
+                    projectWords={notebookWords}
+                    onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
+                    onDownload={() => void downloadFile(activeNotebook)}
+                    onDebugStart={() => {
+                      if (!narrow) {
+                        setSideView('debug')
+                        setExplorerDocked(true)
+                      }
+                    }}
+                  />
+                ) : null}
+                {/* The file editor stays mounted under a notebook (it is a singleton the shell drives); hidden, it holds no file. */}
+                <div className={activeNotebook ? 'hidden' : 'contents'}>
                 <Editor
-                  path={activePath}
+                  path={activeNotebook ? null : activePath}
                   content={activeContent}
                   fontSize={fontSize}
                   onChange={(p, c) => project.setContent(p, c)}
@@ -3351,11 +3433,20 @@ function Ide({ report }: { report: CapabilityReport }) {
                   indentDisplay={indentPref}
                   onIndent={setIndentInfo}
                 />
+                </div>
                 {/* VS Code's floating debug toolbar, over the editor while a session runs. */}
-                <DebugToolbar onRestart={restartDebugging} onStop={runner.stop} />
+                <DebugToolbar
+                  onRestart={restartDebugging}
+                  // A notebook cell under the debugger stops by interrupting it, not by killing its kernel.
+                  onStop={() => {
+                    const nb = notebookDebugOwner()
+                    if (nb) nb.interrupt()
+                    else runner.stop()
+                  }}
+                />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
                     menu. Quiet at rest, semi-transparent, above the home indicator. */}
-                {activePath ? (
+                {activePath && !activeNotebook ? (
                   <button
                     ref={fabRef}
                     type="button"
@@ -3474,16 +3565,17 @@ function Ide({ report }: { report: CapabilityReport }) {
           exitCode={runner.exitCode}
           activePath={activePath}
           entryPath={runControl.entry}
-          cursor={empty || !activePath ? null : cursor}
+          // A notebook has no single caret, problems list or indentation — its cells are many editors.
+          cursor={empty || !activePath || activeNotebook ? null : cursor}
           // Same gate as the caret: a problems count belongs to an open file.
-          problems={empty || !activePath ? null : problems}
+          problems={empty || !activePath || activeNotebook ? null : problems}
           onProblems={() => editorRef.current?.toggleProblems()}
           fontSize={fontSize}
           onFontSize={setFontSize}
           // Ln/Col opens Go to Line — the quick input's ':' face, VS Code's
           // own behaviour for that status item.
           onGotoLine={() => setQuickPick('goto')}
-          indent={indentInfo}
+          indent={activeNotebook ? null : indentInfo}
           onIndentMenu={setIndentMenu}
         />
       )}

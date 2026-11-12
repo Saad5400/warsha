@@ -45,8 +45,9 @@ type Listener = () => void
 
 const STORAGE_PREFIX = 'warsha.debug.v1.'
 
-/** Extensions whose files can carry a breakpoint (the debuggable engines' sources). */
-const DEBUGGABLE = /\.(py|java|cs|c|m?js|cjs|jsx|tsx?|mts|cts)$/i
+/** Extensions whose files can carry a breakpoint (the debuggable engines' sources),
+ *  and notebook cells, whose path is `nb.ipynb#cell=<id>` (notebook/nbformat.ts). */
+const DEBUGGABLE = /\.(py|java|cs|c|m?js|cjs|jsx|tsx?|mts|cts)$|\.ipynb#cell=[\w-]+$/i
 export function canHoldBreakpoints(path: string | null | undefined): boolean {
   return !!path && DEBUGGABLE.test(path)
 }
@@ -149,12 +150,12 @@ class DebugStore {
     ])
   }
   renamePath(from: string, to: string) {
-    const isDir = (p: string) => p === from || p.startsWith(from + '/')
+    const isDir = (p: string) => within(p, from)
     if (!this.state.breakpoints.some((b) => isDir(b.path))) return
     this.updateBreakpoints(this.state.breakpoints.map((b) => (isDir(b.path) ? { ...b, path: to + b.path.slice(from.length) } : b)))
   }
   dropPath(path: string) {
-    const gone = (p: string) => p === path || p.startsWith(path + '/')
+    const gone = (p: string) => within(p, path)
     if (!this.state.breakpoints.some((b) => gone(b.path))) return
     this.updateBreakpoints(this.state.breakpoints.filter((b) => !gone(b.path)))
   }
@@ -313,6 +314,11 @@ class DebugStore {
     if (seq !== this.state.stopSeq || frame !== this.state.frameIndex) return
     this.set({ watchResults: { ...this.state.watchResults, [w.id]: result } })
   }
+}
+
+/** `p` is `root`, under it as a folder, or one of its cells as a notebook. */
+function within(p: string, root: string): boolean {
+  return p === root || p.startsWith(root + '/') || p.startsWith(root + '#')
 }
 
 function sortBps(bps: BreakpointEntry[]) {
