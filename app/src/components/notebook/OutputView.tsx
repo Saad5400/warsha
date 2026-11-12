@@ -37,9 +37,8 @@ const MIME_ORDER = [
 /** Stream text past this is cut, with a note — a runaway print loop must not freeze the tab. */
 const MAX_TEXT = 200_000
 
-const PRE =
-  'm-0 whitespace-pre-wrap break-words font-code text-[13px] leading-[1.5] text-text-1 ' +
-  'max-h-[min(70vh,640px)] overflow-y-auto scroller'
+// No height cap here: a long output scrolls in the cell's one capped area (CellView OutputScroll).
+const PRE = 'm-0 whitespace-pre-wrap break-words font-code text-[13px] leading-[1.5] text-text-1'
 
 export function Ansi({ text }: { text: string }) {
   const cut = text.length > MAX_TEXT
@@ -96,9 +95,18 @@ export function SafeHtml({ html, className }: { html: string; className?: string
   return <div className={className} dangerouslySetInnerHTML={props} />
 }
 
+function edgeMask({ left, right }: { left: boolean; right: boolean }): React.CSSProperties {
+  if (!left && !right) return {}
+  const m = `linear-gradient(to right, ${left ? 'transparent' : '#000'}, #000 48px, #000 calc(100% - 48px), ${right ? 'transparent' : '#000'})`
+  return { maskImage: m, WebkitMaskImage: m }
+}
+
 function HtmlFrame({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(32)
+  // A table wider than the output (a 12-column DataFrame): the cut edges fade, so the columns
+  // past the edge are visibly there — its scrollbar can be a screen further down (QA).
+  const [cut, setCut] = useState({ left: false, right: false })
   const doc = useMemo(
     () => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>${frameStyles()}</style></head><body>${html}</body></html>`,
     [html],
@@ -111,6 +119,11 @@ function HtmlFrame({ html }: { html: string }) {
       const d = frame.contentDocument
       if (!d?.documentElement) return
       setHeight(Math.max(16, Math.ceil(d.documentElement.scrollHeight)))
+      const b = d.body
+      if (!b) return
+      const left = b.scrollLeft > 1
+      const right = b.scrollLeft + b.clientWidth < b.scrollWidth - 1
+      setCut((c) => (c.left === left && c.right === right ? c : { left, right }))
     }
     const onLoad = () => {
       // Scripts never run in here, but a link is followed by the browser: every one goes through
@@ -130,6 +143,8 @@ function HtmlFrame({ html }: { html: string }) {
       if (d?.body) {
         ro = new ResizeObserver(measure)
         ro.observe(d.body)
+        ro.observe(frame)
+        d.body.addEventListener('scroll', measure, { passive: true })
       }
     }
     frame.addEventListener('load', onLoad)
@@ -147,7 +162,8 @@ function HtmlFrame({ html }: { html: string }) {
       // or a map's attribution link must work — so popups may leave the sandbox.
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={doc}
-      style={{ height }}
+      style={{ height, ...edgeMask(cut) }}
+      data-cut={cut.left || cut.right ? 'x' : undefined}
       className="block w-full border-0 bg-transparent"
     />
   )
@@ -161,7 +177,7 @@ function ImageOut({ mime, data, meta }: { mime: string; data: string; meta: Reco
   const w = typeof meta?.width === 'number' ? meta.width : undefined
   return (
     // An <img> never runs script, which is why even an SVG output is safe here.
-    <img src={src} alt="" style={w ? { width: w } : undefined} className="block h-auto max-w-full rounded-sm bg-white/0" />
+    <img src={src} alt="" style={w ? { width: w } : undefined} className="block h-auto max-w-full self-start rounded-sm bg-white/0" />
   )
 }
 
@@ -213,12 +229,11 @@ function RichOut({ output }: { output: NbOutput }) {
 export function OutputView({ output }: { output: NbOutput }) {
   switch (output.output_type) {
     case 'stream': {
+      // stderr is not an error (warnings, progress bars, logging): a muted stream, never red.
+      // Red is kept for `error` outputs only.
       const err = output.name === 'stderr'
       return (
-        <pre
-          data-stream={err ? 'stderr' : 'stdout'}
-          className={PRE + (err ? ' -mx-2 px-2 bg-danger-soft/60 border-s-2 border-danger' : '')}
-        >
+        <pre data-stream={err ? 'stderr' : 'stdout'} className={PRE + (err ? ' !text-text-2' : '')}>
           <Ansi text={streamDisplay(joinText(output.text))} />
         </pre>
       )

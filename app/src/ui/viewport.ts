@@ -15,6 +15,10 @@
 export function installViewport(): () => void {
   const root = document.documentElement
   let pending = 0
+  /** The tallest visual viewport seen at this width (this orientation): on Android the layout
+   *  viewport shrinks WITH the keyboard (resizes-content), so innerHeight − vv.height stays ≈0
+   *  and only a drop from this height, while something editable has focus, shows the keyboard. */
+  let tallest = { width: 0, height: 0 }
 
   function sync() {
     pending = 0
@@ -35,9 +39,13 @@ export function installViewport(): () => void {
     // instead of the layout viewport it is fixed to. 0 on Android and desktop.
     root.style.setProperty('--app-top', `${Math.max(0, Math.round(vv.offsetTop))}px`)
     root.style.setProperty('--kb-inset', `${kb}px`)
+    if (Math.round(vv.width) !== tallest.width) tallest = { width: Math.round(vv.width), height: 0 }
+    tallest.height = Math.max(tallest.height, vv.height)
+    const a = document.activeElement as HTMLElement | null
+    const editing = !!a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName))
     // >100px so an attached Magic Keyboard or the iPad shortcut bar alone does
-    // not trigger the compact layout.
-    root.dataset.kb = kb > 100 ? 'open' : 'closed'
+    // not trigger the compact layout. Android: a 150px+ drop while typing (above).
+    root.dataset.kb = kb > 100 || (editing && tallest.height - vv.height > 150) ? 'open' : 'closed'
   }
 
   const schedule = () => {
@@ -57,6 +65,8 @@ export function installViewport(): () => void {
       sync()
     }, 300)
   window.addEventListener('focusout', onFocusOut)
+  // Focus can land after the resize (Android): look again.
+  window.addEventListener('focusin', schedule)
   sync()
 
   return () => {
@@ -64,6 +74,7 @@ export function installViewport(): () => void {
     vv?.removeEventListener('scroll', schedule)
     window.removeEventListener('orientationchange', onOrientation)
     window.removeEventListener('focusout', onFocusOut)
+    window.removeEventListener('focusin', schedule)
   }
 }
 

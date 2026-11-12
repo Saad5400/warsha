@@ -333,6 +333,37 @@ export function setOutputsCollapsed(cell: NbCell, collapsed: boolean): NbCell {
   return { ...cell, raw: { ...cell.raw, metadata: meta } }
 }
 
+/**
+ * Whether a long output shows in full. nbformat's `metadata.scrolled`: `false` is
+ * expanded; `true`, `"auto"` or absent let a long output scroll in a capped area
+ * (Colab and Jupyter's default).
+ */
+export function outputsExpanded(cell: NbCell): boolean {
+  return cellMeta(cell).scrolled === false
+}
+
+/** Expanding writes `scrolled: false`; collapsing back drops the key (the default). */
+export function setOutputsExpanded(cell: NbCell, expanded: boolean): NbCell {
+  const meta = { ...cellMeta(cell) }
+  if (expanded) meta.scrolled = false
+  else delete meta.scrolled
+  return { ...cell, raw: { ...cell.raw, metadata: meta } }
+}
+
+/**
+ * Colab's form cells: a first line `#@title Load the data { display-mode: "form" }`.
+ * Colab shows the title and hides the code when the cell's view is a form
+ * (`metadata.cellView: "form"`, or display-mode "form"); "both" shows both.
+ */
+export function formTitle(cell: NbCell): { title: string; hideCode: boolean } | null {
+  if (cell.type !== 'code') return null
+  const m = /^#\s*@title\s+(.*?)\s*(\{[^}]*\})?\s*$/m.exec(cell.source.split('\n', 1)[0])
+  if (!m || !m[1]) return null
+  const mode = /display-mode\s*:\s*"(\w+)"/.exec(m[2] ?? '')?.[1]
+  const hideCode = mode ? mode === 'form' : cellMeta(cell).cellView === 'form'
+  return { title: m[1], hideCode }
+}
+
 /* -------------------------------------------------------- new notebook */
 
 /** The kernelspec every new notebook carries: the stock `python3` name, so Colab and

@@ -81,16 +81,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           'pointer-events-none fixed inset-x-0 z-(--z-toast) flex flex-col gap-2 px-4 ' +
           (keyboardOpen || wide ? 'items-end' : 'items-center')
         }
-        // The offset tracks a bar (ARCHITECTURE §4.2's exception): top mode tracks
-        // --bar-title (not --bar-top) so a toast sits 8px under it, not on it, and
-        // switches to --bar-top-kb with the keyboard up. Bottom mode tracks the
-        // status bar plus the home-indicator safe area.
+        // The offset tracks a bar (ARCHITECTURE §4.2's exception). With the keyboard up it sits
+        // under --bar-top-kb. Otherwise it sits above the status bar (plus the home-indicator
+        // safe area) — at the bottom-end on wide screens, VS Code's notification corner: at the
+        // top it covered the tab strip's Run and ⋯ for its whole life on every new project (QA).
         style={
           keyboardOpen
             ? { top: 'calc(var(--bar-top-kb) + var(--sp-2))' }
-            : wide
-              ? { top: 'calc(var(--bar-title) + var(--sp-2))' }
-              : { bottom: 'calc(var(--bar-status) + var(--sp-2) + env(safe-area-inset-bottom, 0px))' }
+            : { bottom: 'calc(var(--bar-status) + var(--sp-2) + env(safe-area-inset-bottom, 0px))' }
         }
         role="status"
         aria-live="polite"

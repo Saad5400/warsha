@@ -17,7 +17,7 @@ const { NotebookSession } = await import('../../src/notebook/session.ts')
 const { STALL_LIMITS } = await import('../../src/runtime/stallWatchdog.ts')
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms))
-const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' })
+const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' })
 
 /** A kernel whose boot and cells the test scripts. */
 function kernel(opts: { load?: (onProgress: (p: unknown) => void) => Promise<void>; execute?: (io: Record<string, (...a: unknown[]) => void>) => void }) {

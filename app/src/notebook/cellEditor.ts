@@ -16,9 +16,9 @@
  * 40vh scroll padding and the full-height fill.
  */
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { indentUnit } from '@codemirror/language'
-import { completionStatus } from '@codemirror/autocomplete'
+import { closeCompletion, completionStatus } from '@codemirror/autocomplete'
 import { DESK_MEDIA, codeFontTheme, editingStack, languageStack, loadLanguage, tooltipsWithin } from '../editor/setup'
 import { foreignLines } from '../editor/lint'
 import { textContext } from '../editor/textContext'
@@ -36,6 +36,12 @@ export interface CellEditorOptions {
   fontSize: number
   /** A live-collab viewer: the cell can be read and selected, never edited. */
   readOnly?: boolean
+  /** Line numbers (off by default in a notebook, as in Colab). */
+  lineNumbers?: boolean
+  /** The empty cell's hint. CodeMirror's own placeholder, drawn AT the caret position. */
+  placeholder?: string
+  /** Where the code's text starts, px from the editor's left edge; reported on mount and on every geometry change. */
+  onTextEdge?(px: number): void
   /** Code of the cells above (code cells), read lazily on every completion. */
   context(): string
   projectWords(): readonly string[]
@@ -57,6 +63,7 @@ export interface CellEditor {
   setDoc(text: string): void
   setFontSize(px: number): void
   setReadOnly(readOnly: boolean): void
+  setLineNumbers(on: boolean): void
   focus(where?: 'start' | 'end'): void
   destroy(): void
 }
@@ -68,9 +75,21 @@ const cellTheme = EditorView.theme({
   '&.cm-editor': { backgroundColor: 'transparent' },
   '&.cm-editor.cm-focused': { outline: 'none' },
   '&.cm-editor .cm-scroller': { overflowX: 'auto' },
+  // 6px above and below the code: the run button is centred on the first line from this (CellView).
   '&.cm-editor .cm-content': { paddingTop: '6px', paddingBottom: '6px' },
+  // The file editor's desk inset (12px) is room beside a page-tall gutter; in a cell box it
+  // is just distance between the run button and the code. 4px, as on touch.
+  '&.cm-editor.cm-desk .cm-content, &.cm-editor .cm-content': { paddingLeft: '4px' },
   '&.cm-editor .cm-gutters': { backgroundColor: 'transparent' },
-  '&.cm-editor .cm-lineNumbers .cm-gutterElement': { minWidth: '2ch', paddingInline: '4px 6px' },
+  // When shown, numbers are muted and stand clear of the code.
+  '&.cm-editor .cm-lineNumbers .cm-gutterElement': { minWidth: '2ch', paddingInline: '6px 12px', color: 'var(--text-3)' },
+  '&.cm-editor .cm-placeholder': { color: 'var(--text-3)', fontStyle: 'normal' },
+  // Bracket matching is for the cell being edited; other cells stay plain text (QA).
+  '&.cm-editor:not(.cm-focused) .cm-matchingBracket, &.cm-editor:not(.cm-focused) .cm-nonmatchingBracket': {
+    backgroundColor: 'transparent',
+    outline: 'none',
+    textDecoration: 'none',
+  },
 })
 
 export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): CellEditor {
@@ -78,6 +97,8 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
   const langConf = new Compartment()
   const deskConf = new Compartment()
   const roConf = new Compartment()
+  const lnConf = new Compartment()
+  const lnExt = (on: boolean): Extension => (on && code ? lineNumbers({ domEventHandlers: lineNumberToggle(opts.path) }) : [])
   const roExt = (ro: boolean): Extension => (ro ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [])
   const code = opts.type === 'code'
   let applying = false
@@ -129,14 +150,17 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       notebookKeys,
       // The popup and the docs card may use the notebook's whole scroll area, not just this cell's lines.
       tooltipsWithin('.notebook-scroller'),
-      code ? [debugExtension(opts.path), debugTheme, lineNumbers({ domEventHandlers: lineNumberToggle(opts.path) })] : [],
+      code ? [debugExtension(opts.path), debugTheme] : [],
+      lnConf.of(lnExt(!!opts.lineNumbers)),
+      opts.placeholder ? placeholder(opts.placeholder) : [],
       // The same editing core as the file editor (setup.ts); the notebook's own keys are above.
       editingStack({ history: true, keys: [] }),
       indentUnit.of('    '),
       deskConf.of(deskExt()),
       roConf.of(roExt(!!opts.readOnly)),
       EditorView.contentAttributes.of({ 'aria-label': code ? 'Code cell' : 'Markdown cell' }),
-      cellTheme,
+      // Above the shared chrome theme, whose editor background would paint over the code box.
+      Prec.high(cellTheme),
       fontConf.of(codeFontTheme(fontSize)),
       langConf.of([]),
       textContext.of(context),
@@ -144,11 +168,27 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !applying) opts.onChange(u.state.doc.toString())
         if (u.focusChanged && u.view.hasFocus) opts.onFocus()
+        // Leaving a cell (Shift+Enter, a click elsewhere) takes its completion popup with it (QA).
+        if (u.focusChanged && !u.view.hasFocus && completionStatus(u.state)) closeCompletion(u.view)
+        if (u.geometryChanged) reportEdge()
       }),
     ],
   })
 
+  // Outputs line up with the code's text: tell the cell where that is (gutters move it).
+  let edge = -1
+  const reportEdge = () =>
+    view.requestMeasure({
+      read: () => {
+        const at = view.coordsAtPos(0)
+        return at ? Math.round(at.left - view.dom.getBoundingClientRect().left) : -1
+      },
+      write: (x) => {
+        if (x >= 0 && x !== edge) opts.onTextEdge?.((edge = x))
+      },
+    })
   const view = new EditorView({ parent, state })
+  reportEdge()
   if (code) {
     void loadLanguage('python').then((support) => {
       if (!view.dom.isConnected && !parent.isConnected) return
@@ -165,6 +205,9 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       applying = true
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
       applying = false
+    },
+    setLineNumbers(on) {
+      view.dispatch({ effects: lnConf.reconfigure(lnExt(on)) })
     },
     setReadOnly(ro) {
       view.dispatch({ effects: roConf.reconfigure(roExt(ro)) })

@@ -45,6 +45,10 @@ export interface SessionState {
   notice: string | null
   /** A debug run is in flight. */
   debugging: boolean
+  /** A run of several cells stopped at this failing cell; `skipped` did not run (their
+   *  outputs are from an earlier run). Cleared by the next run. */
+  stoppedAt?: string | null
+  skipped?: readonly string[]
 }
 
 export interface SessionHost {
@@ -68,6 +72,8 @@ export interface SessionMessages {
   lost: string
   /** Another debug session (the program's, or another notebook's) is live. */
   debugBusy: string
+  /** A Run all (or Run below) stopped at a failing cell; n cells after it did not run. */
+  stoppedAtError(n: number): string
 }
 
 /** How long an Interrupt may take. `escalateMs`: a cell whose code is RUNNING and has not
@@ -313,7 +319,7 @@ export class NotebookSession {
     }
     const t0 = performance.now()
     this.started = false
-    this.set({ running: id, kernel: this.state.kernel === 'off' ? 'starting' : this.state.kernel, notice: null })
+    this.set({ running: id, kernel: this.state.kernel === 'off' ? 'starting' : this.state.kernel, notice: null, stoppedAt: null, skipped: (this.state.skipped ?? []).filter((s) => s !== id) })
     this.setCell(id, { state: 'running', startedAt: Date.now() })
     // Jupyter clears a cell's outputs when it starts, not when it ends.
     this.host.update(id, (c) => ({ ...c, outputs: [], executionCount: null }))
@@ -480,7 +486,12 @@ export class NotebookSession {
     const state: CellRunState = code === 0 ? 'ok' : interrupted ? 'interrupted' : 'error'
     this.setCell(id, { state, ms })
     // Jupyter stops a Run all at the first failure; the cells after it would only fail too.
-    if (state !== 'ok') this.dropQueue()
+    // Say so, and which cells kept outputs from an earlier run (QA: Run all stopped silently).
+    if (state !== 'ok') {
+      const skipped = this.queue.map((q) => q.id).concat(this.waitingTurn ? [this.waitingTurn] : [])
+      this.dropQueue()
+      if (state === 'error' && skipped.length) this.set({ stoppedAt: id, skipped, notice: this.messages().stoppedAtError(skipped.length) })
+    }
     if (code === null) this.epoch = -2 // the worker was replaced: report it on the next run
     this.set({ running: null, waiting: null, progress: null, debugging: false, kernel: 'idle' })
   }

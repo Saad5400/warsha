@@ -144,7 +144,7 @@ test('#4 document: a remote edit arriving while a local write is pending is merg
     owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   }
   const doc = new NotebookDocument('n.ipynb', fakeKernel(), io)
   doc.updateCell('a', (c) => ({ ...c, source: 'A mine' })) // pending (coalesced)
@@ -196,7 +196,7 @@ test('#3 project switch: pending notebook edits land in the project being LEFT, 
     owner: () => project.owner,
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   }
   const doc = notebookDocument('notebook.ipynb', fakeKernel(), io)
   doc.updateCell('a', (c) => ({ ...c, source: 'A edited' }))
@@ -224,7 +224,7 @@ test('#3 dispose: a late output after close is dropped; a deleted notebook is no
     owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   })
   doc.session.run(['a'])
   await tick(10)
@@ -244,7 +244,7 @@ test('#3 dispose: a late output after close is dropped; a deleted notebook is no
 test('#8 namespace: keyed per open notebook, kept across rename, never shared by a reused name', async () => {
   const k = fakeKernel()
   const host = { files: () => [], workspace: () => 'p', cell: () => newCell('code', 'x'), update() {}, cellIds: () => [], onFilesChanged() {}, onFailure() {} }
-  const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' })
+  const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' })
   const s1 = new NotebookSession('lab.ipynb', k, host, msgs)
   s1.run(['c1'])
   await tick(10)
@@ -265,7 +265,7 @@ test('#9 interrupt: a cell waiting behind another notebook\'s cell is cancelled 
   let finishA: (() => void) | null = null
   const k = fakeKernel({ onExecute: (io) => (finishA ??= () => io.onExit?.(0)) })
   const host = { files: () => [], workspace: () => 'p', cell: () => newCell('code', 'x'), update() {}, cellIds: () => [], onFilesChanged() {}, onFailure() {} }
-  const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' })
+  const msgs = () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' })
   const a = new NotebookSession('a.ipynb', k, host, msgs)
   const b = new NotebookSession('b.ipynb', k, host, msgs)
   a.run(['a1'])
@@ -316,7 +316,7 @@ test('suspected: an empty .ipynb opens as an empty notebook and writes NOTHING u
     owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   })
   assert.equal(doc.get().model?.cells.length, 1)
   await tick(400)
@@ -370,7 +370,7 @@ test('A(i) merge: a notebook without ids is merged, not doubled', () => {
     owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   })
   assert.deepEqual(writes, [], 'opening writes nothing (minted ids are not persisted into an unedited file)')
   const a = doc.get().model!.cells[0].id
@@ -390,7 +390,7 @@ test('A(ii) sync: a file change reaches an open notebook through the registry, v
     owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
-    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '', stoppedAtError: () => '' }),
   })
   doc.updateCell('a', (c) => ({ ...c, outputs: [{ output_type: 'stream', name: 'stdout', text: 'running…' }] })) // a cell streaming
   notebookFileChanged('p', 'bg.ipynb', serializeNotebook(nb([['a', 'A'], ['b', 'B theirs']])))
@@ -425,7 +425,7 @@ test('C interrupt: a download that never ends is stopped at the ceiling', async 
     return { kill: () => (killed++, exitFn?.(null)), writeStdin() {} } // never starts (no onExecuteInput), never ends
   }
   const host = { files: () => [], workspace: () => 'p', cell: () => newCell('code', 'import big'), update() {}, cellIds: () => [], onFilesChanged() {}, onFailure() {} }
-  const s = new NotebookSession('d.ipynb', k, host, () => ({ restarted: '', forcedRestart: 'forced', lost: '', debugBusy: '' }))
+  const s = new NotebookSession('d.ipynb', k, host, () => ({ restarted: '', forcedRestart: 'forced', lost: '', debugBusy: '', stoppedAtError: () => '' }))
   s.run(['c'])
   await tick(10)
   s.interrupt()

@@ -24,14 +24,22 @@
  *    notebook.ipynb, so project A's notebook → Home → a new notebook project B
  *    must show B's own cells and run them, and after an edit + save + reload A
  *    and B must each still hold their own notebook in OPFS.
- * ONLY=K, ONLY=U or ONLY=P runs one part. */
+ * Q  the student-eye QA report's notebook findings, each pinned: a 240-cell
+ *    notebook opens fast with few editors built (M3), stderr is not an error
+ *    (M6), images keep their natural size (M2), Run all stopping at an error
+ *    says so and marks the stale cells, Restart asks first, Colab #@title
+ *    form cells, markdown styling, one toolbar and one ⋯ menu, the console
+ *    folded, the phone keyboard compaction (M8) and phone menus.
+ * G  (with U) the cell geometry of docs/design/NOTEBOOK.md on four surfaces.
+ * ONLY=K, ONLY=U, ONLY=G, ONLY=P or ONLY=Q runs one part. */
 import { chromium } from 'playwright-core'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { importNotebook, longNotebook, qaNotebook } from './lib/notebooks.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const URL_ = process.env.WARSHA_URL ?? 'http://127.0.0.1:8120/'
-const ONLY = process.env.ONLY ?? 'KUP'
+const ONLY = process.env.ONLY ?? 'KUPQ'
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname
 mkdirSync(SHOTS, { recursive: true })
 
@@ -326,7 +334,9 @@ if (ONLY.includes('U')) {
   await page.keyboard.press('b')
   await page.waitForTimeout(400)
   await page.keyboard.type('df.he', { delay: 60 })
-  await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+  // Member completion is async (the context of earlier cells): wait for the list to settle on it,
+  // not the first popup (which can still be the one for "d").
+  await page.waitForFunction(() => [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((li) => /^head/.test(li.textContent)), null, { timeout: 5000 }).catch(() => {})
   const opts = await page.$$eval('.cm-tooltip-autocomplete li', (els) => els.map((e) => e.textContent))
   check('U: completion in a new cell offers DataFrame members of df from cell 1', opts.some((o) => /^head/.test(o)), J(opts.slice(0, 8)))
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-completion.png') })
@@ -381,9 +391,11 @@ if (ONLY.includes('U')) {
   await page.keyboard.press('Escape')
   const dcell = page.locator('.notebook-view [data-selected]')
   const dcellId = await dcell.getAttribute('data-cell-id')
-  await dcell.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^2$/ }).click()
+  // Line numbers are off in cells (Colab); F9 on the line is the keyboard path to a breakpoint.
+  await dcell.locator('.cm-line').nth(1).click()
+  await page.keyboard.press('F9')
   await page.waitForTimeout(200)
-  check('U: a click on a cell\'s gutter sets a breakpoint on its cell path', await page.evaluate((id) => {
+  check('U: F9 on a cell line sets a breakpoint on its cell path', await page.evaluate((id) => {
     const raw = Object.keys(localStorage).filter((k) => k.startsWith('warsha.debug.v1.')).map((k) => localStorage.getItem(k)).join('')
     return raw.includes(`notebook.ipynb#cell=${id}`) && raw.includes('"line":2')
   }, dcellId))
@@ -412,7 +424,8 @@ if (ONLY.includes('U')) {
   check('U: Continue finishes the cell with its result', (await dcell.innerText()).includes('20'))
   const hint = await page.locator('[data-debug-phase]').innerText()
   check('U: Run and Debug explains debugging a notebook cell', hint.includes('in a cell') && !hint.includes('Open a program'), J(hint.slice(0, 120)))
-  await dcell.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^2$/ }).click()
+  await dcell.locator('.cm-line').nth(1).click()
+  await page.keyboard.press('F9')
 
   // Format cell: black through the kernel, IPython lines untouched.
   await dcell.locator('.cm-content').click()
@@ -593,11 +606,15 @@ if (ONLY.includes('U')) {
   check('U suspected: a notebook shown as text is no longer rewritten by its (closed) session', asText1 === asText2 && asText1.includes('"cells"'), J({ same: asText1 === asText2, len: asText1.length }))
   await ctx.close()
 
-  // Phone, LTR and RTL; desktop RTL.
+}
+
+// Every surface: phone/desk × LTR/RTL — geometry included (ONLY=G runs just this part).
+if (ONLY.includes('U') || ONLY.includes('G')) {
   for (const [w, h, mobile, lang, tag] of [
     [390, 844, true, 'en', 'phone-ltr'],
     [390, 844, true, 'ar', 'phone-rtl'],
     [1280, 860, false, 'ar', 'desk-rtl'],
+    [1280, 860, false, 'en', 'desk-ltr'],
   ]) {
     const b = await browser({ width: w, height: h }, mobile)
     await isolated(b.page, `?lang=${lang}`)
@@ -620,6 +637,7 @@ if (ONLY.includes('U')) {
     }))
     check(`U[${tag}]: no horizontal page scroll; plots fit; code stays LTR`, geo.page && geo.img && geo.code === 'ltr', J(geo))
     if (lang === 'ar') check(`U[${tag}]: the page is RTL`, geo.dir === 'rtl')
+    await cellGeometry(b.page, tag, lang, mobile)
     await b.ctx.close()
   }
 }
@@ -673,8 +691,9 @@ if (ONLY.includes('P')) {
   await page.locator('button', { hasText: /^New project$/ }).first().click()
   await page.locator('dialog[open]').getByRole('button', { name: /^Python/ }).first().click()
   await page.locator('.template-card').filter({ hasText: 'Python basics notebook' }).first().click()
-  // A project is already open, so the starter asks for the new project's name first.
-  await page.locator('dialog[open]').getByRole('button', { name: /^Create$/ }).click()
+  // Before #36 a second project from a starter asked for its name first; now the starter names it.
+  // Answer the prompt if one comes, so the check holds either way.
+  await page.locator('dialog[open]').getByRole('button', { name: /^Create$/ }).click({ timeout: 3000 }).catch(() => {})
   await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 15000 }).catch(() => {})
   await page.waitForSelector('[role="treeitem"][data-path="scores.csv"]', { state: 'detached', timeout: 15000 }).catch(() => {})
   await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 30000 })
@@ -723,6 +742,450 @@ if (ONLY.includes('P')) {
   // The documents were scoped right in the first place: the write guard never had to step in.
   check('P: no cross-project write was ever attempted (the guard stayed silent)', refused.length === 0, J(refused))
   await ctx.close()
+}
+
+/* ---- cell geometry (docs/design/NOTEBOOK.md), asserted so the visual bugs cannot come back ---- */
+async function cellGeometry(page, tag, lang, mobile) {
+  const T = (n) => `U[${tag}] geometry: ${n}`
+  // A ran code cell with outputs: text edge, run column, one frame, the rail, no overlaps.
+  const ran = await page.evaluate((mobile) => {
+    const cell = [...document.querySelectorAll('.notebook-view [data-cell-type="code"]')].find((c) => c.querySelector('.nb-outputs'))
+    if (!cell) return null
+    cell.scrollIntoView({ block: 'center' })
+    const r = (el) => el.getBoundingClientRect()
+    const box = cell.querySelector('[data-code-box]')
+    const line = cell.querySelector('.cm-line')
+    const codeText = r(line).left + parseFloat(getComputedStyle(line).paddingLeft)
+    const firstOut = cell.querySelector('.nb-outputs > div > *') ?? cell.querySelector('.nb-outputs > button:not([data-output-menu])')
+    const col = r(cell.querySelector('[data-run-col]'))
+    const btn = cell.querySelector('[data-run]')
+    const count = cell.querySelector('[data-count]')
+    const menu = cell.querySelector('[data-output-menu]')
+    const cx = (x) => x.left + x.width / 2
+    const cy = (x) => x.top + x.height / 2
+    const rail = getComputedStyle(cell, '::before')
+    const cr = r(cell)
+    const overlap = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
+    const outs = r(cell.querySelector('.nb-outputs'))
+    return {
+      outputEdge: Math.abs(r(firstOut).left - codeText),
+      lineNumbers: cell.querySelectorAll('.cm-lineNumbers').length,
+      boxBorder: parseFloat(getComputedStyle(box).borderTopWidth) + parseFloat(getComputedStyle(box).borderLeftWidth),
+      nestedBorders: [...cell.querySelectorAll('*')].filter((e) => !e.closest('.cm-tooltip, [role="toolbar"], .nb-outputs, button') && parseFloat(getComputedStyle(e).borderTopWidth) > 0 && getComputedStyle(e).borderTopStyle !== 'none' && getComputedStyle(e).borderTopColor !== 'rgba(0, 0, 0, 0)').map((e) => e.className.toString().slice(0, 40)),
+      runCentreX: btn ? Math.abs(cx(r(btn)) - cx(col)) : 0,
+      countCentreX: Math.abs(cx(r(count)) - cx(col)),
+      menuCentreX: menu && !mobile ? Math.abs(cx(r(menu)) - cx(col)) : 0,
+      runCentreY: btn ? Math.abs(cy(r(btn)) - cy(r(line))) : 0,
+      railInside: rail.content !== 'none' ? { top: parseFloat(rail.top), bottom: parseFloat(rail.bottom), width: parseFloat(rail.width), left: parseFloat(rail.insetInlineStart || rail.left) } : null,
+      overlaps: [
+        btn && overlap(r(btn), r(box)),
+        overlap(r(box), outs),
+        menu && getComputedStyle(menu).display !== 'none' && overlap(r(menu), outs.left < r(menu).left ? { ...outs.toJSON(), left: outs.left + parseFloat(cell.querySelector('.nb-outputs').style.paddingLeft || '0') } : outs),
+        btn && !mobile && overlap(r(btn), outs),
+      ].filter(Boolean).length,
+      insideCell: [box, btn, count].filter(Boolean).every((e) => { const x = r(e); return x.left >= cr.left - 0.5 && x.right <= cr.right + 0.5 && x.top >= cr.top - 0.5 && x.bottom <= cr.bottom + 0.5 }),
+    }
+  }, mobile)
+  if (!ran) return fail(T('a code cell with output exists'))
+  check(T('output left edge == editor text edge'), ran.outputEdge <= 1, J(ran.outputEdge))
+  check(T('line numbers are off by default'), ran.lineNumbers === 0)
+  check(T('one frame: the code box has no border, nothing inside the cell is bordered'), ran.boxBorder === 0 && ran.nestedBorders.length === 0, J(ran.nestedBorders))
+  check(T('run button, count and output menu are centred in the run column'), ran.runCentreX <= 1 && ran.countCentreX <= 1 && ran.menuCentreX <= 1, J(ran))
+  check(T('the run button is level with the first code line'), ran.runCentreY <= 2, J(ran.runCentreY))
+  check(T('no element overlaps another in the cell; all sit inside its box'), ran.overlaps === 0 && ran.insideCell, J(ran))
+
+  // Select it: the rail is inside the box.
+  await page.locator('.notebook-view [data-cell-type="code"]').first().focus()
+  await page.waitForTimeout(250)
+  const rail = await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view [data-selected]')
+    const b = getComputedStyle(c, '::before')
+    return { top: parseFloat(b.top), bottom: parseFloat(b.bottom), width: parseFloat(b.width), colour: b.backgroundColor }
+  })
+  check(T('the selection rail is slim, inside the cell box, not white'), rail.top >= 0 && rail.bottom >= 0 && rail.width <= 2 && rail.colour !== 'rgb(250, 250, 250)' && rail.colour !== 'rgba(0, 0, 0, 0)', J(rail))
+
+  // Markdown prose starts at the same x as code text.
+  const md = await page.evaluate(() => {
+    const m = document.querySelector('.notebook-view [data-cell-type="markdown"] .nb-md > :first-child')
+    const line = document.querySelector('.notebook-view [data-cell-type="code"] .cm-line')
+    if (!m || !line) return null
+    const range = document.createRange()
+    range.selectNodeContents(m)
+    const text = range.getClientRects()[0]
+    const lr = line.getBoundingClientRect().left + parseFloat(getComputedStyle(line).paddingLeft)
+    // RTL prose starts at the right: compare its start edge with the code column's start edge.
+    const ltr = getComputedStyle(m).direction === 'ltr'
+    const cellBody = m.closest('[data-cell-id]').querySelector('[data-run-col]').nextElementSibling.getBoundingClientRect()
+    const codeBody = line.closest('[data-cell-id]').querySelector('[data-run-col]').nextElementSibling.getBoundingClientRect()
+    return ltr ? Math.abs(text.left - cellBody.left - (lr - codeBody.left)) : 0
+  })
+  if (md !== null) check(T('rendered markdown starts at the code text edge'), md <= 1, J(md))
+
+  // A new empty cell: the placeholder starts at the caret.
+  await page.locator('[role="toolbar"] button[aria-label="' + (lang === 'en' ? 'Add code cell' : 'أضف خلية كود') + '"]').first().click()
+  await page.waitForTimeout(500)
+  const ph = await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view [data-cell-id] .cm-focused')?.closest('[data-cell-id]')
+    const p = c?.querySelector('.cm-placeholder')
+    const caret = c?.querySelector('.cm-cursor')
+    return p && caret ? Math.abs(p.getBoundingClientRect().left - caret.getBoundingClientRect().left) : null
+  })
+  check(T('the placeholder starts exactly at the caret'), ph !== null && ph <= 1, J(ph))
+
+  // The completion popup is whole: in the viewport, unclipped, 3+ rows.
+  const popup = async (where) => {
+    await page.keyboard.type('prin', { delay: 50 })
+    await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+    await page.waitForTimeout(250)
+    const res = await page.evaluate(() => {
+      const t = document.querySelector('.cm-tooltip-autocomplete')
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      const rows = [...t.querySelectorAll('li')].filter((li) => { const x = li.getBoundingClientRect(); return x.top >= r.top - 0.5 && x.bottom <= r.bottom + 0.5 && x.height > 0 })
+      const first = t.querySelector('li')?.getBoundingClientRect()
+      const hit = first ? document.elementFromPoint(first.left + first.width / 2, first.top + first.height / 2) : null
+      const vv = window.visualViewport ?? { width: innerWidth, height: innerHeight }
+      return { inView: r.left >= 0 && r.top >= 0 && r.right <= vv.width + 0.5 && r.bottom <= vv.height + 0.5, unclipped: !!hit && t.contains(hit), rows: rows.length }
+    })
+    check(T(`the completion popup (${where}) is in the viewport, unclipped, 3+ rows`), !!res && res.inView && res.unclipped && res.rows >= 3, J(res))
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+  }
+  await popup('mid-screen')
+  // The same cell pushed to the bottom of the screen: the popup flips above.
+  await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view .cm-focused').closest('[data-cell-id]')
+    const s = document.querySelector('.notebook-scroller')
+    s.scrollTop += c.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom + 8
+  })
+  await page.waitForTimeout(200)
+  await popup('bottom of the screen')
+  if (!mobile) {
+    await page.keyboard.insertText('print(1)')
+    await page.waitForTimeout(200)
+    const line = await page.locator('.notebook-view .cm-focused .cm-line').first().boundingBox()
+    await page.mouse.move(line.x + 30, line.y + line.height / 2)
+    await page.waitForSelector('.cm-tooltip-docs', { timeout: 3000 }).catch(() => {})
+    const card = await page.evaluate(() => {
+      const t = document.querySelector('.cm-tooltip-docs')
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(12, r.height / 2))
+      return { inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5, unclipped: !!hit && t.contains(hit) }
+    })
+    check(T('the hover docs card is in the viewport and unclipped'), !!card && card.inView && card.unclipped, J(card))
+
+    // Insert affordance: between two cells, inside the gap, touching neither cell.
+    const gap = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      cells[0].scrollIntoView({ block: 'center' })
+      const a = cells[0].getBoundingClientRect()
+      const g = cells[0].parentElement.querySelector(':scope > [data-cell-id] + [data-gap]') ?? cells[0].nextElementSibling
+      return { a: a.toJSON(), g: g.getBoundingClientRect().toJSON() }
+    })
+    await page.mouse.move(gap.g.left + gap.g.width / 2, gap.g.top + gap.g.height / 2)
+    await page.waitForTimeout(300)
+    const chips = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      const g = cells[0].nextElementSibling
+      const b = cells[1].getBoundingClientRect()
+      const a = cells[0].getBoundingClientRect()
+      const btns = [...g.querySelectorAll('button')].map((x) => x.getBoundingClientRect())
+      const shown = [...g.querySelectorAll('button')].every((x) => parseFloat(getComputedStyle(x.parentElement).opacity) > 0.9)
+      const g2 = g.getBoundingClientRect()
+      const hit = document.elementFromPoint(g2.left + g2.width / 2, g2.top + g2.height / 2)
+      return { shown, inside: btns.length === 2 && btns.every((x) => x.top >= a.bottom - 0.5 && x.bottom <= b.top + 0.5), gap: g2.height, chip: btns[0]?.height }
+    })
+    check(T('hover shows "+ Code / + Text" inside the 32px gap, clear of both cells'), chips.shown && chips.inside && chips.gap === 32, J(chips))
+  }
+
+  await toolbarClear(page, T, mobile)
+  await longOutput(page, T, mobile, lang)
+}
+
+/** The cell toolbar never covers code, output, prose or a cell border (NOTEBOOK.md §6), whichever
+ *  cell is selected (the first one, one-liners, markdown) and, on desk, while another is hovered. */
+async function toolbarClear(page, T, mobile) {
+  const measure = () =>
+    page.evaluate((mobile) => {
+      const r = (e) => e.getBoundingClientRect()
+      const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      const content = cells.flatMap((c) => [...c.querySelectorAll('[data-code-box], .nb-outputs, .nb-md')]).map(r).filter((x) => x.height > 0)
+      const scroller = r(document.querySelector('.notebook-scroller'))
+      const bad = []
+      let shown = 0
+      cells.forEach((c, i) => {
+        const tb = c.querySelector(':scope [role="toolbar"]')
+        if (!tb || getComputedStyle(tb).display === 'none') return
+        shown++
+        const t = r(tb)
+        if (content.some((x) => hit(t, x))) bad.push(`#${i} covers content`)
+        if (!mobile) {
+          // Above its own cell's border; below the cell above (or the notebook's top edge).
+          if (t.bottom > r(c).top + 0.5) bad.push(`#${i} reaches into its cell (${t.bottom} > ${r(c).top})`)
+          const above = cells[i - 1] ? r(cells[i - 1]).bottom : scroller.top
+          if (t.top < above - 0.5) bad.push(`#${i} reaches the cell above / notebook top (${t.top} < ${above})`)
+        } else if (t.top < r(c).top || t.bottom > r(c).bottom) bad.push(`#${i} outside its cell`)
+      })
+      return { shown, bad }
+    }, mobile)
+  const n = await page.locator('.notebook-view [data-cell-id]').count()
+  const bad = []
+  for (let i = 0; i < n; i++) {
+    const c = page.locator('.notebook-view [data-cell-id]').nth(i)
+    await page.keyboard.press('Escape')
+    await c.focus()
+    if (i === 0) await page.evaluate(() => (document.querySelector('.notebook-scroller').scrollTop = 0))
+    else await c.evaluate((e) => e.scrollIntoView({ block: 'center' }))
+    if (!mobile && i + 1 < n) {
+      // Hover the next cell too: two toolbars at once (selected + hovered).
+      const nb = await page.locator('.notebook-view [data-cell-id]').nth(i + 1).boundingBox()
+      if (nb) await page.mouse.move(nb.x + nb.width / 2, nb.y + Math.min(nb.height / 2, 30))
+    }
+    await page.waitForTimeout(150)
+    const m = await measure()
+    if (m.shown === 0) bad.push(`#${i}: no toolbar shown`)
+    bad.push(...m.bad.map((b) => `sel #${i}: ${b}`))
+  }
+  check(T(`the cell toolbar never overlaps code, output, prose or a cell (${n} cells selected in turn${mobile ? '' : ', next one hovered'})`), bad.length === 0, J(bad.slice(0, 6)))
+}
+
+/** Long output: capped with its own scroll, faded at the cut, following the stream unless scrolled
+ *  up, and Expand / Collapse (nbformat `scrolled`) from the output actions. */
+async function longOutput(page, T, mobile, lang) {
+  await page.keyboard.press('Escape')
+  const last = page.locator('.notebook-view [data-cell-type="code"]').last()
+  await last.evaluate((e) => e.scrollIntoView({ block: 'start' }))
+  await last.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('import time\nfor i in range(400):\n    print("line", i)\n    if i > 100 and i % 10 == 0: time.sleep(0.12)')
+  await page.keyboard.press('Control+Enter')
+  const box = () => last.locator('[data-output-scroll]')
+  await box().waitFor({ timeout: 20000 })
+  await page.waitForFunction(() => document.querySelectorAll('.notebook-view [data-cell-type="code"]').length && [...document.querySelectorAll('[data-output-scroll]')].pop()?.textContent.includes('line 150'), null, { timeout: 30000 })
+  const follow = await box().evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)
+  check(T('a streaming long output follows the newest line'), follow <= 4, J(follow))
+  await box().evaluate((el) => (el.scrollTop = 0))
+  await page.waitForTimeout(900)
+  const held = await box().evaluate((el) => el.scrollTop)
+  check(T('…but not after the student scrolls up'), held <= 4, J(held))
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-output-scroll]')].pop()?.textContent.includes('line 399'), null, { timeout: 60000 })
+  await page.waitForTimeout(400)
+  const cap = await box().evaluate((el) => {
+    el.scrollTop = 0
+    return new Promise((res) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const vh = window.visualViewport?.height ?? innerHeight
+          res({ mode: el.dataset.outputScroll, h: Math.round(el.clientHeight), full: el.scrollHeight, vh, mask: getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage })
+        }),
+      ),
+    )
+  })
+  const limit = mobile ? cap.vh * 0.6 + 1 : 561
+  check(T('a long output is capped (desk 560px / phone 60vh) with its own scroll area'), cap.mode === 'capped' && cap.h <= limit && cap.h >= limit - 40 && cap.full > cap.h * 2, J(cap))
+  check(T('…and fades out at the cut'), /linear-gradient/.test(cap.mask) && /transparent|rgba\(0, 0, 0, 0\)/.test(cap.mask), J(cap.mask))
+  // Expand from the output actions (desk) or the cell menu (touch); then collapse back.
+  const expand = async (label) => {
+    await last.focus()
+    await last.hover()
+    if (mobile) await last.getByRole('button', { name: lang === 'en' ? 'Cell actions' : 'إجراءات الخلية' }).first().click()
+    else await last.locator('[data-output-menu]').click()
+    await page.getByRole('menuitem', { name: label }).click()
+    await page.waitForTimeout(300)
+    return box().evaluate((el) => ({ mode: el.dataset.outputScroll, h: Math.round(el.clientHeight), full: el.scrollHeight }))
+  }
+  const ex = await expand(lang === 'en' ? 'Expand output' : 'وسّع النتيجة')
+  check(T('Expand output shows the whole output'), ex.mode === 'expanded' && ex.h >= ex.full - 1 && ex.h > cap.h * 2, J(ex))
+  const co = await expand(lang === 'en' ? 'Collapse output' : 'قلّص النتيجة')
+  check(T('Collapse output caps it again'), co.mode === 'capped' && co.h <= limit, J(co))
+}
+
+/* ===================================================================== Q */
+if (ONLY.includes('Q')) {
+  const dir = mkdtempSync(join(tmpdir(), 'nbq-'))
+  const longFile = join(dir, 'long_notebook.ipynb')
+  const qaFile = join(dir, 'qa.ipynb')
+  writeFileSync(longFile, longNotebook())
+  writeFileSync(qaFile, qaNotebook())
+
+  // ---- M3: a long notebook opens fast, building only the editors near the screen ----
+  {
+    const { ctx, page } = await browser({ width: 1366, height: 768 })
+    await isolated(page, '?lang=en')
+    const t = await importNotebook(page, longFile)
+    await page.waitForFunction(() => document.querySelectorAll('.notebook-view [data-cell-id]').length >= 240, null, { timeout: 120000, polling: 50 })
+    const shownMs = Date.now() - t
+    const c0 = Date.now()
+    await page.locator('.notebook-view [data-cell-id]').nth(3).click({ timeout: 60000 })
+    const clickMs = Date.now() - c0
+    await page.waitForTimeout(1500)
+    const editors = await page.locator('.notebook-view .cm-editor').count()
+    // Dev server (unbundled, unminified): about 2x a production build. Prod measured 1.1s / 0.6s.
+    check('Q M3: a 240-cell notebook shows its cells within 4s of Import (dev server)', shownMs < 4000, J({ shownMs }))
+    // Generous on a dev server (1.8–3.2s seen); before lazy editors it was 14s. Production: 0.6s.
+    check('Q M3: …and a click registers within 5s (no long freeze; was 14s)', clickMs < 5000, J({ clickMs }))
+    check('Q M3: only the editors near the screen are built (not 200)', editors > 0 && editors <= 30, J({ editors }))
+    // Scrolling far down builds the editors there once scrolling rests; a static cell is clickable at once.
+    await page.evaluate(() => (document.querySelector('.notebook-scroller').scrollTop = 1e9))
+    const tailOf = () => page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-type="code"]')]
+      const sc = document.querySelector('.notebook-scroller').getBoundingClientRect()
+      const onScreen = cells.filter((c) => { const r = c.getBoundingClientRect(); return r.bottom > sc.top && r.top < sc.bottom })
+      return { onScreen: onScreen.length, built: onScreen.filter((c) => c.querySelector('.cm-editor')).length }
+    })
+    let tail = await tailOf()
+    for (let i = 0; i < 20 && tail.built < tail.onScreen; i++) {
+      await page.waitForTimeout(200)
+      tail = await tailOf()
+    }
+    check('Q M3: after scrolling, the cells on screen get their editors', tail.onScreen > 0 && tail.built === tail.onScreen, J(tail))
+    await ctx.close()
+  }
+
+  // ---- the QA notebook, desktop ----
+  {
+    const { ctx, page } = await browser({ width: 1366, height: 768 })
+    await isolated(page, '?lang=en')
+    await importNotebook(page, qaFile)
+    await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
+    await page.waitForTimeout(1500)
+    const cellSel = (id) => `.notebook-view [data-cell-id="${id}"]`
+    const winTitle = await page.locator('header').first().innerText()
+    check('Q minor 17: the imported project is named without its extension', winTitle.includes('qa.ipynb — qa') && !winTitle.includes('qa.ipynb — qa.ipynb'), J(winTitle))
+    check('Q minor 13: the idle console is folded when a notebook opens', await page.evaluate(() => !document.querySelector('.console-panel')?.classList.contains('console-panel--open')))
+    const menus = await page.evaluate(() => {
+      const nb = document.querySelector('.notebook-toolbar').getBoundingClientRect(), nbTop = nb.top
+      // The tab strip's ⋯ would sit in the row above the notebook toolbar.
+      const tabMore = [...document.querySelectorAll('button[aria-label="More actions"]')].filter((b) => { const r = b.getBoundingClientRect(); return r.height > 0 && r.left >= nb.left && r.bottom <= nbTop + 1 && r.top >= nbTop - 80 })
+      return { tabMore: tabMore.length, nbMore: document.querySelectorAll('button[aria-label="More notebook actions"]').length }
+    })
+    check('Q polish: one ⋯ menu (the tab strip folds its items into the notebook\'s)', menus.tabMore === 0 && menus.nbMore === 1, J(menus))
+    check('Q polish: Clear outputs is labelled, not icon-only', (await page.locator('.notebook-toolbar button[aria-label="Clear all outputs"]').innerText()).trim().length > 0)
+    const bar = await page.evaluate(() => {
+      const tb = document.querySelector('.notebook-toolbar [role="toolbar"]').getBoundingClientRect()
+      const col = document.querySelector('.notebook-scroller > div').getBoundingClientRect()
+      return { tb: [Math.round(tb.left), Math.round(tb.right)], col: [Math.round(col.left), Math.round(col.right)] }
+    })
+    check('Q polish: the notebook toolbar spans the cells\' column, not the window', Math.abs(bar.tb[0] - bar.col[0]) <= 1 && Math.abs(bar.tb[1] - bar.col[1]) <= 1, J(bar))
+    const look = await page.evaluate((sel) => {
+      const q = (id, s) => document.querySelector(`.notebook-view [data-cell-id="${id}"] ${s}`)
+      const cs = (e) => (e ? getComputedStyle(e) : null)
+      const info = getComputedStyle(document.documentElement).getPropertyValue('--info').trim()
+      const probe = document.createElement('span'); probe.style.color = info; document.body.append(probe); const infoRgb = getComputedStyle(probe).color; probe.remove()
+      const danger = (() => { const p = document.createElement('span'); p.style.color = getComputedStyle(document.documentElement).getPropertyValue('--danger'); document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c })()
+      const err = q('q1', 'pre[data-stream="stderr"]')
+      const img = q('q2', '.nb-outputs img')
+      const td = q('q0', '.nb-md td'), a = q('q0', '.nb-md a'), pre = q('q0', '.nb-md pre'), sum = q('q0', '.nb-md mo[largeop]')
+      return {
+        stderr: { color: cs(err)?.color, danger, borderStart: cs(err)?.borderInlineStartWidth, bg: cs(err)?.backgroundColor },
+        img: img ? { w: Math.round(img.getBoundingClientRect().width), natural: img.naturalWidth } : null,
+        td: cs(td)?.borderLeftWidth, link: cs(a)?.color, infoRgb, pre: cs(pre)?.fontSize, preBorder: cs(pre)?.borderTopWidth,
+        sum: sum ? Math.round(sum.getBoundingClientRect().height) : null, line: Math.round(parseFloat(cs(q('q0', '.nb-md p'))?.lineHeight ?? '0')),
+        form: { title: q('q3', '[data-form-title]')?.textContent ?? null, code: !!q('q3', '[data-code-box]') },
+        wide: q('q4', 'iframe')?.dataset.cut ?? null,
+      }
+    })
+    check('Q M6: stderr is a muted stream, not drawn as an error', look.stderr.color !== look.stderr.danger && look.stderr.borderStart === '0px' && look.stderr.bg === 'rgba(0, 0, 0, 0)', J(look.stderr))
+    check('Q M2: an image without width metadata keeps its natural size', !!look.img && look.img.natural === 40 && look.img.w === 40, J(look.img))
+    check('Q polish: markdown tables have rules, not a grid (like a DataFrame)', look.td === '0px', J(look.td))
+    check('Q polish: markdown links are the info hue', look.link === look.infoRgb, J({ link: look.link, info: look.infoRgb }))
+    check('Q polish: markdown code blocks use the code size, no frame', look.pre === '14px' && look.preBorder === '0px', J({ pre: look.pre, border: look.preBorder }))
+    check('Q minor 10: display-math ∑ is drawn large, not text-sized', look.sum !== null && look.sum > 22, J({ sum: look.sum }))
+    check('Q polish: a Colab #@title form cell shows its title with the code folded', /Load the data/.test(look.form.title ?? '') && !look.form.code, J(look.form))
+    check('Q minor 12: a table wider than the output fades at its cut edge', look.wide === 'x', J(look.wide))
+    await page.locator(cellSel('q3')).getByRole('button', { name: 'Show code' }).click()
+    await page.waitForTimeout(300)
+    check('Q polish: …and Show code reveals it', (await page.locator(`${cellSel('q3')} [data-code-box]`).count()) === 1)
+    const gaps = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')].map((c) => c.getBoundingClientRect())
+      return cells.slice(1).map((r, i) => Math.round(r.top - cells[i].bottom))
+    })
+    check('Q polish: every gap between cells is the same 32px', gaps.every((g) => g === 32), J(gaps))
+
+    // One toolbar: the selected cell's, not also the hovered one's.
+    await page.locator(cellSel('q5')).focus()
+    await page.locator(cellSel('q6')).hover()
+    await page.waitForTimeout(250)
+    const bars = await page.evaluate(() => [...document.querySelectorAll('.notebook-view [data-cell-id] [role="toolbar"]')].filter((t) => getComputedStyle(t).display !== 'none').length)
+    check('Q minor 2: one cell toolbar at a time (selected), none for the hovered cell', bars === 1, J(bars))
+
+    // Completion closes when the caret leaves its cell.
+    await page.locator(`${cellSel('q5')} .cm-content`).click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\npri', { delay: 50 })
+    await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+    await page.locator(cellSel('q6')).click({ position: { x: 20, y: 10 } })
+    await page.waitForTimeout(300)
+    check('Q minor 3: leaving a cell takes its completion popup with it', (await page.locator('.cm-tooltip-autocomplete').count()) === 0)
+    await page.locator(`${cellSel('q5')} .cm-content`).click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.press('Shift+Home')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Escape')
+
+    // Run all stops at the error: says so, goes there, marks the stale cell below.
+    await page.locator('.notebook-toolbar button[aria-label="Run all"]').click()
+    await kernelIdle(page)
+    await page.waitForTimeout(800)
+    const stop = await page.evaluate(() => ({
+      notice: document.querySelector('.notebook-view p[role="status"]')?.textContent ?? '',
+      selected: document.querySelector('.notebook-view [data-selected]')?.getAttribute('data-cell-id'),
+      stale: !!document.querySelector('.notebook-view [data-cell-id="q7"] [data-stale]'),
+      inView: (() => { const r = document.querySelector('.notebook-view [data-cell-id="q6"]').getBoundingClientRect(), s = document.querySelector('.notebook-scroller').getBoundingClientRect(); return r.top >= s.top && r.bottom <= s.bottom })(),
+    }))
+    check('Q minor 5: Run all stopping at an error says so, selects and shows that cell', /Stopped at an error/.test(stop.notice) && stop.selected === 'q6' && stop.inView, J(stop))
+    check('Q minor 5: …and marks the cell below as holding an earlier run\'s output', stop.stale, J(stop))
+    await page.screenshot({ path: join(SHOTS, 'notebook-qa-runall-stopped.png') })
+
+    // Restart asks first.
+    await page.locator('.notebook-toolbar button[aria-label="Restart"]').click()
+    const asked = await page.locator('dialog[open]').filter({ hasText: 'Restart Python?' }).count()
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    check('Q minor 6: Restart asks before clearing the variables', asked === 1, J(asked))
+    await ctx.close()
+  }
+
+  // ---- phone: keyboard compaction (M8), pill label, menu hints ----
+  {
+    const { ctx, page } = await browser({ width: 390, height: 844 }, true)
+    await isolated(page, '?lang=en')
+    await importNotebook(page, qaFile)
+    await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
+    await page.waitForTimeout(1200)
+    check('Q minor 14: the phone kernel pill has a label, not a bare dot', await page.evaluate(() => { const s = document.querySelector('[data-kernel] span:last-child'); return !!s && getComputedStyle(s).display !== 'none' && s.textContent.trim().length > 0 }))
+    await page.locator('.notebook-view [data-cell-id="q5"]').click()
+    await page.waitForTimeout(300)
+    await page.locator('.notebook-view [data-cell-id="q5"]').getByRole('button', { name: 'Cell actions' }).last().click()
+    await page.waitForTimeout(300)
+    const menu = await page.evaluate(() => ({
+      hint: [...document.querySelectorAll('[role="menu"] *')].some((e) => e.children.length === 0 && /Shift\+Alt\+F/.test(e.textContent) && getComputedStyle(e).display !== 'none'),
+      seps: [...document.querySelectorAll('[role="menu"] [role="separator"]')].map((e) => getComputedStyle(e).borderTopColor),
+    }))
+    check('Q minor 19: the phone cell menu shows no keyboard shortcut', !menu.hint, J(menu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    // The keyboard: focus a cell, then the visual viewport shrinks as an Android keyboard does.
+    await page.locator('.notebook-view [data-cell-id="q5"] .cm-content').click()
+    await page.waitForTimeout(300)
+    await page.setViewportSize({ width: 390, height: 508 })
+    await page.waitForTimeout(800)
+    const kb = await page.evaluate(() => {
+      const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0 }
+      const caret = document.querySelector('.notebook-view .cm-focused .cm-cursor')?.getBoundingClientRect()
+      const sc = document.querySelector('.notebook-scroller').getBoundingClientRect()
+      return { kb: document.documentElement.dataset.kb, console: shown('.console-panel'), crumbs: shown('.breadcrumbs'), status: shown('.status-bar'), caret: caret ? Math.round(caret.top) : null, sc: [Math.round(sc.top), Math.round(sc.bottom)] }
+    })
+    check('Q M8: a keyboard over a notebook cell is detected (Android-style resize)', kb.kb === 'open', J(kb))
+    check('Q M8: …the console strip, breadcrumbs and status bar step aside', !kb.console && !kb.crumbs && !kb.status, J(kb))
+    check('Q M8: …and the caret line stays in the visible band of the notebook', kb.caret !== null && kb.caret > kb.sc[0] + 20 && kb.caret < kb.sc[1] - 20, J(kb))
+    await page.screenshot({ path: join(SHOTS, 'notebook-qa-phone-keyboard.png') })
+    await ctx.close()
+  }
 }
 
 const failed = results.filter((r) => r[0] === 'FAIL')

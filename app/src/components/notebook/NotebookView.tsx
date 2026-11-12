@@ -8,18 +8,22 @@ import {
   duplicateCell,
   newCell,
   outputsCollapsed,
+  outputsExpanded,
   setOutputsCollapsed,
+  setOutputsExpanded,
   type CellType,
   type NbCell,
   type Notebook,
 } from '../../notebook/nbformat'
 import { transformCell } from '../../notebook/magics'
 import { headingId } from '../../notebook/markdown'
-import type { CellEditor, RunMode } from '../../notebook/cellEditor'
+import type { RunMode } from '../../notebook/cellEditor'
 import { useMedia } from '../../hooks/useMedia'
 import { COPY } from '../../copy'
-import { CellView, INSERT_CHIP, type CellAction } from './CellView'
+import { CellView, INSERT_CHIP, type CellAction, type LazyCellEditor } from './CellView'
 import { Button } from '../ui/Button'
+import { useDialogs } from '../ui/DialogProvider'
+import { EditorView } from '@codemirror/view'
 import { Menu, type MenuAnchor, type MenuItem } from '../ui/Menu'
 import { IconClear, IconDownload, IconMore, IconPlus, IconRestart, IconRunAll, IconStop, IconCode, IconText, IconFileLines } from '../ui/Icons'
 
@@ -35,6 +39,8 @@ export interface NotebookViewProps {
   projectWords(): readonly string[]
   onOpenAsText(): void
   onDownload(): void
+  /** The file's share items (the shell's), folded into the notebook's ⋯ so there is one menu. */
+  moreExtras?: MenuItem[]
   /** A cell is about to run under the debugger (the shell opens Run and Debug). */
   onDebugStart(): void
   /** Reformat a cell's source (actions/format.ts); rejects when it cannot. */
@@ -47,7 +53,7 @@ export interface NotebookViewProps {
 let clipboard: NbCell[] = []
 
 const BAR =
-  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center gap-1 px-2 bg-surface-1 ' +
+  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center bg-surface-1 ' +
   'shadow-[inset_0_-1px_0_0_var(--border-subtle)] min-w-0'
 
 const BAR_BTN =
@@ -81,42 +87,50 @@ function KernelPill({ state }: { state: SessionState }) {
               : 'bg-transparent border-text-3')
         }
       />
-      <span className="truncate max-[419px]:hidden">{kernelLabel(state)}</span>
+      <span className="truncate">{kernelLabel(state)}</span>
     </span>
   )
 }
 
-/** Between two cells: "+ Code / + Text". Revealed on hover with a mouse; on touch, shown under the selected cell. */
-function Inserter({ visible, always, onAdd }: { visible: boolean; always?: boolean; onAdd(type: CellType): void }) {
-  return (
-    <div
-      className={
-        'group/ins relative flex h-3 items-center justify-center desk:h-4 ' +
-        (always || visible ? 'h-auto py-1 desk:py-0.5' : 'hidden desk:flex')
-      }
-    >
-      <div
-        className={
-          'flex items-center gap-2 ' +
-          (always || visible ? '' : 'opacity-0 group-hover/ins:opacity-100 focus-within:opacity-100 transition-opacity duration-(--dur-fast)')
-        }
-      >
-        <span aria-hidden="true" className="absolute inset-x-12 top-1/2 h-px bg-border-subtle -z-10" />
-        {(['code', 'markdown'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => onAdd(t)}
-            aria-label={t === 'code' ? COPY.nbAddCodeCell : COPY.nbAddTextCell}
-            className={INSERT_CHIP}
-          >
-            <IconPlus size={14} />
-            {t === 'code' ? COPY.nbAddCode : COPY.nbAddText}
-          </button>
-        ))}
+/**
+ * The space between two cells (docs/design/NOTEBOOK.md §5) — the only vertical gap there is:
+ * desk 24px, with a hairline and "+ Code / + Text" (22px, so they fit inside it and never touch
+ * a cell border) on hover or keyboard focus; touch 8px, the selected cell's action row carrying
+ * the chips. After the last cell the chips always show.
+ */
+function Gap({ always, chips, onAdd }: { always: boolean; chips: boolean; onAdd(type: CellType): void }) {
+  const buttons = (['code', 'markdown'] as const).map((t) => (
+    <button key={t} type="button" onClick={() => onAdd(t)} aria-label={t === 'code' ? COPY.nbAddCodeCell : COPY.nbAddTextCell} className={INSERT_CHIP + ' relative'}>
+      <IconPlus size={14} />
+      {t === 'code' ? COPY.nbAddCode : COPY.nbAddText}
+    </button>
+  ))
+  if (always && chips) {
+    return (
+      <div data-gap="" data-gap-always="" className="flex items-center justify-center gap-2 py-3">
+        {buttons}
       </div>
+    )
+  }
+  return (
+    <div data-gap="" className="group/ins relative h-2 desk:h-6">
+      {chips ? (
+        <div className="absolute inset-0 hidden items-center justify-center gap-2 opacity-0 transition-opacity duration-(--dur-fast) ease-standard group-hover/ins:opacity-100 focus-within:opacity-100 desk:flex">
+          <span aria-hidden="true" className="absolute inset-x-0 top-1/2 h-px bg-border-subtle" />
+          {buttons}
+        </div>
+      ) : null}
     </div>
   )
+}
+
+const LINE_NUMBERS_KEY = 'warsha.notebook.lineNumbers'
+const readLineNumbers = () => {
+  try {
+    return localStorage.getItem(LINE_NUMBERS_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 export function NotebookView(props: NotebookViewProps) {
@@ -131,7 +145,18 @@ export function NotebookView(props: NotebookViewProps) {
   const [selected, setSelected] = useState<string | null>(null)
   const [editingText, setEditingText] = useState<Set<string>>(() => new Set())
   const [menu, setMenu] = useState<MenuAnchor | null>(null)
-  const editors = useRef(new Map<string, CellEditor>())
+  // Line numbers in code cells: off by default (Colab), one switch for every notebook, remembered.
+  const [lineNumbers, setLineNumbers] = useState(readLineNumbers)
+  const toggleLineNumbers = () =>
+    setLineNumbers((on) => {
+      try {
+        localStorage.setItem(LINE_NUMBERS_KEY, on ? '0' : '1')
+      } catch {
+        /* still toggles for this visit */
+      }
+      return !on
+    })
+  const editors = useRef(new Map<string, LazyCellEditor>())
   const scroller = useRef<HTMLDivElement>(null)
   const undoStack = useRef<{ cell: NbCell; index: number }[]>([])
   const chord = useRef<{ key: string; at: number } | null>(null)
@@ -180,7 +205,7 @@ export function NotebookView(props: NotebookViewProps) {
       const el = scroller.current?.querySelector(`[data-cell-id="${id}"]`) as HTMLElement | null
       const ed = editors.current.get(id)
       if (mode === 'edit' && !ed && tries++ < 10) return void requestAnimationFrame(go)
-      if (mode === 'edit' && ed) ed.focus(where)
+      if (mode === 'edit' && ed) ed.mount().focus(where)
       else el?.focus({ preventScroll: true })
       el?.scrollIntoView({ block: 'nearest' })
     }
@@ -290,6 +315,8 @@ export function NotebookView(props: NotebookViewProps) {
           return doc.updateCell(id, (c) => ({ ...c, outputs: [], executionCount: null }))
         case 'toggleOutput':
           return doc.updateCell(id, (c) => setOutputsCollapsed(c, !outputsCollapsed(c)))
+        case 'toggleExpand':
+          return doc.updateCell(id, (c) => setOutputsExpanded(c, !outputsExpanded(c)))
         case 'debug':
           props.onDebugStart()
           return doc.session.run([id], { debug: true })
@@ -337,18 +364,60 @@ export function NotebookView(props: NotebookViewProps) {
   useEffect(() => {
     doc.selected = selected
   }, [doc, selected])
-  const restart = () => void doc.session.restart()
+  // Restart clears every variable: ask first, as Colab does (QA). Nothing to lose when it never started.
+  const dialogs = useDialogs()
+  const confirmRestart = () =>
+    doc.session.get().kernel === 'off' && !doc.session.busy
+      ? Promise.resolve(true)
+      : dialogs.confirm({ title: COPY.nbRestartConfirmTitle, message: COPY.nbRestartConfirmBody, okLabel: COPY.nbRestart, danger: true })
+  const restart = async () => {
+    if (await confirmRestart()) await doc.session.restart()
+  }
   const restartRunAll = async () => {
+    if (!(await confirmRestart())) return
     await doc.session.restart()
     doc.session.run(doc.codeIds())
   }
   const clearAll = () => doc.replace((m) => clearAllOutputs(m))
 
+  /* ---- phone keyboard: the line being typed stays mid-screen, clear of the keyboard (QA M8) ---- */
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    let raf = 0
+    const centre = () => {
+      cancelAnimationFrame(raf)
+      // After the shell has re-laid out for the new height (viewport.ts, then React).
+      raf = requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (document.documentElement.dataset.kb !== 'open') return
+          for (const ed of editors.current.values()) {
+            const view = ed.current?.view
+            if (view?.hasFocus) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' }) })
+          }
+        }),
+      )
+    }
+    vv.addEventListener('resize', centre)
+    return () => {
+      vv.removeEventListener('resize', centre)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  /* ---- a run of several cells stopped at an error: go to it (QA: Run all stopped silently) ---- */
+  useEffect(() => {
+    const id = session.stoppedAt
+    if (!id) return
+    setSelected(id)
+    requestAnimationFrame(() => scroller.current?.querySelector(`[data-cell-id="${id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+  }, [session.stoppedAt])
+
   /* ---- debug stops and reveals arrive for a cell path ---- */
   useEffect(
     () =>
       doc.onReveal((cellId, line) => {
-        const ed = editors.current.get(cellId)
+        const ed = editors.current.get(cellId)?.mount()
         setSelected(cellId)
         requestAnimationFrame(() => {
           const el = scroller.current?.querySelector(`[data-cell-id="${cellId}"]`)
@@ -470,7 +539,7 @@ export function NotebookView(props: NotebookViewProps) {
   const onInterrupt = useCallback(() => doc.session.interrupt(), [doc])
   const onStdin = useCallback((line: string) => doc.session.writeStdin(line), [doc])
   const onSave = useCallback(() => doc.flush(), [doc])
-  const registerEditor = useCallback((id: string, ed: CellEditor | null) => {
+  const registerEditor = useCallback((id: string, ed: LazyCellEditor | null) => {
     if (ed) editors.current.set(id, ed)
     else editors.current.delete(id)
   }, [])
@@ -495,20 +564,24 @@ export function NotebookView(props: NotebookViewProps) {
   const moreItems: MenuItem[] = [
     { label: COPY.nbRestartRunAll, icon: <IconRestart size={18} />, onSelect: () => void restartRunAll() },
     { label: COPY.nbClearOutputs, icon: <IconClear size={18} />, onSelect: clearAll },
+    { label: lineNumbers ? COPY.nbHideLineNumbers : COPY.nbShowLineNumbers, onSelect: toggleLineNumbers, startsGroup: true },
     { label: COPY.nbDownload, icon: <IconDownload size={18} />, onSelect: props.onDownload, startsGroup: true },
     { label: COPY.nbOpenAsText, icon: <IconFileLines size={18} />, onSelect: props.onOpenAsText },
+    ...(props.moreExtras ?? []).map((item, i) => (i === 0 ? { ...item, startsGroup: true } : item)),
   ]
 
   return (
     <section aria-label={path} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
-      <div role="toolbar" aria-label={COPY.nbToolbar} className={BAR + (props.readOnly ? ' hidden' : '')}>
+      <div className={BAR + (props.readOnly ? ' hidden' : '')}>
+      {/* The toolbar's buttons share the cells' 1100px column (QA: the pill sat 260px off it at 1920). */}
+      <div role="toolbar" aria-label={COPY.nbToolbar} className="mx-auto flex w-full max-w-[1100px] min-w-0 items-center gap-1 px-1 desk:px-4">
         <BarButton label={COPY.nbAddCode} icon={<IconCode size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'code')} aria-label={COPY.nbAddCodeCell} />
         <BarButton label={COPY.nbAddText} icon={<IconText size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'markdown')} aria-label={COPY.nbAddTextCell} />
         <span aria-hidden="true" className="mx-1 h-5 w-px flex-none bg-border-subtle" />
         <BarButton label={COPY.nbRunAll} icon={<IconRunAll size={18} />} onClick={runAll} />
         <BarButton label={COPY.nbInterrupt} icon={<IconStop size={16} />} onClick={() => doc.session.interrupt()} disabled={!anyBusy} />
         <BarButton label={COPY.nbRestart} icon={<IconRestart size={18} />} onClick={restart} disabled={session.kernel === 'off' && !anyBusy} />
-        <BarButton label={COPY.nbClearOutputs} icon={<IconClear size={18} />} onClick={clearAll} showLabel={false} />
+        <BarButton label={COPY.nbClearOutputs} icon={<IconClear size={18} />} onClick={clearAll} />
         <span className="flex-1" />
         <KernelPill state={session} />
         <BarButton
@@ -523,6 +596,7 @@ export function NotebookView(props: NotebookViewProps) {
         />
         {menu ? <Menu anchor={menu} items={moreItems} label={COPY.nbMore} onClose={() => setMenu(null)} /> : null}
       </div>
+      </div>
       {session.notice ? (
         <p role="status" className="m-0 border-b border-border-subtle bg-info-soft px-3 py-1.5 text-meta text-text-1">
           {session.notice}
@@ -530,7 +604,7 @@ export function NotebookView(props: NotebookViewProps) {
       ) : null}
 
       <div ref={scroller} className="notebook-scroller scroller min-h-0 flex-1 overflow-y-auto overflow-x-hidden" onKeyDown={onKeyDown} onClick={onFragmentClick}>
-        <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col px-1 pt-4 pb-[40vh] desk:px-4">
+        <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col px-1 pt-2 pb-[40vh] desk:px-4">
           {nb.cells.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
               <p className="m-0 text-btn font-semibold text-text-2">{COPY.nbEmptyTitle}</p>
@@ -539,7 +613,7 @@ export function NotebookView(props: NotebookViewProps) {
           ) : null}
           {nb.cells.map((cell, i) => (
             <div key={cell.id} className="min-w-0">
-              {i === 0 && !props.readOnly ? <Inserter visible={false} onAdd={(t) => insertAt(0, t)} /> : null}
+              {i === 0 ? <Gap always={false} chips={!props.readOnly} onAdd={(t) => insertAt(0, t)} /> : null}
               <CellView
                 cell={cell}
                 index={i}
@@ -547,9 +621,11 @@ export function NotebookView(props: NotebookViewProps) {
                 selected={selected === cell.id}
                 editingText={editingText.has(cell.id)}
                 status={session.cells[cell.id]}
+                stale={!!session.skipped?.includes(cell.id) && cell.outputs.length > 0}
                 waiting={session.waiting === cell.id}
                 progress={session.running === cell.id ? session.progress : null}
                 fontSize={props.fontSize}
+                lineNumbers={lineNumbers}
                 readOnly={!!props.readOnly}
                 desk={desk}
                 first={i === 0}
@@ -568,12 +644,11 @@ export function NotebookView(props: NotebookViewProps) {
                 registerEditor={registerEditor}
               />
               {/* On touch the selected cell's own toolbar row carries the insert chips. */}
-              {props.readOnly ? null : (
-                <Inserter visible={false} always={i === nb.cells.length - 1 && !(selected === cell.id && !desk)} onAdd={(t) => insertAt(i + 1, t)} />
-              )}
+              {/* On touch the selected cell's own action row carries the insert chips. */}
+              <Gap always={i === nb.cells.length - 1 && !(selected === cell.id && !desk)} chips={!props.readOnly} onAdd={(t) => insertAt(i + 1, t)} />
             </div>
           ))}
-          {nb.cells.length === 0 && !props.readOnly ? <Inserter visible always onAdd={(t) => insertAt(0, t)} /> : null}
+          {nb.cells.length === 0 ? <Gap always chips={!props.readOnly} onAdd={(t) => insertAt(0, t)} /> : null}
         </div>
       </div>
     </section>
