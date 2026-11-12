@@ -345,6 +345,15 @@ export class PythonRuntime implements Runtime {
           ...(typeof msg.loaded === 'number' ? { loaded: msg.loaded } : {}),
           ...(typeof msg.total === 'number' ? { total: msg.total } : {}),
         }
+        // Once this worker is ready, progress can only come from inside a run:
+        // the packages a program imports downloading before it starts
+        // (worker.js, loadImportedPackages). That belongs to the run, not to a
+        // boot, so it must not become lastProgress -- load() would replay it on
+        // every later run. (Not `version`: that survives a kill() respawn.)
+        if (!this.bootSettle) {
+          if (this.active && !this.active.ended) this.active.io.onProgress?.(report)
+          return
+        }
         this.lastProgress = report
         for (const listener of this.progressListeners) listener(report)
         return

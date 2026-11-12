@@ -309,6 +309,26 @@ the curriculum uses `asyncio`; genuinely supporting it would mean moving the
 runner to `runPythonAsync`, which collides with the synchronous `Atomics.wait`
 that makes `input()` block — still not on the table.
 
+**`import numpy` / `import pandas` work; the package downloads before the run.**
+Before the program starts, every `.py` file in the file set (not just the entry
+— a helper may be the one importing numpy) goes through
+`pyodide.loadPackagesFromImports`, so any package in the Pyodide distribution is
+fetched on first import. Only names that map to a distribution package trigger a
+fetch: a program importing just the stdlib pays one AST walk per file and no
+download. While it downloads, the worker sends the ordinary `progress` message
+(`phase: 'download'`, `message: 'Loading numpy (one-time)...'`, byte counts), and
+`PythonRuntime` forwards it to the run's **`RunIO.onProgress`**, not to `load()`
+listeners — measured on a fast connection: numpy ~2.9 MB / ~1.3 s; pandas + dateutil + pytz + six
+another ~4.9 MB / ~4 s on top of numpy. A loaded package stays loaded for the
+life of the worker (a `kill()` respawn pays again, from the HTTP/SW cache). Pyodide's
+loader never rejects on a failed download, so the worker collects the failure and,
+instead of running the program into a bare `ModuleNotFoundError`, ends the run
+with exit 1 and one stderr line, `[Warsha: could not download a package this
+program imports -- check your internet connection, then press Run again]` plus
+Pyodide's reason; a later Run retries. The download happens before the
+synchronous run starts, so `input()`/Stop are unaffected (Stop during a download
+is the usual `terminate()`).
+
 **Each run starts from a clean project dir and clean user modules.** Editing
 `helpers/shapes.py` between runs takes effect, and a file you removed from the
 file set is really gone (no stale import, no stale `__pycache__`). `__name__` is

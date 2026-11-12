@@ -1,28 +1,35 @@
 /**
- * Runs the collab unit tests (tests/collab/*.test.ts).
+ * Runs a unit-test suite: tests/<suite>/*.test.ts (collab, editor).
  *
  * This Node build ships without the built-in TypeScript stripper, and its test
  * runner ignores node_modules, so we bundle each test to a temp dir with the
  * (already-installed) esbuild CLI and point `node --test` at the output. Pure
- * Node + yjs — no browser, no DOM.
+ * Node — no browser, no DOM.
  *
- * Usage: `npm run test:collab`
+ * Usage: `npm run test:collab`, `npm run test:editor`
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const names = ['doc', 'blobSync', 'materialize', 'auth', 'headlessSync']
-const out = mkdtempSync(join(tmpdir(), 'warsha-collab-'))
+const suite = process.argv[2]
+if (!suite) {
+  console.error('usage: node tools/unit-tests.mjs <suite>   (a folder under tests/)')
+  process.exit(2)
+}
+const names = readdirSync(join(root, 'tests', suite))
+  .filter((f) => f.endsWith('.test.ts'))
+  .map((f) => f.slice(0, -'.test.ts'.length))
+const out = mkdtempSync(join(tmpdir(), `warsha-${suite}-`))
 const esbuild = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild')
 
 const built = spawnSync(
   esbuild,
   [
-    ...names.map((n) => join(root, 'tests', 'collab', `${n}.test.ts`)),
+    ...names.map((n) => join(root, 'tests', suite, `${n}.test.ts`)),
     '--bundle',
     '--platform=node',
     '--format=esm',

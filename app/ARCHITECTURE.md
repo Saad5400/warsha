@@ -27,6 +27,12 @@ WARSHA_ORIGIN=https://example.org npm run build   # deploying to a new origin â€
 | `src/console/buffer.ts` | The transcript. Chunk-based (not line-based), batched notification, 5000-line head-dropping cap. Plain TS, no React. |
 | `src/editor/setup.ts` | All CodeMirror wiring: per-file state cache, lazy grammars, compartments. Plain TS. |
 | `src/editor/hoverDocs.ts` | Docs on hover: one VS Code-style card fed by the built-in dictionary (shared with completions.ts, so hover and autocomplete-info agree) plus the student's own Javadoc/docstrings scanned across the project (accessor registered from App). Mouse hover, long-press on touch, Ctrl/Cmd+K Ctrl/Cmd+I. |
+| `src/editor/completions.ts` | The completion sources and the beginner dictionaries (snippets, keywords, API names, built-in docs). Ranks by situation and by the student's own usage (`usage.ts`). |
+| `src/editor/members.ts` | What `x.` offers: the library member tables (each `detail` leads with the return type, which chains follow) and the member source. |
+| `src/editor/receiver.ts` | The type of the expression before a dot, read from text: declarations, parameters, `catch`, `this`/`super`/`self`, chains, casts, literals, indexing. |
+| `src/editor/typeIndex.ts` | The student's own classes (fields, methods, constants, parents) scanned from the open file and the project. |
+| `src/editor/names.ts` | JetBrains-style variable-name suggestions where a new name goes. |
+| `src/editor/projectSource.ts` | The project-files seam App registers once per revision; read by hover docs and the type index. |
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |

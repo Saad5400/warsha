@@ -44,9 +44,13 @@ care about.
   before multi-project support are migrated on first open.
 - **A real editor.** Syntax highlighting, search, indent guides, and completion for every
   language Warsha runs, including the snippet abbreviations students already see teachers
-  type — `sout`, `psvm`, `fori` — plus a hand-written dictionary of the API names from the
-  first weeks of a course, each with a plain-English description. It is a word list, not type
-  analysis; real type-aware completion is a later version.
+  type — `sout`, `psvm`, `fori` — plus a hand-written dictionary of the Java and Python API a
+  university course uses, each with a plain-English description. After a dot it offers what
+  that value can actually do: it follows locals, parameters, `catch` variables, chains like
+  `sc.next().charAt`, and the student's own classes across the project, inheritance included.
+  Naming a variable suggests names from its type, the way JetBrains IDEs do (`Scanner ` →
+  `scanner`, `ArrayList<Student> ` → `students`). It reads the code as text — no compiler
+  behind it — so it is right for course-sized code, not a language server.
 - **A console that behaves like a terminal.** Partial writes appear immediately, so a
   `print("Name: ")` prompt shows up before the newline that never comes; what you type
   lands on the same line as the prompt; output auto-scrolls with a jump-to-bottom pill
@@ -111,7 +115,7 @@ static files.
 |---|---|
 | **Editor** | [CodeMirror 6](https://codemirror.net/) — syntax highlighting, autocomplete, search |
 | **Java** | [CheerpJ](https://cheerpj.com/) — a full JVM compiled to WebAssembly, loaded from Leaning Technologies' CDN — plus [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj), the Eclipse batch compiler, which runs *inside* that JVM to compile the student's code |
-| **Python** | [Pyodide](https://pyodide.org/) — CPython and the standard library compiled to WebAssembly |
+| **Python** | [Pyodide](https://pyodide.org/) — CPython and the standard library compiled to WebAssembly; packages from the Pyodide distribution (numpy, pandas, …) are fetched on first import |
 | **C#** | The [.NET 9 WebAssembly runtime](https://github.com/dotnet/runtime) (Mono, single-threaded) hosting [Roslyn](https://github.com/dotnet/roslyn), which compiles the student's `.cs` files into an assembly and runs it, all in a module worker |
 | **C** | [clang 16](https://wasmer.io/wasmer/clang) (via [`@wasmer/sdk`](https://github.com/wasmerio/wasmer-js)) compiles student C to WebAssembly; Warsha then runs that module itself under [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/browser_wasi_shim) so `scanf`/`getchar` can block on a `SharedArrayBuffer` for real interactive input |
 | **Web preview & bundler** | A student's HTML/CSS/JS/TS is assembled into one document and rendered in a sandboxed iframe; [esbuild-wasm](https://esbuild.github.io/) bundles TypeScript and cross-file imports, and — fetched only when a project uses them — first-party, on-device builds of React, Vue, and Svelte, plus Tailwind CSS |
