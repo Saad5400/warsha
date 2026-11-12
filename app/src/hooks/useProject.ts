@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Project, type TreeNode } from '../fs/project'
+import { MemoryStore } from '../fs/opfs'
 import { prefs, setPrefs } from '../fs/prefs'
 import {
   nextProjectName,
@@ -101,7 +102,7 @@ export function useProject(): ProjectView {
         storeRef.current = opened.projects
         // Fresh device: nothing to open, so no store to attach — Home shows its empty state.
         if (opened.current) {
-          await project.switchStore(opened.projects.storeFor(opened.current.id))
+          await project.switchStore(opened.projects.storeFor(opened.current.id), opened.current.id)
           if (cancelled) return
           setPrefs({ currentProjectId: opened.current.id })
         }
@@ -173,7 +174,7 @@ export function useProject(): ProjectView {
       const store = storeRef.current
       if (!store) return
       await guard(async () => {
-        await project.switchStore(store.storeFor(meta.id))
+        await project.switchStore(store.storeFor(meta.id), meta.id)
         await store.touch(meta.id)
       }, undefined)
       setPrefs({ currentProjectId: meta.id })
@@ -255,13 +256,23 @@ export function useProject(): ProjectView {
     async (id: string): Promise<boolean> => {
       const store = storeRef.current
       if (!store) return false
+      const wasOpen = id === current?.id
+      // The open project lets go of its storage first: its notebooks and pending edits close
+      // (flushed while it is still attached), and nothing left over can write into — and so
+      // resurrect — the folder being removed, or follow the student into the next project.
+      if (wasOpen) await guard(() => project.switchStore(new MemoryStore()), undefined)
       await guard(() => store.remove(id), undefined)
       const remaining = await guard(() => store.list(), [])
       // The listing is the verdict, not the call: a removal that threw (or half-ran)
       // leaves the project here, and the shell must not announce a delete that a
       // refresh will contradict.
       const gone = !remaining.some((p) => p.id === id)
-      if (id !== current?.id) {
+      if (wasOpen && !gone && current) {
+        // Storage refused: the project is still here, so it is still the open one.
+        await open(current)
+        return false
+      }
+      if (!wasOpen) {
         setProjects(remaining)
         return gone
       }
@@ -276,7 +287,7 @@ export function useProject(): ProjectView {
       }
       return gone
     },
-    [current, open, guard],
+    [current, open, guard, project],
   )
 
   const snapshotOf = useCallback(

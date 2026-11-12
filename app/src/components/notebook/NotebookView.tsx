@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import type { NotebookKernel } from '../../runtime/types'
-import { notebookDocument, type DocumentIO, type NotebookDocument } from '../../notebook/document'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import type { NotebookDocument } from '../../notebook/document'
 import { kernelLabel, sessionBusy, useSession, type SessionState } from '../../notebook/session'
 import {
   cellIds,
@@ -28,8 +27,8 @@ const DESK = '(min-width: 900px) and (hover: hover) and (pointer: fine)'
 
 export interface NotebookViewProps {
   path: string
-  kernel: NotebookKernel
-  io: DocumentIO
+  /** The open document — the attached project's (notebook/document.ts), never looked up here by path alone. */
+  doc: NotebookDocument
   fontSize: number
   /** A live-collab viewer: cells can be read, not edited or run (nothing they produced could be saved). */
   readOnly?: boolean
@@ -121,8 +120,7 @@ function Inserter({ visible, always, onAdd }: { visible: boolean; always?: boole
 }
 
 export function NotebookView(props: NotebookViewProps) {
-  const { path } = props
-  const doc: NotebookDocument = useMemo(() => notebookDocument(path, props.kernel, props.io), [path, props.kernel, props.io])
+  const { path, doc } = props
   const snap = useSyncExternalStore(doc.subscribe, doc.get)
   const session = useSession(doc.session)
   const desk = useMedia(DESK)

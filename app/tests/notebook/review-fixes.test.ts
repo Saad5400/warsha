@@ -141,7 +141,7 @@ test('#4 document: a remote edit arriving while a local write is pending is merg
     read: () => file,
     write: (_p: string, t: string) => void writes.push((file = t)),
     files: () => [],
-    workspace: () => 'p',
+    owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
@@ -193,7 +193,7 @@ test('#3 project switch: pending notebook edits land in the project being LEFT, 
     read: (p: string) => project.read(p),
     write: (p: string, t: string) => project.has(p) && project.setContent(p, t),
     files: () => project.sourceFiles(),
-    workspace: () => 'x',
+    owner: () => project.owner,
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
@@ -221,7 +221,7 @@ test('#3 dispose: a late output after close is dropped; a deleted notebook is no
       writes.push(t)
     },
     files: () => [],
-    workspace: () => 'p',
+    owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
@@ -313,7 +313,7 @@ test('suspected: an empty .ipynb opens as an empty notebook and writes NOTHING u
     read: () => '',
     write: (_p, t) => void writes.push(t),
     files: () => [],
-    workspace: () => 'p',
+    owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
@@ -367,7 +367,7 @@ test('A(i) merge: a notebook without ids is merged, not doubled', () => {
     read: () => file,
     write: (_p, t) => void writes.push((file = t)),
     files: () => [],
-    workspace: () => 'p',
+    owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
@@ -387,18 +387,18 @@ test('A(ii) sync: a file change reaches an open notebook through the registry, v
     read: () => file,
     write: (_p, t) => void (file = t),
     files: () => [],
-    workspace: () => 'p',
+    owner: () => 'p',
     onFilesChanged() {},
     onFailure() {},
     messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
   })
   doc.updateCell('a', (c) => ({ ...c, outputs: [{ output_type: 'stream', name: 'stdout', text: 'running…' }] })) // a cell streaming
-  notebookFileChanged('bg.ipynb', serializeNotebook(nb([['a', 'A'], ['b', 'B theirs']])))
+  notebookFileChanged('p', 'bg.ipynb', serializeNotebook(nb([['a', 'A'], ['b', 'B theirs']])))
   doc.flush()
   const saved = parseNotebook(file).cells
   assert.equal(saved[1].source, 'B theirs', "the collaborator's edit survives the output flush")
   assert.equal(saved[0].outputs.length, 1, 'and so does the local output')
-  closeNotebooksExcept(new Set())
+  closeNotebooksExcept('p', new Set())
 })
 
 test('B fragments: only heading slugs; #room=/#share= and friends are refused', () => {

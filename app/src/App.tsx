@@ -1270,7 +1270,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, to] of mapping) {
         editorRef.current?.renamePath(from, to)
         debugStore.renamePath(from, to)
-        renameNotebook(from, to)
+        renameNotebook(project.owner, from, to)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1291,7 +1291,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, dest] of mapping) {
         editorRef.current?.renamePath(from, dest)
         debugStore.renamePath(from, dest)
-        renameNotebook(from, dest)
+        renameNotebook(project.owner, from, dest)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1695,6 +1695,13 @@ function Ide({ report }: { report: CapabilityReport }) {
     projects.some((p) => p.id !== exceptId && p.name.trim() === name.trim())
       ? COPY.noteProjectNameTaken
       : null
+
+  /** Leaving the editor for Home: what the open project still holds (an open notebook's
+   *  coalesced edits included) is written to it now, while it is the one attached. */
+  const goHome = () => {
+    void project.saveAll()
+    setView('home')
+  }
 
   const switchToProject = async (id: string) => {
     // Checked against the LIVE ref, not this closure's snapshot: enterRoom calls
@@ -2303,14 +2310,14 @@ function Ide({ report }: { report: CapabilityReport }) {
   // A notebook shown as text is closed too: its session must not keep writing JSON under the
   // student's text edits.
   useEffect(() => {
-    closeNotebooksExcept(new Set(tabs.filter((t) => !notebookAsText.has(t))))
+    closeNotebooksExcept(project.owner, new Set(tabs.filter((t) => !notebookAsText.has(t))))
     if (Array.from(notebookAsText).some((p) => !tabs.includes(p))) setNotebookAsText(new Set(Array.from(notebookAsText).filter((p) => tabs.includes(p))))
-  }, [tabs, notebookAsText])
+  }, [tabs, notebookAsText, project])
   // Pending notebook edits reach the project before any save; open notebooks close before a
   // project switch, while the project being left is still the one attached (closeNotebooksForSwitch).
   // Every change to an open notebook's file reaches its document — view on screen or not — so a
   // collaborator's edit is merged into a notebook whose cell keeps writing in a background tab.
-  useEffect(() => project.onContentChange((path) => notebookFileChanged(path, project.read(path))), [project])
+  useEffect(() => project.onContentChange((path) => notebookFileChanged(project.owner, path, project.read(path))), [project])
   useEffect(() => {
     const offSave = project.onBeforeSave(flushNotebooks)
     const offSwitch = project.onBeforeSwitch(closeNotebooksForSwitch)
@@ -2329,7 +2336,8 @@ function Ide({ report }: { report: CapabilityReport }) {
         if (!collabRef.current.binding?.replaceDoc(path, text)) project.setContent(path, text)
       },
       files: () => project.sourceFiles(),
-      workspace: () => currentProjectIdRef.current ?? '',
+      // The project whose files `project` holds — not currentProject, which trails a switch.
+      owner: () => project.owner,
       onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
       onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
       messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy }),
@@ -2340,12 +2348,12 @@ function Ide({ report }: { report: CapabilityReport }) {
   const debugName = (path: string): string => {
     const cell = parseCellPath(path)
     if (!cell) return splitPath(path).name
-    const index = notebookModel(cell.notebook, project.read(cell.notebook))?.cells.findIndex((c) => c.id === cell.cellId) ?? -1
+    const index = notebookModel(project.owner, cell.notebook, project.read(cell.notebook))?.cells.findIndex((c) => c.id === cell.cellId) ?? -1
     return `${splitPath(cell.notebook).name} [${index >= 0 ? index + 1 : '?'}]`
   }
   /** One cell's source, for the debugger's breakpoint rows. */
   const cellSource = (notebook: string, cellId: string): string =>
-    notebookModel(notebook, project.read(notebook))?.cells.find((c) => c.id === cellId)?.source ?? ''
+    notebookModel(project.owner, notebook, project.read(notebook))?.cells.find((c) => c.id === cellId)?.source ?? ''
 
   // A collab viewer (or a guest whose copy is not bound yet — the file editor's rule, setup.ts)
   // can read a notebook but not edit or run it.
@@ -2355,6 +2363,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   // A notebook on screen owns Run: Run runs all its cells, Debug debugs its selected (or
   // first) code cell, Stop interrupts, and the status bar shows its kernel — never the
   // project's entry point, which a notebook-only project does not have.
+  // The attached project's document for the tab (null for the moment a project switch is
+  // between projects); the view renders exactly this one, keyed by its project.
   const nbDoc = activeNotebook ? notebookDocument(activeNotebook, kernelFor(activeNotebook)!, notebookIO) : null
   if (nbDoc) nbDoc.readOnly = nbReadOnly
   const nbState = useOptionalSession(nbDoc?.session ?? null)
@@ -2444,7 +2454,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (cell) {
       if (!project.has(cell.notebook)) return
       openFile(cell.notebook)
-      revealCell(cell.notebook, cell.cellId, line)
+      revealCell(project.owner, cell.notebook, cell.cellId, line)
       return
     }
     const text = project.read(path)
@@ -3004,7 +3014,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         { label: COPY.menuOpenRecent, icon: <IconClock size={18} />, startsGroup: true, items: projectRows },
         // The projects grid: the other way to reach another project, so it sits
         // with Open Recent instead of leading the menu as a bare brand row.
-        { label: COPY.menuAllProjects, icon: <Logo size={16} />, onSelect: () => setView('home') },
+        { label: COPY.menuAllProjects, icon: <Logo size={16} />, onSelect: goHome },
         // In and out of the device, as a pair. Export is in Share too, same label.
         { label: COPY.menuImportZip, icon: <IconImport size={18} />, startsGroup: true, onSelect: () => setImportMode('replace') },
         { label: COPY.menuExportZip, icon: <IconExport size={18} />, disabled: empty, onSelect: exportProject },
@@ -3313,7 +3323,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       <ActivityBar
         // Active rule follows whichever view the sidebar shows; none while it's hidden.
         activeView={explorerVisible ? sideView : null}
-        onHome={() => setView('home')}
+        onHome={goHome}
         onShowExplorer={() => showSideView('explorer')}
         // Search is a VIEW now — the editor's own find panel stays on Mod+F / Edit > Find.
         onShowSearch={() => showSideView('search')}
@@ -3463,11 +3473,11 @@ function Ide({ report }: { report: CapabilityReport }) {
               >
                 {activeNotebook ? (
                   <Suspense fallback={<div className="flex-1 bg-surface-1" />}>
+                  {nbDoc ? (
                   <NotebookView
-                    key={activeNotebook}
+                    key={`${nbDoc.owner}\u0000${activeNotebook}`}
                     path={activeNotebook}
-                    kernel={kernelFor(activeNotebook)!}
-                    io={notebookIO}
+                    doc={nbDoc}
                     fontSize={fontSize}
                     // The file editor's rule (setup.ts): a viewer, or a guest whose copy is not bound yet.
                     readOnly={nbReadOnly}
@@ -3491,6 +3501,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                       }
                     }}
                   />
+                  ) : null}
                   </Suspense>
                 ) : null}
                 {/* The file editor stays mounted under a notebook (it is a singleton the shell drives); hidden, it holds no file. */}

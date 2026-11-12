@@ -29,6 +29,11 @@ export class Project {
    *  construction and hard-gates on it, so a project switch can never diff the
    *  NEW project's files against an old room's doc (which wiped the room). */
   private storeEpoch = 0
+  /** Whose files are in memory: the project id given to `switchStore` (a token for an
+   *  anonymous store), or null from the moment a switch starts until the next project's files
+   *  are loaded. Holders of per-project state (open notebooks) key by it and check it before
+   *  every write, so nothing loaded from one project can reach another's file of the same name. */
+  private loadedOwner: string | null = 'store-0'
 
   /** Starts on an in-memory store; `switchStore` points it at real storage later — touching OPFS here could recreate the legacy root before migration runs. */
   constructor(store: ProjectStore = new MemoryStore()) {
@@ -42,6 +47,11 @@ export class Project {
   /** Identity of the attached store over time — changes iff `switchStore` ran. */
   get epoch() {
     return this.storeEpoch
+  }
+
+  /** The project whose files this object holds, or null mid-switch (see `loadedOwner`). */
+  get owner(): string | null {
+    return this.loadedOwner
   }
 
   /** Returns an unsubscribe function, so React effects can clean up. */
@@ -97,18 +107,30 @@ export class Project {
     }
   }
 
-  /** Switches storage after flushing pending edits to the old store (no dropped keystrokes or cross-writes); keeps this instance's identity so React doesn't remount. */
-  async switchStore(store: ProjectStore): Promise<void> {
+  /** Switches storage after flushing pending edits to the old store (no dropped keystrokes or cross-writes); keeps this instance's identity so React doesn't remount.
+   *  `owner` names the project the store holds (its id); without one the store gets a fresh token. */
+  async switchStore(store: ProjectStore, owner?: string): Promise<void> {
     for (const fn of [...this.beforeSwitch]) fn()
-    await this.saveAll()
+    // From here until load() replaces the files, memory holds the project being LEFT while the
+    // shell already acts for the next one (and re-renders across every await below): nothing
+    // per-project may open or write in that window.
+    const leaving = this.loadedOwner
+    this.loadedOwner = null
+    try {
+      await this.saveAll()
+    } catch (error) {
+      this.loadedOwner = leaving
+      throw error
+    }
     this.store = store
     // Bumped BEFORE load()'s emitStructure, so a still-attached collab bridge is
     // already gated out when the new project's structure event fires.
     this.storeEpoch++
-    await this.load()
+    await this.load(owner ?? `store-${this.storeEpoch}`)
   }
 
-  async load(): Promise<void> {
+  /** (Re)reads the attached store. `owner` is set with the new files, before anyone hears of them. */
+  async load(owner?: string): Promise<void> {
     // Unreadable store is reported, not thrown — an exception here leaves boot
     // with no project and no explanation.
     let snap: FsSnapshot = { files: [], dirs: [] }
@@ -120,6 +142,7 @@ export class Project {
     this.dirty.clear()
     for (const f of snap.files) this.files.set(f.path, f.content)
     for (const d of snap.dirs) this.dirs.add(d)
+    if (owner !== undefined) this.loadedOwner = owner
     this.emitStructure()
   }
 
