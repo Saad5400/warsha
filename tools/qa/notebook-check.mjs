@@ -24,14 +24,22 @@
  *    notebook.ipynb, so project A's notebook → Home → a new notebook project B
  *    must show B's own cells and run them, and after an edit + save + reload A
  *    and B must each still hold their own notebook in OPFS.
- * ONLY=K, ONLY=U or ONLY=P runs one part. */
+ * Q  the student-eye QA report's notebook findings, each pinned: a 240-cell
+ *    notebook opens fast with few editors built (M3), stderr is not an error
+ *    (M6), images keep their natural size (M2), Run all stopping at an error
+ *    says so and marks the stale cells, Restart asks first, Colab #@title
+ *    form cells, markdown styling, one toolbar and one ⋯ menu, the console
+ *    folded, the phone keyboard compaction (M8) and phone menus.
+ * G  (with U) the cell geometry of docs/design/NOTEBOOK.md on four surfaces.
+ * ONLY=K, ONLY=U, ONLY=G, ONLY=P or ONLY=Q runs one part. */
 import { chromium } from 'playwright-core'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { importNotebook, longNotebook, qaNotebook } from './lib/notebooks.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const URL_ = process.env.WARSHA_URL ?? 'http://127.0.0.1:8120/'
-const ONLY = process.env.ONLY ?? 'KUP'
+const ONLY = process.env.ONLY ?? 'KUPQ'
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname
 mkdirSync(SHOTS, { recursive: true })
 
@@ -326,7 +334,9 @@ if (ONLY.includes('U')) {
   await page.keyboard.press('b')
   await page.waitForTimeout(400)
   await page.keyboard.type('df.he', { delay: 60 })
-  await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+  // Member completion is async (the context of earlier cells): wait for the list to settle on it,
+  // not the first popup (which can still be the one for "d").
+  await page.waitForFunction(() => [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((li) => /^head/.test(li.textContent)), null, { timeout: 5000 }).catch(() => {})
   const opts = await page.$$eval('.cm-tooltip-autocomplete li', (els) => els.map((e) => e.textContent))
   check('U: completion in a new cell offers DataFrame members of df from cell 1', opts.some((o) => /^head/.test(o)), J(opts.slice(0, 8)))
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-completion.png') })
@@ -990,6 +1000,191 @@ async function longOutput(page, T, mobile, lang) {
   check(T('Expand output shows the whole output'), ex.mode === 'expanded' && ex.h >= ex.full - 1 && ex.h > cap.h * 2, J(ex))
   const co = await expand(lang === 'en' ? 'Collapse output' : 'قلّص النتيجة')
   check(T('Collapse output caps it again'), co.mode === 'capped' && co.h <= limit, J(co))
+}
+
+/* ===================================================================== Q */
+if (ONLY.includes('Q')) {
+  const dir = mkdtempSync(join(tmpdir(), 'nbq-'))
+  const longFile = join(dir, 'long_notebook.ipynb')
+  const qaFile = join(dir, 'qa.ipynb')
+  writeFileSync(longFile, longNotebook())
+  writeFileSync(qaFile, qaNotebook())
+
+  // ---- M3: a long notebook opens fast, building only the editors near the screen ----
+  {
+    const { ctx, page } = await browser({ width: 1366, height: 768 })
+    await isolated(page, '?lang=en')
+    const t = await importNotebook(page, longFile)
+    await page.waitForFunction(() => document.querySelectorAll('.notebook-view [data-cell-id]').length >= 240, null, { timeout: 120000, polling: 50 })
+    const shownMs = Date.now() - t
+    const c0 = Date.now()
+    await page.locator('.notebook-view [data-cell-id]').nth(3).click({ timeout: 60000 })
+    const clickMs = Date.now() - c0
+    await page.waitForTimeout(1500)
+    const editors = await page.locator('.notebook-view .cm-editor').count()
+    // Dev server (unbundled, unminified): about 2x a production build. Prod measured 1.1s / 0.6s.
+    check('Q M3: a 240-cell notebook shows its cells within 4s of Import (dev server)', shownMs < 4000, J({ shownMs }))
+    // Generous on a dev server (1.8–3.2s seen); before lazy editors it was 14s. Production: 0.6s.
+    check('Q M3: …and a click registers within 5s (no long freeze; was 14s)', clickMs < 5000, J({ clickMs }))
+    check('Q M3: only the editors near the screen are built (not 200)', editors > 0 && editors <= 30, J({ editors }))
+    // Scrolling far down builds the editors there once scrolling rests; a static cell is clickable at once.
+    await page.evaluate(() => (document.querySelector('.notebook-scroller').scrollTop = 1e9))
+    const tailOf = () => page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-type="code"]')]
+      const sc = document.querySelector('.notebook-scroller').getBoundingClientRect()
+      const onScreen = cells.filter((c) => { const r = c.getBoundingClientRect(); return r.bottom > sc.top && r.top < sc.bottom })
+      return { onScreen: onScreen.length, built: onScreen.filter((c) => c.querySelector('.cm-editor')).length }
+    })
+    let tail = await tailOf()
+    for (let i = 0; i < 20 && tail.built < tail.onScreen; i++) {
+      await page.waitForTimeout(200)
+      tail = await tailOf()
+    }
+    check('Q M3: after scrolling, the cells on screen get their editors', tail.onScreen > 0 && tail.built === tail.onScreen, J(tail))
+    await ctx.close()
+  }
+
+  // ---- the QA notebook, desktop ----
+  {
+    const { ctx, page } = await browser({ width: 1366, height: 768 })
+    await isolated(page, '?lang=en')
+    await importNotebook(page, qaFile)
+    await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
+    await page.waitForTimeout(1500)
+    const cellSel = (id) => `.notebook-view [data-cell-id="${id}"]`
+    const winTitle = await page.locator('header').first().innerText()
+    check('Q minor 17: the imported project is named without its extension', winTitle.includes('qa.ipynb — qa') && !winTitle.includes('qa.ipynb — qa.ipynb'), J(winTitle))
+    check('Q minor 13: the idle console is folded when a notebook opens', await page.evaluate(() => !document.querySelector('.console-panel')?.classList.contains('console-panel--open')))
+    const menus = await page.evaluate(() => {
+      const nb = document.querySelector('.notebook-toolbar').getBoundingClientRect(), nbTop = nb.top
+      // The tab strip's ⋯ would sit in the row above the notebook toolbar.
+      const tabMore = [...document.querySelectorAll('button[aria-label="More actions"]')].filter((b) => { const r = b.getBoundingClientRect(); return r.height > 0 && r.left >= nb.left && r.bottom <= nbTop + 1 && r.top >= nbTop - 80 })
+      return { tabMore: tabMore.length, nbMore: document.querySelectorAll('button[aria-label="More notebook actions"]').length }
+    })
+    check('Q polish: one ⋯ menu (the tab strip folds its items into the notebook\'s)', menus.tabMore === 0 && menus.nbMore === 1, J(menus))
+    check('Q polish: Clear outputs is labelled, not icon-only', (await page.locator('.notebook-toolbar button[aria-label="Clear all outputs"]').innerText()).trim().length > 0)
+    const bar = await page.evaluate(() => {
+      const tb = document.querySelector('.notebook-toolbar [role="toolbar"]').getBoundingClientRect()
+      const col = document.querySelector('.notebook-scroller > div').getBoundingClientRect()
+      return { tb: [Math.round(tb.left), Math.round(tb.right)], col: [Math.round(col.left), Math.round(col.right)] }
+    })
+    check('Q polish: the notebook toolbar spans the cells\' column, not the window', Math.abs(bar.tb[0] - bar.col[0]) <= 1 && Math.abs(bar.tb[1] - bar.col[1]) <= 1, J(bar))
+    const look = await page.evaluate((sel) => {
+      const q = (id, s) => document.querySelector(`.notebook-view [data-cell-id="${id}"] ${s}`)
+      const cs = (e) => (e ? getComputedStyle(e) : null)
+      const info = getComputedStyle(document.documentElement).getPropertyValue('--info').trim()
+      const probe = document.createElement('span'); probe.style.color = info; document.body.append(probe); const infoRgb = getComputedStyle(probe).color; probe.remove()
+      const danger = (() => { const p = document.createElement('span'); p.style.color = getComputedStyle(document.documentElement).getPropertyValue('--danger'); document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c })()
+      const err = q('q1', 'pre[data-stream="stderr"]')
+      const img = q('q2', '.nb-outputs img')
+      const td = q('q0', '.nb-md td'), a = q('q0', '.nb-md a'), pre = q('q0', '.nb-md pre'), sum = q('q0', '.nb-md mo[largeop]')
+      return {
+        stderr: { color: cs(err)?.color, danger, borderStart: cs(err)?.borderInlineStartWidth, bg: cs(err)?.backgroundColor },
+        img: img ? { w: Math.round(img.getBoundingClientRect().width), natural: img.naturalWidth } : null,
+        td: cs(td)?.borderLeftWidth, link: cs(a)?.color, infoRgb, pre: cs(pre)?.fontSize, preBorder: cs(pre)?.borderTopWidth,
+        sum: sum ? Math.round(sum.getBoundingClientRect().height) : null, line: Math.round(parseFloat(cs(q('q0', '.nb-md p'))?.lineHeight ?? '0')),
+        form: { title: q('q3', '[data-form-title]')?.textContent ?? null, code: !!q('q3', '[data-code-box]') },
+        wide: q('q4', 'iframe')?.dataset.cut ?? null,
+      }
+    })
+    check('Q M6: stderr is a muted stream, not drawn as an error', look.stderr.color !== look.stderr.danger && look.stderr.borderStart === '0px' && look.stderr.bg === 'rgba(0, 0, 0, 0)', J(look.stderr))
+    check('Q M2: an image without width metadata keeps its natural size', !!look.img && look.img.natural === 40 && look.img.w === 40, J(look.img))
+    check('Q polish: markdown tables have rules, not a grid (like a DataFrame)', look.td === '0px', J(look.td))
+    check('Q polish: markdown links are the info hue', look.link === look.infoRgb, J({ link: look.link, info: look.infoRgb }))
+    check('Q polish: markdown code blocks use the code size, no frame', look.pre === '14px' && look.preBorder === '0px', J({ pre: look.pre, border: look.preBorder }))
+    check('Q minor 10: display-math ∑ is drawn large, not text-sized', look.sum !== null && look.sum > 22, J({ sum: look.sum }))
+    check('Q polish: a Colab #@title form cell shows its title with the code folded', /Load the data/.test(look.form.title ?? '') && !look.form.code, J(look.form))
+    check('Q minor 12: a table wider than the output fades at its cut edge', look.wide === 'x', J(look.wide))
+    await page.locator(cellSel('q3')).getByRole('button', { name: 'Show code' }).click()
+    await page.waitForTimeout(300)
+    check('Q polish: …and Show code reveals it', (await page.locator(`${cellSel('q3')} [data-code-box]`).count()) === 1)
+    const gaps = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')].map((c) => c.getBoundingClientRect())
+      return cells.slice(1).map((r, i) => Math.round(r.top - cells[i].bottom))
+    })
+    check('Q polish: every gap between cells is the same 32px', gaps.every((g) => g === 32), J(gaps))
+
+    // One toolbar: the selected cell's, not also the hovered one's.
+    await page.locator(cellSel('q5')).focus()
+    await page.locator(cellSel('q6')).hover()
+    await page.waitForTimeout(250)
+    const bars = await page.evaluate(() => [...document.querySelectorAll('.notebook-view [data-cell-id] [role="toolbar"]')].filter((t) => getComputedStyle(t).display !== 'none').length)
+    check('Q minor 2: one cell toolbar at a time (selected), none for the hovered cell', bars === 1, J(bars))
+
+    // Completion closes when the caret leaves its cell.
+    await page.locator(`${cellSel('q5')} .cm-content`).click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\npri', { delay: 50 })
+    await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+    await page.locator(cellSel('q6')).click({ position: { x: 20, y: 10 } })
+    await page.waitForTimeout(300)
+    check('Q minor 3: leaving a cell takes its completion popup with it', (await page.locator('.cm-tooltip-autocomplete').count()) === 0)
+    await page.locator(`${cellSel('q5')} .cm-content`).click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.press('Shift+Home')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Escape')
+
+    // Run all stops at the error: says so, goes there, marks the stale cell below.
+    await page.locator('.notebook-toolbar button[aria-label="Run all"]').click()
+    await kernelIdle(page)
+    await page.waitForTimeout(800)
+    const stop = await page.evaluate(() => ({
+      notice: document.querySelector('.notebook-view p[role="status"]')?.textContent ?? '',
+      selected: document.querySelector('.notebook-view [data-selected]')?.getAttribute('data-cell-id'),
+      stale: !!document.querySelector('.notebook-view [data-cell-id="q7"] [data-stale]'),
+      inView: (() => { const r = document.querySelector('.notebook-view [data-cell-id="q6"]').getBoundingClientRect(), s = document.querySelector('.notebook-scroller').getBoundingClientRect(); return r.top >= s.top && r.bottom <= s.bottom })(),
+    }))
+    check('Q minor 5: Run all stopping at an error says so, selects and shows that cell', /Stopped at an error/.test(stop.notice) && stop.selected === 'q6' && stop.inView, J(stop))
+    check('Q minor 5: …and marks the cell below as holding an earlier run\'s output', stop.stale, J(stop))
+    await page.screenshot({ path: join(SHOTS, 'notebook-qa-runall-stopped.png') })
+
+    // Restart asks first.
+    await page.locator('.notebook-toolbar button[aria-label="Restart"]').click()
+    const asked = await page.locator('dialog[open]').filter({ hasText: 'Restart Python?' }).count()
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    check('Q minor 6: Restart asks before clearing the variables', asked === 1, J(asked))
+    await ctx.close()
+  }
+
+  // ---- phone: keyboard compaction (M8), pill label, menu hints ----
+  {
+    const { ctx, page } = await browser({ width: 390, height: 844 }, true)
+    await isolated(page, '?lang=en')
+    await importNotebook(page, qaFile)
+    await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
+    await page.waitForTimeout(1200)
+    check('Q minor 14: the phone kernel pill has a label, not a bare dot', await page.evaluate(() => { const s = document.querySelector('[data-kernel] span:last-child'); return !!s && getComputedStyle(s).display !== 'none' && s.textContent.trim().length > 0 }))
+    await page.locator('.notebook-view [data-cell-id="q5"]').click()
+    await page.waitForTimeout(300)
+    await page.locator('.notebook-view [data-cell-id="q5"]').getByRole('button', { name: 'Cell actions' }).last().click()
+    await page.waitForTimeout(300)
+    const menu = await page.evaluate(() => ({
+      hint: [...document.querySelectorAll('[role="menu"] *')].some((e) => e.children.length === 0 && /Shift\+Alt\+F/.test(e.textContent) && getComputedStyle(e).display !== 'none'),
+      seps: [...document.querySelectorAll('[role="menu"] [role="separator"]')].map((e) => getComputedStyle(e).borderTopColor),
+    }))
+    check('Q minor 19: the phone cell menu shows no keyboard shortcut', !menu.hint, J(menu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    // The keyboard: focus a cell, then the visual viewport shrinks as an Android keyboard does.
+    await page.locator('.notebook-view [data-cell-id="q5"] .cm-content').click()
+    await page.waitForTimeout(300)
+    await page.setViewportSize({ width: 390, height: 508 })
+    await page.waitForTimeout(800)
+    const kb = await page.evaluate(() => {
+      const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0 }
+      const caret = document.querySelector('.notebook-view .cm-focused .cm-cursor')?.getBoundingClientRect()
+      const sc = document.querySelector('.notebook-scroller').getBoundingClientRect()
+      return { kb: document.documentElement.dataset.kb, console: shown('.console-panel'), crumbs: shown('.breadcrumbs'), status: shown('.status-bar'), caret: caret ? Math.round(caret.top) : null, sc: [Math.round(sc.top), Math.round(sc.bottom)] }
+    })
+    check('Q M8: a keyboard over a notebook cell is detected (Android-style resize)', kb.kb === 'open', J(kb))
+    check('Q M8: …the console strip, breadcrumbs and status bar step aside', !kb.console && !kb.crumbs && !kb.status, J(kb))
+    check('Q M8: …and the caret line stays in the visible band of the notebook', kb.caret !== null && kb.caret > kb.sc[0] + 20 && kb.caret < kb.sc[1] - 20, J(kb))
+    await page.screenshot({ path: join(SHOTS, 'notebook-qa-phone-keyboard.png') })
+    await ctx.close()
+  }
 }
 
 const failed = results.filter((r) => r[0] === 'FAIL')

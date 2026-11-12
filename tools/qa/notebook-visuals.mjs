@@ -8,7 +8,8 @@
  *   screenshots/nbvis/<TAG>/<surface>-<lang>-<state>.png
  * The geometry that keeps these right is asserted in notebook-check.mjs. */
 import { chromium } from 'playwright-core'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { importNotebook, qaNotebook } from './lib/notebooks.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -175,7 +176,67 @@ async function run(surface, lang) {
   await ctx.close()
 }
 
+/** The QA report's cases (lib/notebooks.mjs): markdown, stderr, an image, a form cell, a wide
+ *  table, Run all stopping at an error, Restart's question, and the phone keyboard. Files are
+ *  <surface>-<lang>-qa-<state>.png. */
+async function runQa(surface, lang) {
+  const phone = surface === 'phone'
+  const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'nbvis-qa-')), {
+    executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
+    headless: true,
+    viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 860 },
+    deviceScaleFactor: 2,
+    ...(phone ? { isMobile: true, hasTouch: true } : {}),
+  })
+  const page = ctx.pages()[0]
+  await page.routeWebSocket(/./, () => {})
+  const name = (s) => join(DIR, `${surface}-${lang}-qa-${s}.png`)
+  const file = join(mkdtempSync(join(tmpdir(), 'nbvis-file-')), 'qa.ipynb')
+  writeFileSync(file, qaNotebook())
+  await page.goto(`${URL_}?lang=${lang}`)
+  await importNotebook(page, file, lang)
+  await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
+  await page.waitForTimeout(1500)
+  const cell = (id) => page.locator(`.notebook-view [data-cell-id="${id}"]`)
+  const shotCell = async (id, state) => {
+    await cell(id).evaluate((e) => e.scrollIntoView({ block: 'center' }))
+    await page.waitForTimeout(300)
+    await cell(id).screenshot({ path: name(state) })
+  }
+  await page.screenshot({ path: name('opened') })
+  await shotCell('q0', 'markdown')
+  await shotCell('q1', 'stderr')
+  await shotCell('q2', 'image')
+  await shotCell('q3', 'form-cell')
+  await shotCell('q4', 'wide-table')
+  await page.locator('.notebook-toolbar [role="toolbar"] button').filter({ has: page.locator('svg') }).nth(2).click() // Run all
+  await page.waitForFunction(() => {
+    const k = document.querySelector('[data-kernel]')
+    return k?.getAttribute('data-kernel') === 'idle' && !k.hasAttribute('data-busy')
+  }, null, { timeout: 180000 })
+  await page.waitForTimeout(1200)
+  await page.screenshot({ path: name('runall-stopped') })
+  await page.locator('.notebook-toolbar [role="toolbar"] button').filter({ has: page.locator('svg') }).nth(4).click() // Restart
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: name('restart-confirm') })
+  await page.keyboard.press('Escape')
+  if (phone) {
+    await cell('q5').evaluate((e) => e.scrollIntoView({ block: 'center' }))
+    await page.waitForTimeout(300)
+    await cell('q5').locator('[data-code-box]').click()
+    await page.waitForSelector('.notebook-view .cm-focused', { timeout: 5000 })
+    await page.setViewportSize({ width: 390, height: 508 })
+    await page.waitForFunction(() => document.documentElement.dataset.kb === 'open', null, { timeout: 5000 }).catch(() => {})
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: name('keyboard') })
+  }
+  await ctx.close()
+}
+
 // ONLY=desk-en (comma-separated) shoots a subset while iterating.
 const only = process.env.ONLY?.split(',')
-for (const surface of ['desk', 'phone']) for (const lang of ['en', 'ar']) if (!only || only.includes(`${surface}-${lang}`)) await run(surface, lang)
+for (const surface of ['desk', 'phone']) for (const lang of ['en', 'ar']) if (!only || only.includes(`${surface}-${lang}`)) {
+  if (process.env.QA !== 'only') await run(surface, lang)
+  if (process.env.QA !== 'skip') await runQa(surface, lang)
+}
 console.log('notebook visuals written to ' + DIR)
