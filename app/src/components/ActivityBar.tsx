@@ -12,20 +12,25 @@ const RAIL =
   'shadow-[inset_-1px_0_0_0_var(--border-subtle)] pl-[env(safe-area-inset-left)] ' +
   'col-start-1 row-start-2 row-span-1'
 
-// 48px square — the column's own width, past the 44px floor.
+// A square the column's own width: VSCode's 48 at desk; 40 on touch, where the
+// `after:` pseudo grows the hit area 2px a side to the 44px EFFECTIVE floor (the
+// rail's edge is the screen's, so the outer 2px still lands on the slot).
 // Hover/active is ink-only, no fill, unlike the normal icon-btn recipe (VS Code's rail).
 // Active rule is an inset box-shadow, not a border-l: Tailwind v4 reads a bare custom
 // property on border-l as a color (width 0), and a real border would offset the glyph 1px.
 // Disabled is a color swap, not opacity, to keep measured contrast.
 const SLOT =
-  'grid place-items-center flex-none size-activity cursor-pointer touch-manipulation ' +
+  'relative grid place-items-center flex-none size-activity cursor-pointer touch-manipulation ' +
+  "after:absolute after:-inset-0.5 after:content-[''] desk:after:hidden " +
   'text-(--ab-fg-inactive) transition-colors duration-(--dur-fast) ease-standard ' +
   'hover:not-disabled:text-(--ab-fg) ' +
   'data-[state=active]:text-(--ab-fg) ' +
   'data-[state=active]:shadow-[inset_2px_0_0_0_var(--ab-active-border)] ' +
   'disabled:text-(--ab-fg-inactive) disabled:cursor-default ' +
   // Inset ring: an outset one would be clipped by the rail's own edge.
-  'focus-visible:outline-offset-[-1px]'
+  'focus-visible:outline-offset-[-1px] ' +
+  // 22px glyphs in the 40px touch rail (24 in VSCode's 48): same ink-to-slot ratio.
+  '[&>svg]:size-[22px] desk:[&>svg]:size-6'
 
 export type SideView = 'explorer' | 'search' | 'debug' | 'extensions'
 

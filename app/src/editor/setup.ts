@@ -1,4 +1,4 @@
-import { EditorState, Compartment, Text } from '@codemirror/state'
+import { EditorState, Compartment, Text, type Extension, type StateEffect } from '@codemirror/state'
 import {
   EditorView,
   keymap,
@@ -1279,6 +1279,16 @@ export function createEditor(
   // when the student flips a switch in the Extensions view.
   const extConf = new Compartment()
   const indentConf = new Compartment()
+  // Desk-vs-touch editor behavior (the `.cm-desk` root class + line wrapping).
+  // A compartment, not a once-per-state-build choice: a window resized across
+  // 900px, DevTools device mode, a rotated tablet or a newly attached mouse must
+  // restyle the open file at once — it used to keep the old density (desk gutter
+  // padding, no wrap, 4-wide indents on a phone) until the next file open.
+  const deskConf = new Compartment()
+  const deskMq = window.matchMedia(DESK_MEDIA)
+  const DESK_EXT: Extension = EditorView.editorAttributes.of({ class: 'cm-desk' })
+  const TOUCH_EXT: Extension = EditorView.lineWrapping
+  const deskExt = () => (deskMq.matches ? DESK_EXT : TOUCH_EXT)
   let indentPref: IndentDisplayPref = opts.indentDisplay ?? 'auto'
   const states = new Map<string, EditorState>()
   let path: string | null = null
@@ -1488,23 +1498,17 @@ export function createEditor(
     ),
     // The desk chromeTheme rules key off `.cm-desk` on the root — a class, not
     // an `@media` key, because style-mod cannot host `&`-keys inside an
-    // at-rule (see the note in chromeTheme). Evaluated once per state build,
-    // the same resize caveat as lineWrapping below.
-    window.matchMedia(DESK_MEDIA).matches
-      ? EditorView.editorAttributes.of({ class: 'cm-desk' })
-      : [],
+    // at-rule (see the note in chromeTheme). Touch instead wraps rather than
+    // scrolls horizontally: a wrapped line is readable on a phone, a
+    // horizontally-scrolling one is not; VS Code does not wrap at desk. Both live
+    // in deskConf and follow the media query live (syncIndent).
+    deskConf.of(deskExt()),
     // Per-file indentation (detected from the file, editor/indentDisplay.ts)
     // plus the device's display size — one compartment, so the status bar's
     // "Spaces: N" menu reconfigures it live. indentFit draws leading spaces
     // at the display size without touching the text.
-    indentConf.of(indentConfig(indent, indentPref, window.matchMedia(DESK_MEDIA).matches)),
+    indentConf.of(indentConfig(indent, indentPref, deskMq.matches)),
     indentFit,
-    // Wrap rather than scroll horizontally on touch: a wrapped line is readable
-    // on a phone, a horizontally-scrolling one is not. At desk it is the
-    // opposite — VS Code does not wrap — so the choice is evaluated once per
-    // state build (a resize across 900px mid-session keeps the old behavior
-    // until the next file open; acceptable, and cheaper than a reconfigure).
-    window.matchMedia(DESK_MEDIA).matches ? [] : EditorView.lineWrapping,
     // Not optional (spec §3.4). Without these, iPadOS actively corrupts student
     // code as it is typed: it capitalises the first word of every line and turns
     // " into a curly quote, which a beginner cannot possibly diagnose. This is
@@ -1605,9 +1609,12 @@ export function createEditor(
    *  file shown (a cached state may predate a pref change) and on a pref change. */
   const syncIndent = () => {
     const info = view.state.facet(fileIndent)
-    const desk = window.matchMedia(DESK_MEDIA).matches
+    const desk = deskMq.matches
+    const effects: StateEffect<unknown>[] = []
+    if (deskConf.get(view.state) !== deskExt()) effects.push(deskConf.reconfigure(deskExt()))
     if (view.state.facet(indentDisplay) !== resolveDisplay(indentPref, info, desk))
-      view.dispatch({ effects: indentConf.reconfigure(indentConfig(info, indentPref, desk)) })
+      effects.push(indentConf.reconfigure(indentConfig(info, indentPref, desk)))
+    if (effects.length) view.dispatch({ effects })
     reportIndent()
   }
   let reportedIndent = ''
@@ -1621,6 +1628,7 @@ export function createEditor(
   }
 
   const view = new EditorView({ parent, state: stateFor('', '') })
+  deskMq.addEventListener('change', syncIndent)
 
   /**
    * Point the editor at the grammar `p`'s extension calls for, whatever it was
@@ -1817,6 +1825,9 @@ export function createEditor(
     },
     focus: () => view.focus(),
     currentPath: () => path,
-    destroy: () => view.destroy(),
+    destroy: () => {
+      deskMq.removeEventListener('change', syncIndent)
+      view.destroy()
+    },
   }
 }
