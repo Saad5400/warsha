@@ -37,9 +37,8 @@ const MIME_ORDER = [
 /** Stream text past this is cut, with a note — a runaway print loop must not freeze the tab. */
 const MAX_TEXT = 200_000
 
-const PRE =
-  'm-0 whitespace-pre-wrap break-words font-code text-[13px] leading-[1.5] text-text-1 ' +
-  'max-h-[min(70vh,640px)] overflow-y-auto scroller'
+// No height cap here: a long output scrolls in the cell's one capped area (CellView OutputScroll).
+const PRE = 'm-0 whitespace-pre-wrap break-words font-code text-[13px] leading-[1.5] text-text-1'
 
 export function Ansi({ text }: { text: string }) {
   const cut = text.length > MAX_TEXT
@@ -161,7 +160,7 @@ function ImageOut({ mime, data, meta }: { mime: string; data: string; meta: Reco
   const w = typeof meta?.width === 'number' ? meta.width : undefined
   return (
     // An <img> never runs script, which is why even an SVG output is safe here.
-    <img src={src} alt="" style={w ? { width: w } : undefined} className="block h-auto max-w-full rounded-sm bg-white/0" />
+    <img src={src} alt="" style={w ? { width: w } : undefined} className="block h-auto max-w-full self-start rounded-sm bg-white/0" />
   )
 }
 
@@ -213,12 +212,11 @@ function RichOut({ output }: { output: NbOutput }) {
 export function OutputView({ output }: { output: NbOutput }) {
   switch (output.output_type) {
     case 'stream': {
+      // stderr is not an error (warnings, progress bars, logging): a muted stream, never red.
+      // Red is kept for `error` outputs only.
       const err = output.name === 'stderr'
       return (
-        <pre
-          data-stream={err ? 'stderr' : 'stdout'}
-          className={PRE + (err ? ' -mx-2 px-2 bg-danger-soft/60 border-s-2 border-danger' : '')}
-        >
+        <pre data-stream={err ? 'stderr' : 'stdout'} className={PRE + (err ? ' !text-text-2' : '')}>
           <Ansi text={streamDisplay(joinText(output.text))} />
         </pre>
       )
