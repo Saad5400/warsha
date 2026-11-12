@@ -30,7 +30,9 @@ const SLOT =
   // Inset ring: an outset one would be clipped by the rail's own edge.
   'focus-visible:outline-offset-[-1px] ' +
   // 22px glyphs in the 40px touch rail (24 in VSCode's 48): same ink-to-slot ratio.
-  '[&>svg]:size-[22px] desk:[&>svg]:size-6'
+  // Literal px, not the spacing scale: here `size-6` is --sp-6 = 32px (not Tailwind's
+  // 24), which once blew the desk glyphs up to 32px and crammed the rail.
+  '[&>svg]:size-[22px] desk:[&>svg]:size-[24px]'
 
 export type SideView = 'explorer' | 'search' | 'debug' | 'extensions'
 
