@@ -76,14 +76,25 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
+/** Thrown when malformed TeX would make the parser go round without consuming input. */
+class TexBudget extends Error {}
+
 class Parser {
   i = 0
+  /** Every peek costs a step; a formula gets a generous fixed multiple of its length. A loop
+   *  that stopped consuming tokens (malformed input nobody anticipated) runs out and the
+   *  formula renders as an error instead of freezing the page. */
+  private steps = 0
+  private readonly budget: number
   constructor(
     private toks: Tok[],
     private display: boolean,
-  ) {}
+  ) {
+    this.budget = 64 * toks.length + 256
+  }
 
   peek(): Tok | undefined {
+    if (++this.steps > this.budget) throw new TexBudget('TeX too tangled to parse')
     while (this.toks[this.i]?.t === 'space') this.i++
     return this.toks[this.i]
   }
@@ -284,7 +295,13 @@ class Parser {
         rows.push([])
         continue
       }
+      const at = this.i
       const cell = this.row()
+      // A stray `}` or `\right` ends a row without consuming anything: skip it, or loop forever.
+      if (this.i === at) {
+        this.next()
+        continue
+      }
       const r = rows[rows.length - 1]
       if (r.length && r[r.length - 1] === '') r[r.length - 1] = cell
       else r.push(cell)
