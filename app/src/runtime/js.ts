@@ -1,5 +1,6 @@
 import type { DebugBreakpoint, DebugOptions, DebugSession, DebugStepCommand, DebugValue, ProgressReport, RunContext, RunIO, RunOptions, RunSession, Runtime, SourceFile } from './types'
 import { bundleProject, ensureBundler, needsBundle } from './bundle'
+import { CONSOLE_FORMAT_SOURCE } from './consoleFormat'
 
 /**
  * The standalone JavaScript / TypeScript runtime — a `kind: 'console'` engine,
@@ -38,66 +39,126 @@ import { bundleProject, ensureBundler, needsBundle } from './bundle'
 
 /**
  * Worker source (blob-URL MODULE worker, sidesteps Vite's worker.format).
- * Overrides `console`, tracks timers to report real completion, and runs code
+ * Overrides `console` (formatting shared with the page preview, consoleFormat.ts),
+ * tracks timers and in-flight fetches to report real completion, and runs code
  * as raw source in an async wrapper (`script` mode) or a pre-bundled ESM blob
  * import (`module` mode).
  */
 const WORKER_SOURCE = `
+${CONSOLE_FORMAT_SOURCE}
 const post = (type, text, code) => postMessage({ type, text, code })
-const fmt = (a) => {
-  if (typeof a === 'string') return a
-  if (a instanceof Error) return a.stack || a.message || String(a)
-  if (typeof a === 'undefined') return 'undefined'
-  try { return JSON.stringify(a) } catch (e) { return String(a) }
-}
-const line = (args) => Array.prototype.map.call(args, fmt).join(' ') + '\\n'
-console.log = (...a) => post('stdout', line(a))
-console.info = (...a) => post('stdout', line(a))
-console.debug = (...a) => post('stdout', line(a))
-console.warn = (...a) => post('stderr', line(a))
-console.error = (...a) => post('stderr', line(a))
+const out = (text) => post('stdout', text)
+const err = (text) => post('stderr', text)
+console.log = console.info = console.debug = (...a) => out(__wline(a))
+console.warn = console.error = console.trace = (...a) => err(__wline(a))
+console.dir = (v) => out(__wfmt(v) + '\\n')
+console.table = (data, cols) => out(__wtable(data, cols))
+console.assert = (ok, ...a) => { if (!ok) err(__wline(['Assertion failed' + (a.length ? ':' : ''), ...a])) }
 
 let topDone = false
 let exited = false
-let finalCode = 0
 const timeouts = new Set()
-let intervals = 0
+const liveIntervals = new Set()
+// In-flight fetch() calls and body reads keep the program alive, as pending I/O
+// keeps Node alive: without this, fetch(url).then(r => r.json()).then(console.log)
+// ended the run (and terminated the worker) before the response arrived,
+// printing nothing at all.
+let pendingIo = 0
 const _st = self.setTimeout.bind(self)
 const _ct = self.clearTimeout.bind(self)
 const _si = self.setInterval.bind(self)
 const _ci = self.clearInterval.bind(self)
 
-function onErr(e) { post('stderr', fmt(e) + '\\n') }
+let entryName = 'main.js'
+let entryLines = Infinity
+// The source line a raw script's code starts on inside new Function(): the
+// "function anonymous(" and ") {" header lines, then the async wrapper's line.
+const SCRIPT_LINE_OFFSET = 3
 
+/**
+ * A stack a student can read: frames in their script name their file and their
+ * line ("at main.js:2:6"), where V8 reported "eval at onmessage (blob:…),
+ * <anonymous>:5:6" — three lines off, plus Warsha's own worker frames.
+ */
+function studentStack(stack) {
+  return stack
+    .replace(/\\(?eval at [^\\n]*?, <anonymous>:(\\d+):(\\d+)\\)?/g, (m, l, c) => {
+      const line = l - SCRIPT_LINE_OFFSET
+      // Past the student's last line is the wrapper's own call: Warsha's frame, not theirs.
+      return line < 1 || line > entryLines ? '(blob:)' : '(' + entryName + ':' + line + ':' + c + ')'
+    })
+    .split('\\n')
+    .filter((frame) => !/^\\s+at .*blob:/.test(frame))
+    .join('\\n')
+}
+
+function onErr(e) { err((e instanceof Error ? studentStack(e.stack || String(e)) : 'Uncaught ' + __wfmt.nested(e)) + '\\n') }
+
+function exit(code) {
+  if (exited) return
+  exited = true
+  post('exit', '', code)
+}
+
+/** An uncaught error ends the program with exit code 1 — wherever it was thrown (top level, a timer, a rejected promise), the way Node does. */
+function crash(e) {
+  onErr(e)
+  exit(1)
+}
+
+/**
+ * Ends the run once nothing can print any more. Checked on a fresh task, never
+ * inline: the code after an \`await\` on a timer or a fetch runs as a microtask
+ * AFTER the callback that settled it, so an inline check ended
+ * \`await sleep(300); console.log("b")\` before "b" printed.
+ */
 function maybeExit() {
-  if (topDone && !exited && timeouts.size === 0 && intervals === 0) {
-    exited = true
-    post('exit', '', finalCode)
-  }
+  _st(() => {
+    if (topDone && timeouts.size === 0 && liveIntervals.size === 0 && pendingIo === 0) exit(0)
+  }, 0)
+}
+
+function trackIo(promise) {
+  pendingIo++
+  const settled = () => { pendingIo--; maybeExit() }
+  promise.then(settled, settled)
+  return promise
 }
 
 self.setTimeout = (fn, ms, ...rest) => {
   let id
   id = _st(() => {
     timeouts.delete(id)
-    try { if (typeof fn === 'function') fn(...rest) } catch (e) { onErr(e) }
+    try { if (typeof fn === 'function') fn(...rest) } catch (e) { crash(e) }
     maybeExit()
   }, ms)
   timeouts.add(id)
   return id
 }
-self.clearTimeout = (id) => { timeouts.delete(id); _ct(id) }
+self.clearTimeout = (id) => { timeouts.delete(id); _ct(id); maybeExit() }
 self.setInterval = (fn, ms, ...rest) => {
-  intervals++
-  return _si(() => { try { if (typeof fn === 'function') fn(...rest) } catch (e) { onErr(e) } }, ms)
+  const id = _si(() => { try { if (typeof fn === 'function') fn(...rest) } catch (e) { crash(e) } }, ms)
+  liveIntervals.add(id)
+  return id
 }
-self.clearInterval = (id) => { if (intervals > 0) intervals--; _ci(id) }
+// A set, not a counter: clearing one id twice used to drop the tally and end a
+// program whose other interval was still running.
+self.clearInterval = (id) => { liveIntervals.delete(id); _ci(id); maybeExit() }
+if (self.fetch) {
+  const _fetch = self.fetch.bind(self)
+  self.fetch = (...args) => trackIo(_fetch(...args))
+  for (const m of ['json', 'text', 'arrayBuffer', 'blob', 'formData']) {
+    const read = Response.prototype[m]
+    if (read) Response.prototype[m] = function () { return trackIo(read.call(this)) }
+  }
+}
 
-self.addEventListener('unhandledrejection', (e) => { onErr(e && e.reason); if (e && e.preventDefault) e.preventDefault() })
-self.addEventListener('error', (e) => { onErr((e && (e.error || e.message)) || 'Script error') })
+self.addEventListener('unhandledrejection', (e) => { if (e && e.preventDefault) e.preventDefault(); crash(e && e.reason) })
+self.addEventListener('error', (e) => { if (e && e.preventDefault) e.preventDefault(); crash((e && (e.error || e.message)) || 'Script error') })
 
 onmessage = async (ev) => {
   if (!ev.data || ev.data.type !== 'run') return
+  if (ev.data.entry) entryName = ev.data.entry
   try {
     if (ev.data.mode === 'module') {
       // Pre-bundled ESM: import it as a blob module so top-level await and the
@@ -106,12 +167,12 @@ onmessage = async (ev) => {
       try { await import(url) } finally { URL.revokeObjectURL(url) }
     } else {
       // Raw source: async wrapper for top-level await, non-strict script scope.
+      entryLines = ev.data.code.split('\\n').length
       const runner = new Function('return (async () => {\\n' + ev.data.code + '\\n})()')
       await runner()
     }
   } catch (e) {
-    onErr(e)
-    finalCode = 1
+    crash(e)
   }
   topDone = true
   maybeExit()
@@ -186,7 +247,7 @@ export class JsRuntime implements Runtime {
       finish(1)
     }
 
-    worker.postMessage({ type: 'run', mode, code })
+    worker.postMessage({ type: 'run', mode, code, entry: entryPath })
 
     return {
       // Stop: kill the worker mid-run and report the neutral "stopped".
@@ -377,7 +438,7 @@ export class JsRuntime implements Runtime {
       finish(1)
     }
 
-    worker.postMessage({ type: 'run', mode, code, debug: { sab, files: paths, stopOnEntry: !!dbg.stopOnEntry } })
+    worker.postMessage({ type: 'run', mode, code, entry: entryPath, debug: { sab, files: paths, stopOnEntry: !!dbg.stopOnEntry } })
 
     const debug: DebugSession = {
       resume(cmd: DebugStepCommand) {
