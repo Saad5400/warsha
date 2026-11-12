@@ -53,7 +53,7 @@ export interface NotebookViewProps {
 let clipboard: NbCell[] = []
 
 const BAR =
-  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center gap-1 px-2 bg-surface-1 ' +
+  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center bg-surface-1 ' +
   'shadow-[inset_0_-1px_0_0_var(--border-subtle)] min-w-0'
 
 const BAR_BTN =
@@ -574,7 +574,7 @@ export function NotebookView(props: NotebookViewProps) {
     <section aria-label={path} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
       <div className={BAR + (props.readOnly ? ' hidden' : '')}>
       {/* The toolbar's buttons share the cells' 1100px column (QA: the pill sat 260px off it at 1920). */}
-      <div role="toolbar" aria-label={COPY.nbToolbar} className="mx-auto flex w-full max-w-[1100px] min-w-0 items-center gap-1 desk:px-4">
+      <div role="toolbar" aria-label={COPY.nbToolbar} className="mx-auto flex w-full max-w-[1100px] min-w-0 items-center gap-1 px-1 desk:px-4">
         <BarButton label={COPY.nbAddCode} icon={<IconCode size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'code')} aria-label={COPY.nbAddCodeCell} />
         <BarButton label={COPY.nbAddText} icon={<IconText size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'markdown')} aria-label={COPY.nbAddTextCell} />
         <span aria-hidden="true" className="mx-1 h-5 w-px flex-none bg-border-subtle" />

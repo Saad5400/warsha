@@ -824,7 +824,8 @@
      strip (cells print inline) and the breadcrumbs go while the keyboard is up; a console
      that has the focus itself (a program's input()) is never hidden. */
   html[data-kb='open'] .app-shell:has(.notebook-view :focus) :is(.console-panel, .breadcrumbs) {
-    display: none;
+    /* !important: .breadcrumbs carries the `flex` utility, and utilities outrank this layer. */
+    display: none !important;
   }
   /* Touch affordances: kill double-tap zoom on controls, never on the editor. */
   .tap {

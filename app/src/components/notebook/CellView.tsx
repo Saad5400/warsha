@@ -498,6 +498,9 @@ function CellViewImpl(p: CellViewProps) {
       className={
         'nb-cell group/cell relative grid grid-cols-[40px_minmax(0,1fr)] desk:grid-cols-[44px_minmax(0,1fr)] ' +
         'rounded-lg border border-transparent p-1 ' +
+        // Brought into view with room: its toolbar above, and clear of the bottom edge (QA: a new
+        // cell after Shift+Enter sat flush on the console strip).
+        'scroll-mt-[40px] scroll-mb-[20vh] ' +
         'transition-[border-color,background-color] duration-(--dur-fast) ease-standard ' +
         // The keyboard focus ring stays (never removed), drawn on the border in the selection grey: the rail and border already say "selected".
         'focus-visible:outline-offset-[-1px] focus-visible:outline-(--border-control) ' +
