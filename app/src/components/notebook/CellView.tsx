@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createCellEditor, type CellEditor, type RunMode } from '../../notebook/cellEditor'
-import { cellPath, outputsCollapsed, type NbCell } from '../../notebook/nbformat'
+import { cellPath, outputsCollapsed, outputsExpanded, type NbCell } from '../../notebook/nbformat'
 import { renderMarkdown } from '../../notebook/markdown'
 import type { CellStatus } from '../../notebook/session'
 import type { LoadProgress } from '../../runtime/types'
@@ -20,6 +20,7 @@ export type CellAction =
   | 'toText'
   | 'clearOutput'
   | 'toggleOutput'
+  | 'toggleExpand'
   | 'debug'
   | 'runAbove'
   | 'runBelow'
@@ -203,6 +204,61 @@ function ToolButton({ label, onClick, disabled, children }: { label: string; onC
   )
 }
 
+/**
+ * NOTEBOOK.md §4: a long output scrolls inside a capped area (nbformat `scrolled`,
+ * Colab's default), faded where it is cut. While the cell runs it follows the newest
+ * line, unless the student has scrolled up to read.
+ */
+function OutputScroll({ capped, running, onOverflow, children }: { capped: boolean; running: boolean; onOverflow(over: boolean): void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null)
+  const inner = useRef<HTMLDivElement>(null)
+  const stuck = useRef(true)
+  const live = useRef({ running, capped, onOverflow })
+  live.current = { running, capped, onOverflow }
+  const [cut, setCut] = useState<{ above: boolean; below: boolean }>({ above: false, below: false })
+  const sync = useRef(() => {})
+  sync.current = () => {
+    const el = box.current
+    if (!el) return
+    if (live.current.running && stuck.current) el.scrollTop = el.scrollHeight
+    const over = live.current.capped && el.scrollHeight > el.clientHeight + 1
+    const above = over && el.scrollTop > 1
+    const below = over && el.scrollTop + el.clientHeight < el.scrollHeight - 1
+    setCut((c) => (c.above === above && c.below === below ? c : { above, below }))
+    live.current.onOverflow(over)
+  }
+  // A new run follows the output again.
+  useEffect(() => {
+    if (running) stuck.current = true
+  }, [running])
+  useEffect(() => {
+    const ro = new ResizeObserver(() => sync.current())
+    if (inner.current) ro.observe(inner.current)
+    if (box.current) ro.observe(box.current)
+    return () => ro.disconnect()
+  }, [])
+  useEffect(() => sync.current(), [capped, running, children])
+  const edge = (more: boolean) => (more ? 'transparent' : '#000')
+  const mask = cut.above || cut.below ? `linear-gradient(to bottom, ${edge(cut.above)}, #000 32px, #000 calc(100% - 32px), ${edge(cut.below)})` : undefined
+  return (
+    <div
+      ref={box}
+      data-output-scroll={capped ? 'capped' : 'expanded'}
+      className={capped ? 'max-h-[60vh] overflow-y-auto overscroll-y-auto desk:max-h-[560px]' : ''}
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      onScroll={(e) => {
+        const el = e.currentTarget
+        stuck.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 4
+        sync.current()
+      }}
+    >
+      <div ref={inner} className="flex min-w-0 flex-col gap-1 pe-2">
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function StdinRow({ onSubmit }: { onSubmit(line: string): void }) {
   const ref = useRef<HTMLInputElement>(null)
   // Where the student was (Shift+Enter has usually moved them into the next cell): they go back there after answering.
@@ -245,6 +301,9 @@ function CellViewImpl(p: CellViewProps) {
   const attachments = (cell.raw.attachments ?? undefined) as Record<string, Record<string, string>> | undefined
   const mdOpts = useMarkdownOptions(attachments)
   const collapsed = outputsCollapsed(cell)
+  const expanded = outputsExpanded(cell)
+  // Whether the capped output is cut (so Expand means something).
+  const [overflows, setOverflows] = useState(false)
   const state = p.status?.state
   const showEditor = code || p.editingText || cell.type === 'raw'
   const rendered = useMemo(() => (showEditor ? '' : renderMarkdown(cell.source, mdOpts)), [showEditor, cell.source, mdOpts])
@@ -261,6 +320,10 @@ function CellViewImpl(p: CellViewProps) {
     const rtl = document.documentElement.dir === 'rtl'
     return { x: rtl ? r.left : r.right, y: r.bottom, fromRight: !rtl }
   }
+  const expandItem: MenuItem[] =
+    !collapsed && (expanded || overflows)
+      ? [{ label: expanded ? COPY.nbCollapseOutput : COPY.nbExpandOutput, icon: expanded ? <IconChevronUp size={18} /> : <IconChevronDown size={18} />, onSelect: act('toggleExpand') }]
+      : []
   const menuItems: MenuItem[] = [
     ...(code
       ? [
@@ -270,6 +333,7 @@ function CellViewImpl(p: CellViewProps) {
           { label: COPY.nbRunBelow, onSelect: act('runBelow') },
           { label: COPY.nbClearOutput, onSelect: act('clearOutput'), startsGroup: true },
           { label: collapsed ? COPY.nbShowOutput : COPY.nbHideOutput, onSelect: act('toggleOutput') },
+          ...expandItem.map(({ icon: _icon, ...item }) => item),
           { label: COPY.nbToText, icon: <IconText size={18} />, onSelect: act('toText'), startsGroup: true },
         ]
       : [{ label: COPY.nbToCode, icon: <IconCode size={18} />, onSelect: act('toCode') }]),
@@ -279,6 +343,7 @@ function CellViewImpl(p: CellViewProps) {
   const outputItems: MenuItem[] = [
     { label: COPY.nbClearOutput, icon: <IconClose size={18} />, onSelect: act('clearOutput') },
     { label: collapsed ? COPY.nbShowOutput : COPY.nbHideOutput, icon: <IconChevronDown size={18} />, onSelect: act('toggleOutput') },
+    ...expandItem,
   ]
   const hasOutput = code && (cell.outputs.length > 0 || p.waiting)
 
@@ -417,24 +482,26 @@ function CellViewImpl(p: CellViewProps) {
                 {COPY.nbOutputsHidden(cell.outputs.length)}
               </button>
             ) : (
-              <div className="flex min-w-0 flex-col gap-1 pe-2">
+              <OutputScroll capped={!expanded} running={state === 'running'} onOverflow={setOverflows}>
                 {cell.outputs.map((o, i) => (
                   <OutputView key={i} output={o} />
                 ))}
                 {p.waiting ? <StdinRow onSubmit={p.onStdin} /> : null}
-              </div>
+              </OutputScroll>
             )}
           </div>
         ) : null}
 
-        {/* The cell's toolbar. Desk: floating over the cell's top border, on hover/selection (Colab).
-            Touch: a row under the selected cell, insert chips leading, actions trailing. */}
+        {/* The cell's toolbar (NOTEBOOK.md §6). Desk: in the gap ABOVE the cell, trailing side, its bottom
+            on the cell's top edge — it never covers code, output or the border; the gap and the notebook's
+            top padding are tall enough for it. Touch: a row under the selected cell, insert chips leading,
+            actions trailing. */}
         <div
           role="toolbar"
           aria-label={COPY.nbCellActions}
           className={
             'z-(--z-raised) mt-1 items-center gap-0.5 ' +
-            'desk:absolute desk:-top-4 desk:end-2 desk:mt-0 desk:rounded-md desk:border desk:border-border-subtle desk:bg-surface-3 desk:p-0.5 desk:shadow-raised ' +
+            'desk:absolute desk:bottom-[calc(100%+1px)] desk:end-2 desk:mt-0 desk:gap-0 desk:rounded-md desk:border desk:border-border-subtle desk:bg-surface-3 desk:shadow-raised desk:[&>button]:size-[24px] ' +
             (p.readOnly ? 'hidden' : p.selected ? 'flex' : 'hidden desk:group-hover/cell:flex')
           }
         >

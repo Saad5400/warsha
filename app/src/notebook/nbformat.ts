@@ -333,6 +333,23 @@ export function setOutputsCollapsed(cell: NbCell, collapsed: boolean): NbCell {
   return { ...cell, raw: { ...cell.raw, metadata: meta } }
 }
 
+/**
+ * Whether a long output shows in full. nbformat's `metadata.scrolled`: `false` is
+ * expanded; `true`, `"auto"` or absent let a long output scroll in a capped area
+ * (Colab and Jupyter's default).
+ */
+export function outputsExpanded(cell: NbCell): boolean {
+  return cellMeta(cell).scrolled === false
+}
+
+/** Expanding writes `scrolled: false`; collapsing back drops the key (the default). */
+export function setOutputsExpanded(cell: NbCell, expanded: boolean): NbCell {
+  const meta = { ...cellMeta(cell) }
+  if (expanded) meta.scrolled = false
+  else delete meta.scrolled
+  return { ...cell, raw: { ...cell.raw, metadata: meta } }
+}
+
 /* -------------------------------------------------------- new notebook */
 
 /** The kernelspec every new notebook carries: the stock `python3` name, so Colab and

@@ -1025,6 +1025,8 @@ export const EN = {
   nbClearOutput: 'Clear output',
   nbHideOutput: 'Hide output',
   nbShowOutput: 'Show output',
+  nbExpandOutput: 'Expand output',
+  nbCollapseOutput: 'Collapse output',
   nbOutputsHidden: (n: number) => `${count(n, 'output')} hidden`,
   nbEmptyText: 'Empty text cell. Double-click or press Enter to write here.',
   nbEmptyTextTouch: 'Empty text cell. Tap Edit to write here.',

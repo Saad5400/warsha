@@ -8,7 +8,9 @@ import {
   duplicateCell,
   newCell,
   outputsCollapsed,
+  outputsExpanded,
   setOutputsCollapsed,
+  setOutputsExpanded,
   type CellType,
   type NbCell,
   type Notebook,
@@ -107,7 +109,7 @@ function Gap({ always, chips, onAdd }: { always: boolean; chips: boolean; onAdd(
     )
   }
   return (
-    <div data-gap="" className="group/ins relative h-2 desk:h-5">
+    <div data-gap="" className="group/ins relative h-2 desk:h-6">
       {chips ? (
         <div className="absolute inset-0 hidden items-center justify-center gap-2 opacity-0 transition-opacity duration-(--dur-fast) ease-standard group-hover/ins:opacity-100 focus-within:opacity-100 desk:flex">
           <span aria-hidden="true" className="absolute inset-x-0 top-1/2 h-px bg-border-subtle" />
@@ -309,6 +311,8 @@ export function NotebookView(props: NotebookViewProps) {
           return doc.updateCell(id, (c) => ({ ...c, outputs: [], executionCount: null }))
         case 'toggleOutput':
           return doc.updateCell(id, (c) => setOutputsCollapsed(c, !outputsCollapsed(c)))
+        case 'toggleExpand':
+          return doc.updateCell(id, (c) => setOutputsExpanded(c, !outputsExpanded(c)))
         case 'debug':
           props.onDebugStart()
           return doc.session.run([id], { debug: true })

@@ -921,6 +921,8 @@ export const AR: Bundle = {
   nbClearOutput: 'امسح النتيجة',
   nbHideOutput: 'أخفِ النتيجة',
   nbShowOutput: 'أظهر النتيجة',
+  nbExpandOutput: 'وسّع النتيجة',
+  nbCollapseOutput: 'قلّص النتيجة',
   nbOutputsHidden: (n) => `${arCount(n, 'نتيجة واحدة مخفية', 'نتيجتان مخفيتان', 'نتائج مخفية', 'نتيجة مخفية')}`,
   nbEmptyText: 'خلية نص فارغة. انقر مرتين أو اضغط Enter لتكتب هنا.',
   nbEmptyTextTouch: 'خلية نص فارغة. اضغط «عدّل» لتكتب هنا.',

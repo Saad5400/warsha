@@ -886,8 +886,110 @@ async function cellGeometry(page, tag, lang, mobile) {
       const hit = document.elementFromPoint(g2.left + g2.width / 2, g2.top + g2.height / 2)
       return { shown, inside: btns.length === 2 && btns.every((x) => x.top >= a.bottom - 0.5 && x.bottom <= b.top + 0.5), gap: g2.height, chip: btns[0]?.height }
     })
-    check(T('hover shows "+ Code / + Text" inside the 24px gap, clear of both cells'), chips.shown && chips.inside && chips.gap === 24, J(chips))
+    check(T('hover shows "+ Code / + Text" inside the 32px gap, clear of both cells'), chips.shown && chips.inside && chips.gap === 32, J(chips))
   }
+
+  await toolbarClear(page, T, mobile)
+  await longOutput(page, T, mobile, lang)
+}
+
+/** The cell toolbar never covers code, output, prose or a cell border (NOTEBOOK.md §6), whichever
+ *  cell is selected (the first one, one-liners, markdown) and, on desk, while another is hovered. */
+async function toolbarClear(page, T, mobile) {
+  const measure = () =>
+    page.evaluate((mobile) => {
+      const r = (e) => e.getBoundingClientRect()
+      const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      const content = cells.flatMap((c) => [...c.querySelectorAll('[data-code-box], .nb-outputs, .nb-md')]).map(r).filter((x) => x.height > 0)
+      const scroller = r(document.querySelector('.notebook-scroller'))
+      const bad = []
+      let shown = 0
+      cells.forEach((c, i) => {
+        const tb = c.querySelector(':scope [role="toolbar"]')
+        if (!tb || getComputedStyle(tb).display === 'none') return
+        shown++
+        const t = r(tb)
+        if (content.some((x) => hit(t, x))) bad.push(`#${i} covers content`)
+        if (!mobile) {
+          // Above its own cell's border; below the cell above (or the notebook's top edge).
+          if (t.bottom > r(c).top + 0.5) bad.push(`#${i} reaches into its cell (${t.bottom} > ${r(c).top})`)
+          const above = cells[i - 1] ? r(cells[i - 1]).bottom : scroller.top
+          if (t.top < above - 0.5) bad.push(`#${i} reaches the cell above / notebook top (${t.top} < ${above})`)
+        } else if (t.top < r(c).top || t.bottom > r(c).bottom) bad.push(`#${i} outside its cell`)
+      })
+      return { shown, bad }
+    }, mobile)
+  const n = await page.locator('.notebook-view [data-cell-id]').count()
+  const bad = []
+  for (let i = 0; i < n; i++) {
+    const c = page.locator('.notebook-view [data-cell-id]').nth(i)
+    await page.keyboard.press('Escape')
+    await c.focus()
+    if (i === 0) await page.evaluate(() => (document.querySelector('.notebook-scroller').scrollTop = 0))
+    else await c.evaluate((e) => e.scrollIntoView({ block: 'center' }))
+    if (!mobile && i + 1 < n) {
+      // Hover the next cell too: two toolbars at once (selected + hovered).
+      const nb = await page.locator('.notebook-view [data-cell-id]').nth(i + 1).boundingBox()
+      if (nb) await page.mouse.move(nb.x + nb.width / 2, nb.y + Math.min(nb.height / 2, 30))
+    }
+    await page.waitForTimeout(150)
+    const m = await measure()
+    if (m.shown === 0) bad.push(`#${i}: no toolbar shown`)
+    bad.push(...m.bad.map((b) => `sel #${i}: ${b}`))
+  }
+  check(T(`the cell toolbar never overlaps code, output, prose or a cell (${n} cells selected in turn${mobile ? '' : ', next one hovered'})`), bad.length === 0, J(bad.slice(0, 6)))
+}
+
+/** Long output: capped with its own scroll, faded at the cut, following the stream unless scrolled
+ *  up, and Expand / Collapse (nbformat `scrolled`) from the output actions. */
+async function longOutput(page, T, mobile, lang) {
+  await page.keyboard.press('Escape')
+  const last = page.locator('.notebook-view [data-cell-type="code"]').last()
+  await last.evaluate((e) => e.scrollIntoView({ block: 'start' }))
+  await last.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('import time\nfor i in range(400):\n    print("line", i)\n    if i > 100 and i % 10 == 0: time.sleep(0.12)')
+  await page.keyboard.press('Control+Enter')
+  const box = () => last.locator('[data-output-scroll]')
+  await box().waitFor({ timeout: 20000 })
+  await page.waitForFunction(() => document.querySelectorAll('.notebook-view [data-cell-type="code"]').length && [...document.querySelectorAll('[data-output-scroll]')].pop()?.textContent.includes('line 150'), null, { timeout: 30000 })
+  const follow = await box().evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)
+  check(T('a streaming long output follows the newest line'), follow <= 4, J(follow))
+  await box().evaluate((el) => (el.scrollTop = 0))
+  await page.waitForTimeout(900)
+  const held = await box().evaluate((el) => el.scrollTop)
+  check(T('…but not after the student scrolls up'), held <= 4, J(held))
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-output-scroll]')].pop()?.textContent.includes('line 399'), null, { timeout: 60000 })
+  await page.waitForTimeout(400)
+  const cap = await box().evaluate((el) => {
+    el.scrollTop = 0
+    return new Promise((res) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const vh = window.visualViewport?.height ?? innerHeight
+          res({ mode: el.dataset.outputScroll, h: Math.round(el.clientHeight), full: el.scrollHeight, vh, mask: getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage })
+        }),
+      ),
+    )
+  })
+  const limit = mobile ? cap.vh * 0.6 + 1 : 561
+  check(T('a long output is capped (desk 560px / phone 60vh) with its own scroll area'), cap.mode === 'capped' && cap.h <= limit && cap.h >= limit - 40 && cap.full > cap.h * 2, J(cap))
+  check(T('…and fades out at the cut'), /linear-gradient/.test(cap.mask) && /transparent|rgba\(0, 0, 0, 0\)/.test(cap.mask), J(cap.mask))
+  // Expand from the output actions (desk) or the cell menu (touch); then collapse back.
+  const expand = async (label) => {
+    await last.focus()
+    await last.hover()
+    if (mobile) await last.getByRole('button', { name: lang === 'en' ? 'Cell actions' : 'إجراءات الخلية' }).first().click()
+    else await last.locator('[data-output-menu]').click()
+    await page.getByRole('menuitem', { name: label }).click()
+    await page.waitForTimeout(300)
+    return box().evaluate((el) => ({ mode: el.dataset.outputScroll, h: Math.round(el.clientHeight), full: el.scrollHeight }))
+  }
+  const ex = await expand(lang === 'en' ? 'Expand output' : 'وسّع النتيجة')
+  check(T('Expand output shows the whole output'), ex.mode === 'expanded' && ex.h >= ex.full - 1 && ex.h > cap.h * 2, J(ex))
+  const co = await expand(lang === 'en' ? 'Collapse output' : 'قلّص النتيجة')
+  check(T('Collapse output caps it again'), co.mode === 'capped' && co.h <= limit, J(co))
 }
 
 const failed = results.filter((r) => r[0] === 'FAIL')

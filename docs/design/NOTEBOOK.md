@@ -73,10 +73,18 @@ border in `--border-control` rather than the white app ring.
   only, shown on hover of the cell or when selected. Touch: the same actions are
   in the cell's action row (⋯).
 - Hidden outputs collapse to one muted "N outputs hidden" row at the text edge.
+- **Long output** scrolls in its own capped area (Colab): desk 560px (about 30
+  lines), touch 60vh. Where it is cut it fades out (a 32px mask at the cut
+  edge, top and/or bottom). "Expand output" / "Collapse output" in the output
+  actions (and the cell ⋯ menu on touch) toggles the cap, saved per cell as
+  nbformat's `metadata.scrolled` (`false` = expanded; absent = capped). While
+  the cell runs, the area follows the newest line unless the student has
+  scrolled up; the next run follows again.
 
 ## 5. Between cells
 
-- Gap: desk 24px (`--sp-5`), touch 8px (`--sp-2`) — the only vertical space between cells.
+- Gap: desk 32px (`--sp-6`), touch 8px (`--sp-2`) — the only vertical space
+  between cells. Desk needs 32px: the cell toolbar (26px) lives in it.
 - **Insert affordance (desk):** a hairline across the gap, "+ Code / + Text"
   chips (22px tall) centred on it, shown on hover or keyboard focus of the gap.
   The chips fit inside the gap: they never touch a cell border.
@@ -85,9 +93,13 @@ border in `--border-control` rather than the white app ring.
 
 ## 6. Cell toolbar
 
-Desk: floating, top-end corner, over the cell's top border (Colab), on hover or
-selection. Touch: a row under the selected cell — insert chips leading, actions
-trailing.
+Desk: in the gap ABOVE the cell, trailing end (mirrored in RTL), its bottom on
+the outer edge of the cell's top border, on hover or selection. 24px buttons,
+26px tall with its border: it fits the 32px gap, so it never covers code,
+output, the border or the cell above. The first cell gets the same room from
+the leading gap plus the notebook's 8px top padding. Touching the border keeps
+the hover continuous from cell to toolbar. Touch: a row under the selected
+cell — insert chips leading, actions trailing.
 
 ## 7. Editor inside a cell
 

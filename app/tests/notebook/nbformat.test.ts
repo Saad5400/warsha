@@ -24,6 +24,8 @@ import {
   parseNotebook,
   serializeNotebook,
   setOutputsCollapsed,
+  outputsExpanded,
+  setOutputsExpanded,
   splitLines,
   withoutOutputs,
   NotebookParseError,
@@ -149,6 +151,13 @@ test('convert, duplicate, collapse, clear', () => {
   assert.equal(outputsCollapsed(folded), true)
   assert.equal(outputsCollapsed(setOutputsCollapsed(folded, false)), false)
   assert.deepEqual(Object.keys(setOutputsCollapsed(folded, false).raw.metadata as object), ['id', 'colab', 'outputId'])
+  // Long outputs: nbformat's `scrolled` (false = expanded; absent = capped, the default).
+  assert.equal(outputsExpanded(code), false)
+  const open = setOutputsExpanded(code, true)
+  assert.equal((open.raw.metadata as Record<string, unknown>).scrolled, false)
+  assert.equal(outputsExpanded(open), true)
+  assert.equal('scrolled' in (setOutputsExpanded(open, false).raw.metadata as object), false)
+  assert.equal(outputsExpanded({ ...code, raw: { ...code.raw, metadata: { scrolled: true } } }), false)
   const cleared = clearAllOutputs(nb)
   assert.ok(cleared.cells.every((c) => c.outputs.length === 0 && c.executionCount === null))
   assert.ok(withoutOutputs(COLAB).length < COLAB.length)
