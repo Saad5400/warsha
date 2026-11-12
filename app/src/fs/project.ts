@@ -159,6 +159,7 @@ export class Project {
   setContent(path: string, content: string) {
     if (this.files.get(path) === content) return
     this.files.set(path, content)
+    this.emitContent(path)
     if (!this.dirty.has(path)) {
       this.dirty.add(path)
       this.emitDirty()
@@ -190,6 +191,24 @@ export class Project {
    * store switch never miss the last edits); `onBeforeSwitch` runs before the store is
    * swapped, while this object still reads and writes the project being left.
    */
+  /**
+   * Fires on every change to a file's text, from anywhere — the editor, a collaborator via the
+   * materializer, a program's write-back, an import. The dirty event cannot stand in for it: it
+   * fires only when a file turns dirty, not on each later change. An open notebook listens
+   * here, whether or not its view is on screen, so a collaborator's edit is merged even into a
+   * notebook in a background tab (notebook/document.ts).
+   */
+  private contentListeners: ((path: string) => void)[] = []
+  onContentChange(cb: (path: string) => void): () => void {
+    this.contentListeners.push(cb)
+    return () => {
+      this.contentListeners = this.contentListeners.filter((l) => l !== cb)
+    }
+  }
+  private emitContent(path: string) {
+    for (const cb of [...this.contentListeners]) cb(path)
+  }
+
   private beforeSave: Listener[] = []
   private beforeSwitch: Listener[] = []
   onBeforeSave(cb: Listener): () => void {
@@ -244,6 +263,7 @@ export class Project {
         this.timers.delete(path)
       }
       this.files.set(path, file.content)
+      this.emitContent(path)
       for (const d of ancestors(path)) this.dirs.add(d)
       if (await this.attempt(() => this.store.writeFile(path, file.content), path)) this.dirty.delete(path)
       else this.dirty.add(path)
@@ -327,6 +347,7 @@ export class Project {
       this.files.set(f.path, f.content)
       for (const d of ancestors(f.path)) this.dirs.add(d)
     }
+    for (const f of snap.files) this.emitContent(f.path)
     const snapshot = this.snapshot()
     if (!(await this.attempt(() => this.store.replaceAll(snapshot)))) {
       // Still on screen and runnable even if the write failed — mark everything dirty so the next save retries.

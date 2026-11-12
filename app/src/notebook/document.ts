@@ -295,6 +295,12 @@ export function renameNotebook(from: string, to: string) {
   }
 }
 
+/** A project file's text changed (from anywhere). If it is an open notebook, its document
+ *  takes the change in — its own writes are recognised by their text and ignored. */
+export function notebookFileChanged(path: string, text: string | undefined) {
+  if (text !== undefined) open.get(path)?.syncFrom(text)
+}
+
 /** Write every pending notebook edit (Save All, before a project-wide Run or export). */
 export function flushNotebooks() {
   for (const doc of open.values()) doc.flush()

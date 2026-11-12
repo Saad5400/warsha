@@ -94,6 +94,17 @@ export function newCellId(taken: ReadonlySet<string> = new Set()): string {
   }
 }
 
+/** 8 hex chars from a cell's content and its occurrence (FNV-1a): the same input, the same id. */
+function contentId(key: string, occurrence: number): string {
+  let h = 0x811c9dc5
+  const text = key + '\u0000' + occurrence
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
 /* --------------------------------------------------------- multiline */
 
 /** nbformat's "multiline string": a string, or a list of lines each keeping its `\n`. */
@@ -158,6 +169,8 @@ export function parseNotebook(text: string): Notebook {
   const rawCells = (json.cells ?? []) as unknown[]
   const taken = new Set<string>()
   const cells: NbCell[] = []
+  // Cells whose stored id is missing, invalid or a duplicate; they get one minted below.
+  const unnamed: NbCell[] = []
   for (const [n, rc] of (rawCells as unknown[]).entries()) {
     // Never dropped quietly: saving would then delete it from the student's file.
     if (!isObject(rc)) throw new NotebookParseError(`Cell ${n + 1} of this notebook is not a cell (it is ${Array.isArray(rc) ? 'a list' : JSON.stringify(rc)}).`)
@@ -168,8 +181,8 @@ export function parseNotebook(text: string): Notebook {
     const meta = isObject(rc.metadata) ? rc.metadata : null
     // nbformat 4.5's id wins; Colab (minor 0) keeps a stable one in metadata.id.
     let id = typeof rc.id === 'string' && ID_RE.test(rc.id) ? rc.id : typeof meta?.id === 'string' && ID_RE.test(meta.id) ? meta.id : ''
-    if (!id || taken.has(id)) id = newCellId(taken)
-    taken.add(id)
+    if (id && taken.has(id)) id = ''
+    if (id) taken.add(id)
     let raw = rc
     let source = joinText(rc.source)
     if (heading) {
@@ -178,7 +191,7 @@ export function parseNotebook(text: string): Notebook {
       const { level: _l, ...rest } = rc
       raw = { ...rest, cell_type: 'markdown' }
     }
-    cells.push({
+    const cell: NbCell = {
       id,
       type,
       source,
@@ -186,7 +199,24 @@ export function parseNotebook(text: string): Notebook {
       outputs: type === 'code' && Array.isArray(rc.outputs) ? (rc.outputs.filter((o) => isObject(o) && typeof o.output_type === 'string') as NbOutput[]) : [],
       executionCount: type === 'code' && typeof rc.execution_count === 'number' ? rc.execution_count : null,
       raw,
-    })
+    }
+    if (!id) unnamed.push(cell)
+    cells.push(cell)
+  }
+  // Minted ids are a function of the cell's own content (and which occurrence of that content
+  // it is), never random: the three parses a merge compares — the last agreed text, this tab's
+  // and a collaborator's — must give an unchanged cell the same id, or the merge sees no
+  // common cells and keeps both copies of everything. Nothing is written for them until the
+  // student edits; then they are stored (nbformat 4.5's id, else Colab's metadata.id).
+  const seen = new Map<string, number>()
+  for (const cell of unnamed) {
+    const key = cell.type + '\u0000' + cell.source
+    let k = seen.get(key) ?? 0
+    let id = contentId(key, k)
+    while (taken.has(id)) id = contentId(key, ++k)
+    seen.set(key, k + 1)
+    taken.add(id)
+    cell.id = id
   }
   return { cells, raw: { ...json, cells: null }, indent: detectIndent(text), trailingNewline: text.endsWith('\n') }
 }

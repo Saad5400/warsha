@@ -15,6 +15,7 @@ import {
   type Notebook,
 } from '../../notebook/nbformat'
 import { transformCell } from '../../notebook/magics'
+import { headingId } from '../../notebook/markdown'
 import type { CellEditor, RunMode } from '../../notebook/cellEditor'
 import { useMedia } from '../../hooks/useMedia'
 import { COPY } from '../../copy'
@@ -27,8 +28,6 @@ const DESK = '(min-width: 900px) and (hover: hover) and (pointer: fine)'
 
 export interface NotebookViewProps {
   path: string
-  /** The file's current text in the project; changes that did not come from this view are re-read. */
-  content: string
   kernel: NotebookKernel
   io: DocumentIO
   fontSize: number
@@ -139,8 +138,6 @@ export function NotebookView(props: NotebookViewProps) {
   const undoStack = useRef<{ cell: NbCell; index: number }[]>([])
   const chord = useRef<{ key: string; at: number } | null>(null)
 
-  // Outside changes to the file come back in; our own writes are recognised and ignored.
-  useEffect(() => doc.syncFrom(props.content), [doc, props.content])
   useEffect(() => () => doc.flush(), [doc])
   // Keep a selection.
   useEffect(() => {
@@ -434,6 +431,20 @@ export function NotebookView(props: NotebookViewProps) {
     }
   }
 
+  /* ---- in-page links ---- */
+  // A markdown `[see below](#results)` scrolls to that heading inside the notebook. It never
+  // reaches location.hash: the app's fragment carries commands (#room=, #share=), and a
+  // notebook's link must not be able to issue one.
+  const onFragmentClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href^="#"]')
+    if (!a) return
+    e.preventDefault()
+    const name = decodeURIComponent(a.getAttribute('href')!.slice(1))
+    const target = name ? scroller.current?.querySelector(`[id="${CSS.escape(headingId(name))}"]`) : null
+    // After this click's own focus handling (which would cancel a smooth scroll), and instant.
+    if (target) requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }))
+  }
+
   /* ---- stable callbacks for memoised cells ---- */
   const onSelect = useCallback((id: string) => setSelected(id), [])
   const onChange = useCallback((id: string, text: string) => doc.updateCell(id, (c) => (c.source === text ? c : { ...c, source: text })), [doc])
@@ -520,7 +531,7 @@ export function NotebookView(props: NotebookViewProps) {
         </p>
       ) : null}
 
-      <div ref={scroller} className="notebook-scroller scroller min-h-0 flex-1 overflow-y-auto overflow-x-hidden" onKeyDown={onKeyDown}>
+      <div ref={scroller} className="notebook-scroller scroller min-h-0 flex-1 overflow-y-auto overflow-x-hidden" onKeyDown={onKeyDown} onClick={onFragmentClick}>
         <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col px-1 pt-4 pb-[40vh] desk:px-4">
           {nb.cells.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">

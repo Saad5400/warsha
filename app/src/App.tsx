@@ -12,7 +12,7 @@ import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
 import { classifyRunFailure } from './hooks/useRunner'
 import { createNotebook, isNotebookPath, parseCellPath, readableText, serializeNotebook } from './notebook/nbformat'
-import { closeNotebooksExcept, closeNotebooksForSwitch, flushNotebooks, notebookDocument, notebookModel, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
+import { closeNotebooksExcept, closeNotebooksForSwitch, flushNotebooks, notebookDocument, notebookFileChanged, notebookModel, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
 import { kernelLabel, notebookDebugOwner, runStatusOf, useOptionalSession } from './notebook/session'
 // The notebook UI (cells, outputs, markdown, math) loads the first time a notebook opens.
 const NotebookView = lazy(() => import('./components/notebook/NotebookView').then((m) => ({ default: m.NotebookView })))
@@ -2308,6 +2308,9 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [tabs, notebookAsText])
   // Pending notebook edits reach the project before any save; open notebooks close before a
   // project switch, while the project being left is still the one attached (closeNotebooksForSwitch).
+  // Every change to an open notebook's file reaches its document — view on screen or not — so a
+  // collaborator's edit is merged into a notebook whose cell keeps writing in a background tab.
+  useEffect(() => project.onContentChange((path) => notebookFileChanged(path, project.read(path))), [project])
   useEffect(() => {
     const offSave = project.onBeforeSave(flushNotebooks)
     const offSwitch = project.onBeforeSwitch(closeNotebooksForSwitch)
@@ -3446,7 +3449,6 @@ function Ide({ report }: { report: CapabilityReport }) {
                   <NotebookView
                     key={activeNotebook}
                     path={activeNotebook}
-                    content={activeContent}
                     kernel={kernelFor(activeNotebook)!}
                     io={notebookIO}
                     fontSize={fontSize}
