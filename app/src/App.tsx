@@ -2140,7 +2140,9 @@ function Ide({ report }: { report: CapabilityReport }) {
         !(
           matchEvent(e, 'Mod+Enter') &&
           e.target instanceof Element &&
-          e.target.closest('.cm-editor')
+          e.target.closest('.cm-editor') &&
+          // In a notebook cell Ctrl+Enter runs the cell — and only the cell.
+          !e.target.closest('.notebook-view')
         )
       )
         return
@@ -3419,6 +3421,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                     kernel={kernelFor(activeNotebook)!}
                     io={ioFor(activeNotebook)}
                     fontSize={fontSize}
+                    // The file editor's rule (setup.ts): a viewer, or a guest whose copy is not bound yet.
+                    readOnly={!!collab.binding && (collab.binding.readOnly() || (collab.binding.guarded() && !collab.binding.isCollab(activeNotebook)))}
                     projectWords={notebookWords}
                     onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
                     onDownload={() => void downloadFile(activeNotebook)}

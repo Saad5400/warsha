@@ -33,6 +33,8 @@ export interface NotebookViewProps {
   kernel: NotebookKernel
   io: DocumentIO
   fontSize: number
+  /** A live-collab viewer: cells can be read, not edited or run (nothing they produced could be saved). */
+  readOnly?: boolean
   projectWords(): readonly string[]
   onOpenAsText(): void
   onDownload(): void
@@ -379,6 +381,7 @@ export function NotebookView(props: NotebookViewProps) {
 
   /* ---- command mode (Jupyter's keys), only when focus is on a cell, not in its editor ---- */
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (props.readOnly) return
     const target = e.target as HTMLElement
     if (target.closest('.cm-editor, input, textarea, [role="menu"], [role="toolbar"]')) return
     const m = modelRef.current
@@ -500,7 +503,7 @@ export function NotebookView(props: NotebookViewProps) {
 
   return (
     <section aria-label={COPY.nbToolbar} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
-      <div role="toolbar" aria-label={COPY.nbToolbar} className={BAR}>
+      <div role="toolbar" aria-label={COPY.nbToolbar} className={BAR + (props.readOnly ? ' hidden' : '')}>
         <BarButton label={COPY.nbAddCode} icon={<IconCode size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'code')} aria-label={COPY.nbAddCodeCell} />
         <BarButton label={COPY.nbAddText} icon={<IconText size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'markdown')} aria-label={COPY.nbAddTextCell} />
         <span aria-hidden="true" className="mx-1 h-5 w-px flex-none bg-border-subtle" />
@@ -538,7 +541,7 @@ export function NotebookView(props: NotebookViewProps) {
           ) : null}
           {nb.cells.map((cell, i) => (
             <div key={cell.id} className="min-w-0">
-              {i === 0 ? <Inserter visible={false} onAdd={(t) => insertAt(0, t)} /> : null}
+              {i === 0 && !props.readOnly ? <Inserter visible={false} onAdd={(t) => insertAt(0, t)} /> : null}
               <CellView
                 cell={cell}
                 index={i}
@@ -549,6 +552,7 @@ export function NotebookView(props: NotebookViewProps) {
                 waiting={session.waiting === cell.id}
                 progress={session.running === cell.id ? session.progress : null}
                 fontSize={props.fontSize}
+                readOnly={!!props.readOnly}
                 desk={desk}
                 first={i === 0}
                 last={i === nb.cells.length - 1}
@@ -566,10 +570,12 @@ export function NotebookView(props: NotebookViewProps) {
                 registerEditor={registerEditor}
               />
               {/* On touch the selected cell's own toolbar row carries the insert chips. */}
-              <Inserter visible={false} always={i === nb.cells.length - 1 && !(selected === cell.id && !desk)} onAdd={(t) => insertAt(i + 1, t)} />
+              {props.readOnly ? null : (
+                <Inserter visible={false} always={i === nb.cells.length - 1 && !(selected === cell.id && !desk)} onAdd={(t) => insertAt(i + 1, t)} />
+              )}
             </div>
           ))}
-          {nb.cells.length === 0 ? <Inserter visible always onAdd={(t) => insertAt(0, t)} /> : null}
+          {nb.cells.length === 0 && !props.readOnly ? <Inserter visible always onAdd={(t) => insertAt(0, t)} /> : null}
         </div>
       </div>
     </section>

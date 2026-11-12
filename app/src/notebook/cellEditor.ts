@@ -56,6 +56,8 @@ export interface CellEditorOptions {
   /** The cell's debug path (`nb.ipynb#cell=<id>`); code cells only. */
   path: string
   fontSize: number
+  /** A live-collab viewer: the cell can be read and selected, never edited. */
+  readOnly?: boolean
   /** Code of the cells above (code cells), read lazily on every completion. */
   context(): string
   projectWords(): readonly string[]
@@ -76,6 +78,7 @@ export interface CellEditor {
   /** Replace the text (an outside change: undo, a remote edit, a format) without echoing onChange. */
   setDoc(text: string): void
   setFontSize(px: number): void
+  setReadOnly(readOnly: boolean): void
   focus(where?: 'start' | 'end'): void
   destroy(): void
 }
@@ -96,6 +99,8 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
   const fontConf = new Compartment()
   const langConf = new Compartment()
   const deskConf = new Compartment()
+  const roConf = new Compartment()
+  const roExt = (ro: boolean): Extension => (ro ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [])
   const code = opts.type === 'code'
   let applying = false
   let fontSize = opts.fontSize
@@ -179,6 +184,7 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       closeBrackets(),
       highlightSelectionMatches(),
       deskConf.of(deskExt()),
+      roConf.of(roExt(!!opts.readOnly)),
       EditorView.contentAttributes.of({
         autocapitalize: 'none',
         autocorrect: 'off',
@@ -228,6 +234,9 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       applying = true
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
       applying = false
+    },
+    setReadOnly(ro) {
+      view.dispatch({ effects: roConf.reconfigure(roExt(ro)) })
     },
     setFontSize(px) {
       if (px === fontSize) return

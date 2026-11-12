@@ -40,6 +40,7 @@ export interface CellViewProps {
   waiting: boolean
   progress: LoadProgress | null
   fontSize: number
+  readOnly: boolean
   desk: boolean
   first: boolean
   last: boolean
@@ -64,6 +65,7 @@ function CellEditorHost(props: {
   cell: NbCell
   notebookPath: string
   fontSize: number
+  readOnly: boolean
   context(): string
   projectWords(): readonly string[]
   placeholder: string
@@ -89,6 +91,7 @@ function CellEditorHost(props: {
       type: props.cell.type,
       path: cellPath(props.notebookPath, props.cell.id),
       fontSize: props.fontSize,
+      readOnly: props.readOnly,
       context: () => live.current.context(),
       projectWords: () => live.current.projectWords(),
       onChange: (t) => live.current.onChange(t),
@@ -114,6 +117,9 @@ function CellEditorHost(props: {
   useEffect(() => {
     editor.current?.setFontSize(props.fontSize)
   }, [props.fontSize])
+  useEffect(() => {
+    editor.current?.setReadOnly(props.readOnly)
+  }, [props.readOnly])
   return (
     <div className="relative min-w-0">
       <div ref={host} className="min-w-0" />
@@ -257,7 +263,7 @@ function CellViewImpl(p: CellViewProps) {
         if (e.target === e.currentTarget) p.onSelect(cell.id)
       }}
       onDoubleClick={() => {
-        if (!code && !p.editingText) p.onAction(cell.id, 'edit')
+        if (!code && !p.editingText && !p.readOnly) p.onAction(cell.id, 'edit')
       }}
       className={
         // A text cell has no run button: on a phone its gutter gives the width back to the prose.
@@ -274,7 +280,7 @@ function CellViewImpl(p: CellViewProps) {
     >
       {/* Gutter: run button and execution count (code); nothing for text. */}
       <div className="flex flex-col items-center gap-0.5 pt-1">
-        {code ? (
+        {code && !p.readOnly ? (
           <>
             <RunButton status={p.status} onRun={() => p.onRun(cell.id, 'run')} onInterrupt={p.onInterrupt} />
             <span
@@ -304,6 +310,7 @@ function CellViewImpl(p: CellViewProps) {
               cell={cell}
               notebookPath={p.notebookPath}
               fontSize={p.fontSize}
+              readOnly={p.readOnly}
               context={p.context}
               projectWords={p.projectWords}
               placeholder={code ? (p.desk ? COPY.nbCodePlaceholder : COPY.nbCodePlaceholderTouch) : ''}
@@ -405,7 +412,7 @@ function CellViewImpl(p: CellViewProps) {
           className={
             'z-(--z-raised) mt-1 items-center gap-0.5 ' +
             'desk:absolute desk:-top-4 desk:end-2 desk:mt-0 desk:rounded-md desk:border desk:border-border-subtle desk:bg-surface-3 desk:p-0.5 desk:shadow-raised ' +
-            (p.selected ? 'flex' : 'hidden desk:group-hover/cell:flex')
+            (p.readOnly ? 'hidden' : p.selected ? 'flex' : 'hidden desk:group-hover/cell:flex')
           }
         >
           {p.desk ? null : (
