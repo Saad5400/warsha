@@ -35,6 +35,11 @@
  *      and tells the page. The same chunk answering 503, four times over: no
  *      attempt counts, nothing goes through, and offline the old build is
  *      still complete, its notebook kernel included.
+ *   F. RAPID NAVIGATIONS WHILE A LARGE DOWNLOAD IS IN FLIGHT. A throttled
+ *      runtime download streams through the old worker while a new release
+ *      waits and ten reloads/navigations fire: every one answers, the
+ *      download completes, and the new worker activates once it has. (A regression test for a
+ *      worker that once stalled a navigation forever on a cloned body.)
  *   C. OFFLINE RIGHT AFTER THE UPGRADE. On that first v2 visit, before anything
  *      has run on v2, the network goes and every language the student used on
  *      v1 is run again. Runtimes must outlive a deploy; Java and C have known
@@ -68,7 +73,7 @@
  * Overridable:
  *   WARSHA_V1_DIST, WARSHA_V2_DIST  the two builds                       (required)
  *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind,notebook (default all)
- *   WARSHA_SCENARIOS    comma list of A,B,C,D,E                          (default all)
+ *   WARSHA_SCENARIOS    comma list of A,B,C,D,E,F                        (default all)
  *   WARSHA_NGINX_CONF   nginx server block    (default ../../app/deploy/nginx.conf)
  *   WARSHA_PORT         host port for nginx                              (default 8291)
  *   WARSHA_V1_AGE_DAYS  how old v1's Last-Modified is                    (default 10)
@@ -97,7 +102,7 @@ const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 const BASE = `http://127.0.0.1:${PORT}/`
 const RUN_TIMEOUT_MS = Number(process.env.WARSHA_RUN_TIMEOUT_MS ?? 240000)
 const SHOTS = process.env.WARSHA_SHOTS ?? join(HERE, 'screenshots')
-const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C,D,E').split(',').map((s) => s.trim().toUpperCase())
+const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C,D,E,F').split(',').map((s) => s.trim().toUpperCase())
 
 const results = []
 const pass = (name, detail = '') => { results.push(true); console.log(`PASS  ${name}${detail ? ' :: ' + detail : ''}`) }
@@ -231,11 +236,13 @@ function startNginx(conf = CONF) {
   ], { stdio: 'ignore' })
 }
 
-/** The production config, but answering 503 for one path — a server having a
- *  bad moment for exactly that file, however long the moment lasts. */
-function confAnswering503(path) {
+/** The production config with one path answered differently — `directive` is
+ *  nginx for that location: `return 503;` (a server having a bad moment for
+ *  exactly that file, however long the moment lasts) or `limit_rate 100k;` (a
+ *  slow download that stays in flight). */
+function confFor(path, directive) {
   const file = join(mkdtempSync(join(tmpdir(), 'warsha-upgrade-conf-')), 'default.conf')
-  const conf = readFileSync(CONF, 'utf8').replace(/^(\s*)location \/ \{/m, `$1location = ${path} {\n$1    return 503;\n$1}\n\n$1location / {`)
+  const conf = readFileSync(CONF, 'utf8').replace(/^(\s*)location \/ \{/m, `$1location = ${path} {\n$1    ${directive}\n$1}\n\n$1location / {`)
   writeFileSync(file, conf)
   chmodSync(file, 0o644)
   return file
@@ -803,7 +810,7 @@ try {
       deploy(V2, 0)
       if (how === 'missing') rmSync(join(SERVE, path))
       else {
-        startNginx(confAnswering503(path))
+        startNginx(confFor(path, 'return 503;'))
         await serverReady()
       }
       const messages = []
@@ -900,6 +907,69 @@ try {
       check(`E ${label}: Java runs on the new build`, r.kind === 'ok', r.kind)
       await ctx.close()
     }
+  }
+
+  if (SCENARIOS.includes('F')) {
+    // F. Regression for the navigation deadlock: the worker once read one clone
+    // of a page while another sat unread, and clones of a network body share a
+    // bounded pipe — the read could stall, the navigation never answered, and
+    // the next worker could not activate behind the stuck event. Here: a large
+    // runtime download held in flight through the old worker (nginx throttles
+    // it), a new release waiting to take over, and a burst of reloads and
+    // navigations. Every one must answer, and the new worker must activate.
+    console.log('\n-- F. rapid navigations while a large download is in flight')
+    const big = '/warsha-dotnet/_framework/Microsoft.CodeAnalysis.CSharp.dll'
+    const bigSize = statSync(join(V2, big)).size
+    deploy(V1, AGE_DAYS)
+    await launch(mkdtempSync(join(tmpdir(), 'warsha-upgrade-nav-')))
+    // First the session the stall was seen after: every engine run in one tab,
+    // which leaves the old worker streaming large runtimes into its cache.
+    const session = ctx.pages()[0] ?? (await ctx.newPage())
+    await session.goto(BASE, { waitUntil: 'load' })
+    await waitControlled(session)
+    await waitShell(session, V1_SHELL)
+    for (const lang of ['python', 'java', 'js', 'csharp', 'notebook'].filter((l) => LANGS.includes(l))) await runLang(session, lang)
+    const downloader = await ctx.newPage()
+    await session.close()
+    await downloader.goto(BASE, { waitUntil: 'load' })
+
+    deploy(V2, 0)
+    startNginx(confFor(big, 'limit_rate 100k;')) // ~65 s for 6.5 MB
+    await serverReady()
+    // Not a file anyone has kept: it streams through the old worker, live.
+    await downloader.evaluate((url) => {
+      window.__qaDownload = fetch(url).then((r) => r.arrayBuffer()).then((b) => b.byteLength, (e) => `failed: ${e.message}`)
+    }, big)
+    const t0 = Date.now()
+    const tab = await ctx.newPage()
+    // The new page, served by the old worker, then asks for every runtime file
+    // at once (the old worker answering from the server, the server ahead).
+    await tab.goto(BASE, { waitUntil: 'load', timeout: 15000 }).catch(() => {})
+    await cacheAudit(tab).catch(() => {})
+    const targets = [BASE, `${BASE}en/`, BASE, `${BASE}ar/`, BASE, `${BASE}tutorials/`, BASE, BASE, `${BASE}en/`, BASE]
+    const timings = []
+    for (const [i, url] of targets.entries()) {
+      const start = Date.now()
+      const ok = await (i % 2 ? tab.reload({ waitUntil: 'load', timeout: 15000 }) : tab.goto(url, { waitUntil: 'load', timeout: 15000 }))
+        .then(() => true, () => false)
+      timings.push(ok ? Date.now() - start : null)
+    }
+    const answered = timings.filter((t) => t !== null)
+    check(`F: all ${targets.length} navigations answered within 15 s while the download was in flight`, answered.length === targets.length,
+      `${answered.length}/${targets.length}, slowest ${Math.max(...answered)} ms`)
+    // The browser holds a skipWaiting activation until the old worker has no
+    // event in flight — and a response it is still streaming counts — so the
+    // new worker may wait out the download; what it must not do is wait
+    // forever, which is what the stalled navigation caused.
+    const got = await downloader.evaluate(() => Promise.race([window.__qaDownload, new Promise((r) => setTimeout(() => r('timeout'), 120000))]))
+    const downloadDone = Date.now()
+    check('F: the in-flight download completed intact', got === bigSize, `${got} of ${bigSize} bytes after ${Math.round((downloadDone - t0) / 1000)} s`)
+    const activated = await waitShell(tab, V2_SHELL, 30000)
+    check('F: the pending new worker activated (at the latest once the download ended)', activated,
+      `${Math.round((Date.now() - downloadDone) / 1000)} s after the download ended`)
+    await ctx.close()
+    startNginx()
+    await serverReady()
   }
 
   if (SCENARIOS.includes('B')) {
