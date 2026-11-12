@@ -237,7 +237,7 @@ if (run('B')) try {
   const LOOP = [
     '#include <stdio.h>',        // 1
     'int main(void) {',          // 2
-    '    long i = 0;',           // 3
+    '    long i = 0; printf("go\\n"); fflush(stdout);', // 3 (marker: the loop is really running)
     '    while (1) {',           // 4
     '        i++;',              // 5
     '        if (i < 0) break;', // 6
@@ -246,7 +246,10 @@ if (run('B')) try {
     '}',                         // 9
   ].join('\n')
   await page.evaluate((f) => window.__T.start(f, 'main.c', { debug: { breakpoints: [] } }), [{ path: 'main.c', content: LOOP }])
-  await page.waitForTimeout(2500)
+  // Wait for the program itself, not a fixed delay: a cold/loaded compile can take
+  // longer than any constant, and a pause before main runs (correctly) stops at line 3.
+  await page.waitForFunction(() => window.__T.out === 'go\n', null, { timeout: 60000 })
+  await page.waitForTimeout(500)
   check('B1 infinite loop runs (no stop, no exit)', await page.evaluate(() => window.__T.stops.length === 0 && window.__T.exit === undefined))
   await page.evaluate(() => window.__T.s.debug.pause())
   await waitStops(1, 10000)

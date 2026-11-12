@@ -85,7 +85,11 @@ __attribute__((constructor)) static void __warsha_unbuffer(void){
 // The guest's stdout is unbuffered (above), so a no-newline prompt reaches us as a
 // write; we buffer host-side for throughput and flush on threshold, before the guest
 // blocks on stdin, and at exit — so prompts are never stranded behind buffering.
+// A completed line also goes out if the last flush was >= FLUSH_INTERVAL_MS ago, so
+// `printf("Working...\n");` before a long computation shows up while it runs (no
+// timer can fire in a busy worker), yet a tight print loop still batches.
 const FLUSH_THRESHOLD = 8192
+const FLUSH_INTERVAL_MS = 50
 
 class OutFd extends Fd {
   constructor(kind) {
@@ -93,10 +97,13 @@ class OutFd extends Fd {
     this.kind = kind // 'stdout' | 'stderr'
     this.decoder = new TextDecoder('utf-8', { fatal: false })
     this.pending = ''
+    this.lastFlush = 0
   }
   fd_write(dataBytes) {
-    this.pending += this.decoder.decode(dataBytes, { stream: true })
+    const text = this.decoder.decode(dataBytes, { stream: true })
+    this.pending += text
     if (this.pending.length >= FLUSH_THRESHOLD) this.flush()
+    else if (text.includes('\n') && performance.now() - this.lastFlush >= FLUSH_INTERVAL_MS) this.flush()
     return { ret: 0, nwritten: dataBytes.byteLength }
   }
   fd_fdstat_get() { return { ret: 0, fdstat: new wasiDefs.Fdstat(CHARDEV, 0) } }
@@ -104,6 +111,7 @@ class OutFd extends Fd {
     if (this.pending.length === 0) return
     self.postMessage({ type: this.kind, text: this.pending })
     this.pending = ''
+    this.lastFlush = performance.now()
   }
 }
 
@@ -493,12 +501,18 @@ class DebugEngine {
       if (s === ST_REQ) {
         const id = Atomics.load(this.i32, D_REQID)
         const ref = Atomics.load(this.i32, D_REQREF)
+        let reply
         try {
-          self.postMessage({ type: 'dbg-vars', id, vars: this.children(ref) })
+          reply = { type: 'dbg-vars', id, vars: this.children(ref) }
         } catch (e) {
-          self.postMessage({ type: 'dbg-vars', id, error: String((e && e.message) || e) })
+          reply = { type: 'dbg-vars', id, error: String((e && e.message) || e) }
         }
+        // Back to PARKED *before* replying: the main thread sends the next queued
+        // request the moment this reply lands, and resetting after it would wipe
+        // that request out (both sides then wait forever). The CAS still leaves a
+        // RESUME that raced in untouched.
         Atomics.compareExchange(this.i32, D_STATE, ST_REQ, ST_PARKED)
+        self.postMessage(reply)
         continue
       }
       if (s === ST_RESUME) break
