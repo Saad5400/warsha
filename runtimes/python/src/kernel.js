@@ -147,11 +147,28 @@ def _warsha_mimebundle(obj):
     return data, meta
 
 
+def _warsha_finite(v):
+    """The value with every non-finite float spelled as a string ("nan", "inf")."""
+    import math
+    if isinstance(v, float) and not math.isfinite(v):
+        return str(v)
+    if isinstance(v, dict):
+        return {k: _warsha_finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_warsha_finite(x) for x in v]
+    return v
+
+
 def _warsha_publish(kind, output):
     sys.stdout.flush()
     sys.stderr.flush()
     try:
-        text = _wkjson.dumps(output, default=str)
+        # allow_nan=False: Python would write NaN/Infinity, which is not JSON and broke the
+        # shell's JSON.parse (a DataFrame with a NaN in its metadata, a plot's limits).
+        try:
+            text = _wkjson.dumps(output, default=str, allow_nan=False)
+        except ValueError:
+            text = _wkjson.dumps(_warsha_finite(output), default=str, allow_nan=False)
     except Exception:
         text = _wkjson.dumps({"output_type": "stream", "name": "stderr", "text": "[Warsha: an output could not be shown]\n"})
         kind = "display"
@@ -874,8 +891,9 @@ class _WarshaKernel:
     # --- running ------------------------------------------------------------
 
     def register_sources(self):
-        # linecache outlives nothing here (a fresh worker per kernel), but the
-        # runner of a plain Run can clear it; re-register every cell each time.
+        # Anything may have cleared linecache since the last cell -- traceback's own
+        # checkcache(), a library calling linecache.clearcache() -- so every run's
+        # source (one entry per "<cell path>@<run>") is registered again before each cell.
         for path, src in self.sources.items():
             linecache.cache[path] = (len(src), None, src.splitlines(True), path)
 
@@ -916,7 +934,28 @@ class _WarshaKernel:
         sys.stdout.flush()
         sys.stderr.flush()
         _warsha_close_open_files(proj, close=False)
+        self.trim_history(n)
         return "ok" if ok is not False else "error"
+
+    _HISTORY = 1000
+
+    def trim_history(self, n):
+        """Keep the last 1000 runs' sources and results, as IPython's cache_size does: a notebook
+        re-run all afternoon must not grow linecache, Out and _N without bound."""
+        old = n - self._HISTORY
+        if old <= 0:
+            return
+        for name in [p for p, k in self.labels.items() if k <= old]:
+            self.labels.pop(name, None)
+            self.sources.pop(name, None)
+            linecache.cache.pop(name, None)
+        out = self.ns.get("Out")
+        if isinstance(out, dict):
+            for k in [k for k in out if isinstance(k, int) and k <= old]:
+                del out[k]
+        for k in (old, old - 1):
+            self.ns.pop("_" + str(k), None)
+            self.ns.pop("_i" + str(k), None)
 
     def compile_cell(self, code, filename, interactive):
         """(body, last expression or None), or raises SyntaxError. IPython's

@@ -99,6 +99,7 @@ export class Project {
 
   /** Switches storage after flushing pending edits to the old store (no dropped keystrokes or cross-writes); keeps this instance's identity so React doesn't remount. */
   async switchStore(store: ProjectStore): Promise<void> {
+    for (const fn of [...this.beforeSwitch]) fn()
     await this.saveAll()
     this.store = store
     // Bumped BEFORE load()'s emitStructure, so a still-attached collab bridge is
@@ -183,7 +184,29 @@ export class Project {
   }
 
   /** Called before Run so the engine sees what's on screen; returns false so the caller doesn't blame stale bytes on the student's code. */
+  /**
+   * Holders of text not yet handed to the project — an open notebook coalesces its writes —
+   * register here. `onBeforeSave` runs at the start of every saveAll (so Save, Run and a
+   * store switch never miss the last edits); `onBeforeSwitch` runs before the store is
+   * swapped, while this object still reads and writes the project being left.
+   */
+  private beforeSave: Listener[] = []
+  private beforeSwitch: Listener[] = []
+  onBeforeSave(cb: Listener): () => void {
+    this.beforeSave.push(cb)
+    return () => {
+      this.beforeSave = this.beforeSave.filter((l) => l !== cb)
+    }
+  }
+  onBeforeSwitch(cb: Listener): () => void {
+    this.beforeSwitch.push(cb)
+    return () => {
+      this.beforeSwitch = this.beforeSwitch.filter((l) => l !== cb)
+    }
+  }
+
   async saveAll(): Promise<boolean> {
+    for (const fn of [...this.beforeSave]) fn()
     for (const [, t] of this.timers) clearTimeout(t)
     this.timers.clear()
     const results = await Promise.all([...this.dirty].map((p) => this.flush(p)))

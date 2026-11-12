@@ -170,18 +170,34 @@ class DebugStore {
     this.session?.setBreakpoints(this.enabledBreakpoints())
   }
 
-  // ---- session lifecycle (driven by useRunner) ----
-  begin(debugging: boolean) {
+  // ---- session lifecycle (driven by useRunner, and by a notebook's session) ----
+  /**
+   * Two things can run code: the program runner and a notebook's kernel. Each
+   * passes itself as `owner`, and while one is DEBUGGING the other's lifecycle
+   * calls are ignored — a plain Run starting (or ending) must not reset the
+   * store under a paused notebook cell, orphaning it with no way to resume.
+   * Starting a second debug session is refused by the callers (`busyFor`).
+   */
+  private owner: unknown = 'program'
+  /** True when someone other than `owner` holds a live debug session. */
+  busyFor(owner: unknown): boolean {
+    return this.state.debugging && this.owner !== owner
+  }
+  begin(debugging: boolean, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
+    this.owner = owner
     this.session = null
     this.varCache.clear()
     this.set({ phase: debugging ? 'running' : 'inactive', debugging, stopped: null, frameIndex: 0, watchResults: {} })
   }
-  attach(session: DebugSession) {
+  attach(session: DebugSession, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.session = session
     // Breakpoints toggled while the engine was booting reach it now.
     session.setBreakpoints(this.enabledBreakpoints())
   }
-  end() {
+  end(owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.session = null
     this.varCache.clear()
     if (this.state.phase !== 'inactive' || this.state.debugging)

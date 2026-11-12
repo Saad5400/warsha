@@ -78,6 +78,8 @@ let ctrl = null
 let data = null
 // Kernel workers only: Pyodide's interrupt buffer (2 = SIGINT requested).
 let intBuf = null
+// Kernel workers only: 1 = Interrupt was asked for during this cell (sticky; see pythonRuntime.ts).
+let intAsked = null
 // Set when a read was cut short by Interrupt; the kernel's input() turns the
 // resulting EOF into KeyboardInterrupt (kernel.js, _warsha_input).
 let stdinInterrupted = false
@@ -98,8 +100,10 @@ function requestStdinLine() {
   while (Atomics.load(ctrl, 0) === 0) {
     // Interrupt while parked here: Python is not executing bytecode, so the
     // interrupt buffer would never be seen. Answer EOF and say why.
+    // The buffer is left SET: whatever read this (input(), sys.stdin.readline(), a library)
+    // gets EOF and then the KeyboardInterrupt itself at Python's next check. The kernel's
+    // input() claims it sooner, cleanly (stdinInterrupted below clears it).
     if (intBuf && Atomics.load(intBuf, 0) === 2) {
-      Atomics.store(intBuf, 0, 0)
       stdinInterrupted = true
       return undefined
     }
@@ -188,9 +192,11 @@ const kernelBridge = {
   executeInput(count) {
     self.postMessage({ type: 'execute-input', count })
   },
+  /** Did Interrupt end the last read? Claims the interrupt (the caller raises it itself). */
   stdinInterrupted() {
     const was = stdinInterrupted
     stdinInterrupted = false
+    if (was && intBuf) Atomics.store(intBuf, 0, 0)
     return was
   },
   /** A pip install is starting a download: say what, and count every byte from now. */
@@ -1233,7 +1239,10 @@ self.onmessage = (ev) => {
     if (msg.isatty === true) isatty = true
     if (msg.kernel === true) {
       kernelMode = true
-      if (msg.intSab) intBuf = new Int32Array(msg.intSab, 0, 1)
+      if (msg.intSab) {
+        intBuf = new Int32Array(msg.intSab, 0, 1)
+        intAsked = new Int32Array(msg.intSab, 4, 1)
+      }
     }
     if (typeof msg.indexURL === 'string' && msg.indexURL) indexURL = msg.indexURL
     boot().catch((e) =>
@@ -1278,8 +1287,16 @@ self.onmessage = (ev) => {
  */
 let kernelFiles = {} // path -> content, as the shell last gave it (or took it back)
 const reportedSkipped = new Set()
+let kernelWorkspace = null // the project those files belong to
 
-function syncKernelFiles(files) {
+function syncKernelFiles(files, workspace) {
+  // Another project: its files, and nothing a cell of the last project left behind.
+  if (workspace !== kernelWorkspace) {
+    kernelWorkspace = workspace
+    resetFs()
+    kernelFiles = {}
+    reportedSkipped.clear()
+  }
   const FS = pyodide.FS
   for (const path of Object.keys(kernelFiles)) {
     if (!(path in files)) {
@@ -1312,6 +1329,15 @@ async function preparePip(pip) {
 
 const SHIMMED_IMPORTS = /^[ \t]*(?:from[ \t]+IPython\b|import[ \t]+IPython\b).*$/gm
 
+function interruptedBeforeStart() {
+  if (!intAsked || Atomics.load(intAsked, 0) !== 1) return false
+  Atomics.store(intAsked, 0, 0)
+  if (intBuf) Atomics.store(intBuf, 0, 0)
+  self.postMessage({ type: 'output', kind: 'error', output: { output_type: 'error', ename: 'KeyboardInterrupt', evalue: '', traceback: ['KeyboardInterrupt'] } })
+  self.postMessage({ type: 'done', code: 1, ms: 0 })
+  return true
+}
+
 async function runCell(msg) {
   sentBytes = 0
   capped = false
@@ -1323,13 +1349,16 @@ async function runCell(msg) {
     // left in, the scan would download the real IPython (~15 packages) for it.
     const sources = { ...msg.files, [`${msg.cellPath}.py`]: msg.code.replace(SHIMMED_IMPORTS, '') }
     const loadError = await loadImportedPackages(sources)
+    // Interrupted while packages were downloading: the cell does not start at all — and a
+    // download the interrupt cut short is the interrupt, not a network failure.
+    if (interruptedBeforeStart()) return
     if (loadError) {
       self.postMessage({ type: 'stderr', text: loadError })
       self.postMessage({ type: 'done', code: 1, ms: 0 })
       return
     }
-    syncKernelFiles(msg.files)
-    if (intBuf) Atomics.store(intBuf, 0, 0)
+    syncKernelFiles(msg.files, msg.workspace ?? '')
+    if (interruptedBeforeStart()) return
     const t0 = performance.now()
     const status = runCellFn(
       msg.notebook,

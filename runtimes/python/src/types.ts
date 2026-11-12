@@ -163,11 +163,16 @@ export interface NotebookKernel {
   /** Reformat one cell's source (same engine as `Runtime.format`). */
   format?(code: string): Promise<string>
   isReady?(): boolean
+  /** OPTIONAL — true while a run (or cell) occupies the engine; `format` would refuse then. */
+  isBusy?(): boolean
 }
 
 export interface CellRequest {
-  /** Project-relative path of the notebook — the namespace's key. */
+  /** The notebook's namespace key: stable for one open notebook (across renames), never reused. */
   notebook: string
+  /** Which project the files belong to. A different one than the last cell's starts the kernel's
+   *  working directory empty, so one project's files never show up in another's cells. */
+  workspace?: string
   /** The cell's synthetic path (`nb.ipynb#cell=<id>`): its compile filename, breakpoint path and frame path. */
   cellPath: string
   /** What the student wrote (tracebacks quote it). */

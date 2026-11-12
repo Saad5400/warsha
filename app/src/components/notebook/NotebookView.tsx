@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { NotebookKernel } from '../../runtime/types'
 import { notebookDocument, type DocumentIO, type NotebookDocument } from '../../notebook/document'
-import { useSession, type KernelStatus } from '../../notebook/session'
+import { kernelLabel, sessionBusy, useSession, type SessionState } from '../../notebook/session'
 import {
   cellIds,
   clearAllOutputs,
   convertCell,
-  createNotebook,
   duplicateCell,
   newCell,
   outputsCollapsed,
@@ -68,20 +67,11 @@ function BarButton({ label, icon, onClick, disabled, showLabel = true, ...rest }
   )
 }
 
-function KernelPill({ status, busyCell }: { status: KernelStatus; busyCell: boolean }) {
-  const text =
-    status === 'starting'
-      ? COPY.nbKernelStarting
-      : status === 'interrupting'
-        ? COPY.nbKernelInterrupting
-        : busyCell
-          ? COPY.nbKernelBusy
-          : status === 'off'
-            ? COPY.nbKernelOff
-            : COPY.nbKernelIdle
-  const tone = status === 'off' ? 'off' : busyCell || status !== 'idle' ? 'busy' : 'idle'
+function KernelPill({ state }: { state: SessionState }) {
+  const busy = sessionBusy(state)
+  const tone = state.kernel === 'off' && !busy ? 'off' : busy || state.kernel !== 'idle' ? 'busy' : 'idle'
   return (
-    <span data-kernel={status} data-busy={busyCell || undefined} className="flex min-w-0 items-center gap-1.5 ps-1 text-micro text-text-3" aria-live="polite">
+    <span data-kernel={state.kernel} data-busy={busy || undefined} className="flex min-w-0 items-center gap-1.5 ps-1 text-micro text-text-3" aria-live="polite">
       <span
         aria-hidden="true"
         className={
@@ -93,7 +83,7 @@ function KernelPill({ status, busyCell }: { status: KernelStatus; busyCell: bool
               : 'bg-transparent border-text-3')
         }
       />
-      <span className="truncate max-[419px]:hidden">{text}</span>
+      <span className="truncate max-[419px]:hidden">{kernelLabel(state)}</span>
     </span>
   )
 }
@@ -151,10 +141,6 @@ export function NotebookView(props: NotebookViewProps) {
 
   // Outside changes to the file come back in; our own writes are recognised and ignored.
   useEffect(() => doc.syncFrom(props.content), [doc, props.content])
-  // A brand-new (empty) .ipynb becomes a one-cell notebook.
-  useEffect(() => {
-    if (!snap.model && !snap.error) doc.initialize(createNotebook())
-  }, [doc, snap.model, snap.error])
   useEffect(() => () => doc.flush(), [doc])
   // Keep a selection.
   useEffect(() => {
@@ -260,7 +246,6 @@ export function NotebookView(props: NotebookViewProps) {
   )
 
   /* ---- running ---- */
-  const codeIds = (from = 0, to?: number) => (modelRef.current?.cells ?? []).slice(from, to).filter((c) => c.type === 'code').map((c) => c.id)
 
   const run = useCallback(
     (id: string, mode: RunMode) => {
@@ -314,9 +299,9 @@ export function NotebookView(props: NotebookViewProps) {
           props.onDebugStart()
           return doc.session.run([id], { debug: true })
         case 'runAbove':
-          return doc.session.run(codeIds(0, i))
+          return doc.session.run(doc.codeIds(0, i))
         case 'runBelow':
-          return doc.session.run(codeIds(i))
+          return doc.session.run(doc.codeIds(i))
         case 'edit':
           setEditingText((s) => new Set(s).add(id))
           return focusCell(id, 'edit', 'end')
@@ -360,7 +345,7 @@ export function NotebookView(props: NotebookViewProps) {
   const restart = () => void doc.session.restart()
   const restartRunAll = async () => {
     await doc.session.restart()
-    doc.session.run(codeIds())
+    doc.session.run(doc.codeIds())
   }
   const clearAll = () => doc.replace((m) => clearAllOutputs(m))
 
@@ -497,7 +482,7 @@ export function NotebookView(props: NotebookViewProps) {
   }
   if (!nb) return <div className="notebook-view flex-1 bg-surface-1" />
 
-  const anyBusy = session.running !== null || Object.values(session.cells).some((c) => c.state === 'queued')
+  const anyBusy = sessionBusy(session)
   const moreItems: MenuItem[] = [
     { label: COPY.nbRestartRunAll, icon: <IconRestart size={18} />, onSelect: () => void restartRunAll() },
     { label: COPY.nbClearOutputs, icon: <IconClear size={18} />, onSelect: clearAll },
@@ -516,7 +501,7 @@ export function NotebookView(props: NotebookViewProps) {
         <BarButton label={COPY.nbRestart} icon={<IconRestart size={18} />} onClick={restart} disabled={session.kernel === 'off' && !anyBusy} />
         <BarButton label={COPY.nbClearOutputs} icon={<IconClear size={18} />} onClick={clearAll} showLabel={false} />
         <span className="flex-1" />
-        <KernelPill status={session.kernel} busyCell={anyBusy} />
+        <KernelPill state={session} />
         <BarButton
           label={COPY.nbMore}
           icon={<IconMore size={18} />}

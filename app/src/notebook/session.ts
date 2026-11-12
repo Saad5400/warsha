@@ -14,7 +14,8 @@
  * notebook B queued behind a long cell of notebook A just waits its turn.
  */
 import { useSyncExternalStore } from 'react'
-import type { FilesChange, LoadProgress, NotebookKernel, RunSession, SourceFile } from '../runtime/types'
+import type { CellOutputKind, DebugStopped, FilesChange, LoadProgress, NotebookKernel, RunSession, SourceFile } from '../runtime/types'
+import { COPY } from '../copy'
 import { normalizeProgress } from '../runtime/types'
 import { debugStore } from '../debug/store'
 import { transformCell } from './magics'
@@ -48,6 +49,8 @@ export interface SessionState {
 export interface SessionHost {
   /** The project's files, as a run sees them (the cwd of every cell). */
   files(): SourceFile[]
+  /** Which project those files belong to: the kernel keeps one project's files at a time. */
+  workspace(): string
   cell(id: string): NbCell | undefined
   /** Replace one cell in the model. */
   update(id: string, fn: (cell: NbCell) => NbCell): void
@@ -62,10 +65,14 @@ export interface SessionMessages {
   restarted: string
   forcedRestart: string
   lost: string
+  /** Another debug session (the program's, or another notebook's) is live. */
+  debugBusy: string
 }
 
-/** Interrupt that has not landed after this long (stuck in C code, a download) restarts the kernel. */
+/** Interrupt that has not landed after this long (stuck in C code) restarts the kernel. */
 const INTERRUPT_ESCALATE_MS = 4000
+/** Stream chunks are applied to the model at most once a frame, or after this when frames stall (a background tab). */
+const STREAM_FLUSH_MS = 100
 
 let chain: Promise<unknown> = Promise.resolve()
 /** One cell at a time across every notebook — they share the kernel's single thread. */
@@ -79,16 +86,28 @@ function exclusive<T>(fn: () => Promise<T>): Promise<T> {
 let debugOwner: NotebookSession | null = null
 export const notebookDebugOwner = (): NotebookSession | null => debugOwner
 
+/** A namespace key for one open notebook: stable across renames, never reused by a later notebook of the same name. */
+const newNamespaceKey = () => `nb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
 export class NotebookSession {
   private state: SessionState = { kernel: 'off', cells: {}, running: null, waiting: null, progress: null, notice: null, debugging: false }
   private listeners = new Set<() => void>()
   private queue: { id: string; debug: boolean }[] = []
+  /** Bumped by every dropQueue: a cell already taken off the queue but still waiting for the
+   *  kernel (behind another notebook's cell) checks it before it starts, and stands down. */
+  private generation = 0
+  /** The cell between the queue and the kernel: shifted, waiting its turn in `exclusive`. */
+  private waitingTurn: string | null = null
   private session: RunSession | null = null
   private epoch = -1
   private escalate = 0
   private clearPending = false
   private pumping = false
   private debugCell: string | null = null
+  private disposed = false
+  /** The kernel namespace this notebook runs in. Not its path: a rename keeps the variables,
+   *  and a new notebook reusing an old name starts clean. */
+  readonly key = newNamespaceKey()
 
   constructor(
     public path: string,
@@ -105,6 +124,7 @@ export class NotebookSession {
     }
   }
   private set(patch: Partial<SessionState>) {
+    if (this.disposed) return
     this.state = { ...this.state, ...patch }
     for (const fn of [...this.listeners]) fn()
   }
@@ -117,8 +137,13 @@ export class NotebookSession {
 
   /** Queue cells to run, in order. `debug` runs each under the debugger (breakpoints, stepping). */
   run(ids: string[], opts: { debug?: boolean } = {}) {
+    if (this.disposed) return
+    if (opts.debug && debugStore.busyFor(this)) {
+      this.set({ notice: this.messages().debugBusy })
+      return
+    }
     for (const id of ids) {
-      if (this.queue.some((q) => q.id === id) || this.state.running === id) continue
+      if (this.queue.some((q) => q.id === id) || this.state.running === id || this.waitingTurn === id) continue
       const cell = this.host.cell(id)
       if (!cell || cell.type !== 'code') continue
       this.queue.push({ id, debug: !!opts.debug })
@@ -127,17 +152,25 @@ export class NotebookSession {
     void this.pump()
   }
 
-  /** Drop everything queued (Jupyter does this when a cell fails, and on Interrupt). */
+  /** Drop everything queued (Jupyter does this when a cell fails, and on Interrupt) — including a
+   *  cell that already left the queue and is waiting for the kernel behind another notebook. */
   private dropQueue() {
+    this.generation++
     const cells = { ...this.state.cells }
     for (const q of this.queue) delete cells[q.id]
+    if (this.waitingTurn) delete cells[this.waitingTurn]
+    this.waitingTurn = null
     this.queue = []
     this.set({ cells })
   }
 
   get busy(): boolean {
-    return this.state.running !== null || this.queue.length > 0
+    return this.state.running !== null || this.queue.length > 0 || this.waitingTurn !== null
   }
+
+  /** Set once the running cell's code has started (it has its In[n]): before that it is still
+   *  downloading packages, which an interrupt waits out instead of killing the kernel. */
+  private started = false
 
   interrupt() {
     this.dropQueue()
@@ -146,13 +179,17 @@ export class NotebookSession {
     this.kernel.interrupt()
     clearTimeout(this.escalate)
     const running = this.state.running
-    this.escalate = window.setTimeout(() => {
-      // Still the same cell: it is not listening (native code, a download). End it the hard way.
-      if (this.state.running === running && this.session) {
+    const arm = () => {
+      this.escalate = window.setTimeout(() => {
+        if (this.state.running !== running || !this.session) return
+        // Still downloading: the worker honours the interrupt the moment the download ends.
+        if (!this.started) return arm()
+        // Running and not listening (native code). End it the hard way.
         this.set({ notice: this.messages().forcedRestart })
         this.session.kill()
-      }
-    }, INTERRUPT_ESCALATE_MS)
+      }, INTERRUPT_ESCALATE_MS)
+    }
+    arm()
   }
 
   /** The debug toolbar's Restart: stop the cell being debugged and debug it again from the top. */
@@ -181,45 +218,64 @@ export class NotebookSession {
             resolve()
           }
         })
+        if (!this.state.running) {
+          off()
+          resolve()
+        }
       })
     }
-    await exclusive(() => this.kernel.restart(this.path))
+    await exclusive(() => this.kernel.restart(this.key))
     this.set({ cells: {}, notice: this.messages().restarted, kernel: this.state.kernel === 'off' ? 'off' : 'idle' })
   }
 
   writeStdin(line: string) {
     const id = this.state.waiting
     if (!id || !this.session) return
+    this.flushStreams?.()
     this.host.update(id, (c) => ({ ...c, outputs: echoInput(c.outputs, line) }))
     this.set({ waiting: null })
     this.session.writeStdin(line)
   }
 
-  /** The notebook was renamed: its namespace keeps its old key until restart. */
+  /** The notebook was renamed. Its namespace is keyed by `key`, so its variables come along. */
   rename(path: string) {
     this.path = path
   }
 
-  /** The notebook was closed: stop what it runs and free its namespace (Jupyter shuts its kernel down). */
+  /** The notebook was closed: stop what it runs, free its namespace (Jupyter shuts its kernel
+   *  down), and ignore anything the kernel still reports for it. */
   dispose() {
+    if (this.disposed) return
     this.dropQueue()
     if (this.state.running) this.interrupt()
+    this.disposed = true
     this.listeners.clear()
-    void exclusive(() => this.kernel.restart(this.path)).catch(() => {})
+    if (debugOwner === this) debugOwner = null
+    void exclusive(() => this.kernel.restart(this.key)).catch(() => {})
   }
 
   private async pump() {
     if (this.pumping) return
     this.pumping = true
     try {
-      while (this.queue.length) {
+      while (this.queue.length && !this.disposed) {
         const next = this.queue.shift()!
-        await exclusive(() => this.execute(next.id, next.debug))
+        const gen = this.generation
+        this.waitingTurn = next.id
+        await exclusive(async () => {
+          this.waitingTurn = null
+          // Interrupted, restarted or closed while waiting for another notebook's cell.
+          if (gen !== this.generation || this.disposed) return
+          await this.execute(next.id, next.debug)
+        })
       }
     } finally {
+      this.waitingTurn = null
       this.pumping = false
     }
   }
+
+  private flushStreams: (() => void) | null = null
 
   private async execute(id: string, debug: boolean): Promise<void> {
     const cell = this.host.cell(id)
@@ -228,6 +284,7 @@ export class NotebookSession {
       return
     }
     const t0 = performance.now()
+    this.started = false
     this.set({ running: id, kernel: this.state.kernel === 'off' ? 'starting' : this.state.kernel, notice: null })
     this.setCell(id, { state: 'running', startedAt: Date.now() })
     // Jupyter clears a cell's outputs when it starts, not when it ends.
@@ -240,7 +297,7 @@ export class NotebookSession {
       this.set({ running: null, kernel: 'off', progress: null })
       this.setCell(id, { state: 'error' })
       this.dropQueue()
-      this.host.onFailure(String((e as Error)?.message ?? e), String(e))
+      if (!this.disposed) this.host.onFailure(String((e as Error)?.message ?? e), String(e))
       return
     }
     // A new interpreter (first boot, or after a forced stop) holds none of this notebook's variables.
@@ -250,27 +307,62 @@ export class NotebookSession {
 
     const t = transformCell(cell.source)
     const path = cellPath(this.path, id)
+    // Everything the kernel reports for a closed notebook is dropped.
+    const live = () => !this.disposed
     const write = (fn: (outputs: NbOutput[]) => NbOutput[]) =>
+      live() &&
       this.host.update(id, (c) => {
         const base = this.clearPending ? [] : c.outputs
         this.clearPending = false
         return { ...c, outputs: fn(base) }
       })
 
+    // Streams are coalesced: a print loop sends thousands of chunks, and applying each
+    // one to the model re-renders the cell. Chunks wait for the next frame (or 100 ms
+    // if frames stall) and land as one update; any other event flushes them first, so
+    // the order of what the cell printed and displayed is kept.
+    let pending: { name: 'stdout' | 'stderr'; text: string }[] = []
+    let frame = 0
+    let timer = 0
+    const flush = () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+      frame = timer = 0
+      if (!pending.length) return
+      const chunks = pending
+      pending = []
+      write((o) => chunks.reduce((acc, c) => appendStream(acc, c.name, c.text), o))
+    }
+    this.flushStreams = flush
+    const stream = (name: 'stdout' | 'stderr', text: string) => {
+      const last = pending[pending.length - 1]
+      if (last && last.name === name) last.text += text
+      else pending.push({ name, text })
+      if (!frame) frame = requestAnimationFrame(flush)
+      if (!timer) timer = window.setTimeout(flush, STREAM_FLUSH_MS)
+    }
+    const before = <A extends unknown[]>(fn: (...a: A) => void) => (...a: A) => {
+      if (!live()) return
+      flush()
+      fn(...a)
+    }
+
     const code = await new Promise<number | null>((resolve) => {
+      if (debug) debugStore.begin(true, this)
       void this.kernel
         .execute(
           this.host.files(),
-          { notebook: this.path, cellPath: path, source: cell.source, code: t.code, cellMagic: t.cellMagic, pip: t.pip },
+          { notebook: this.key, workspace: this.host.workspace(), cellPath: path, source: cell.source, code: t.code, cellMagic: t.cellMagic, pip: t.pip },
           {
-            onStdout: (text) => write((o) => appendStream(o, 'stdout', text)),
-            onStderr: (text) => write((o) => appendStream(o, 'stderr', text)),
+            onStdout: (text) => live() && stream('stdout', text),
+            onStderr: (text) => live() && stream('stderr', text),
             onProgress: (p) => this.set({ progress: normalizeProgress(p) }),
-            onExecuteInput: (n) => {
+            onExecuteInput: before((n: number) => {
+              this.started = true
               this.set({ progress: null })
               this.host.update(id, (c) => ({ ...c, executionCount: n }))
-            },
-            onOutput: (kind, output) => {
+            }),
+            onOutput: before((kind: CellOutputKind, output: Record<string, unknown>) => {
               this.set({ progress: null })
               const out = output as NbOutput
               if (kind === 'update') {
@@ -282,16 +374,19 @@ export class NotebookSession {
                 return
               }
               write((o) => addOutput(o, kind, out))
-            },
-            onClearOutput: (wait) => {
+            }),
+            onClearOutput: before((wait: boolean) => {
               if (wait) this.clearPending = true
               else this.host.update(id, (c) => ({ ...c, outputs: [] }))
+            }),
+            onStdinRequest: before(() => this.set({ waiting: id })),
+            onFilesChanged: before((change: FilesChange) => this.host.onFilesChanged(change)),
+            onDebugStop: before((stopped: DebugStopped) => debugStore.onStop(stopped)),
+            onDebugResume: () => live() && debugStore.onResume(),
+            onExit: (c) => {
+              flush()
+              resolve(c)
             },
-            onStdinRequest: () => this.set({ waiting: id }),
-            onFilesChanged: (change) => this.host.onFilesChanged(change),
-            onDebugStop: (stopped) => debugStore.onStop(stopped),
-            onDebugResume: () => debugStore.onResume(),
-            onExit: (c) => resolve(c),
           },
           debug ? { debug: { breakpoints: debugStore.enabledBreakpoints() } } : undefined,
         )
@@ -301,19 +396,20 @@ export class NotebookSession {
             debugOwner = this
             this.debugCell = id
             this.set({ debugging: true })
-            debugStore.attach(s.debug)
+            debugStore.attach(s.debug, this)
           }
         })
         .catch((e) => {
-          this.host.onFailure(String((e as Error)?.message ?? e), String(e))
+          if (live()) this.host.onFailure(String((e as Error)?.message ?? e), String(e))
           resolve(1)
         })
-      if (debug) debugStore.begin(true)
     })
 
+    flush()
+    this.flushStreams = null
     clearTimeout(this.escalate)
     if (debug) {
-      debugStore.end()
+      debugStore.end(this)
       if (debugOwner === this) debugOwner = null
     }
     this.session = null
@@ -339,9 +435,21 @@ export function useOptionalSession(session: NotebookSession | null): SessionStat
   return useSyncExternalStore(session ? session.subscribe : noSession, () => (session ? session.get() : null))
 }
 
+/** Anything running or waiting to: the one test the toolbar, the status bar and Run/Stop share. */
+export const sessionBusy = (s: SessionState): boolean =>
+  s.running !== null || Object.values(s.cells).some((c) => c.state === 'queued' || c.state === 'running')
+
 /** A session's state in the shell's run vocabulary (status bar, Run/Stop control). */
 export function runStatusOf(s: SessionState): 'idle' | 'preparing' | 'running' | 'waiting' {
   if (s.kernel === 'starting') return 'preparing'
   if (s.waiting) return 'waiting'
-  return s.running || Object.values(s.cells).some((c) => c.state === 'queued') ? 'running' : 'idle'
+  return sessionBusy(s) ? 'running' : 'idle'
+}
+
+/** The kernel's state in words — the notebook toolbar's pill and the status bar read this one function. */
+export function kernelLabel(s: SessionState): string {
+  if (s.kernel === 'starting') return COPY.nbKernelStarting
+  if (s.kernel === 'interrupting') return COPY.nbKernelInterrupting
+  if (sessionBusy(s)) return COPY.nbKernelBusy
+  return s.kernel === 'off' ? COPY.nbKernelOff : COPY.nbKernelIdle
 }

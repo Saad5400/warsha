@@ -219,7 +219,8 @@ export class PythonRuntime implements Runtime, NotebookKernel {
       (debug) => ({
         type: 'cell',
         files: payload,
-        notebook: normalizePath(cell.notebook),
+        notebook: cell.notebook,
+        workspace: cell.workspace ?? '',
         cellPath: cell.cellPath,
         code: cell.code,
         source: cell.source,
@@ -241,6 +242,7 @@ export class PythonRuntime implements Runtime, NotebookKernel {
   interrupt(): void {
     const active = this.active
     if (!active || active.ended || !this.intBuf) return
+    Atomics.store(this.intBuf, 1, 1)
     Atomics.store(this.intBuf, 0, 2)
     if (this.ctrl) Atomics.notify(this.ctrl, 0)
     const dbg = active.debug
@@ -261,7 +263,7 @@ export class PythonRuntime implements Runtime, NotebookKernel {
     if (this.active && !this.active.ended) throw new Error('A cell is running; interrupt it before restarting.')
     const id = this.nextRestartId++
     const done = new Promise<void>((resolve) => this.restarts.set(id, resolve))
-    this.worker.postMessage({ type: 'kernel-restart', id, notebook: normalizePath(notebook) })
+    this.worker.postMessage({ type: 'kernel-restart', id, notebook })
     return done
   }
 
@@ -302,7 +304,10 @@ export class PythonRuntime implements Runtime, NotebookKernel {
       debug = { stopOnEntry: debugOpts.stopOnEntry === true }
     }
 
-    if (this.intBuf) Atomics.store(this.intBuf, 0, 0)
+    if (this.intBuf) {
+      Atomics.store(this.intBuf, 0, 0)
+      Atomics.store(this.intBuf, 1, 0)
+    }
     worker.postMessage(message(debug))
 
     const session: PythonRunSession = {
@@ -321,6 +326,11 @@ export class PythonRuntime implements Runtime, NotebookKernel {
    */
   isReady(): boolean {
     return this.worker !== null && this.version !== null
+  }
+
+  /** A program or cell is in flight; `format()` would refuse. */
+  isBusy(): boolean {
+    return !!this.active && !this.active.ended
   }
 
   /**
@@ -390,7 +400,10 @@ export class PythonRuntime implements Runtime, NotebookKernel {
     this.dbgBytes = new Uint8Array(this.dbgSab, DBG_HEADER_BYTES)
     if (this.kernelMode) {
       // Fresh per worker for the same reason as the debugger's buffer.
-      this.intSab = new SharedArrayBuffer(4)
+      // Word 0 is Pyodide's interrupt buffer (Pyodide clears it when it raises). Word 1 is ours
+      // and sticky: "an interrupt was asked for during this cell" — it survives Pyodide's own
+      // import scan swallowing word 0 while packages download.
+      this.intSab = new SharedArrayBuffer(8)
       this.intBuf = new Int32Array(this.intSab)
     }
     this.epoch++

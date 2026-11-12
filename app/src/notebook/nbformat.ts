@@ -158,22 +158,34 @@ export function parseNotebook(text: string): Notebook {
   const rawCells = (json.cells ?? []) as unknown[]
   const taken = new Set<string>()
   const cells: NbCell[] = []
-  for (const rc of rawCells as unknown[]) {
-    if (!isObject(rc)) continue
+  for (const [n, rc] of (rawCells as unknown[]).entries()) {
+    // Never dropped quietly: saving would then delete it from the student's file.
+    if (!isObject(rc)) throw new NotebookParseError(`Cell ${n + 1} of this notebook is not a cell (it is ${Array.isArray(rc) ? 'a list' : JSON.stringify(rc)}).`)
     const t = rc.cell_type
-    const type: CellType = t === 'markdown' || t === 'raw' ? t : 'code'
+    // nbformat 3's heading cell has no v4 form; it is the markdown heading it always meant.
+    const heading = t === 'heading'
+    const type: CellType = t === 'code' ? 'code' : t === 'markdown' || heading ? 'markdown' : 'raw'
     const meta = isObject(rc.metadata) ? rc.metadata : null
     // nbformat 4.5's id wins; Colab (minor 0) keeps a stable one in metadata.id.
     let id = typeof rc.id === 'string' && ID_RE.test(rc.id) ? rc.id : typeof meta?.id === 'string' && ID_RE.test(meta.id) ? meta.id : ''
     if (!id || taken.has(id)) id = newCellId(taken)
     taken.add(id)
+    let raw = rc
+    let source = joinText(rc.source)
+    if (heading) {
+      const level = Math.min(6, Math.max(1, Number(rc.level) || 1))
+      source = '#'.repeat(level) + ' ' + source
+      const { level: _l, ...rest } = rc
+      raw = { ...rest, cell_type: 'markdown' }
+    }
     cells.push({
       id,
       type,
-      source: joinText(rc.source),
-      outputs: type === 'code' && Array.isArray(rc.outputs) ? (rc.outputs.filter(isObject) as NbOutput[]) : [],
+      source,
+      // An output without an output_type is not one; keeping it would save an invalid file.
+      outputs: type === 'code' && Array.isArray(rc.outputs) ? (rc.outputs.filter((o) => isObject(o) && typeof o.output_type === 'string') as NbOutput[]) : [],
       executionCount: type === 'code' && typeof rc.execution_count === 'number' ? rc.execution_count : null,
-      raw: rc,
+      raw,
     })
   }
   return { cells, raw: { ...json, cells: null }, indent: detectIndent(text), trailingNewline: text.endsWith('\n') }
@@ -355,4 +367,57 @@ export function withoutOutputs(text: string): string {
   } catch {
     return text
   }
+}
+
+/* -------------------------------------------------------------- merging */
+
+/** Everything about a cell that an edit can change, as one comparable string. */
+function cellPrint(c: NbCell): string {
+  return JSON.stringify([c.type, c.source, c.outputs, c.executionCount, c.raw.metadata ?? null, c.raw.attachments ?? null])
+}
+
+/**
+ * Three-way merge of a notebook, cell by cell, keyed by cell id: `base` is the
+ * text both sides last agreed on, `local` has this tab's unsaved edits, `remote`
+ * is what just arrived (a collaborator, another view). A cell only one side
+ * changed takes that side's version; a cell both changed keeps the local one
+ * (it is what the student is looking at); additions and deletions from either
+ * side are honoured, except that a deletion never discards the other side's
+ * edit of that same cell. Order follows `remote`, with local additions placed
+ * after the cell they followed locally.
+ */
+export function mergeNotebooks(base: Notebook, local: Notebook, remote: Notebook): Notebook {
+  const b = new Map(base.cells.map((c) => [c.id, c]))
+  const l = new Map(local.cells.map((c) => [c.id, c]))
+  const r = new Map(remote.cells.map((c) => [c.id, c]))
+  const same = (x: NbCell | undefined, y: NbCell | undefined) => !!x && !!y && cellPrint(x) === cellPrint(y)
+
+  const out: NbCell[] = []
+  for (const rc of remote.cells) {
+    const lc = l.get(rc.id)
+    const bc = b.get(rc.id)
+    if (!lc) {
+      // Deleted here: gone, unless the other side edited it meanwhile.
+      if (bc && same(bc, rc)) continue
+      out.push(rc)
+    } else if (bc && same(lc, bc)) out.push(rc)
+    else out.push(lc)
+  }
+  // Cells only this side has: added here (keep), or deleted there (keep only if edited here).
+  local.cells.forEach((lc, i) => {
+    if (r.has(lc.id)) return
+    const bc = b.get(lc.id)
+    if (bc && same(lc, bc)) return
+    let at = 0
+    for (let k = i - 1; k >= 0; k--) {
+      const j = out.findIndex((c) => c.id === local.cells[k].id)
+      if (j >= 0) {
+        at = j + 1
+        break
+      }
+    }
+    out.splice(at, 0, lc)
+  })
+  const rawSame = JSON.stringify(local.raw) === JSON.stringify(base.raw)
+  return { ...local, raw: rawSame ? remote.raw : local.raw, cells: out }
 }

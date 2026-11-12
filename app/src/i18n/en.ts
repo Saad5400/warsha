@@ -933,6 +933,7 @@ export const EN = {
   nbDebugCell: 'Debug cell',
   nbFormatCell: 'Format cell',
   debugNotebookHint: 'Click left of a line number in a cell to set a breakpoint, then Run and Debug: the selected code cell (or the first one) runs under the debugger and pauses there so you can step through it and inspect variables.',
+  nbDebugBusy: 'Another debug session is paused. Stop it (Shift+F5) before debugging this cell.',
   nbRunAbove: 'Run cells above',
   nbRunBelow: 'Run this cell and below',
   nbMoveUp: 'Move cell up',

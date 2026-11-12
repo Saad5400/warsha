@@ -11,9 +11,9 @@ import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
 import { classifyRunFailure } from './hooks/useRunner'
-import { createNotebook, isNotebookPath, parseCellPath, parseNotebook, readableText, serializeNotebook } from './notebook/nbformat'
-import { closeNotebooksExcept, flushNotebooks, notebookDocument, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
-import { notebookDebugOwner, runStatusOf, useOptionalSession } from './notebook/session'
+import { createNotebook, isNotebookPath, parseCellPath, readableText, serializeNotebook } from './notebook/nbformat'
+import { closeNotebooksExcept, closeNotebooksForSwitch, flushNotebooks, notebookDocument, notebookModel, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
+import { kernelLabel, notebookDebugOwner, runStatusOf, useOptionalSession } from './notebook/session'
 // The notebook UI (cells, outputs, markdown, math) loads the first time a notebook opens.
 const NotebookView = lazy(() => import('./components/notebook/NotebookView').then((m) => ({ default: m.NotebookView })))
 
@@ -1142,7 +1142,9 @@ function Ide({ report }: { report: CapabilityReport }) {
       return `${pkg}public class ${cls} {\n\n}\n`
     }
     if (name.endsWith('.py')) return `"""${name}"""\n\n`
-    // A new .ipynb starts empty; the notebook view writes a one-cell nbformat 4.5 notebook into it.
+    // A new .ipynb is a real one-cell nbformat 4.5 notebook from the start: the view never
+    // writes one into an empty file by itself (an empty text may only be not-yet-synced).
+    if (name.endsWith('.ipynb')) return serializeNotebook(createNotebook())
     return ''
   }
 
@@ -1623,8 +1625,6 @@ function Ide({ report }: { report: CapabilityReport }) {
   // Switch/create/delete all invalidate the workspace: tabs, console transcript, and
   // editor per-file state belong to the project being left.
   const adoptProject = (leavingTabs: string[], preferredEntry?: string | null) => {
-    // Notebooks are per project: their models and namespaces go with it.
-    closeNotebooksExcept(new Set())
     // Old project's open paths are evicted from editor state by name — two projects can both have a "main.py".
     for (const path of leavingTabs) editorRef.current?.closeFile(path)
     const entry = preferredEntry ?? entryCandidates(project.sourceFiles())[0] ?? project.paths()[0] ?? null
@@ -2300,61 +2300,63 @@ function Ide({ report }: { report: CapabilityReport }) {
   const [notebookAsText, setNotebookAsText] = useState<ReadonlySet<string>>(() => new Set())
   const activeNotebook = activePath && isNotebookPath(activePath) && !notebookAsText.has(activePath) ? activePath : null
   // Open notebooks follow the tabs: closing a notebook's tab closes it (and frees its namespace).
+  // A notebook shown as text is closed too: its session must not keep writing JSON under the
+  // student's text edits.
   useEffect(() => {
-    closeNotebooksExcept(new Set(tabs))
-    setNotebookAsText((cur) => (Array.from(cur).every((p) => tabs.includes(p)) ? cur : new Set(Array.from(cur).filter((p) => tabs.includes(p)))))
-  }, [tabs])
-  const notebookIO = useMemo((): Record<string, DocumentIO> => ({}), [project])
-  const ioFor = (path: string): DocumentIO =>
-    (notebookIO[path] ??= {
-      read: () => project.read(path),
-      // A live-collab notebook lands in its shared doc as a minimal splice, like Format does.
-      write: (text) => {
+    closeNotebooksExcept(new Set(tabs.filter((t) => !notebookAsText.has(t))))
+    if (Array.from(notebookAsText).some((p) => !tabs.includes(p))) setNotebookAsText(new Set(Array.from(notebookAsText).filter((p) => tabs.includes(p))))
+  }, [tabs, notebookAsText])
+  // Pending notebook edits reach the project before any save; open notebooks close before a
+  // project switch, while the project being left is still the one attached (closeNotebooksForSwitch).
+  useEffect(() => {
+    const offSave = project.onBeforeSave(flushNotebooks)
+    const offSwitch = project.onBeforeSwitch(closeNotebooksForSwitch)
+    return () => {
+      offSave()
+      offSwitch()
+    }
+  }, [project])
+  const notebookIO = useMemo(
+    (): DocumentIO => ({
+      read: (path) => project.read(path),
+      write: (path, text) => {
+        // Deleted (or moved) while open: not brought back.
+        if (!project.has(path)) return
+        // A live-collab notebook lands in its shared doc as a minimal splice, like Format does.
         if (!collabRef.current.binding?.replaceDoc(path, text)) project.setContent(path, text)
       },
       files: () => project.sourceFiles(),
+      workspace: () => currentProjectIdRef.current ?? '',
       onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
       onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
-      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost }),
-    })
+      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy }),
+    }),
+    [project, notify],
+  )
   /** A notebook cell reads as "lab.ipynb [3]" (its position) in the debugger; a file as its name. */
   const debugName = (path: string): string => {
     const cell = parseCellPath(path)
     if (!cell) return splitPath(path).name
-    let index = -1
-    try {
-      index = parseNotebook(project.read(cell.notebook) ?? '').cells.findIndex((c) => c.id === cell.cellId)
-    } catch {
-      /* an unreadable notebook still names itself */
-    }
+    const index = notebookModel(cell.notebook, project.read(cell.notebook))?.cells.findIndex((c) => c.id === cell.cellId) ?? -1
     return `${splitPath(cell.notebook).name} [${index >= 0 ? index + 1 : '?'}]`
   }
   /** One cell's source, for the debugger's breakpoint rows. */
-  const cellSource = (notebook: string, cellId: string): string => {
-    try {
-      return parseNotebook(project.read(notebook) ?? '').cells.find((c) => c.id === cellId)?.source ?? ''
-    } catch {
-      return ''
-    }
-  }
+  const cellSource = (notebook: string, cellId: string): string =>
+    notebookModel(notebook, project.read(notebook))?.cells.find((c) => c.id === cellId)?.source ?? ''
+
+  // A collab viewer (or a guest whose copy is not bound yet — the file editor's rule, setup.ts)
+  // can read a notebook but not edit or run it.
+  const nbReadOnly =
+    !!activeNotebook && !!collab.binding && (collab.binding.readOnly() || (collab.binding.guarded() && !collab.binding.isCollab(activeNotebook)))
 
   // A notebook on screen owns Run: Run runs all its cells, Debug debugs its selected (or
   // first) code cell, Stop interrupts, and the status bar shows its kernel — never the
   // project's entry point, which a notebook-only project does not have.
-  const nbDoc = activeNotebook ? notebookDocument(activeNotebook, kernelFor(activeNotebook)!, ioFor(activeNotebook)) : null
+  const nbDoc = activeNotebook ? notebookDocument(activeNotebook, kernelFor(activeNotebook)!, notebookIO) : null
+  if (nbDoc) nbDoc.readOnly = nbReadOnly
   const nbState = useOptionalSession(nbDoc?.session ?? null)
   const nbStatus = nbState ? runStatusOf(nbState) : null
-  const kernelLabel = nbState
-    ? nbState.kernel === 'starting'
-      ? COPY.nbKernelStarting
-      : nbState.kernel === 'interrupting'
-        ? COPY.nbKernelInterrupting
-        : nbStatus !== 'idle'
-          ? COPY.nbKernelBusy
-          : nbState.kernel === 'off'
-            ? COPY.nbKernelOff
-            : COPY.nbKernelIdle
-    : null
+  const nbKernelLabel = nbState ? kernelLabel(nbState) : null
 
   // Single state object so Run/Stop in the tab strip (Tabs.tsx), the Run menu, and
   // F5/Shift+F5 all share the same handlers and can't drift apart.
@@ -2363,7 +2365,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       ? {
           status: nbStatus,
           busy: nbStatus !== 'idle',
-          canRun: true,
+          canRun: !nbReadOnly,
           entry: activeNotebook,
           onRun: () => nbDoc.runAll(),
           onStop: () => nbDoc.session.interrupt(),
@@ -2381,10 +2383,11 @@ function Ide({ report }: { report: CapabilityReport }) {
         }
 
   // ---- debugger ----
-  const canDebugEntry = nbDoc ? true : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
+  const canDebugEntry = nbDoc ? !nbReadOnly : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
   /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
   const startDebugging = () => {
-    if (runControl.busy || !canDebugEntry) return
+    // One debug session at a time: a paused notebook cell blocks debugging the program and back.
+    if (runControl.busy || !canDebugEntry || debugStore.get().debugging) return
     if (nbDoc) {
       if (!narrow) {
         setSideView('debug')
@@ -3445,10 +3448,10 @@ function Ide({ report }: { report: CapabilityReport }) {
                     path={activeNotebook}
                     content={activeContent}
                     kernel={kernelFor(activeNotebook)!}
-                    io={ioFor(activeNotebook)}
+                    io={notebookIO}
                     fontSize={fontSize}
                     // The file editor's rule (setup.ts): a viewer, or a guest whose copy is not bound yet.
-                    readOnly={!!collab.binding && (collab.binding.readOnly() || (collab.binding.guarded() && !collab.binding.isCollab(activeNotebook)))}
+                    readOnly={nbReadOnly}
                     projectWords={notebookWords}
                     onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
                     onDownload={() => void downloadFile(activeNotebook)}
@@ -3642,7 +3645,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           exitCode={nbStatus ? null : runner.exitCode}
           activePath={activePath}
           entryPath={runControl.entry}
-          kernelLabel={kernelLabel}
+          kernelLabel={nbKernelLabel}
           // A notebook has no single caret, problems list or indentation — its cells are many editors.
           cursor={empty || !activePath || activeNotebook ? null : cursor}
           // Same gate as the caret: a problems count belongs to an open file.
