@@ -29,10 +29,12 @@
  *      rollout. Offline afterwards, whichever build boots must get only its own
  *      files — an unfinished install may change nothing the old build serves.
  *   E. A RELEASE THAT CANNOT FULLY INSTALL. One shell icon 404s: the upgrade
- *      must still complete. A precached chunk is missing: the install refuses,
- *      the old worker stays — and must still hand the new page the new runtime
- *      files online; after repeated failures the install goes through
- *      best-effort and tells the page.
+ *      must still complete. A precached chunk 404s: the install refuses, the
+ *      old worker stays — and must still hand the new page the new runtime
+ *      files online; after repeated 404s the install goes through best-effort
+ *      and tells the page. The same chunk answering 503, four times over: no
+ *      attempt counts, nothing goes through, and offline the old build is
+ *      still complete, its notebook kernel included.
  *   C. OFFLINE RIGHT AFTER THE UPGRADE. On that first v2 visit, before anything
  *      has run on v2, the network goes and every language the student used on
  *      v1 is run again. Runtimes must outlive a deploy; Java and C have known
@@ -75,7 +77,7 @@
 import { chromium } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -219,14 +221,24 @@ function deploy(dist, ageDays) {
   for (const f of walk(SERVE)) utimesSync(join(SERVE, f), when, when)
 }
 
-function startNginx() {
+function startNginx(conf = CONF) {
   try { execFileSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) } catch { /* not running */ }
   execFileSync('docker', [
     'run', '-d', '--name', CONTAINER, '-p', `127.0.0.1:${PORT}:80`,
     '-v', `${SERVE}:/usr/share/nginx/html:ro`,
-    '-v', `${CONF}:/etc/nginx/conf.d/default.conf:ro`,
+    '-v', `${conf}:/etc/nginx/conf.d/default.conf:ro`,
     'nginx:alpine',
   ], { stdio: 'ignore' })
+}
+
+/** The production config, but answering 503 for one path — a server having a
+ *  bad moment for exactly that file, however long the moment lasts. */
+function confAnswering503(path) {
+  const file = join(mkdtempSync(join(tmpdir(), 'warsha-upgrade-conf-')), 'default.conf')
+  const conf = readFileSync(CONF, 'utf8').replace(/^(\s*)location \/ \{/m, `$1location = ${path} {\n$1    return 503;\n$1}\n\n$1location / {`)
+  writeFileSync(file, conf)
+  chmodSync(file, 0o644)
+  return file
 }
 const stopNginx = () => { try { execFileSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) } catch { /* gone */ } }
 
@@ -237,6 +249,13 @@ const stopNginx = () => { try { execFileSync('docker', ['rm', '-f', CONTAINER], 
  *  able to reach the server by that side door. */
 const serverDown = () => execFileSync('docker', ['stop', '-t', '0', CONTAINER], { stdio: 'ignore' })
 const serverUp = () => execFileSync('docker', ['start', CONTAINER], { stdio: 'ignore' })
+/** Until nginx answers — a restarted container takes a moment to listen. */
+async function serverReady(timeout = 20000) {
+  for (const end = Date.now() + timeout; Date.now() < end; await new Promise((r) => setTimeout(r, 250))) {
+    if ((await fetch(BASE).catch(() => null))?.ok) return
+  }
+  throw new Error(`nginx did not come back on ${BASE}`)
+}
 
 /** What nginx actually sent since `since` (a Date), from its own access log:
  *  the server's view of every download, service-worker requests included. */
@@ -738,27 +757,31 @@ try {
       check(`D ${label}: Python runs offline`, r.kind === 'ok', r.kind)
       await ctx.close()
       serverUp()
-      await new Promise((resolve) => setTimeout(resolve, 800))
+      await serverReady()
     }
   }
 
   if (SCENARIOS.includes('E')) {
     // E. A release that cannot fully install. The install must not let one
-    // missing file strand anyone on the old version, and whatever worker is in
-    // charge must hand the NEW page the NEW runtime files.
-    const E_LANGS = ['python', 'java', 'js', 'csharp'].filter((l) => LANGS.includes(l))
+    // missing file strand anyone on the old version; must not give up a complete
+    // offline copy for an incomplete one because a server hiccuped; and
+    // whatever worker is in charge must hand the NEW page the NEW runtime files.
+    const E_LANGS = ['python', 'java', 'js', 'csharp', 'notebook'].filter((l) => LANGS.includes(l))
     // A precached chunk NEW in v2 (one v1 already brought is skipped, rightly),
     // lazy (not needed to boot): the notebook kernel when it changed.
     const v1Assets = new Set(readdirSync(join(V1, 'assets')))
     const newChunks = readdirSync(join(V2, 'assets')).filter((f) => f.endsWith('.js') && !v1Assets.has(f) && !f.startsWith('index-'))
     const lazyChunk = newChunks.find((f) => f.startsWith('kernel-')) ?? newChunks[0]
+    // [label, path, how]: 'missing' deletes it from the server (404 — the
+    // release is wrong, every time); '503' leaves it in place but has nginx
+    // answer 503 for it (a bad moment, however many times it repeats).
     const variants = [
-      ['one shell icon 404s', '/apple-touch-icon.png'],
-      [`a precached chunk is missing (${lazyChunk})`, `/assets/${lazyChunk}`],
+      ['one shell icon 404s', '/apple-touch-icon.png', 'missing'],
+      [`a precached chunk 404s (${lazyChunk})`, `/assets/${lazyChunk}`, 'missing'],
+      [`a precached chunk answers 503 (${lazyChunk})`, `/assets/${lazyChunk}`, '503'],
     ]
-    for (const [label, missing] of variants) {
-      const removed = new Set([missing])
-      const breakIt = () => rmSync(join(SERVE, missing))
+    for (const [label, path, how] of variants) {
+      const removed = new Set([path])
       console.log(`\n-- E. a release that cannot fully install: ${label}`)
       deploy(V1, AGE_DAYS)
       await launch(mkdtempSync(join(tmpdir(), 'warsha-upgrade-broken-')))
@@ -778,7 +801,11 @@ try {
       page = fresh
 
       deploy(V2, 0)
-      breakIt()
+      if (how === 'missing') rmSync(join(SERVE, path))
+      else {
+        startNginx(confAnswering503(path))
+        await serverReady()
+      }
       const messages = []
       await page.exposeFunction('__qaSwMessage', (d) => messages.push(d))
       await page.addInitScript(() => navigator.serviceWorker?.addEventListener('message', (e) => window.__qaSwMessage(e.data)))
@@ -794,17 +821,11 @@ try {
         const failures = await (await (await caches.open('warsha-keep-index')).match('/__warsha-install-failures'))?.text()
         return JSON.stringify({ installing: !!reg?.installing, waiting: !!reg?.waiting, caches: await caches.keys(), failures: failures ?? null })
       })
-      if (label.startsWith('one shell icon')) {
-        const ok = await waitShell(page, V2_SHELL)
-        check(`E ${label}: the upgrade still installs`, ok, ok ? '' : await installState())
-      } else {
-        await page.waitForTimeout(4000)
-        check(`E ${label}: the install refuses (v1 stays in charge)`, !(await waitShell(page, V2_SHELL, 3000)), await installState())
-        // Further visits retry the install; past the retry limit it must go
-        // through best-effort and say so.
+      // Further visits retry the install, as a returning student's would.
+      const retry = async (times) => {
         let installed = false
         const attempts = []
-        for (let i = 0; i < 6 && !installed; i++) {
+        for (let i = 0; i < times && !installed; i++) {
           attempts.push(await page.evaluate(async () => {
             try {
               await (await navigator.serviceWorker.getRegistration())?.update()
@@ -815,10 +836,63 @@ try {
           }))
           installed = await waitShell(page, V2_SHELL, 10000)
         }
-        check(`E ${label}: after repeated failures the install goes through (escape hatch)`, installed,
+        return { installed, attempts }
+      }
+
+      if (path === '/apple-touch-icon.png') {
+        let ok = await waitShell(page, V2_SHELL)
+        if (!ok && /"waiting":true/.test(await installState())) {
+          // Installed, not yet active: with skipWaiting the browser still holds
+          // activation until the old worker's in-flight events finish. Seen
+          // intermittently after a long multi-engine session; the student's
+          // next visit (every Warsha tab closed, a new one opened) must let it.
+          info(`v2 installed but waiting: ${await installState()} — closing every tab, opening a new one`)
+          const next = await ctx.newPage()
+          for (const other of ctx.pages()) if (other !== next) await other.close()
+          page = next
+          await page.goto(BASE, { waitUntil: 'load' })
+          ok = await waitShell(page, V2_SHELL, 30000)
+        }
+        check(`E ${label}: the upgrade still installs`, ok, ok ? '' : await installState())
+      } else if (how === 'missing') {
+        await page.waitForTimeout(4000)
+        check(`E ${label}: the install refuses (v1 stays in charge)`, !(await waitShell(page, V2_SHELL, 3000)), await installState())
+        // A release that fails the same way every time: past the retry limit
+        // it goes through best-effort, and says so.
+        const { installed, attempts } = await retry(6)
+        check(`E ${label}: after repeated 404s the install goes through (escape hatch)`, installed,
           installed ? `after ${attempts.length} update attempts` : `${JSON.stringify(attempts)} ${await installState()}`)
         check(`E ${label}: …and the page is told its offline copy is incomplete`, messages.some((m) => m?.type === 'warsha:install-degraded'),
           JSON.stringify(messages.slice(0, 2)))
+      } else {
+        // A server answering 503: every attempt fails, none counts. Four
+        // attempts — one past the limit a 404 would need — and still the old
+        // worker, with its complete copy, stays in charge.
+        await page.waitForTimeout(4000)
+        const { installed, attempts } = await retry(4)
+        const state = await installState()
+        check(`E ${label}: after 4 failed attempts no install went through`, !installed, `${JSON.stringify(attempts)} ${state}`)
+        const recorded = JSON.parse(JSON.parse(state).failures ?? 'null')
+        check(`E ${label}: …none of them counted toward the escape hatch`, !recorded || recorded.count === 0, state)
+        check(`E ${label}: …and no incomplete install was reported`, !messages.some((m) => m?.type === 'warsha:install-degraded'), JSON.stringify(messages))
+        // Offline, the old build is still whole: its page, its runtimes, its
+        // notebook kernel (the very chunk the new release could not deliver).
+        serverDown()
+        await page.goto(BASE, { waitUntil: 'load' }).catch(() => {})
+        const booted = await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 }).then(() => true).catch(() => false)
+        check(`E ${label}: offline, Warsha still opens`, booted)
+        const entry = await page.evaluate(() => document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute('src') ?? null)
+        check(`E ${label}: offline, it is the old build, complete`, entry === V1_ENTRY, String(entry))
+        assertFresh(`E ${label}: offline`, await cacheAudit(page), V1)
+        for (const lang of ['python', 'notebook'].filter((l) => E_LANGS.includes(l))) {
+          const r = booted ? await runLang(page, lang).catch((e) => ({ kind: `threw: ${String(e.message).split('\n')[0]}` })) : { kind: 'not booted' }
+          check(`E ${label}: offline, ${lang} runs`, r.kind === 'ok', r.kind)
+        }
+        await ctx.close()
+        serverUp()
+        startNginx()
+        await serverReady()
+        continue
       }
       await page.reload({ waitUntil: 'load' })
       assertFresh(`E ${label}: after the update`, await cacheAudit(page), V2, removed)
