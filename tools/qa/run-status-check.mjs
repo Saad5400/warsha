@@ -26,6 +26,9 @@
  *      Try again recovers.
  * Plus, Python only: 9. a blackholed engine CDN (requests that never answer):
  *   the stall card after ~45 s, then Try again recovers.
+ * Java only: 10. the Run after System.exit() reboots the JVM, shown as loading.
+ * And once: 11. a web page (its run never ends) never shows the activity line or
+ *   the "still running" note. `--lang web` runs only that.
  *
  * Screenshots (phone for Python and C#, desktop for Java and C), each state in
  * English and Arabic; the dark/light pair once per language — Warsha has one
@@ -39,7 +42,7 @@
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
@@ -53,7 +56,8 @@ const argVal = (name) => {
   const i = args.indexOf(name)
   return i >= 0 ? args[i + 1] : null
 }
-const LANGS = (argVal('--lang') ?? 'python,java,csharp,c').split(',')
+const ASKED = (argVal('--lang') ?? 'python,java,csharp,c,web').split(',')
+const LANGS = ASKED.filter((l) => l !== 'web')
 const OFFLINE = !args.includes('--no-offline')
 const BLACKHOLE = !args.includes('--no-blackhole')
 const MAIN = !args.includes('--no-main')
@@ -93,6 +97,8 @@ const PROGRAMS = {
       'import java.util.Scanner;\npublic class Main {\n  public static void main(String[] args) {\n    System.out.print("Type something: ");\n    new Scanner(System.in).nextLine();\n  }\n}\n',
     crash:
       'public class Main {\n  public static void main(String[] args) {\n    System.out.println("before the crash");\n    throw new IllegalStateException("boom");\n  }\n}\n',
+    // System.exit takes the shared JVM down with it; the next Run reboots one.
+    exit: 'public class Main {\n  public static void main(String[] args) {\n    System.out.println("leaving");\n    System.exit(0);\n  }\n}\n',
   },
   csharp: {
     lang: 'C#', template: 'C# (empty)', cdn: /warsha-dotnet\//,
@@ -125,8 +131,13 @@ const FORM = { python: 'phone', java: 'desktop', csharp: 'phone', c: 'desktop' }
 
 // ------------------------------------------------------------------ helpers
 
+// Profiles live under the home directory, not tmpdir(): /tmp is a small tmpfs on this
+// machine, and five cold engines (~150 MB of cache each) filled it for other agents.
+const PROFILES = process.env.WARSHA_PROFILES ?? join(homedir(), '.cache', 'warsha-qa-profiles')
+mkdirSync(PROFILES, { recursive: true })
+
 async function openContext(form) {
-  const dir = mkdtempSync(join(tmpdir(), 'warsha-runstatus-'))
+  const dir = mkdtempSync(join(PROFILES, 'warsha-runstatus-'))
   const ctx = await chromium.launchPersistentContext(dir, {
     executablePath: CHROME,
     headless: true,
@@ -134,7 +145,7 @@ async function openContext(form) {
   })
   const page = ctx.pages()[0] ?? (await ctx.newPage())
   const errors = []
-  page.on('pageerror', (e) => errors.push(e.message))
+  page.on('pageerror', (e) => errors.push(`${e.message} @ ${(e.stack ?? '').split('\n').slice(1, 3).join(' < ').trim()}`))
   return { ctx, page, dir, errors }
 }
 
@@ -468,10 +479,32 @@ async function languageSuite(id) {
     await clickRun(page)
     await waitState(page, ['ok', 'failed'], 60000)
     const rs7 = await runState(page)
+    // The closing sentence follows a paced reveal of the trace (console/buffer.ts).
+    await page.waitForFunction(() => /red lines above say why/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''), null, { timeout: 8000 }).catch(() => {})
     const out7 = await output(page)
     check(rs7.state === 'failed' && /Stopped early · exit [1-9]/.test(rs7.text), '7. a crash reads "Stopped early · exit N"', rs7.text)
     check(/red lines above say why/.test(out7), '7. and says where to look', out7.slice(-90))
     await shotBoth(page, '7-crashed')
+
+    // ---- 10. (Java) the Run after System.exit() reboots the JVM: that reboot must read
+    // as loading (named, counted, watched), not as a silent "Running" for ~26 s.
+    if (P.exit) {
+      await setEditor(page, P.exit)
+      await clickRun(page)
+      await waitState(page, ['ok', 'failed'], 90000)
+      await setEditor(page, P.hello)
+      await startSampler(page)
+      await clickRun(page)
+      await waitState(page, ['ok', 'failed'], 120000)
+      const reboot = await samples(page)
+      const silent = reboot.filter((s) => s.state === 'running' && !s.progress && !/Hello/.test(s.empty ?? ''))
+      const boot = reboot.filter((s) => s.phase)
+      info(`after System.exit: ${boot.length} loading samples (${[...new Set(boot.map((s) => s.pill))].join(', ')}), ${silent.length} silent running samples`)
+      check(boot.length > 0 && longestFreeze(reboot, (s) => s.state === 'running' && !s.progress) < 3000,
+        '10. the JVM reboot after System.exit shows as loading, not a silent Running',
+        `loading samples ${boot.length}; longest silent running stretch ${longestFreeze(reboot, (s) => s.state === 'running' && !s.progress)} ms`)
+      check((await runState(page)).state === 'ok', '10. and the program then runs', (await runState(page)).text)
+    }
 
     check(c.errors.length === 0, 'no uncaught page errors', c.errors.slice(0, 3).join(' | '))
   } catch (e) {
@@ -551,7 +584,39 @@ async function blackholeSuite(id) {
   }
 }
 
+// ---- 11. a web page: its run never ends (the page stays live), so it must not read
+// as working, and must never be called "stuck in a loop".
+async function webSuite() {
+  tag = 'web'
+  console.log('\n==== web (desktop) ====')
+  const c = await openContext('desktop')
+  const { page } = c
+  try {
+    await page.goto(BASE + '?lang=en', { waitUntil: 'load' })
+    await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 60000 }).catch(() => {})
+    await page.waitForTimeout(800)
+    await page.getByRole('button', { name: 'New project', exact: true }).first().click()
+    await page.locator('dialog[open]').getByRole('button', { name: /^Web/ }).first().click()
+    await page.locator('.template-card').filter({ hasText: 'Web page (empty)' }).first().click()
+    await page.waitForSelector('.cm-content', { timeout: 30000 })
+    await page.waitForTimeout(800)
+    await page.getByRole('button', { name: /^Run \S+\.html?$/ }).first().click()
+    await waitState(page, 'running', 30000)
+    await startSampler(page)
+    await page.waitForTimeout(36000)
+    const live = await samples(page)
+    check(!live.some((s) => s.activity), '11. a live web page shows no activity line', `${live.filter((s) => s.activity).length} samples with it`)
+    check(!live.some((s) => s.quiet), '11. and is never called "still running" after 30 s')
+    await page.screenshot({ path: `${SHOTS}/rs-web-desktop-11-live-page-en-dark.png` })
+  } catch (e) {
+    fail('web suite crashed', String(e && e.stack || e).slice(0, 400))
+  } finally {
+    await closeContext(c)
+  }
+}
+
 for (const id of LANGS) await languageSuite(id)
+if (ASKED.includes('web')) await webSuite()
 
 const failed = results.filter((r) => r[0] === 'FAIL')
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
