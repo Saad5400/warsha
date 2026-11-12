@@ -180,6 +180,9 @@ export const AR: Bundle = {
   // ---- status bar ----
   langJava: 'Java 17',
   langPython: 'Python 3.14',
+  // Named the way the picker names their engines, not by the bare ending ("CS").
+  langCSharp: 'C# · .NET 9',
+  langC: 'C · clang 16',
   langPlain: 'نص عادي',
   langNone: 'لا ملف مفتوح',
   statusBarNoEntry: 'لا نقطة بداية',

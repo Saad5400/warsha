@@ -150,6 +150,9 @@ export const EN = {
   // both engines are pinned: CheerpJ on Java 17, Pyodide on CPython 3.14 (ARCHITECTURE §6).
   langJava: 'Java 17',
   langPython: 'Python 3.14',
+  // Named the way the picker names their engines, not by the bare ending ("CS").
+  langCSharp: 'C# · .NET 9',
+  langC: 'C · clang 16',
   langPlain: 'Plain text',
   /** Nothing is open, so there is no language to name. */
   langNone: 'No file',

@@ -35,14 +35,20 @@ export interface StatusBarProps {
   onIndentMenu?(anchor: { x: number; y: number; fromRight?: boolean }): void
 }
 
-/** "Java 17" / "Python 3.14" for the two real engines, honest for everything else. */
+/** VS Code's language-mode names for endings whose upper-cased form is not a name. */
+const LANGUAGE_MODE: Record<string, string> = { js: 'JavaScript', mjs: 'JavaScript', jsx: 'JavaScript JSX', ts: 'TypeScript', tsx: 'TypeScript JSX', md: 'Markdown' }
+
+/** "Java 17" / "Python 3.14" / "C# · .NET 9" / "C · clang 16" for the engines, the way
+ *  the picker names them; the language mode for everything else. */
 function languageLabel(path: string | null): string {
   if (!path) return COPY.langNone
   const lang = langForPath(path)
   if (lang === 'java') return COPY.langJava
   if (lang === 'python' || isNotebookPath(path)) return COPY.langPython
+  if (lang === 'csharp') return COPY.langCSharp
+  if (lang === 'c') return COPY.langC
   const ext = extOf(path)
-  return ext ? ext.toUpperCase() : COPY.langPlain
+  return ext ? (LANGUAGE_MODE[ext.toLowerCase()] ?? ext.toUpperCase()) : COPY.langPlain
 }
 
 // VS Code's statusbar chrome: no horizontal padding on the footer itself (the leading block
