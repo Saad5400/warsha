@@ -1503,7 +1503,8 @@ const staticOptions = (lang: CompletionLang): Completion[] => {
     const type = label.includes('.') ? (/^[A-Z][A-Z0-9_]*$/.test(last) ? 'constant' : 'method') : /^[A-Z]/.test(label) ? 'class' : 'function'
     return lang === 'java'
       ? javaApiCompletion(label, detail, type)
-      : { label, detail, type, boost: 10, ...docInfo('python', label) }
+      : // Exception classes rank low: they belong after `except`/`raise`, where a prefix finds them anyway.
+        { label, detail, type, boost: /(?:Error|Exception|Interrupt|Iteration)$/.test(label) ? 2 : 10, ...docInfo('python', label) }
   })
   return [
     ...snippets,
@@ -1714,13 +1715,21 @@ const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComm
 
 /** Module functions offered after `os.` / `json.` / `re.` …, derived from
  *  `PYTHON_MODULE_API` so the two never drift. A module with a richer hand-written
- *  receiver (math, random, datetime…) overrides these inside memberSource. Nested
- *  paths (os.path) are skipped — a receiver is a single identifier, not `os.path`. */
+ *  receiver (math, random, datetime…) overrides these inside memberSource. A nested
+ *  module (`os.path`) gets its own table, and its parent offers it as a namespace —
+ *  so `os.` lists `path`, and `os.path.` lists `join`, `exists`… */
 function pythonModuleMembers(): Record<string, Completion[]> {
   const out: Record<string, Completion[]> = {}
   for (const [label, module, detail] of PYTHON_MODULE_API) {
-    if (module.includes('.')) continue
     ;(out[module] ??= []).push({ label, type: 'function', detail, boost: 30, ...docInfo('python', `${module}.${label}`) })
+  }
+  for (const module of Object.keys(out)) {
+    const dot = module.lastIndexOf('.')
+    if (dot === -1) continue
+    const parent = module.slice(0, dot)
+    const name = module.slice(dot + 1)
+    if (!(out[parent] ??= []).some((c) => c.label === name))
+      out[parent].push({ label: name, type: 'namespace', detail: `the ${module} module`, boost: 30 })
   }
   return out
 }

@@ -1,6 +1,6 @@
 import type { EditorState } from '@codemirror/state'
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
-import { JAVA_PRIMS, baseOf, isThrowableName, maskCode, splitTopLevel, typeArgs, type TextLang } from './codeText'
+import { JAVA_PRIMS, baseOf, isThrowableName, maskCode, simpleName, splitTopLevel, typeArgs, type TextLang } from './codeText'
 import { javaFqcn } from './imports'
 import { projectRevision } from './projectSource'
 import { parseChain, resolveReceiver, type MemberTypes, type Resolved } from './receiver'
@@ -1209,7 +1209,7 @@ function detailType(detail: string | undefined): string | null {
 
 /** `E` → `String` for `ArrayList<String>`; a raw type's parameters become Object. */
 function substitute(t: string, owner: string): string {
-  const params = JAVA_TYPE_PARAMS[baseOf(owner)]
+  const params = JAVA_TYPE_PARAMS[javaBase(owner)]
   if (!params) return t
   const args = typeArgs(owner)
   let out = t
@@ -1285,7 +1285,14 @@ function dedupe(list: readonly Completion[]): Completion[] {
 export type PyTables = Record<string, readonly Completion[]>
 
 /** The type name a member's card is filed under — `ArrayList<String>` → `ArrayList`, `list[str]` → `list`. */
-export const ownerOf = (lang: TextLang, r: Resolved) => (lang === 'java' ? baseOf(r.type) : r.type.replace(/\[.*$/, ''))
+export const ownerOf = (lang: TextLang, r: Resolved) => (lang === 'java' ? javaBase(r.type) : r.type.replace(/\[.*$/, ''))
+
+/** The table key of a Java type as written: `java.util.List<Integer>` → `List`; `Map.Entry<K, V>` stays `Map.Entry`. */
+function javaBase(t: string): string {
+  const b = baseOf(t)
+  if (JAVA_MEMBERS[b] || !b.includes('.')) return b
+  return simpleName(b)
+}
 
 /**
  * Everything `x.` should offer for this resolved type, or null when there is no
@@ -1404,7 +1411,7 @@ function makeMemberTypes(pyTables: PyTables): MemberTypes {
       const t = on.type.replace(/\s+/g, '')
       if (lang === 'java') {
         if (/\[\]$/.test(t)) return member === 'length' ? 'int' : member === 'clone' ? t : null
-        const base = baseOf(t)
+        const base = javaBase(t)
         const user = index.get(base)
         if (user) {
           const found = findUserMember(user, member, call, index, lang)
@@ -1424,7 +1431,9 @@ function makeMemberTypes(pyTables: PyTables): MemberTypes {
       const user = index.get(base)
       if (user) return findUserMember(user, member, call, index, lang) ?? null
       const qual = `${t}.${member}`
-      // A module attribute that is a class (`csv.DictReader`, `pd.DataFrame`) stays a class until called.
+      // A module attribute that is a class (`csv.DictReader`, `pd.DataFrame`) stays a class until
+      // called; one that is a nested module (`os.path`) is that module.
+      if (!call && pyTables[qual] && on.isStatic) return `static:${qual}`
       if (!call && pyTables[t]?.some((c) => c.label === member && c.type === 'class')) return `static:${qual}`
       return PY_RESULTS[qual] ?? PY_RESULTS[`${base}.${member}`] ?? null
     },
