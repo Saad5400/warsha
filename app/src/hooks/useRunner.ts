@@ -4,6 +4,7 @@ import { entryCandidates, langForPath, languageName, runtimeFor } from '../runti
 import { normalizeProgress, type LoadProgress, type RunSession, type Runtime } from '../runtime/types'
 import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
+import { reloadIfStale } from '../ui/staleBuild'
 import { COPY } from '../copy'
 import { langOfEntry, track } from '../analytics'
 import { debugStore } from '../debug/store'
@@ -442,6 +443,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       for (const line of pendingWrites.current) s.writeStdin(line)
       pendingWrites.current = []
     } catch (e) {
+      if (token.current !== mine) return
+      // A page older than the deploy fails exactly here (its worker or chunk is
+      // gone or no longer matches) and only a reload fixes it — so if the server
+      // serves a newer build, reload onto it instead of reporting an engine
+      // failure the student cannot act on. See ui/staleBuild.ts.
+      if (await reloadIfStale(() => project.saveAll())) return
       if (token.current !== mine) return
       // Covers anything that blocked startup (CDN down, not isolated, worker won't
       // boot) — discard the engine and surface an actionable message.

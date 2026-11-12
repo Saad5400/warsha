@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from './ui/Button'
 import { COPY } from '../copy'
 import { track } from '../analytics'
+import { reloadIfStale } from '../ui/staleBuild'
 
 /**
  * Last line of defence: without it, one thrown render blanks the whole React tree
@@ -29,6 +30,10 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
     // screen is otherwise the one failure that reports absolutely nothing,
     // since the student cannot even reach a button to tell us.
     track('app_crashed', {})
+    // A page older than the deploy can crash on a module the deploy replaced;
+    // if so, a reload onto the new build is the fix, so make it instead of
+    // asking for it. Otherwise this screen stays, as it always has.
+    void reloadIfStale()
   }
 
   render() {

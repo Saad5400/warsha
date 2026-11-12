@@ -6,6 +6,7 @@ import { CrashScreen } from './components/CrashScreen'
 import { ToastProvider } from './components/ui/Toast'
 import { DialogProvider } from './components/ui/DialogProvider'
 import { initLocale } from './i18n/locale'
+import { watchForStaleBuild } from './ui/staleBuild'
 
 const host = document.getElementById('root')
 if (!host) throw new Error('missing #root')
@@ -37,6 +38,9 @@ window.addEventListener('unhandledrejection', (e) => {
 window.addEventListener('error', (e) => {
   record(`error: ${e.message}`)
 })
+// Before the first render: a chunk the shell lazy-loads at mount can already be
+// one a deploy deleted.
+watchForStaleBuild()
 
 createRoot(host).render(
   <StrictMode>
