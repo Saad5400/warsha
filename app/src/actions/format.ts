@@ -21,6 +21,9 @@ import { detectIndent } from '../editor/indentDisplay'
  *  confusing 11 MB download behind a menu click. */
 export class PythonNotLoadedError extends Error {}
 
+/** Every booted Python engine is busy (a program, a notebook cell): formatting would have to wait. */
+export class PythonBusyError extends Error {}
+
 /** True for any language `langForPath` recognises, not just Java/Python (the
  *  two `formatFile` handles) — other extensions pass here then throw there. */
 export function canFormat(path: string | null): boolean {
@@ -66,11 +69,15 @@ export async function formatJava(source: string): Promise<string> {
 async function formatPython(path: string, source: string): Promise<string> {
   // Either Python engine can format — the program runner or the notebook kernel, whichever
   // is already booted (a student working only in a notebook never booted the runner).
+  // …and one that is free: a worker running a program or a cell would refuse (and Format on
+  // Save must never sit waiting behind a long cell).
   const engines = [runtimeFor(path), kernelFor('.ipynb')].filter((e) => !!e?.format)
-  const ready = engines.find((e) => !e!.isReady || e!.isReady())
   if (!engines.length) throw new Error('Python formatting is unavailable.')
-  if (!ready) throw new PythonNotLoadedError('Python has not been loaded yet.')
-  return ready.format!(source)
+  const ready = engines.filter((e) => !e!.isReady || e!.isReady())
+  if (!ready.length) throw new PythonNotLoadedError('Python has not been loaded yet.')
+  const free = ready.find((e) => !e!.isBusy?.())
+  if (!free) throw new PythonBusyError('Python is busy running code.')
+  return free.format!(source)
 }
 
 /**
