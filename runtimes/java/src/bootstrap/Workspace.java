@@ -176,9 +176,10 @@ public final class Workspace {
      * they are written through sun.misc.Unsafe, which ignores both.
      *
      * <p>Plain java.io streams opened with a relative name ({@code new
-     * FileReader("data.txt")}) hand that name straight to the platform, so for
-     * those the platform's own cwd decides; the run reports through
-     * Bridge.writeInternal whether a relative probe actually landed here.
+     * FileReader("data.txt")}) hand that name straight to the platform, which
+     * has no cwd of its own; jvm.worker.js (anchorRelativePaths) resolves those
+     * against this same directory. The run reports through Bridge.writeInternal
+     * whether a relative probe actually landed here.
      *
      * @return a short report of which layers took, for the internal log
      */

@@ -51,6 +51,10 @@ const JAVA_VERSION = 17
  * resolves nothing. See build-bootstrap.sh. */
 const DEFAULT_BOOT_JAR_PATH = '/app/warsha-boot.jar'
 
+/* The student program's working directory -- MUST equal Workspace.ROOT in
+ * bootstrap/Workspace.java, plus the trailing slash. */
+const WORKDIR = '/files/warsha-work/'
+
 /* Engine assets worth measuring, for a determinate progress bar.
  *
  * Streaming them ourselves reports real byte counts and leaves them in the HTTP
@@ -363,6 +367,37 @@ self.onmessage = (event) => {
   }
 }
 
+// --- working directory -----------------------------------------------------
+
+/**
+ * Makes a relative file name resolve inside the program's working directory.
+ *
+ * CheerpJ has no cwd: cheerpOS.js's cheerpjNormalizePath pins every relative
+ * path to /files/ ("TODO: Support cwd" in its source). Workspace points
+ * user.dir, java.io's cached copy of it and NIO's default directory at the
+ * workspace, but plain java.io hands a relative name straight to the platform
+ * -- so `new Scanner(new File("data.txt"))`, `new FileReader("data.txt")` and
+ * `new FileWriter("out.txt")`, the file I/O every Java course teaches, read
+ * from and wrote to /files/ instead: the project's data.txt was "not found",
+ * and out.txt never reached the explorer (it piled up in IndexedDB instead).
+ *
+ * cheerpOS.js is a classic script imported into this worker's global scope and
+ * calls the function by its global name, so replacing the global is enough.
+ * Only relative paths change; everything Warsha and CheerpJ themselves open is
+ * absolute (/app/, /lt/, /files/warsha-run-*, /str/). Workspace's
+ * `relative=ok|MISSES` probe on the internal channel is the check that this
+ * still takes after a CheerpJ upgrade.
+ */
+function anchorRelativePaths() {
+  const normalize = self.cheerpjNormalizePath
+  if (typeof normalize !== 'function') {
+    post({ type: 'internal', level: 'warn', text: 'warsha-workdir: cheerpjNormalizePath not found; relative java.io paths resolve to /files/', noise: false })
+    return
+  }
+  self.cheerpjNormalizePath = (path) =>
+    normalize(typeof path === 'string' && path !== '' && !path.startsWith('/') ? WORKDIR + path : path)
+}
+
 // --- boot ------------------------------------------------------------------
 
 async function boot(cdnBase) {
@@ -404,6 +439,7 @@ async function boot(cdnBase) {
     },
   })
   const initMs = performance.now() - started
+  anchorRelativePaths()
 
   // The bootstrap is prebuilt, so this either works or the deploy is broken.
   const warmStarted = performance.now()

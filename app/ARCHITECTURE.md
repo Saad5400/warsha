@@ -135,10 +135,10 @@ gitignored build products. See `runtimes/java/INTEGRATION.md` §2–§3.
   in-memory WASI directory preopened as `/`; C# — an in-memory `/warsha-project` set as
   `Directory.SetCurrentDirectory`; Java — the persistent `/files/warsha-work` (IndexedDB), staged
   write-only-what-differs by `bootstrap/Workspace.java`, which also points `user.dir`, java.io's
-  cached copy of it and NIO's default directory there. Plain `java.io` streams opened with a
-  *relative* name still resolve against CheerpJ's own native cwd; the run logs
-  `warsha-workdir: … relative=ok|MISSES …` on the internal channel, which is the thing to check in
-  the browser harness. Standalone JavaScript has no file system (no `fs`), by design.
+  cached copy of it and NIO's default directory there; plain `java.io` streams opened with a
+  *relative* name are anchored there by `jvm.worker.js` (CheerpJ itself pins every relative path to
+  `/files/`). The run logs `warsha-workdir: … relative=ok|MISSES …` on the internal channel, which
+  is the thing to check in the browser harness. Standalone JavaScript has no file system (no `fs`), by design.
 - After `kill()`, send exactly one `onExit(null)`. Output from a superseded run is discarded by a run
   token, so you need not be perfect about it.
 
