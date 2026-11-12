@@ -117,6 +117,8 @@ export interface RunIO extends DebugIO {
   onExit(code: number | null): void
   /** Progress from inside the run — the compile. See the shell's RunIO. */
   onProgress?(report: ProgressReport): void
+  /** The compile is done and the program's main is starting. See the shell's RunIO. */
+  onStarted?(): void
 }
 
 export interface RunSession {

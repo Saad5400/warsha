@@ -496,6 +496,9 @@ export class JavaRuntime implements Runtime {
         if (this.active?.debug?.fallback) {
           this.active.io.onStderr('[debugger] Warsha could not prepare this program for debugging, so it runs without breakpoints.\n')
         }
+        // The compile progress is over and main() is starting: a program that
+        // then runs in silence must read as running, not as a compile that hangs.
+        if (this.active && !this.active.ended) this.active.io.onStarted?.()
         return
 
       case 'debug-stop':

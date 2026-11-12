@@ -21,6 +21,7 @@
  *                                           after "ready" the download of the
  *                                           packages a run imports (before it starts)
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
+ *   { type: "started" }                     packages loaded; the program's own code begins
  *   { type: "stdout" | "stderr", text }     one message per Python write
  *   { type: "stdin-request" }               parked in input()
  *   { type: "files", written, deleted, skipped }  what the program did to the
@@ -1411,6 +1412,9 @@ async function runProgram(msg) {
       self.postMessage({ type: 'done', code: 1, ms: 0 })
       return
     }
+    // From here on it is the student's code, not loading: the shell drops the
+    // package progress (and its stall watchdog) on this, not on first output.
+    self.postMessage({ type: 'started' })
     resetFs()
     writeProjectFiles(msg.files)
     const t0 = performance.now()

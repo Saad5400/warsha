@@ -45,6 +45,15 @@ export interface RunIO extends DebugIO {
   onRender?(srcdoc: string): void
   /** OPTIONAL — progress from inside a run, not the boot before it. Java needs this: its compiler takes ~12s before any output, and without it the console sits on the empty-state placeholder the whole time. */
   onProgress?(report: ProgressReport): void
+  /**
+   * OPTIONAL — the program's own code has begun, so whatever `onProgress`
+   * reported (Java's compile, Python's package download) is over. Without it
+   * the shell can only learn that from the first output, and a program that
+   * computes in silence went on showing "Compiling your code" with its
+   * counter climbing — and, 45 s in, was reported as a failed download.
+   * Engines that report no run-phase progress need not call it.
+   */
+  onStarted?(): void
 }
 export interface RunSession {
   kill(): void
