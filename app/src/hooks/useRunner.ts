@@ -4,6 +4,7 @@ import { entryCandidates, langForPath, languageName, runtimeFor } from '../runti
 import { normalizeProgress, type LoadProgress, type RunSession, type Runtime } from '../runtime/types'
 import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
+import { reloadIfStale } from '../ui/staleBuild'
 import { COPY } from '../copy'
 import { langOfEntry, track } from '../analytics'
 import { debugStore } from '../debug/store'
@@ -61,6 +62,17 @@ export function classifyRunFailure(error: unknown, lang: string): RunFailure {
   // which says only "worker failed to start" and would read as a broken engine.
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { kind: 'offline', message: COPY.engineOffline(lang), hint: COPY.engineOfflineHint, detail }
+  }
+  // An engine file answered with a web PAGE (a host's index.html fallback for a
+  // file it does not have: a stale page after a deploy, a misconfigured server).
+  // The engine reports it as e.g. `Failed to load config file … Unexpected token
+  // '<', "<!doctype"…`, which the offline test below would claim — telling a
+  // student who is online to check their Wi-Fi. The network delivered fine; the
+  // file is wrong, and a reload is the fix (useRunner has already tried the
+  // automatic one by the time this runs — ui/staleBuild.ts). Checked before the
+  // error-text offline test.
+  if (/Unexpected token '<'|<!doctype|<html|MIME type .*text\/html/i.test(detail)) {
+    return { kind: 'engine', message: COPY.engineBroken(lang), hint: COPY.engineBrokenHint, detail }
   }
   if (
     /failed to fetch|networkerror|load failed|err_|net::|importScripts|Failed to load|ERR_INTERNET/i.test(detail) ||
@@ -442,6 +454,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       for (const line of pendingWrites.current) s.writeStdin(line)
       pendingWrites.current = []
     } catch (e) {
+      if (token.current !== mine) return
+      // A page older than the deploy fails exactly here (its worker or chunk is
+      // gone or no longer matches) and only a reload fixes it — so if the server
+      // serves a newer build, reload onto it instead of reporting an engine
+      // failure the student cannot act on. See ui/staleBuild.ts.
+      if (await reloadIfStale()) return
       if (token.current !== mine) return
       // Covers anything that blocked startup (CDN down, not isolated, worker won't
       // boot) — discard the engine and surface an actionable message.

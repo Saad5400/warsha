@@ -28,6 +28,7 @@ import { createApi, type DocListEntry, type DocRole } from './collab/api'
 import { currentToken, ensureDeviceToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
+import { reloadIfStale, setStaleBuildSaver } from './ui/staleBuild'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
@@ -2294,14 +2295,21 @@ function Ide({ report }: { report: CapabilityReport }) {
   // backgrounded tab). All call the same idempotent flush, so firing twice is free.
   // Async, so the page may vanish before OPFS finishes — unavoidable, hence the tight 350ms debounce.
   useEffect(() => {
+    const save = () =>
+      Promise.all([
+        project.saveAll(),
+        // The room's durable snapshot mirrors project.saveAll() here — otherwise
+        // closing the tab dropped up to a debounce-window of collab edits.
+        collabRef.current.flush(),
+        // Same for the ambient Phase-C headless engine (open project, signed-in).
+        cloudRef.current.flushOpen(),
+      ])
     const flush = () => {
-      void project.saveAll()
-      // The room's durable snapshot mirrors project.saveAll() here — otherwise
-      // closing the tab dropped up to a debounce-window of collab edits.
-      void collabRef.current.flush()
-      // Same for the ambient Phase-C headless engine (open project, signed-in).
-      void cloudRef.current.flushOpen()
+      void save()
     }
+    // The stale-build self-heal (ui/staleBuild.ts) reloads the tab on its own;
+    // it awaits this same flush first, whichever failure triggered it.
+    setStaleBuildSaver(save)
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush()
     }
@@ -2317,6 +2325,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', onPageHide)
       document.removeEventListener('freeze', flush)
+      setStaleBuildSaver(null)
     }
   }, [project])
 
@@ -2435,7 +2444,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       // The project whose files `project` holds — not currentProject, which trails a switch.
       owner: () => project.owner,
       onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
-      onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
+      // The kernel failing to start in a notebook left open across a deploy is the
+      // run path's stale-page failure again, so it gets the same self-heal first.
+      onFailure: (message) =>
+        void reloadIfStale().then((reloading) => {
+          if (!reloading) notify(classifyRunFailure(new Error(message), 'Python').message, 'error')
+        }),
       messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy, stoppedAtError: COPY.nbStoppedAtError }),
     }),
     [project, notify],

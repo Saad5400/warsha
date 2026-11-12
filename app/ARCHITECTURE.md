@@ -192,9 +192,52 @@ a real Vite build and a real dev server.
   header transform is byte-identical). On `install` it precaches the app shell — the build-hashed
   JS/CSS, injected as `self.__WARSHA_PRECACHE__` by the `warsha:sw-precache` plugin in
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
-  for the shell and the two runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) and
-  network-first for navigations with a cached-`index.html` fallback, so after one online visit the
-  app shell opens with **no network**. One carve-out is load-bearing: **requests carrying a `Range`
+  only for URLs whose bytes cannot change — Vite's content-hashed `/assets/` and the version-pinned
+  runtime URLs (`cdn.jsdelivr.net/pyodide/v…/`, `cjrtnc.leaningtech.com/<v>/`, exact-version
+  `unpkg.com` packages, content-addressed `cdn.wasmer.io/webcimages/<sha256>.webc`; CheerpJ's
+  `4.3/` path can be patched in place, so its own declared `max-age` is honoured instead) — and
+  **revalidates** every other same-origin file (the unhashed `public/` runtimes: the engine workers,
+  `warsha-dotnet/**`, `warsha-esbuild.wasm`, the framework JSON, icons) with a conditional request,
+  serving its copy on a `304` or with no network. Navigations are network-first (bypassing the HTTP
+  cache) with a cached-`index.html` fallback, so after one online visit the app shell opens with
+  **no network**, and a deploy reaches a returning student on their next visit instead of being
+  shadowed by a cached worker from the build before. The server half of the same contract is
+  `deploy/nginx.conf`: `/assets/` immutable, everything else `no-cache`, and a missing file a `404`
+  rather than the SPA shell. A page that still outlives its deploy (a tab left open) heals itself:
+  when an engine fails to start, a chunk fails to load or the shell crashes, `ui/staleBuild.ts`
+  compares the build this page booted with the one the server serves and reloads once onto the new
+  one. Downloads outlive deploys: everything the worker fetches (assets, runtimes, the `public/`
+  runtime files) lives in one URL-keyed `warsha-keep` cache, not a per-build one — a deploy only
+  replaces the small per-build shell cache, prunes `/assets/` files the new build no longer emits,
+  and holds the rest least-recently-used under min(500 MB, half the quota minus what the origin
+  already stores), so cached runtimes never crowd out project saves. The build injects a
+  content-hash manifest of every unhashed runtime file (`warsha:sw-precache`); a kept file whose
+  hash is this build's is served with no request at all, and install refreshes only the kept files
+  whose hash changed — so a deploy costs exactly what it changed, not a re-download of every runtime
+  (nginx's mtime+size ETag changes on every deploy; `/Dockerfile` also stamps content-derived mtimes
+  via `tools/stable-mtimes.mjs` so it changes only with the bytes). Install stages everything in a
+  per-build cache that only activation promotes into `warsha-keep`, so an install cut short changes
+  nothing the running build serves. It fails only for what an offline boot needs — the pages (which
+  must be this build's, not a rollout's older container's), the precached JS/CSS, and any download
+  whose bytes are not this build's; an icon that 404s or a runtime file that cannot be refreshed is
+  best-effort. A release that fails the same way three times — a needed file answering 404/410, or
+  arriving with the wrong bytes — installs best-effort anyway and reports it
+  (`offline_install_degraded`); a network error, timeout or 5xx never counts (the old, complete
+  offline copy stays until a real attempt succeeds), and a page is never let go. And the moment a
+  navigation returns an app page (HTML) that is not the worker's own build, the worker stops
+  trusting its manifest and asks the server for every
+  runtime file, without keeping what it gets — so a new page never runs an old runtime online, in
+  the install window or behind a stuck install. Pages are cached only by navigations, only
+  in their own build's shell, and only when the page is that build's (its entry chunk is in the
+  worker's asset list); every lookup names its cache. So a language a student already ran is neither
+  re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
+  a real deploy against all of it, counting every runtime byte fetched again.
+
+  `deploy/nginx.conf` also sets a Content-Security-Policy on documents. Only `object-src 'none'`,
+  `base-uri 'self'` and `frame-ancestors 'self'` are enforced; the strict policy (script-src by
+  hash, no `javascript:` or inline handlers) is Report-Only, because the Web preview is a `srcdoc`
+  frame that inherits the page's policy while running the student's own inline scripts, CDN tags
+  and fetches. Enforcing it means moving the preview to its own origin first. One carve-out is load-bearing: **requests carrying a `Range`
   header bypass the cache entirely** (network only, never stored). CheerpJ reads `/app/ecj.jar` — a
   same-origin GET, so otherwise cache-first — in many HTTP Range requests and needs a `206` +
   `Content-Range` on each; the Cache API ignores the `Range` header and would replay the full stored

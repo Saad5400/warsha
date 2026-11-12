@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
@@ -618,9 +618,12 @@ function renderPrerendered(root: string, origin: string, m: Prerendered): string
 /**
  * Feeds the offline service worker its precache list at build time.
  *
- * public/coi-serviceworker.js reads `self.__WARSHA_PRECACHE__` (the hashed
- * JS/CSS this build emitted) and `self.__WARSHA_VERSION__` (a content hash that
- * names its caches, so a new deploy evicts the old ones). Those globals cannot
+ * public/coi-serviceworker.js reads `self.__WARSHA_ASSETS__` (every
+ * content-hashed file this build emitted under assets/ — it precaches the JS/CSS
+ * among them, and prunes cached assets/ files no longer in the list) and
+ * `self.__WARSHA_VERSION__` (a hash of that list, naming the per-build shell
+ * cache — and, by changing the worker's bytes, what makes a deploy install a new
+ * worker at all). Those globals cannot
  * be known until the bundle exists, so rather than tokenise the vendored SW we
  * PREPEND a two-line header to the copy Vite has already placed in dist/. The
  * source file in public/ is never touched; in dev the globals are simply
@@ -633,12 +636,13 @@ function warshaServiceWorkerPrecache(): Plugin {
     apply: 'build',
     generateBundle(_options, bundle) {
       assets = Object.keys(bundle)
-        .filter((name) => name.endsWith('.js') || name.endsWith('.css'))
+        .filter((name) => name.startsWith('assets/'))
         .map((name) => `./${name}`)
         .sort()
     },
     closeBundle() {
-      const swPath = resolve(__dirname, 'dist/coi-serviceworker.js')
+      const distDir = resolve(__dirname, 'dist')
+      const swPath = resolve(distDir, 'coi-serviceworker.js')
       let source: string
       try {
         source = readFileSync(swPath, 'utf8')
@@ -646,14 +650,111 @@ function warshaServiceWorkerPrecache(): Plugin {
         // No SW in the output (e.g. a library build) — nothing to inject.
         return
       }
-      const version = createHash('sha1').update(assets.join('|')).digest('hex').slice(0, 8)
+      // The runtime manifest: path -> content hash for every file the worker
+      // revalidates rather than trusts by name (everything outside assets/ but
+      // the pages and the worker itself). With it the worker knows, per file,
+      // whether the copy it keeps IS this build's, without asking the server —
+      // whose ETag (mtime + size) changes on every deploy for unchanged bytes,
+      // because every deploy re-stamps every file. Without it, each deploy
+      // re-downloaded every runtime a student had ever used.
+      const files: Record<string, string> = {}
+      for (const path of walkFiles(distDir)) {
+        const rel = path.slice(distDir.length).replaceAll('\\', '/')
+        if (rel.startsWith('/assets/') || rel.endsWith('.html') || rel === '/coi-serviceworker.js') continue
+        files[rel] = createHash('sha1').update(readFileSync(path)).digest('hex').slice(0, 12)
+      }
+      const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)))
+      // Any change to either list renames the shell cache and changes the
+      // worker's bytes — which is what makes the browser install it at all.
+      const version = createHash('sha1')
+        .update(assets.join('|') + JSON.stringify(sorted))
+        .digest('hex')
+        .slice(0, 8)
       const header =
         `self.__WARSHA_VERSION__=${JSON.stringify(version)};` +
-        `self.__WARSHA_PRECACHE__=${JSON.stringify(assets)};\n`
+        `self.__WARSHA_ASSETS__=${JSON.stringify(assets)};` +
+        `self.__WARSHA_FILES__=${JSON.stringify(sorted)};\n`
       writeFileSync(swPath, header + source)
     },
   }
 }
+
+/** Every file under a folder, recursively; [] when it does not exist. */
+function walkFiles(dir: string): string[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return names.flatMap((name) => {
+    const path = resolve(dir, name)
+    return statSync(path).isDirectory() ? walkFiles(path) : [path]
+  })
+}
+
+/**
+ * Keeps the CSP's script hashes honest. deploy/nginx.conf allows the pages'
+ * inline <script>s by their sha256 (a hash is the only way to allow exactly
+ * those scripts and not an injected one). The hash is of the exact bytes, so
+ * editing a comment inside one changes it, and the policy would quietly stop
+ * covering the splash or the recorder gate — invisible while the policy is
+ * Report-Only, a dead splash the day it is enforced.
+ *
+ * So every build reads the script-src of each CSP the config actually sends
+ * (the values of the `$warsha_csp*` maps, not any text that merely appears in
+ * the file), hashes the inline scripts of EVERY built page (index, the locale
+ * entries, the prerendered tutorials), and fails on either drift: a page script
+ * whose hash is missing, or a listed hash no page uses any more. nginx.conf
+ * stays the one place the policy lives. JSON-LD blocks are data, not script,
+ * and are skipped. Build-only.
+ */
+function warshaCspHashes(): Plugin {
+  return {
+    name: 'warsha:csp-hashes',
+    apply: 'build',
+    closeBundle() {
+      const distDir = resolve(__dirname, 'dist')
+      const pages = htmlFiles(distDir)
+      if (pages.length === 0) return // No HTML in this output (a library build).
+
+      const conf = readFileSync(resolve(__dirname, 'deploy/nginx.conf'), 'utf8')
+      const policies = [...conf.matchAll(/^\s*map\s+\S+\s+\$warsha_csp\w*\s*\{([\s\S]*?)^\s*\}/gm)]
+        .flatMap((m) => [...m[1].matchAll(/"([^"]*)"\s*;/g)].map((v) => v[1]))
+        .filter((p) => /script-src/.test(p))
+      if (policies.length === 0) throw new Error('warsha:csp-hashes: no script-src found in the $warsha_csp maps of app/deploy/nginx.conf')
+      const allowed = new Set(
+        policies.flatMap((p) => (/script-src([^;]*)/.exec(p)?.[1] ?? '').match(/'sha256-[^']+'/g) ?? []),
+      )
+
+      const used = new Map<string, string>() // hash -> first page that needs it
+      for (const page of pages) {
+        const html = readFileSync(page, 'utf8')
+        for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+          const attrs = m[1] ?? ''
+          if (/\bsrc=/i.test(attrs) || /application\/ld\+json/i.test(attrs)) continue
+          const hash = `'sha256-${createHash('sha256').update(m[2], 'utf8').digest('base64')}'`
+          if (!used.has(hash)) used.set(hash, page.slice(distDir.length + 1))
+        }
+      }
+      const missing = [...used].filter(([h]) => !allowed.has(h))
+      const stale = [...allowed].filter((h) => !used.has(h))
+      if (missing.length || stale.length) {
+        throw new Error(
+          'An inline <script> changed, so its CSP hash did too. In script-src in app/deploy/nginx.conf, ' +
+            [
+              ...missing.map(([h, page]) => `add ${h} (inline script in ${page})`),
+              ...stale.map((h) => `remove ${h} (no built page uses it)`),
+            ].join('; ') +
+            '.',
+        )
+      }
+    },
+  }
+}
+
+/** Every .html file under a folder. */
+const htmlFiles = (dir: string): string[] => walkFiles(dir).filter((f) => f.endsWith('.html'))
 
 export default defineConfig({
   // Root-absolute asset paths (`/assets/…`, `/warsha-*`), so the app boots
@@ -670,6 +771,7 @@ export default defineConfig({
     warshaLocaleEntries(),
     warshaTutorialPages(),
     warshaServiceWorkerPrecache(),
+    warshaCspHashes(),
   ],
   build: {
     target: 'es2022',

@@ -71,6 +71,9 @@ ARG VITE_WARSHA_API
 ENV VITE_WARSHA_API=${VITE_WARSHA_API}
 
 RUN cd app && npm run build
+# Content-derived mtimes, so nginx's ETag (mtime + size) only changes when a
+# file's bytes do — not on every deploy. See app/tools/stable-mtimes.mjs.
+RUN cd app && node tools/stable-mtimes.mjs dist
 
 # ---- serve stage ----------------------------------------------------------
 FROM nginx:alpine AS serve
