@@ -10,6 +10,8 @@ import {
   highlightSpecialChars,
   runScopeHandlers,
   tooltips,
+  ViewPlugin,
+  type KeyBinding,
   type Panel,
   type ViewUpdate,
 } from '@codemirror/view'
@@ -1330,6 +1332,148 @@ export function codeFontTheme(px: number, opts: { fill?: boolean } = {}) {
   })
 }
 
+/**
+ * Everything that depends on which language a file is in: the Lezer grammar
+ * (which is what produces syntax colours) and the completion sources, hover
+ * docs and linter. One definition for every code editor — the file editor
+ * and each notebook cell (notebook/cellEditor.ts) — so the two cannot drift;
+ * each keeps it in one compartment so a reconfigure swaps it as a unit.
+ */
+export function languageStack(
+  lang: EditorLang | null,
+  support: LanguageSupport | undefined,
+  projectWords: () => readonly string[],
+): Extension[] {
+  return [
+    support ? [support] : [],
+    autocompletion({
+      override: completionSources(completionLang(lang), projectWords),
+      // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
+      // what a student who has used an IDE before will reach for.
+      activateOnTyping: true,
+      selectOnOpen: true,
+      // Enough to scroll through, few enough that the popup cannot swallow a
+      // 390px screen. The list is ranked, so the tail is rarely what you want.
+      maxRenderedOptions: 30,
+      icons: true,
+      // Touch shows this short gloss instead of the full detail (the theme
+      // swaps them by density); the detail string itself is left untouched —
+      // receiver.ts parses Java members' `Type, (params) — gloss` shape.
+      addToOptions: [{ render: (c) => glossNode(c.detail), position: 85 }],
+    }),
+    // Docs on hover (mouse), long-press (touch) and Ctrl/Cmd+K Ctrl/Cmd+I —
+    // in this compartment because the built-in dictionary is per-language,
+    // and a rename (.txt → .py) must swap the hover vocabulary with the
+    // grammar. See editor/hoverDocs.ts.
+    hoverDocs(completionLang(lang)),
+    // The red line and its one-tap fixes. In this compartment for the same
+    // reason as the grammar it reads: a rename swaps the rule set, and the
+    // reconfigure clears the old language's diagnostics with it. Only some
+    // languages get one — see editor/lint.ts. No lint *gutter*: it would
+    // reserve a column of width on every grammar file, and horizontal pixels
+    // are the scarcest thing on a 390px phone (see the gutter notes above).
+    linting(lang),
+  ]
+}
+
+/**
+ * Toggleable editor extensions (Rainbow Brackets, Indent Guides, Indent Rainbow —
+ * extensions/registry.ts) live in one compartment shared by every code editor on
+ * the page, and every editor built with `editingStack` registers itself, so a
+ * switch flipped in the Extensions view reaches the file editor and every open
+ * notebook cell in one call (`refreshEditorExtensions`).
+ */
+const extConf = new Compartment()
+const extViews = new Set<EditorView>()
+const extTracker = ViewPlugin.define((view) => {
+  extViews.add(view)
+  return { destroy: () => void extViews.delete(view) }
+})
+
+export function refreshEditorExtensions(): void {
+  for (const view of extViews) {
+    // The Beginner helper is a linter flag, not an editor extension, so the
+    // reconfigure does not touch it: the refreshLint effect schedules a lint
+    // pass (forceLinting alone only hurries an already-scheduled one), and
+    // forceLinting then runs it now so the toggle lands without a keystroke.
+    view.dispatch({ effects: [extConf.reconfigure(enabledEditorExtensions()), refreshLint.of(null)] })
+    forceLinting(view)
+  }
+}
+
+/**
+ * The editing core every code editor shares: input behaviour, the base keymap,
+ * syntax colours, the toggleable extensions, chrome and the exception sink.
+ * `keys` go before the base keymap (an editor's own bindings win); `history`
+ * is off where something else owns undo (yCollab's CRDT undo manager).
+ */
+export function editingStack(opts: { history: boolean; keys: readonly KeyBinding[] }): Extension[] {
+  return [
+    highlightSpecialChars(),
+    opts.history ? history() : [],
+    drawSelection(),
+    dropCursor(),
+    indentOnInput(),
+    bracketMatching(),
+    closeBrackets(),
+    // Select a word and every other occurrence lights up (--code-selection-match).
+    highlightSelectionMatches(),
+    // Not optional (spec §3.4). Without these, iPadOS actively corrupts student
+    // code as it is typed: it capitalises the first word of every line and turns
+    // " into a curly quote, which a beginner cannot possibly diagnose. This is
+    // the single most likely way the iPad experience silently breaks.
+    EditorView.contentAttributes.of({
+      autocapitalize: 'none',
+      autocorrect: 'off',
+      spellcheck: 'false',
+      'data-gramm': 'false',
+    }),
+    keymap.of([
+      { key: 'Tab', run: acceptCompletion },
+      ...opts.keys,
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...(opts.history ? historyKeymap : []),
+      ...completionKeymap,
+      // Mod-Shift-m opens the problems panel, F8 / Shift-F8 step through the
+      // red lines — the keyboard path; the status bar's problems item is the
+      // pointer/touch one, and both call the same openLintPanel.
+      ...lintKeymap,
+      indentWithTab,
+    ]),
+    // Dark+ syntax colours (see syntaxColors above — oneDark is gone);
+    // chromeTheme keeps the surfaces, gutter, caret and selection on Design's
+    // tokens.
+    syntaxHighlighting(syntaxColors),
+    // After syntaxHighlighting so bracket depth marks beat the flat punctuation
+    // grey (#D4D4D4) on the same spans; the registry keeps brackets last.
+    extConf.of(enabledEditorExtensions()),
+    extTracker,
+    chromeTheme,
+    // M1: swallow y-codemirror.next's benign remote-selection bounds RangeError so
+    // it stops spamming the console under concurrent multi-peer editing. Everything
+    // else still logs. See `editorExceptionSink`.
+    EditorView.exceptionSink.of(editorExceptionSink),
+  ]
+}
+
+/**
+ * Where the completion popup and the docs card may go: absolutely positioned,
+ * inside the box of the nearest `container` (see the file editor's note on why
+ * absolute, below), 6px off its right edge.
+ */
+export function tooltipsWithin(container: string): Extension {
+  return tooltips({
+    position: 'absolute',
+    tooltipSpace: (view) => {
+      const r = (view.dom.closest(container) ?? view.dom).getBoundingClientRect()
+      // 6px off the right edge: on a phone the pane IS the screen, and a popup
+      // flush against the glass reads as cut off.
+      return { top: r.top, left: r.left, bottom: r.bottom, right: r.right - 6 }
+    },
+  })
+}
+
 export interface EditorController {
   open(path: string, content: string): void
   closeFile(path: string): void
@@ -1416,9 +1560,6 @@ export function createEditor(
 ): EditorController {
   const fontTheme = new Compartment()
   const langConf = new Compartment()
-  // Holds the enabled toggleable extensions; `setExtensions` reconfigures it
-  // when the student flips a switch in the Extensions view.
-  const extConf = new Compartment()
   const indentConf = new Compartment()
   // Desk-vs-touch editor behavior (the `.cm-desk` root class + line wrapping).
   // A compartment, not a once-per-state-build choice: a window resized across
@@ -1482,39 +1623,7 @@ export function createEditor(
    * was a unit, a file that gained a `.py` extension could get Python colours
    * while still being offered Java's snippets.
    */
-  const languageExtensions = (lang: EditorLang | null) => {
-    const support = lang ? langCache.get(lang) : undefined
-    return [
-      support ? [support] : [],
-      autocompletion({
-        override: completionSources(completionLang(lang), projectWords),
-        // As-you-type, from the first character — plus Ctrl/Cmd+Space, which is
-        // what a student who has used an IDE before will reach for.
-        activateOnTyping: true,
-        selectOnOpen: true,
-        // Enough to scroll through, few enough that the popup cannot swallow a
-        // 390px screen. The list is ranked, so the tail is rarely what you want.
-        maxRenderedOptions: 30,
-        icons: true,
-        // Touch shows this short gloss instead of the full detail (the theme
-        // swaps them by density); the detail string itself is left untouched —
-        // receiver.ts parses Java members' `Type, (params) — gloss` shape.
-        addToOptions: [{ render: (c) => glossNode(c.detail), position: 85 }],
-      }),
-      // Docs on hover (mouse), long-press (touch) and Ctrl/Cmd+K Ctrl/Cmd+I —
-      // in this compartment because the built-in dictionary is per-language,
-      // and a rename (.txt → .py) must swap the hover vocabulary with the
-      // grammar. See editor/hoverDocs.ts.
-      hoverDocs(completionLang(lang)),
-      // The red line and its one-tap fixes. In this compartment for the same
-      // reason as the grammar it reads: a rename swaps the rule set, and the
-      // reconfigure clears the old language's diagnostics with it. Only some
-      // languages get one — see editor/lint.ts. No lint *gutter*: it would
-      // reserve a column of width on every grammar file, and horizontal pixels
-      // are the scarcest thing on a 390px phone (see the gutter notes above).
-      linting(lang),
-    ]
-  }
+  const languageExtensions = (lang: EditorLang | null) => languageStack(lang, lang ? langCache.get(lang) : undefined, projectWords)
 
   const extensions = (lang: EditorLang | null, p: string, indent: FileIndent = DEFAULT_INDENT) => {
     // Is this file a live collab doc? If so, yCollab owns its history (its own
@@ -1571,15 +1680,7 @@ export function createEditor(
     // tooltipSpace: the PANE, not the window, is the room a tooltip may use, so
     // CM flips it above the caret or shrinks it to fit instead. VS Code keeps
     // its suggest widget inside the editor for the same reason.
-    tooltips({
-      position: 'absolute',
-      tooltipSpace: (view) => {
-        const r = (view.dom.closest('.editor-pane') ?? view.dom).getBoundingClientRect()
-        // 6px off the right edge: on a phone the pane IS the screen, and a popup
-        // flush against the glass reads as cut off.
-        return { top: r.top, left: r.left, bottom: r.bottom, right: r.right - 6 }
-      },
-    }),
+    tooltipsWithin('.editor-pane'),
     // Breakpoint glyph margin (left of the numbers, VS Code's order), the stop
     // arrow/line, inline values and the paused hover — editor/debugExt.ts.
     debugExtension(p),
@@ -1587,21 +1688,10 @@ export function createEditor(
     lineNumbers({ domEventHandlers: lineNumberToggle(p) }),
     highlightActiveLineGutter(),
     highlightActiveLine(),
-    highlightSpecialChars(),
-    // yCollab brings its own (CRDT) undo manager, so a collab file skips the
-    // native local history — otherwise Mod-Z could revert a peer's edit.
-    collabExt ? [] : history(),
-    drawSelection(),
-    dropCursor(),
-    indentOnInput(),
-    bracketMatching(),
-    closeBrackets(),
     // The find widget mounts above the code (`top: true`) with the custom
     // VS Code-anatomy panel above, styled in chromeTheme (floating top-right
     // at desk, full-width docked bar on touch).
     search({ top: true, createPanel: (v) => new FindPanel(v) }),
-    // Select a word and every other occurrence lights up (--code-selection-match).
-    highlightSelectionMatches(),
     // VS Code hides the active-line highlight while a selection exists; the
     // desk chromeTheme rules key off this class. An attributes facet rather
     // than a ViewPlugin because facets may derive from state on every update,
@@ -1622,69 +1712,42 @@ export function createEditor(
     // at the display size without touching the text.
     indentConf.of(indentConfig(indent, indentPref, deskMq.matches)),
     indentFit,
-    // Not optional (spec §3.4). Without these, iPadOS actively corrupts student
-    // code as it is typed: it capitalises the first word of every line and turns
-    // " into a curly quote, which a beginner cannot possibly diagnose. This is
-    // the single most likely way the iPad experience silently breaks.
-    EditorView.contentAttributes.of({
-      autocapitalize: 'none',
-      autocorrect: 'off',
-      spellcheck: 'false',
-      'data-gramm': 'false',
+    // yCollab brings its own (CRDT) undo manager, so a collab file skips the
+    // native local history — otherwise Mod-Z could revert a peer's edit; its
+    // undo bindings arrive inside collabExt instead.
+    editingStack({
+      history: !collabExt,
+      keys: [
+        {
+          key: 'Mod-s',
+          preventDefault: true,
+          run: () => {
+            opts.onSave()
+            return true
+          },
+        },
+        // Swallow defaultKeymap's insertBlankLine on Mod-Enter: returning true
+        // stops CodeMirror from editing the document, but the DOM event still
+        // bubbles, so the shell's run-file handler fires — without this, running
+        // via Ctrl+Enter also inserted a blank line at the caret.
+        { key: 'Mod-Enter', run: () => true },
+        // F9: toggle a breakpoint on the caret's line (VS Code).
+        { key: 'F9', preventDefault: true, run: (v) => toggleBreakpointAtCursor(v, path) },
+        ...searchKeymap,
+        // VS Code muscle memory: Mod-h opens the same widget with the replace
+        // row popped open (replace lives behind the chevron, not a separate
+        // surface). The panel is created synchronously inside openSearchPanel's
+        // dispatch, so the WeakMap lookup right after it is safe.
+        {
+          key: 'Mod-h',
+          run: (v) => {
+            openSearchPanel(v)
+            findPanels.get(v)?.focusReplace()
+            return true
+          },
+        },
+      ],
     }),
-    keymap.of([
-      { key: 'Tab', run: acceptCompletion },
-      {
-        key: 'Mod-s',
-        preventDefault: true,
-        run: () => {
-          opts.onSave()
-          return true
-        },
-      },
-      // Swallow defaultKeymap's insertBlankLine on Mod-Enter: returning true
-      // stops CodeMirror from editing the document, but the DOM event still
-      // bubbles, so the shell's run-file handler fires — without this, running
-      // via Ctrl+Enter also inserted a blank line at the caret.
-      { key: 'Mod-Enter', run: () => true },
-      // F9: toggle a breakpoint on the caret's line (VS Code).
-      { key: 'F9', preventDefault: true, run: (v) => toggleBreakpointAtCursor(v, path) },
-      ...searchKeymap,
-      // VS Code muscle memory: Mod-h opens the same widget with the replace
-      // row popped open (replace lives behind the chevron, not a separate
-      // surface). The panel is created synchronously inside openSearchPanel's
-      // dispatch, so the WeakMap lookup right after it is safe.
-      {
-        key: 'Mod-h',
-        run: (v) => {
-          openSearchPanel(v)
-          findPanels.get(v)?.focusReplace()
-          return true
-        },
-      },
-      ...closeBracketsKeymap,
-      ...defaultKeymap,
-      // Native undo bindings are replaced by yCollab's (yUndoManagerKeymap,
-      // added inside collabExt) when the file is collaborative.
-      ...(collabExt ? [] : historyKeymap),
-      ...completionKeymap,
-      // Mod-Shift-m opens the problems panel, F8 / Shift-F8 step through the
-      // red lines — the keyboard path; the status bar's problems item is the
-      // pointer/touch one, and both call the same openLintPanel.
-      ...lintKeymap,
-      indentWithTab,
-    ]),
-    // Dark+ syntax colours (see syntaxColors above — oneDark is gone);
-    // chromeTheme keeps the surfaces, gutter, caret and selection on Design's
-    // tokens. With no unlayered oneDark module in the fight any more, the
-    // `&.cm-editor` specificity in chromeTheme is belt-and-braces, and cheap.
-    syntaxHighlighting(syntaxColors),
-    // Toggleable editor extensions (Rainbow Brackets, Indent Guides, Indent
-    // Rainbow — see extensions/registry.ts), swapped live via `setExtensions`.
-    // After syntaxHighlighting so bracket depth marks beat the flat punctuation
-    // grey (#D4D4D4) on the same spans; the registry keeps brackets last.
-    extConf.of(enabledEditorExtensions()),
-    chromeTheme,
     fontTheme.of(themeFor(fontSize)),
     langConf.of(languageExtensions(lang)),
     // The per-file yCollab binding (edge #1) — bound to this file's Y.Text plus
@@ -1694,10 +1757,6 @@ export function createEditor(
     // false removes the contenteditable/caret. yCollab's remote dispatches are
     // programmatic, so incoming edits still render.
     collabReadOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
-    // M1: swallow y-codemirror.next's benign remote-selection bounds RangeError so
-    // it stops spamming the console under concurrent multi-peer editing. Everything
-    // else still logs. See `editorExceptionSink`.
-    EditorView.exceptionSink.of(editorExceptionSink),
     EditorView.updateListener.of((u) => {
       // Suppress write-back for a collab file: its Project (and OPFS) copy is
       // fed from the Y.Text via the materializer, so a synced doc change here
@@ -1851,8 +1910,7 @@ export function createEditor(
       // reconfigure does not touch it: the refreshLint effect schedules a lint
       // pass (forceLinting alone only hurries an already-scheduled one), and
       // forceLinting then runs it now so the toggle lands without a keystroke.
-      view.dispatch({ effects: [extConf.reconfigure(enabledEditorExtensions()), refreshLint.of(null)] })
-      forceLinting(view)
+      refreshEditorExtensions()
     },
     setCollab(binding) {
       collab = binding

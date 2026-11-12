@@ -1,11 +1,10 @@
 /**
  * One notebook cell's CodeMirror editor.
  *
- * Built from the SAME pieces as the file editor (editor/setup.ts exports its
- * syntax colours, chrome theme, font metrics and grammar loader; the
- * completion sources, hover docs, linter and debugger gutter are the shared
- * modules) — a cell is not a second editor product, it is the editor sized to
- * its code. What a cell adds:
+ * Built from the SAME stacks as the file editor — setup.ts's `editingStack`
+ * (input, keymap, colours, toggleable extensions, chrome) and `languageStack`
+ * (grammar, completion, hover docs, lint) — so a cell is not a second editor
+ * product that can drift from the first; it is the editor sized to its code. What a cell adds:
  *   - `textContext`: the code cells above it, so completion and hover resolve
  *     `df` from cell 1 inside cell 3 (editor/textContext.ts);
  *   - `foreignLines`: its IPython lines, which the linter leaves alone;
@@ -17,34 +16,13 @@
  * 40vh scroll padding and the full-height fill.
  */
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state'
-import {
-  EditorView,
-  drawSelection,
-  dropCursor,
-  highlightSpecialChars,
-  keymap,
-  lineNumbers,
-  tooltips,
-} from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { bracketMatching, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language'
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, acceptCompletion, completionStatus } from '@codemirror/autocomplete'
-import { highlightSelectionMatches } from '@codemirror/search'
-import { lintKeymap } from '@codemirror/lint'
-import {
-  DESK_MEDIA,
-  chromeTheme,
-  codeFontTheme,
-  editorExceptionSink,
-  loadLanguage,
-  syntaxColors,
-} from '../editor/setup'
-import { completionSources } from '../editor/completions'
-import { hoverDocs } from '../editor/hoverDocs'
-import { linting, foreignLines } from '../editor/lint'
+import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { indentUnit } from '@codemirror/language'
+import { completionStatus } from '@codemirror/autocomplete'
+import { DESK_MEDIA, codeFontTheme, editingStack, languageStack, loadLanguage, tooltipsWithin } from '../editor/setup'
+import { foreignLines } from '../editor/lint'
 import { textContext } from '../editor/textContext'
 import { debugExtension, debugTheme, lineNumberToggle, toggleBreakpointAtCursor } from '../editor/debugExt'
-import { enabledEditorExtensions } from '../extensions/registry'
 import { magicLinesOf } from './magics'
 import type { CellType } from './nbformat'
 
@@ -145,71 +123,24 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
     ]),
   )
 
-  const languageExt = (): Extension => {
-    if (!code) return []
-    return [
-      autocompletion({
-        override: completionSources('python', opts.projectWords),
-        activateOnTyping: true,
-        selectOnOpen: true,
-        maxRenderedOptions: 30,
-        icons: true,
-      }),
-      hoverDocs('python'),
-      linting('python'),
-    ]
-  }
-
   const state = EditorState.create({
     doc: opts.doc,
     extensions: [
       notebookKeys,
-      // The popup and the docs card may use the notebook's whole scroll area, not just
-      // this cell's few lines (see setup.ts for why tooltips are absolutely positioned).
-      tooltips({
-        position: 'absolute',
-        tooltipSpace: (view) => {
-          const r = (view.dom.closest('.notebook-scroller') ?? view.dom).getBoundingClientRect()
-          return { top: r.top, left: r.left, bottom: r.bottom, right: r.right }
-        },
-      }),
+      // The popup and the docs card may use the notebook's whole scroll area, not just this cell's lines.
+      tooltipsWithin('.notebook-scroller'),
       code ? [debugExtension(opts.path), debugTheme, lineNumbers({ domEventHandlers: lineNumberToggle(opts.path) })] : [],
-      highlightSpecialChars(),
-      history(),
-      drawSelection(),
-      dropCursor(),
-      indentOnInput(),
+      // The same editing core as the file editor (setup.ts); the notebook's own keys are above.
+      editingStack({ history: true, keys: [] }),
       indentUnit.of('    '),
-      bracketMatching(),
-      closeBrackets(),
-      highlightSelectionMatches(),
       deskConf.of(deskExt()),
       roConf.of(roExt(!!opts.readOnly)),
-      EditorView.contentAttributes.of({
-        autocapitalize: 'none',
-        autocorrect: 'off',
-        spellcheck: 'false',
-        'data-gramm': 'false',
-        'aria-label': code ? 'Code cell' : 'Markdown cell',
-      }),
-      keymap.of([
-        { key: 'Tab', run: acceptCompletion },
-        ...closeBracketsKeymap,
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...completionKeymap,
-        ...lintKeymap,
-        indentWithTab,
-      ]),
-      syntaxHighlighting(syntaxColors),
-      enabledEditorExtensions(),
-      chromeTheme,
+      EditorView.contentAttributes.of({ 'aria-label': code ? 'Code cell' : 'Markdown cell' }),
       cellTheme,
       fontConf.of(codeFontTheme(fontSize)),
       langConf.of([]),
       textContext.of(context),
       foreignLines.of((s) => new Set(magicLinesOf(s.doc.toString()))),
-      EditorView.exceptionSink.of(editorExceptionSink),
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !applying) opts.onChange(u.state.doc.toString())
         if (u.focusChanged && u.view.hasFocus) opts.onFocus()
@@ -221,7 +152,7 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
   if (code) {
     void loadLanguage('python').then((support) => {
       if (!view.dom.isConnected && !parent.isConnected) return
-      view.dispatch({ effects: langConf.reconfigure([support, languageExt()]) })
+      view.dispatch({ effects: langConf.reconfigure(languageStack('python', support, opts.projectWords)) })
     })
   }
   const onDesk = () => view.dispatch({ effects: deskConf.reconfigure(deskExt()) })
