@@ -1,6 +1,10 @@
 /**
  * Markdown cells → HTML, safe by construction.
  *
+ * Every block carries `dir="auto"`: a notebook is often half English, half
+ * Arabic, and each paragraph should run in its own script's direction whatever
+ * the interface language is.
+ *
  * Every character of the source is escaped and only this file's own tags are
  * emitted; the small set of inline HTML notebooks actually use (<br>, <b>,
  * <img>, <a>, <sub>, <kbd>, …) is rebuilt from an allowlist of tags and
@@ -129,7 +133,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
   const out: string[] = []
   let para: string[] = []
   const flush = () => {
-    if (para.length) out.push(`<p>${renderInline(para.join('\n').trim(), opts)}</p>`)
+    if (para.length) out.push(`<p dir="auto">${renderInline(para.join('\n').trim(), opts)}</p>`)
     para = []
   }
   let i = 0
@@ -180,7 +184,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
     if (h) {
       flush()
       const html = renderInline(h[2], opts)
-      out.push(`<h${h[1].length} id="${escapeHtml(slug(html))}">${html}</h${h[1].length}>`)
+      out.push(`<h${h[1].length} id="${escapeHtml(slug(html))}" dir="auto">${html}</h${h[1].length}>`)
       i++
       continue
     }
@@ -190,7 +194,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
       const level = trimmed[0] === '=' ? 1 : 2
       const html = renderInline(para.join(' ').trim(), opts)
       para = []
-      out.push(`<h${level} id="${escapeHtml(slug(html))}">${html}</h${level}>`)
+      out.push(`<h${level} id="${escapeHtml(slug(html))}" dir="auto">${html}</h${level}>`)
       i++
       continue
     }
@@ -208,7 +212,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
       flush()
       const body: string[] = []
       while (i < lines.length && lines[i].trim().startsWith('>')) body.push(lines[i++].trim().replace(/^>\s?/, ''))
-      out.push(`<blockquote>${renderBlocks(body, opts)}</blockquote>`)
+      out.push(`<blockquote dir="auto">${renderBlocks(body, opts)}</blockquote>`)
       continue
     }
 
@@ -226,7 +230,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
       const body: string[][] = []
       while (i < lines.length && lines[i].trim() && lines[i].includes('|')) body.push(cells(lines[i++]))
       out.push(
-        `<div class="md-table"><table><thead><tr>${head.map((c, k) => `<th${style(k)}>${renderInline(c, opts)}</th>`).join('')}</tr></thead>` +
+        `<div class="md-table"><table dir="auto"><thead><tr>${head.map((c, k) => `<th${style(k)}>${renderInline(c, opts)}</th>`).join('')}</tr></thead>` +
           `<tbody>${body.map((r) => `<tr>${head.map((_, k) => `<td${style(k)}>${renderInline(r[k] ?? '', opts)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`,
       )
       continue
@@ -274,10 +278,10 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
           check = `<input type="checkbox" disabled${task[1] !== ' ' ? ' checked' : ''}> `
           first = task[2]
         }
-        const inner = it.lines.length === 1 ? renderInline(first, opts) : renderBlocks([first, ...it.lines.slice(1)], opts).replace(/^<p>([\s\S]*?)<\/p>\n?/, '$1')
+        const inner = it.lines.length === 1 ? renderInline(first, opts) : renderBlocks([first, ...it.lines.slice(1)], opts).replace(/^<p dir="auto">([\s\S]*?)<\/p>\n?/, '$1')
         return `<li${task ? ' class="task"' : ''}>${check}${inner}</li>`
       })
-      out.push(`<${tag}${ordered && start !== 1 ? ` start="${start}"` : ''}>${lis.join('')}</${tag}>`)
+      out.push(`<${tag} dir="auto"${ordered && start !== 1 ? ` start="${start}"` : ''}>${lis.join('')}</${tag}>`)
       continue
     }
 

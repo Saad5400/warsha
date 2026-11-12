@@ -12,15 +12,15 @@ import { maskMagicsForFormat } from '../../src/notebook/magics.ts'
 
 test('markdown: headings, emphasis, code, lists, tables, quotes', () => {
   const html = renderMarkdown('# Title\n\nSome **bold**, *em*, `x = 1` and ~~old~~.\n\n- a\n- b\n  - nested\n\n1. one\n2. two\n\n| n | sq |\n|---|---:|\n| 2 | 4 |\n\n> quote\n\n```python\nprint(1)\n```')
-  assert.match(html, /<h1 id="title">Title<\/h1>/)
+  assert.match(html, /<h1 id="title" dir="auto">Title<\/h1>/)
   assert.match(html, /<strong>bold<\/strong>/)
   assert.match(html, /<em>em<\/em>/)
   assert.match(html, /<code>x = 1<\/code>/)
   assert.match(html, /<del>old<\/del>/)
-  assert.match(html, /<ul><li>a<\/li><li>b<ul><li>nested<\/li><\/ul><\/li><\/ul>/)
-  assert.match(html, /<ol><li>one<\/li><li>two<\/li><\/ol>/)
+  assert.match(html, /<ul dir="auto"><li>a<\/li><li>b<ul dir="auto"><li>nested<\/li><\/ul><\/li><\/ul>/)
+  assert.match(html, /<ol dir="auto"><li>one<\/li><li>two<\/li><\/ol>/)
   assert.match(html, /<th>n<\/th><th style="text-align:right">sq<\/th>/)
-  assert.match(html, /<blockquote><p>quote<\/p><\/blockquote>/)
+  assert.match(html, /<blockquote dir="auto"><p dir="auto">quote<\/p><\/blockquote>/)
   assert.match(html, /<pre><code data-lang="python">print\(1\)<\/code><\/pre>/)
 })
 
