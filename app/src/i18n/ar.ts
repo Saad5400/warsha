@@ -313,6 +313,22 @@ export const AR: Bundle = {
   importAction: 'استيراد',
   // The adjective is inside the count for agreement — see arCount's note.
   importPicked: (n) => `${arCount(n, 'ملف واحد جاهز', 'ملفان جاهزان', 'ملفات جاهزة', 'ملفًا جاهزًا')} للاستيراد.`,
+  importReplaceTitle: 'استيراد مشروع',
+  importReplaceIntro: `استبدل هذا المشروع كلّه بالملفات أو المجلّد أو ملف ${ZIP} الذي تختاره. لإضافة ملف إلى هذا المشروع بدلًا من ذلك، استخدم «إضافة ملفات…» في المستكشف.`,
+
+  // ---- add files to the open project (Explorer) ----
+  explorerAddFiles: 'إضافة ملفات…',
+  explorerAddFilesTo: (dir) => (dir ? `إضافة ملفات إلى ${iso(dir)}` : 'إضافة ملفات'),
+  explorerDropHere: (dir) => (dir ? `أفلِت للإضافة إلى ${iso(dir)}` : 'أفلِت للإضافة إلى المشروع'),
+  addConflictTitle: (n, name) => (n === 1 ? `«${iso(name)}» موجود بالفعل` : `${files(n)} موجودة بالفعل`),
+  addConflictBody: (names, more) =>
+    `${names.map(iso).join('، ')}${more ? ' وغيرها' : ''}. «الاحتفاظ بالاثنين» يضيف نسخة مرقّمة بجانب الأصل.`,
+  addKeepBoth: 'الاحتفاظ بالاثنين',
+  addReplace: 'استبدال',
+  addSkip: (n) => (n === 1 ? 'تخطّيه' : 'تخطّيها'),
+  added: (n, dir) => (dir ? `أُضيف ${files(n)} إلى ${iso(dir)}.` : `أُضيف ${files(n)}.`),
+  addedNone: 'لم يُضَف شيء.',
+  addSkipped: (n) => `تُرك ${files(n)} — المشروع يحفظ الملفات النصية فقط (كود، CSV، JSON، …).`,
 
   // ---- accessible names for the chrome ----
   a11yActivityBar: 'شريط الأنشطة',
@@ -591,7 +607,7 @@ export const AR: Bundle = {
   menuNewProject: 'مشروع جديد…',
   menuOpenRecent: 'المشاريع الأخيرة',
   menuAllProjects: 'كل المشاريع',
-  menuImportZip: 'استيراد…',
+  menuImportZip: 'استيراد مشروع…',
   menuExportZip: `تصدير كملف ${ZIP}`,
   menuSaveAll: 'حفظ الكل',
   menuRenameProject: 'إعادة تسمية المشروع…',
@@ -659,7 +675,7 @@ export const AR: Bundle = {
   cmdFileFormat: 'ملف: تنسيق المستند',
   cmdFileShareImage: 'مشاركة: الملف كصورة…',
   cmdFileDownload: 'مشاركة: تنزيل الملف',
-  cmdFileImport: 'ملف: استيراد…',
+  cmdFileImport: 'ملف: استيراد مشروع…',
   cmdFileCloseEditor: 'ملف: إغلاق المحرّر',
   cmdEditFind: 'تحرير: بحث',
   cmdSearchInFiles: 'بحث: بحث في الملفات',

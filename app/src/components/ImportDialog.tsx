@@ -92,9 +92,11 @@ export function ImportDialog({ currentFileCount, mode, onCancel, onImport }: Imp
         }}
       >
         <h2 id={titleId} className="dlg-title">
-          {COPY.importTitle}
+          {mode === 'replace' ? COPY.importReplaceTitle : COPY.importTitle}
         </h2>
-        <p className="dlg-msg">{COPY.importIntro}</p>
+        {/* Replace mode says so up front and points at the gentler path: Add files… adds
+            to the project, this swaps the project out (QA M11). */}
+        <p className="dlg-msg">{mode === 'replace' ? COPY.importReplaceIntro : COPY.importIntro}</p>
 
         <div
           data-over={over}

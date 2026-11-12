@@ -19,7 +19,7 @@ const NotebookView = lazy(() => import('./components/notebook/NotebookView').the
 
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
-import { exportZip } from './zip'
+import { exportZip, importFiles, ZipImportError, type PickedFile } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
@@ -1296,6 +1296,74 @@ function Ide({ report }: { report: CapabilityReport }) {
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
       setEntryPath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    }
+  }
+
+  /**
+   * Explorer ▸ Add files… / a desktop drop: files from the device go INTO the open
+   * project, under `dir` (QA M11 — the only way in used to be File ▸ Import, which
+   * replaces every file). Text only, like every other way in; anything else is named
+   * in the toast. A clash asks once for the whole batch: keep both (a numbered copy,
+   * the safe default), replace, or skip.
+   */
+  const addFiles = async (dir: string, picked: PickedFile[]) => {
+    let result: Awaited<ReturnType<typeof importFiles>>
+    try {
+      result = await importFiles(picked)
+    } catch (e) {
+      return notify(e instanceof ZipImportError ? e.message : COPY.importUnreadable((e as Error).message), 'error')
+    }
+    const skipped = result.skipped.length
+    const incoming = result.snapshot.files.map((f) => ({ path: dir ? `${dir}/${f.path}` : f.path, content: f.content }))
+    // A name already used by a folder can't be replaced by a file, only kept beside it.
+    const clashes = incoming.filter((f) => project.has(f.path) || project.hasDir(f.path))
+    let choice: string | null = 'replace'
+    if (clashes.length) {
+      const names = clashes.map((f) => leafOf(f.path))
+      choice = await dialogs.choose({
+        title: COPY.addConflictTitle(clashes.length, names[0]),
+        message: COPY.addConflictBody(names.slice(0, 3), Math.max(0, names.length - 3)),
+        options: [
+          { value: 'both', label: COPY.addKeepBoth },
+          { value: 'replace', label: COPY.addReplace },
+          { value: 'skip', label: COPY.addSkip(clashes.length) },
+        ],
+        cancelLabel: COPY.dlgCancel,
+      })
+      if (choice === null) return
+    }
+    const taken = new Set<string>()
+    const free = (path: string) => !project.has(path) && !project.hasDir(path) && !taken.has(path)
+    const written: { path: string; content: string }[] = []
+    for (const f of incoming) {
+      let path = f.path
+      if (!free(path)) {
+        if (choice === 'skip') continue
+        if (choice === 'both' || project.hasDir(path) || taken.has(path)) {
+          // "scores.csv" → "scores (2).csv", the copy name every desktop uses.
+          const slash = path.lastIndexOf('/')
+          const leaf = path.slice(slash + 1)
+          const dot = leaf.lastIndexOf('.')
+          const stem = dot > 0 ? leaf.slice(0, dot) : leaf
+          const ext = dot > 0 ? leaf.slice(dot) : ''
+          let n = 2
+          do path = `${path.slice(0, slash + 1)}${stem} (${n++})${ext}`
+          while (!free(path))
+        }
+      }
+      taken.add(path)
+      written.push({ path, content: f.content })
+    }
+    try {
+      await whenReady()
+      const applied = await project.applyProgramChanges({ written, deleted: [] })
+      const note = skipped ? ' ' + COPY.addSkipped(skipped) : ''
+      if (applied.written.length) notify(COPY.added(applied.written.length, dir) + note, skipped ? 'info' : 'success')
+      else notify(skipped ? COPY.addSkipped(skipped) : COPY.addedNone, skipped ? 'error' : 'info')
+      // One file in: open it, the way a new file opens. Several: the explorer shows them.
+      if (applied.written.length === 1) openFile(applied.written[0])
     } catch (e) {
       notify((e as Error).message, 'error')
     }
@@ -3416,6 +3484,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
             onDownload={(p) => void downloadFile(p)}
             onMove={(p, toDir) => void moveEntry(p, toDir)}
+            onAddFiles={(dir, picked) => void addFiles(dir, picked)}
             // From a drawer, closing it reveals the starters already in the workspace;
             // docked, they're already visible so the button would be a no-op.
             onShowStarters={narrow ? () => setDrawerOpen(false) : undefined}

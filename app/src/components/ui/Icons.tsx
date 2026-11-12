@@ -272,6 +272,15 @@ export const IconFilePlus = (p: IconProps) => (
   </Icon>
 )
 
+/** "Add files…" — the file sheet with an arrow rising into it (upload from the device). */
+export const IconFileUpload = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 3.25h6.5L15 6.75v10A1 1 0 0 1 14 17.75H6a1 1 0 0 1-1-1V4.25a1 1 0 0 1 1-1Z" />
+    <path d="M11.25 3.5v3.25h3.5" />
+    <path d="M10 14.75v-4.5M8 12.25l2-2 2 2" />
+  </Icon>
+)
+
 /** "Open Recent" — a clock, the universal "recent/history" glyph. */
 export const IconClock = (p: IconProps) => (
   <Icon {...p}>
