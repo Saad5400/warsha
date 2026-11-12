@@ -138,6 +138,40 @@ await check('removing the breakpoint then Continue finishes the run', async () =
   return until(async () => (await page.getByRole('toolbar', { name: 'Debug toolbar' }).count()) === 0 &&
     /total 14/.test(await page.locator('section[aria-label]').filter({ hasText: 'total 14' }).first().innerText().catch(() => '')), 20000)
 })
+// Stop while paused (QA M10): a calm, neutral stop — never "stopped responding"
+// or a red "Stopped early" — and the engine answers the very next Run and Debug.
+// Shift+F5 is pressed straight after the stop lands, inside the Run control's
+// 250 ms double-tap guard on a warm engine: a key is not that tap, and a guarded
+// key left the session parked with Run and F5 dead until a reload.
+const consoleState = () => page.locator('section[aria-label="Console"]').getAttribute('data-state')
+const transcript = () => page.locator('[aria-label="Program output"]').innerText().catch(() => '')
+const pausedOnce = () => until(async () => (await page.locator('.cm-debug-stop-line').count()) === 1, 60000)
+await gutterLine(8).click()
+for (const [how, stopIt] of [
+  ['toolbar Stop', () => page.getByRole('toolbar', { name: 'Debug toolbar' }).getByRole('button', { name: /^Stop/ }).click()],
+  ['Shift+F5 at once', () => page.keyboard.press('Shift+F5')],
+]) {
+  await check(`stop while paused (${how}) is calm and neutral`, async () => {
+    await page.waitForTimeout(400) // Run itself ignores a start inside 250 ms of the last exit
+    await page.keyboard.press('F5')
+    if (!(await pausedOnce())) throw new Error('never paused')
+    await stopIt()
+    if (!(await until(async () => (await consoleState()) === 'stopped', 5000))) throw new Error('state ' + (await consoleState()))
+    await page.waitForTimeout(2500) // the old false alarm arrived ~2 s later
+    const t = await transcript()
+    const status = await page.locator('footer').innerText()
+    const ok = (await consoleState()) === 'stopped' && !/stopped responding/i.test(t) && /Stopped by you/.test(status) && !/Stopped early/.test(status)
+    if (!ok) console.log('   transcript:', JSON.stringify(t.slice(-160)), 'status:', JSON.stringify(status.slice(0, 60)))
+    return ok
+  })
+}
+await check('after a stop, Ctrl+F5 runs to the end', async () => {
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Control+F5')
+  return until(async () => (await consoleState()) === 'ok' && /total 14/.test(await transcript()), 20000)
+})
+await gutterLine(8).click()
+
 await check('breakpoints persist across a reload', async () => {
   await gutterLine(6).click()
   await page.waitForTimeout(300)

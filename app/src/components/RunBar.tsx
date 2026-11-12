@@ -22,17 +22,17 @@ const HEADER =
 const TOOLBAR_HOVER = 'desk:hover:not-disabled:bg-toolbar-hover!'
 
 // Active tab's underline is an inset box-shadow, not a border (a border would eat into the header's height).
-// min-w-10 + shrink (not flex-none): under pressure the caps truncate via the inner label span's ellipsis
-// rather than shoving other controls off a 320px screen.
+// flex-none: a panel tab's name never truncates — «وحدة التحكم» cut to «…التحكم» on a phone
+// (owner, after QA). Under pressure the file name beside the toolbar gives way instead.
 const CAPS_TAB =
-  'relative flex h-full min-w-10 shrink cursor-pointer touch-manipulation items-center px-2 max-[460px]:px-1 font-ui text-[11px] leading-none font-normal uppercase tracking-normal '
+  'relative flex h-full flex-none cursor-pointer touch-manipulation items-center px-2 max-[460px]:px-1 font-ui text-[11px] leading-none font-normal uppercase tracking-normal '
 
 // Prevents tap-focus on caps tabs: some engines draw the focus ring on tap, which compounds with
 // the active underline into a double line. preventDefault on pointerdown blocks only the focus grab —
 // click still fires, and keyboard Tab focus still shows the ring.
 const noTapFocus = (e: { preventDefault(): void }) => e.preventDefault()
-/* The elidable caps label inside a CAPS_TAB. */
-const CAPS_TAB_LABEL = 'min-w-0 truncate'
+/* The caps label inside a CAPS_TAB — whole, always. */
+const CAPS_TAB_LABEL = 'whitespace-nowrap'
 const CAPS_TAB_ACTIVE = 'text-text-2 shadow-[inset_0_-1px_0_0_var(--panel-tab-active)]'
 const CAPS_TAB_IDLE = 'text-text-3 hover:text-text-2'
 
@@ -108,8 +108,11 @@ export function RunBar(props: RunBarProps) {
         />
       </div>
     ) : entry ? (
+      // dir="auto": a Latin file name ellipsizes at its END under an Arabic UI too
+      // ("Progr…", not "…ogram.cs").
       <span
         title={`Run starts ${entry}`}
+        dir="auto"
         className="min-w-[3.5rem] max-w-[26ch] truncate font-ui text-[13px] text-text-2"
       >
         {entry}
@@ -123,7 +126,7 @@ export function RunBar(props: RunBarProps) {
       {previewActive ? (
         consoleOpen && view ? <ViewToggle view={view} onView={props.onView} /> : null
       ) : (
-        <div role="tablist" aria-label={COPY.a11yOutputView} className="flex min-w-0 shrink items-stretch self-stretch">
+        <div role="tablist" aria-label={COPY.a11yOutputView} className="flex flex-none items-stretch self-stretch">
           <button
             type="button"
             role="tab"
@@ -221,7 +224,7 @@ function ViewToggle({ view, onView }: { view: OutputView; onView?: (v: OutputVie
     )
   }
   return (
-    <div role="tablist" aria-label={COPY.a11yOutputView} className="flex min-w-0 shrink items-stretch self-stretch gap-1">
+    <div role="tablist" aria-label={COPY.a11yOutputView} className="flex flex-none items-stretch self-stretch gap-1">
       {segment('preview', COPY.viewPreview)}
       {segment('console', COPY.viewConsole)}
     </div>

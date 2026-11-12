@@ -150,6 +150,9 @@ export const EN = {
   // both engines are pinned: CheerpJ on Java 17, Pyodide on CPython 3.14 (ARCHITECTURE §6).
   langJava: 'Java 17',
   langPython: 'Python 3.14',
+  // Named the way the picker names their engines, not by the bare ending ("CS").
+  langCSharp: 'C# · .NET 9',
+  langC: 'C · clang 16',
   langPlain: 'Plain text',
   /** Nothing is open, so there is no language to name. */
   langNone: 'No file',
@@ -219,6 +222,12 @@ export const EN = {
   homeContinue: 'Continue where you left off',
   homeAll: 'All projects',
   homeOpen: 'Open',
+  /** A Home card's facts line: "Python · 3 files". */
+  homeFacts: (lang: string | null, files: number) => [lang, count(files, 'file')].filter(Boolean).join(' · '),
+  /** The chip on a card whose project holds a notebook. */
+  homeNotebook: 'Notebook',
+  /** The open project's card, instead of its last-opened time. */
+  homeCurrentlyOpen: 'Open now',
   homeDuplicate: 'Duplicate',
   // Appended to a copy's name: "Bank accounts" → "Bank accounts copy".
   homeDupSuffix: 'copy',
@@ -333,6 +342,27 @@ export const EN = {
   importAction: 'Import',
   /** Follows the picked name: "starter.zip — 4 files ready to import." */
   importPicked: (n: number) => `${count(n, 'file')} ready to import.`,
+  /** File ▸ Import Project… (replace mode) — its own title, so nobody mistakes it for "add a file". */
+  importReplaceTitle: 'Import a project',
+  importReplaceIntro:
+    'Swap this whole project for the files, folder or .zip you pick. To add a file to this project instead, use Add Files… in the Explorer.',
+
+  // ---- add files to the open project (Explorer) ----
+  explorerAddFiles: 'Add files…',
+  /** The pane-header icon's name: where the files will land. */
+  explorerAddFilesTo: (dir: string) => (dir ? `Add files to ${dir}` : 'Add files'),
+  explorerDropHere: (dir: string) => (dir ? `Drop to add to ${dir}` : 'Drop to add to the project'),
+  addConflictTitle: (n: number, name: string) => (n === 1 ? `“${name}” already exists` : `${n} files already exist`),
+  /** One clash is already named by the title; several are listed here. */
+  addConflictBody: (names: string[], more: number) =>
+    `${names.length > 1 ? `${names.join(', ')}${more ? ` and ${more} more` : ''}. ` : ''}Keep both adds a numbered copy beside the original.`,
+  addKeepBoth: 'Keep both',
+  addReplace: 'Replace',
+  addSkip: 'Skip',
+  added: (n: number, dir: string) => (dir ? `Added ${count(n, 'file')} to ${dir}.` : `Added ${count(n, 'file')}.`),
+  addedNone: 'Nothing was added.',
+  /** Pictures and other binaries: projects hold text (code, CSV, JSON, …). */
+  addSkipped: (n: number) => `${count(n, 'file')} left out — a project holds text files only (code, CSV, JSON, …).`,
 
   // ---- accessible names for the chrome (LAYOUT-VSCODE) ----
   // Icon-only controls and landmarks — read aloud, never seen, and easy to
@@ -665,7 +695,7 @@ export const EN = {
   /** Back to the projects grid — sits with Open Recent, the other way to reach
    *  another project, instead of leading the menu as a bare brand row. */
   menuAllProjects: 'All Projects',
-  menuImportZip: 'Import…',
+  menuImportZip: 'Import Project…',
   menuExportZip: 'Export as .zip',
   menuSaveAll: 'Save All',
   menuRenameProject: 'Rename Project…',
@@ -738,7 +768,7 @@ export const EN = {
   cmdFileFormat: 'File: Format Document',
   cmdFileShareImage: 'Share: File as Image…',
   cmdFileDownload: 'Share: Download File',
-  cmdFileImport: 'File: Import…',
+  cmdFileImport: 'File: Import Project…',
   cmdFileCloseEditor: 'File: Close Editor',
   cmdEditFind: 'Edit: Find',
   cmdSearchInFiles: 'Search: Find in Files',

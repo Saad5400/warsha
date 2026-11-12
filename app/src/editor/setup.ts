@@ -640,12 +640,21 @@ export const chromeTheme = EditorView.theme(
     // tooltip below and the completion info panel above. VS Code's hover-widget
     // look at both densities: --code-widget-bg panel, 1px --border-widget, 3px
     // radius, subtle shadow, capped at ~420px against the viewport.
-    '&.cm-editor .cm-tooltip.cm-tooltip-docs': {
+    // The card's BOX is whichever element CodeMirror made the tooltip: the card
+    // itself for the manual card (showTooltip puts `.cm-tooltip` on our dom), but
+    // for mouse hover the shared `.cm-tooltip-hover` wrapper, with our dom inside
+    // it as a `.cm-tooltip-section` — so a selector on `.cm-tooltip.cm-tooltip-docs`
+    // alone never matched a hover and the card shipped unpadded and unbounded.
+    // The padding rides the card element in both hosts, so a lint section that
+    // shares the hover wrapper keeps its own.
+    '&.cm-editor .cm-tooltip.cm-tooltip-docs, &.cm-editor .cm-tooltip.cm-tooltip-hover:has(> .cm-tooltip-docs)': {
       backgroundColor: 'var(--code-widget-bg)',
       border: '1px solid var(--border-widget)',
       borderRadius: '3px',
       boxShadow: 'var(--shadow-raised)',
       maxWidth: 'min(420px, calc(100vw / var(--ui-scale, 1) - 2 * var(--sp-3)))',
+    },
+    '&.cm-editor .cm-tooltip-docs': {
       padding: 'var(--sp-2) var(--sp-3)',
     },
     '&.cm-editor .cm-docs': {

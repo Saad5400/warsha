@@ -8,6 +8,7 @@ import {
   IconChevronUp,
   IconCopy,
   IconDownload,
+  IconFileUpload,
   IconFiles,
   IconFolderOpen,
   IconFolderPlus,
@@ -21,6 +22,7 @@ import { formatKeys } from '../ui/keys'
 import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 import { useTreeDnd, type DndNode } from '../hooks/useTreeDnd'
 import { COPY } from '../copy'
+import { pickedFromDataTransfer, pickedFromFileList, type PickedFile } from '../zip'
 
 export interface ExplorerProps {
   project: Project
@@ -57,6 +59,13 @@ export interface ExplorerProps {
    * only reports where the row was dropped. See useTreeDnd for the gesture.
    */
   onMove(path: string, toDir: string): void
+  /**
+   * Files from the device — the picker (every size, the phone's only way) or a
+   * drop from the desktop — to add into folder `dir` (`''` = root). Adds, never
+   * replaces the project: the shell reads them, asks about name clashes and
+   * writes them (File ▸ Import Project… is the replace path).
+   */
+  onAddFiles(dir: string, picked: PickedFile[]): void
   /**
    * Reveals the start panel behind the drawer. Only passed below 900px — docked,
    * the starters are already on screen and the button would be a no-op, so the
@@ -124,8 +133,18 @@ export function Explorer(props: ExplorerProps) {
   const [draft, setDraft] = useState<{ dir: string; makes: 'file' | 'dir' } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; node: TreeNode } | null>(null)
-  const [viewMenu, setViewMenu] = useState<MenuAnchor | null>(null)
+  // `dir`: where its Add files lands — the blank tree's menu means the root.
+  const [viewMenu, setViewMenu] = useState<(MenuAnchor & { dir?: string }) | null>(null)
   const treeRef = useRef<HTMLDivElement>(null)
+  // Add files…: one hidden picker, and the folder its next pick lands in.
+  const addInput = useRef<HTMLInputElement>(null)
+  const addDir = useRef('')
+  // The folder the student last worked in — a folder row they opened or closed,
+  // else the open file's folder. The pane header's Add files lands there, as
+  // VS Code's explorer actions land in the focused folder.
+  const [workDir, setWorkDir] = useState<string | null>(null)
+  // A drag of files from the desktop: the folder it would land in, or null.
+  const [osDrop, setOsDrop] = useState<string | null>(null)
   // A pending empty-area long-press (touch): its timer and the point it started
   // from, so a travelling finger can cancel it before it opens the view menu.
   const emptyHold = useRef<{ timer: number; x: number; y: number } | null>(null)
@@ -201,6 +220,25 @@ export function Explorer(props: ExplorerProps) {
 
   const hasFolders = rows.some((r) => r.kind === 'node' && r.node.kind === 'dir')
 
+  const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+  /** Where the header's Add files lands: a folder that still exists, else the root. */
+  const addTarget = (() => {
+    const dir = workDir ?? (activePath ? parentOf(activePath) : '')
+    return dir && project.hasDir(dir) ? dir : ''
+  })()
+  const pickFiles = (dir: string) => {
+    addDir.current = dir
+    addInput.current?.click()
+  }
+  /** The folder a desktop drop over `target` lands in: a folder row itself, a file row's folder, else the root. */
+  const dropDirAt = (target: EventTarget | null): string => {
+    const row = (target as HTMLElement | null)?.closest?.('[role="treeitem"]') as HTMLElement | null
+    const path = row?.dataset.path
+    if (!path) return ''
+    return nodeByPath.get(path)?.kind === 'dir' ? path : parentOf(path)
+  }
+  const carriesFiles = (dt: DataTransfer | null) => !!dt && Array.from(dt.types).includes('Files')
+
   const dnd = useTreeDnd({
     scroller: treeRef,
     nodeAt: (path) => {
@@ -240,6 +278,7 @@ export function Explorer(props: ExplorerProps) {
         ? [
             { label: COPY.explorerNewFile, icon: <IconPlus />, onSelect: () => startDraft(node.path, 'file') },
             { label: COPY.explorerNewFolder, icon: <IconFolderPlus />, onSelect: () => startDraft(node.path, 'dir') },
+            { label: COPY.explorerAddFiles, icon: <IconFileUpload />, onSelect: () => pickFiles(node.path) },
           ]
         : [{ label: COPY.explorerOpen, icon: <IconFiles />, onSelect: () => props.onOpenFile(node.path) }]),
       // The hint goes through formatKeys like every other shortcut label, even
@@ -305,6 +344,9 @@ export function Explorer(props: ExplorerProps) {
           <IconButton label={COPY.explorerNewFolderAction} className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => startDraft('', 'dir')}>
             <IconFolderPlus />
           </IconButton>
+          <IconButton label={COPY.explorerAddFilesTo(addTarget)} className={PANE_ACTION} style={PANE_ACTION_SIZE} onClick={() => pickFiles(addTarget)}>
+            <IconFileUpload />
+          </IconButton>
           {hasFolders ? (
             <IconButton
               label={COPY.explorerCollapse}
@@ -331,7 +373,7 @@ export function Explorer(props: ExplorerProps) {
         // Hooks for the drag: `data-tree-root` marks the root drop zone, and
         // `data-drop-root` lights the whole panel when a drop would land here.
         data-tree-root=""
-        data-drop-root={dnd.dropDir === '' ? 'true' : undefined}
+        data-drop-root={dnd.dropDir === '' || osDrop === '' ? 'true' : undefined}
         // While a drag is live the tree owns the pointer; native scroll must not
         // fight the captured drag (auto-scroll near the edges replaces it).
         data-dnd-active={dnd.dragging ? 'true' : undefined}
@@ -341,7 +383,7 @@ export function Explorer(props: ExplorerProps) {
         onContextMenu={(e) => {
           if ((e.target as HTMLElement).closest('[role="treeitem"]')) return
           e.preventDefault()
-          setViewMenu({ x: e.clientX, y: e.clientY })
+          setViewMenu({ x: e.clientX, y: e.clientY, dir: '' })
         }}
         // Touch's stand-in for that right-click: a press-and-hold on the blank
         // area. Presses on a row (or its controls) belong to the row's own
@@ -358,7 +400,7 @@ export function Explorer(props: ExplorerProps) {
             y,
             timer: window.setTimeout(() => {
               emptyHold.current = null
-              setViewMenu({ x, y })
+              setViewMenu({ x, y, dir: '' })
             }, EMPTY_HOLD_MS),
           }
         }}
@@ -368,6 +410,34 @@ export function Explorer(props: ExplorerProps) {
         }}
         onPointerUp={clearEmptyHold}
         onPointerCancel={clearEmptyHold}
+        // Files dragged in from the desktop (not a row being moved — that is
+        // useTreeDnd's pointer gesture, which never fires these): light the folder
+        // they would land in, and add them there on drop.
+        onDragEnter={(e) => {
+          if (!carriesFiles(e.dataTransfer)) return
+          e.preventDefault()
+          setOsDrop(dropDirAt(e.target))
+        }}
+        onDragOver={(e) => {
+          if (!carriesFiles(e.dataTransfer)) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          const dir = dropDirAt(e.target)
+          if (dir !== osDrop) setOsDrop(dir)
+        }}
+        onDragLeave={(e) => {
+          // Leaving for a child row is not leaving the tree.
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOsDrop(null)
+        }}
+        onDrop={(e) => {
+          if (!carriesFiles(e.dataTransfer)) return
+          e.preventDefault()
+          const dir = dropDirAt(e.target)
+          setOsDrop(null)
+          void pickedFromDataTransfer(e.dataTransfer).then((picked) => {
+            if (picked.length) props.onAddFiles(dir, picked)
+          })
+        }}
       >
         {rows.length === 0 ? (
           <div className="empty">
@@ -419,7 +489,11 @@ export function Explorer(props: ExplorerProps) {
                 active={row.node.kind === 'file' && activePath === row.node.path}
                 dirty={project.isDirty(row.node.path)}
                 renaming={renaming === row.node.path}
-                onActivate={() => (row.node.kind === 'dir' ? toggle(row.node.path) : props.onOpenFile(row.node.path))}
+                onActivate={() => {
+                  setWorkDir(row.node.kind === 'dir' ? row.node.path : parentOf(row.node.path))
+                  if (row.node.kind === 'dir') toggle(row.node.path)
+                  else props.onOpenFile(row.node.path)
+                }}
                 onStartRename={() => setRenaming(row.node.path)}
                 onCommitRename={(name) => commitRename(row.node, name)}
                 onCancelRename={() => setRenaming(null)}
@@ -430,7 +504,7 @@ export function Explorer(props: ExplorerProps) {
                 onMenu={(anchor) => setMenu({ anchor, node: row.node })}
                 // The drop lands in a folder, so only folder rows light up; a
                 // file drop highlights its parent folder instead (or the root).
-                dropTarget={row.node.kind === 'dir' && dnd.dropDir === row.node.path}
+                dropTarget={row.node.kind === 'dir' && (dnd.dropDir === row.node.path || osDrop === row.node.path)}
                 onPointerDownRow={(e) =>
                   dnd.onRowPointerDown(e, {
                     path: row.node.path,
@@ -462,6 +536,7 @@ export function Explorer(props: ExplorerProps) {
           items={[
             { label: COPY.explorerNewFile, icon: <IconPlus />, onSelect: () => startDraft('', 'file') },
             { label: COPY.explorerNewFolder, icon: <IconFolderPlus />, onSelect: () => startDraft('', 'dir') },
+            { label: COPY.explorerAddFiles, icon: <IconFileUpload />, onSelect: () => pickFiles(viewMenu.dir ?? addTarget) },
             ...(hasFolders
               ? [{ label: COPY.explorerCollapse, icon: <IconChevronUp />, startsGroup: true, onSelect: () => setCollapsed(allFolders(tree)) }]
               : []),
@@ -480,6 +555,32 @@ export function Explorer(props: ExplorerProps) {
           width to the right of the finger and a title bar's height below it.
           #root, not <body>: the chip is app furniture and should take the view
           scale with everything else (DragChip divides the pointer px by it). */}
+      {/* Add files…: the OS picker — on a phone the only way in, so it is never
+          drag-only. Multiple, any type; the shell keeps the text ones and names the rest. */}
+      <input
+        ref={addInput}
+        type="file"
+        multiple
+        hidden
+        aria-hidden="true"
+        tabIndex={-1}
+        data-add-files=""
+        onChange={(e) => {
+          const picked = pickedFromFileList(e.target.files)
+          e.target.value = ''
+          if (picked.length) props.onAddFiles(addDir.current, picked)
+        }}
+      />
+      {/* Says where a desktop drop will land, under the lit folder. */}
+      {osDrop !== null ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none flex-none truncate px-3 py-1.5 text-micro text-text-1 bg-accent-soft shadow-[inset_0_1px_0_0_var(--accent)]"
+        >
+          {COPY.explorerDropHere(osDrop)}
+        </div>
+      ) : null}
+
       {dnd.dragging && dnd.chip
         ? createPortal(
             <DragChip node={dnd.dragging} x={dnd.chip.x} y={dnd.chip.y} touch={dnd.chip.touch} />,

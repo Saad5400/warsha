@@ -116,6 +116,8 @@ export interface PromptRequest {
   okLabel?: string
   /** Returns a student-facing problem, or null when the value is usable. */
   validate?: (value: string) => string | null
+  /** The value is prose (a project's name), not a path: the UI font, not the code font. */
+  prose?: boolean
   resolve: (value: string | null) => void
 }
 
@@ -163,6 +165,9 @@ export interface ChoiceRequest {
   options: ChoiceOption[]
   /** The way out that picks nothing — "Keep “Main”", not "Cancel". */
   cancelLabel?: string
+  /** The answers are words ("Keep both"), not file endings: the UI font, and they become
+   *  the dialog's footer row (with Cancel) instead of a chip row above it. */
+  prose?: boolean
   resolve: (value: string | null) => void
 }
 
@@ -250,7 +255,12 @@ function PromptDialog({ request, open }: { request: PromptRequest; open: boolean
           spellCheck={false}
           aria-invalid={problem ? true : undefined}
           aria-describedby={problem ? problemId : undefined}
-          className="min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 font-code text-input text-text-1 aria-[invalid=true]:border-danger"
+          // A name typed in Arabic reads right-to-left; a file path stays as typed.
+          dir={request.prose ? 'auto' : undefined}
+          className={
+            'min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 text-input text-text-1 aria-[invalid=true]:border-danger ' +
+            (request.prose ? 'font-ui' : 'font-code')
+          }
         />
         {problem ? (
           <p id={problemId} className="mt-2 flex items-start gap-2 text-meta leading-normal text-danger">
@@ -384,27 +394,58 @@ function ChoiceDialog({ request, open }: { request: ChoiceRequest; open: boolean
         {request.title}
       </h2>
       {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
-      {/* Wraps rather than scrolls: six chips fit two rows on the narrowest phone, and a
-          row that scrolls sideways hides the options a student most needs to see. */}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {request.options.map((option, i) => (
-          <Button
-            key={option.value}
-            ref={i === 0 ? firstRef : undefined}
-            variant={i === 0 ? 'primary' : 'ghost'}
-            onClick={() => request.resolve(option.value)}
-          >
-            {option.icon}
-            {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
-            <span className="font-code">{option.label}</span>
+      {request.prose ? (
+        // Words, not chips: the answers ARE the dialog's actions, so they take its footer —
+        // one row, Cancel first as the quiet way out and the recommendation last, at the
+        // trailing edge where every other dialog's primary sits (ACTIONS). Too narrow for
+        // one row (a phone), they stack full width with the recommendation on top.
+        <div className={ACTIONS + ' flex-wrap max-[479px]:flex-col-reverse max-[479px]:items-stretch'}>
+          <Button variant="ghost" large onClick={() => request.resolve(null)}>
+            {request.cancelLabel ?? COPY.dlgCancel}
           </Button>
-        ))}
-      </div>
-      <div className={ACTIONS}>
-        <Button variant="ghost" large onClick={() => request.resolve(null)}>
-          {request.cancelLabel ?? COPY.dlgCancel}
-        </Button>
-      </div>
+          {request.options
+            .map((option, i) => (
+              <Button
+                key={option.value}
+                ref={i === 0 ? firstRef : undefined}
+                variant={i === 0 ? 'primary' : 'ghost'}
+                large
+                // The footer's 96px floor is for its two ends (Cancel, the primary); four
+                // floors overflow a 26rem dialog, so the answers between take their own width.
+                className={i === 0 ? undefined : 'min-w-0!'}
+                onClick={() => request.resolve(option.value)}
+              >
+                {option.icon}
+                {option.label}
+              </Button>
+            ))
+            .reverse()}
+        </div>
+      ) : (
+        <>
+          {/* Wraps rather than scrolls: six chips fit two rows on the narrowest phone, and a
+              row that scrolls sideways hides the options a student most needs to see. */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {request.options.map((option, i) => (
+              <Button
+                key={option.value}
+                ref={i === 0 ? firstRef : undefined}
+                variant={i === 0 ? 'primary' : 'ghost'}
+                onClick={() => request.resolve(option.value)}
+              >
+                {option.icon}
+                {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
+                <span className="font-code">{option.label}</span>
+              </Button>
+            ))}
+          </div>
+          <div className={ACTIONS}>
+            <Button variant="ghost" large onClick={() => request.resolve(null)}>
+              {request.cancelLabel ?? COPY.dlgCancel}
+            </Button>
+          </div>
+        </>
+      )}
     </Modal>
   )
 }

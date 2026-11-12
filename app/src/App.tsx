@@ -19,7 +19,7 @@ const NotebookView = lazy(() => import('./components/notebook/NotebookView').the
 
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
-import { exportZip } from './zip'
+import { exportZip, importFiles, ZipImportError, type PickedFile } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
 import { useRunner } from './hooks/useRunner'
@@ -1301,6 +1301,81 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }
 
+  /**
+   * Explorer ▸ Add files… / a desktop drop: files from the device go INTO the open
+   * project, under `dir` (QA M11 — the only way in used to be File ▸ Import, which
+   * replaces every file). Text only, like every other way in; anything else is named
+   * in the toast. A clash asks once for the whole batch: keep both (a numbered copy,
+   * the safe default), replace, or skip.
+   */
+  const addFiles = async (dir: string, picked: PickedFile[]) => {
+    // The project the files were picked FOR. Reading and the clash question both
+    // await, and a project switch in that window must not land them in the next one
+    // (the notebook cross-project overwrite, #35): they go to this owner or nowhere.
+    const owner = project.owner
+    if (owner === null) return
+    let result: Awaited<ReturnType<typeof importFiles>>
+    try {
+      result = await importFiles(picked)
+    } catch (e) {
+      return notify(e instanceof ZipImportError ? e.message : COPY.importUnreadable((e as Error).message), 'error')
+    }
+    const skipped = result.skipped.length
+    const incoming = result.snapshot.files.map((f) => ({ path: dir ? `${dir}/${f.path}` : f.path, content: f.content }))
+    // A name already used by a folder can't be replaced by a file, only kept beside it.
+    const clashes = incoming.filter((f) => project.has(f.path) || project.hasDir(f.path))
+    let choice: string | null = 'replace'
+    if (clashes.length) {
+      const names = clashes.map((f) => leafOf(f.path))
+      choice = await dialogs.choose({
+        title: COPY.addConflictTitle(clashes.length, names[0]),
+        message: COPY.addConflictBody(names.slice(0, 3), Math.max(0, names.length - 3)),
+        options: [
+          { value: 'both', label: COPY.addKeepBoth },
+          { value: 'replace', label: COPY.addReplace },
+          { value: 'skip', label: COPY.addSkip },
+        ],
+        cancelLabel: COPY.dlgCancel,
+        prose: true,
+      })
+      if (choice === null) return
+    }
+    const taken = new Set<string>()
+    const free = (path: string) => !project.has(path) && !project.hasDir(path) && !taken.has(path)
+    const written: { path: string; content: string }[] = []
+    for (const f of incoming) {
+      let path = f.path
+      if (!free(path)) {
+        if (choice === 'skip') continue
+        if (choice === 'both' || project.hasDir(path) || taken.has(path)) {
+          // "scores.csv" → "scores (2).csv", the copy name every desktop uses.
+          const slash = path.lastIndexOf('/')
+          const leaf = path.slice(slash + 1)
+          const dot = leaf.lastIndexOf('.')
+          const stem = dot > 0 ? leaf.slice(0, dot) : leaf
+          const ext = dot > 0 ? leaf.slice(dot) : ''
+          let n = 2
+          do path = `${path.slice(0, slash + 1)}${stem} (${n++})${ext}`
+          while (!free(path))
+        }
+      }
+      taken.add(path)
+      written.push({ path, content: f.content })
+    }
+    try {
+      await whenReady()
+      if (project.owner !== owner) return
+      const applied = await project.applyProgramChanges({ written, deleted: [] })
+      const note = skipped ? ' ' + COPY.addSkipped(skipped) : ''
+      if (applied.written.length) notify(COPY.added(applied.written.length, dir) + note, skipped ? 'info' : 'success')
+      else notify(skipped ? COPY.addSkipped(skipped) : COPY.addedNone, skipped ? 'error' : 'info')
+      // One file in: open it, the way a new file opens. Several: the explorer shows them.
+      if (applied.written.length === 1) openFile(applied.written[0])
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    }
+  }
+
   const deleteEntry = async (path: string, isDir: boolean) => {
     const ok = await dialogs.confirm({
       title: isDir ? COPY.dlgDeleteFolderTitle : COPY.dlgDeleteFileTitle,
@@ -1587,7 +1662,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     // The import's own name is the teacher's assignment title — not ours to count.
     // Only its entry file's language, and only as one of the fixed ids.
     track('project_created', { source: 'zip', lang: entry ? langOfEntry(entry) : 'none' })
-    if (mode === 'new') return importAsNewProject(snapshot, entry, name)
+    if (mode === 'new') {
+      setView('editor')
+      return importAsNewProject(snapshot, entry, name)
+    }
     await replaceProject(snapshot, entry, COPY.imported(name, snapshot.files.length))
   }
 
@@ -1768,14 +1846,20 @@ function Ide({ report }: { report: CapabilityReport }) {
   enterRoomRef.current = enterRoom
 
   const newProject = async (template?: Template) => {
-    const suggested = template ? template.name : nextProjectName(projects)
-    const name = await dialogs.prompt({
-      title: template ? COPY.dlgNewProjectFrom(template.name) : COPY.dlgNewProjectTitle,
-      label: COPY.dlgProjectName,
-      value: suggested,
-      okLabel: COPY.dlgCreate,
-      validate: (v) => (v.trim() ? projectNameTaken(v) : COPY.dlgProjectNameRequired),
-    })
+    // A starter names its project, exactly as the first project from a starter
+    // always has (the picker says "You can rename the project after"): asking only
+    // from the second project on read as a surprise dialog (QA #25). A blank
+    // project has no name of its own to borrow, so it still asks.
+    const name = template
+      ? uniqueProjectName(template.name)
+      : await dialogs.prompt({
+          title: COPY.dlgNewProjectTitle,
+          label: COPY.dlgProjectName,
+          value: nextProjectName(projects),
+          okLabel: COPY.dlgCreate,
+          prose: true,
+          validate: (v) => (v.trim() ? projectNameTaken(v) : COPY.dlgProjectNameRequired),
+        })
     if (!name) return
     stopIfRunning()
     await stopCollabBeforeSwitch()
@@ -1797,6 +1881,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       label: COPY.dlgProjectName,
       value: currentProject.name,
       okLabel: COPY.dlgRename,
+      prose: true,
       validate: (v) => (v.trim() ? projectNameTaken(v, currentProject.id) : COPY.dlgProjectNameRequired),
     })
     if (!name || name === currentProject.name) return
@@ -1841,16 +1926,14 @@ function Ide({ report }: { report: CapabilityReport }) {
   // ---- the projects Home (components/Home.tsx) ----
   /** Language + file count for a Home card. The open project is read live; others via a snapshot. */
   const metaOf = useCallback(
-    async (id: string): Promise<{ lang: IconLang | null; files: number }> => {
-      if (id === currentProject?.id) {
-        const files = project.sourceFiles()
-        const entry = entryCandidates(files)[0] ?? files[0]?.path ?? null
-        return { lang: entry ? toIconLang(langForPath(entry)) : null, files: project.paths().length }
-      }
-      const snap = await snapshotOf(id)
-      if (!snap) return { lang: null, files: 0 }
-      const entry = entryCandidates(snap.files)[0] ?? snap.files[0]?.path ?? null
-      return { lang: entry ? toIconLang(langForPath(entry)) : null, files: snap.files.length }
+    async (id: string): Promise<{ lang: IconLang | null; files: number; notebook: boolean }> => {
+      const files = id === currentProject?.id ? project.sourceFiles() : ((await snapshotOf(id))?.files ?? [])
+      const entry = entryCandidates(files)[0] ?? files[0]?.path ?? null
+      // A notebook-only project has no runnable entry, but its kernel is Python —
+      // without this its card fell back to a generic folder (QA polish).
+      const notebook = files.some((f) => isNotebookPath(f.path))
+      const lang = (entry ? toIconLang(langForPath(entry)) : null) ?? (notebook ? 'python' : null)
+      return { lang, files: id === currentProject?.id ? project.paths().length : files.length, notebook }
     },
     [currentProject, project, snapshotOf],
   )
@@ -2866,7 +2949,10 @@ function Ide({ report }: { report: CapabilityReport }) {
       title: COPY.cmdRunStop,
       keys: ['Shift+F5'],
       enabled: () => runnerRef.current.busy,
-      run: () => runnerRef.current.stop(),
+      // forceStop: the 250 ms swap guard is for a thumb on the Run control that just
+      // turned into Stop. A key is never that tap, and swallowing it left a warm
+      // debug session (paused well inside 250 ms) parked, with Run and F5 dead.
+      run: () => runnerRef.current.forceStop(),
     },
     { id: 'go.file', title: COPY.cmdGoToFile, keys: ['Mod+P'], run: () => setQuickPick('files') },
     {
@@ -3277,6 +3363,19 @@ function Ide({ report }: { report: CapabilityReport }) {
   const previewActive = isPreviewEntry(runControl.entry)
   const outputFace: OutputView = previewActive ? (outputView ?? 'preview') : 'console'
 
+  // A page needs room the console does not: the console's resting height (~185px at
+  // 1920) showed a page's heading and cut off its first button (QA #23). The first
+  // preview of a session raises a short panel to half the window; never shrinks one,
+  // and never again in the session, so a student who drags it back down keeps that.
+  const previewGrown = useRef(false)
+  const previewShowing = !!runner.previewDoc && consoleOpen && outputFace === 'preview'
+  useEffect(() => {
+    if (!previewShowing || previewGrown.current || consoleMaximized || narrow) return
+    previewGrown.current = true
+    const half = Math.round(window.innerHeight / uiScale / 2)
+    setConsoleHeight((h) => Math.max(h, half))
+  }, [previewShowing, consoleMaximized, narrow, uiScale])
+
   return (
     <>
       {view === 'home' ? (
@@ -3400,6 +3499,7 @@ function Ide({ report }: { report: CapabilityReport }) {
             onDelete={(p, isDir) => void deleteEntry(p, isDir)}
             onDownload={(p) => void downloadFile(p)}
             onMove={(p, toDir) => void moveEntry(p, toDir)}
+            onAddFiles={(dir, picked) => void addFiles(dir, picked)}
             // From a drawer, closing it reveals the starters already in the workspace;
             // docked, they're already visible so the button would be a no-op.
             onShowStarters={narrow ? () => setDrawerOpen(false) : undefined}
@@ -3551,7 +3651,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                   onStop={() => {
                     const nb = notebookDebugOwner()
                     if (nb) nb.interrupt()
-                    else runner.stop()
+                    // Not the Run control, so not its double-tap guard (see run.stop).
+                    else runner.forceStop()
                   }}
                 />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
@@ -3736,9 +3837,11 @@ function Ide({ report }: { report: CapabilityReport }) {
           onPick={pickStarter}
           onBlank={startBlank}
           // Import into a fresh project (non-destructive), not the open one.
+          // Stays on the screen it was opened from (Home, usually) until there is a
+          // project to show: switching first put the LAST project behind the Import
+          // dialog, as if the files were going into it (QA #24). onImported switches.
           onImport={() => {
             setPickerOpen(false)
-            setView('editor')
             setImportMode('new')
           }}
           // Only when a backend is configured (same gate as Home's account affordance).

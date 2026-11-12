@@ -82,7 +82,10 @@ export function TopBar({ menus, title, projectName, dirty, onToggleSidebar, onTo
       <MenuBar menus={menus} />
 
       <span className={IDENTITY}>
-        <span className={WINDOW_TITLE}>
+        {/* dir="auto": the title is the student's own names, almost always Latin. Under an
+            Arabic UI an RTL base ellipsized it from the wrong end ("…nb — Python basics"),
+            eating the file name it leads with (QA #20). */}
+        <span className={WINDOW_TITLE} dir="auto">
           {parts.length ? (
             <>
               {parts.join(' — ')}
