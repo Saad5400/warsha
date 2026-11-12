@@ -220,9 +220,12 @@ a real Vite build and a real dev server.
   nothing the running build serves. It fails only for what an offline boot needs — the pages (which
   must be this build's, not a rollout's older container's), the precached JS/CSS, and any download
   whose bytes are not this build's; an icon that 404s or a runtime file that cannot be refreshed is
-  best-effort. After three failed attempts at the same release it installs best-effort anyway and
-  reports it (`offline_install_degraded`). And the moment a navigation returns a page that is not
-  the worker's own build, the worker stops trusting its manifest and asks the server for every
+  best-effort. A release that fails the same way three times — a needed file answering 404/410, or
+  arriving with the wrong bytes — installs best-effort anyway and reports it
+  (`offline_install_degraded`); a network error, timeout or 5xx never counts (the old, complete
+  offline copy stays until a real attempt succeeds), and a page is never let go. And the moment a
+  navigation returns an app page (HTML) that is not the worker's own build, the worker stops
+  trusting its manifest and asks the server for every
   runtime file, without keeping what it gets — so a new page never runs an old runtime online, in
   the install window or behind a stuck install. Pages are cached only by navigations, only
   in their own build's shell, and only when the page is that build's (its entry chunk is in the

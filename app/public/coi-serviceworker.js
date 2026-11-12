@@ -304,10 +304,13 @@ if (typeof window === 'undefined') {
     // waits for, so a request right after finds the entry being written, never
     // missing) and `done` (the write is on disk and, for KEEP_CACHE, recorded —
     // what install waits for). Into KEEP_CACHE by default; install stages.
-    const keep = (request, response, cacheName = KEEP_CACHE) => {
+    // `sole`: nobody else will read `response` (install), so its own body is
+    // streamed into the cache instead of a clone — a clone whose twin is never
+    // read can stall on the pipe they share (see `readPage`).
+    const keep = (request, response, cacheName = KEEP_CACHE, sole = false) => {
         if (!storable(request, response)) return { opened: Promise.resolve(), done: Promise.resolve(false) };
         let bytes = 0;
-        const counted = response.clone().body.pipeThrough(new TransformStream({
+        const counted = (sole ? response : response.clone()).body.pipeThrough(new TransformStream({
             transform(chunk, ctl) {
                 bytes += chunk.byteLength;
                 ctl.enqueue(chunk);
@@ -335,10 +338,20 @@ if (typeof window === 'undefined') {
     // navigation. When the server has moved on (or, during a rollout, an older
     // container answers), the page in hand belongs to another build, and a
     // student offline would boot it against this build's files.
-    const ownPage = async (response) => {
+    const ownPage = (html) => {
         if (!ASSET_PATHS.size) return true; // dev: no asset list to check against
-        const entry = /<script[^>]+type="module"[^>]+src="([^"]*\/assets\/index-[^"]+\.js)"/.exec(await response.text())?.[1];
+        const entry = /<script[^>]+type="module"[^>]+src="([^"]*\/assets\/index-[^"]+\.js)"/.exec(html)?.[1];
         return !!entry && ASSET_PATHS.has(new URL(entry, self.location.href).pathname);
+    };
+    // A page's bytes, read ONCE, and a fresh Response of them on demand. Never
+    // clone a network body to read one copy while another waits: the clones
+    // share one bounded pipe, so reading one stalls once the unread copy fills
+    // it — and a navigation waiting on that read never answered (the page hung,
+    // and the next worker could not activate behind the stuck event).
+    const readPage = async (response) => {
+        const html = await response.text();
+        const init = { status: response.status, statusText: response.statusText, headers: response.headers };
+        return { html, fresh: () => new Response(html, init) };
     };
 
     // Lookups name their cache — never the global caches.match(), which returns
@@ -588,10 +601,17 @@ if (typeof window === 'undefined') {
     // install forever: no update for returning students, no worker at all for
     // new ones.
     //
-    // And an install that has failed INSTALL_RETRIES times in a row for this
-    // build still goes through, best-effort for everything, and says so —
-    // console.error and a message the app turns into an anonymous analytics
-    // event — so a release that cannot install is seen, not silently stuck.
+    // And a release whose install keeps failing the SAME way — a file it needs
+    // answers 404/410, or arrives with bytes that are not this build's —
+    // INSTALL_RETRIES times in a row still goes through, best-effort for those
+    // files, and says so: console.error and a message the app turns into an
+    // anonymous analytics event, so a release that cannot install is seen, not
+    // silently stuck. Only such deterministic failures count. A network error,
+    // a timeout or a 5xx is a bad moment, not a bad release: it fails this
+    // attempt, counts for nothing, and the next visit simply tries again — an
+    // old worker's complete offline copy beats a new one missing a chunk
+    // because a server hiccuped three times. And a PAGE is never let go,
+    // whatever the count: without its pages a build cannot open offline at all.
     const STAGE_META = new URL('/__warsha-stage-meta', self.location.href).href;
     const INSTALL_FAILURES_KEY = new URL('/__warsha-install-failures', self.location.href).href;
     const INSTALL_RETRIES = 3;
@@ -607,21 +627,24 @@ if (typeof window === 'undefined') {
     // be diagnosed from the browser (Application → Cache Storage), not guessed.
     const setInstallFailures = async (count, reasons) => {
         const cache = await caches.open(KEEP_INDEX_CACHE);
-        if (count) await cache.put(INSTALL_FAILURES_KEY, new Response(JSON.stringify({ version: VERSION, count, reasons })));
+        if (count || reasons?.length) await cache.put(INSTALL_FAILURES_KEY, new Response(JSON.stringify({ version: VERSION, count, reasons })));
         else await cache.delete(INSTALL_FAILURES_KEY);
     };
+    // `deterministic`: the same request will fail the same way next time (the
+    // release itself is wrong), as opposed to a bad moment on the network.
+    const installError = (message, deterministic) => Object.assign(new Error(message), { deterministic });
     const fetchOrThrow = async (url, init) => {
-        const net = await fetch(url, init);
-        if (!net.ok) throw new Error(`${url} answered ${net.status}`);
+        const net = await fetch(url, init); // a network error throws, not deterministic
+        if (!net.ok) throw installError(`${url.url || url} answered ${net.status}`, net.status === 404 || net.status === 410);
         return net;
     };
     const stageOne = async (stage, meta, req, net) => {
-        if (!(await keep(req, net, STAGE_CACHE).done)) throw new Error(`${req.url} could not be stored`);
+        if (!(await keep(req, net, STAGE_CACHE, true).done)) throw installError(`${req.url} is not the file (an HTML page, or partial)`, true);
         const m = await measure(stage, req.url);
         const path = manifestPath(req.url);
         if (path && m?.hash !== FILES[path]) {
             await stage.delete(req);
-            throw new Error(`${req.url} is not this build's (${m?.hash} != ${FILES[path]})`);
+            throw installError(`${req.url} is not this build's (${m?.hash} != ${FILES[path]})`, true);
         }
         meta.files[req.url] = [m?.bytes ?? 0, m?.hash];
     };
@@ -665,9 +688,11 @@ if (typeof window === 'undefined') {
         self.skipWaiting();
         if (DEV) return;
         event.waitUntil(installRelease().catch(async (e) => {
-            // Anything that escaped the accounting below still counts, so the
-            // escape hatch is reached whatever went wrong.
-            if (!e?.counted) await setInstallFailures((await installFailures()) + 1, [String(e?.message || e)]).catch(() => {});
+            // Something that escaped the accounting below (a cache write refused,
+            // say) is recorded for diagnosis but not counted: nothing says it
+            // would happen again, and only a release that fails the same way
+            // every time may earn a best-effort install.
+            if (!e?.counted) await setInstallFailures(await installFailures(), [String(e?.message || e)]).catch(() => {});
             throw e;
         }));
     });
@@ -678,12 +703,15 @@ if (typeof window === 'undefined') {
         const kept = await caches.open(KEEP_CACHE);
         const meta = { files: {}, untrust: [] };
         const failures = await installFailures();
-        const lenient = failures >= INSTALL_RETRIES;
         const problems = [];
-        // What an offline boot needs fails the install (unless lenient);
-        // anything else is noted and let go.
-        const fatal = (e) => { problems.push({ fatal: true, message: String(e?.message || e) }); };
-        const soft = (e) => { problems.push({ fatal: false, message: String(e?.message || e) }); };
+        // What an offline boot needs fails the install (see above for the one
+        // exception); anything else is noted and let go.
+        const note = (fatal, page) => (e) => {
+            problems.push({ fatal, page, deterministic: !!e?.deterministic, message: String(e?.message || e) });
+        };
+        const fatal = note(true, false);
+        const soft = note(false, false);
+        const pageFailed = note(true, true);
         await Promise.all([
             // `cache: 'reload'` skips the HTTP cache so a fresh deploy is
             // precached, not a stale copy.
@@ -691,10 +719,18 @@ if (typeof window === 'undefined') {
                 const page = isPage(new URL(url, self.location.href).pathname);
                 try {
                     const net = await fetchOrThrow(new Request(url, { cache: 'reload' }));
-                    if (page && !(await ownPage(net.clone()))) throw new Error(`${url} is another build's page`);
-                    await shell.put(url, net);
+                    if (!page) {
+                        await shell.put(url, net);
+                        return;
+                    }
+                    // Another build's page (an older container still answering
+                    // during a rollout): a moment that passes, so it counts for
+                    // nothing — but it always fails the install.
+                    const doc = await readPage(net);
+                    if (!ownPage(doc.html)) throw installError(`${url} is another build's page`, false);
+                    await shell.put(url, doc.fresh());
                 } catch (e) {
-                    (page ? fatal : soft)(e);
+                    (page ? pageFailed : soft)(e);
                 }
             }),
             // A chunk an earlier build already brought is the same bytes under
@@ -711,13 +747,23 @@ if (typeof window === 'undefined') {
             refreshKept(stage, meta, fatal, soft),
         ]);
         const blocking = problems.filter((p) => p.fatal);
+        const deterministic = blocking.filter((p) => p.deterministic);
+        // Let go only when every blocking problem is a deterministic failure of a
+        // non-page file, and only once the same release has failed that way
+        // INSTALL_RETRIES times already.
+        const lenient = blocking.length > 0
+            && blocking.every((p) => p.deterministic && !p.page)
+            && failures >= INSTALL_RETRIES;
         if (blocking.length && !lenient) {
-            await setInstallFailures(failures + 1, blocking.map((p) => p.message)).catch(() => {});
+            // Counted only when the release itself is at fault; a transient
+            // failure leaves the count exactly as it was.
+            const count = deterministic.length ? failures + 1 : failures;
+            await setInstallFailures(count, blocking.map((p) => p.message)).catch(() => {});
             throw Object.assign(new Error(`install: ${blocking.map((p) => p.message).join('; ')}`), { counted: true });
         }
         await stage.put(STAGE_META, new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
         await setInstallFailures(0).catch(() => {});
-        if (lenient && blocking.length) {
+        if (lenient) {
             const report = `Warsha's offline copy of this release is incomplete (installed after ${failures} failed attempts): ${blocking.map((p) => p.message).join('; ')}`;
             console.error(report);
             for (const client of await self.clients.matchAll({ includeUncontrolled: true, type: 'window' })) {
@@ -870,14 +916,19 @@ if (typeof window === 'undefined') {
                     // the mode to same-origin; redirects stay manual, so a 3xx
                     // still reaches the browser as an opaqueredirect it follows.)
                     const net = await fetch(request, { cache: 'no-cache' });
-                    if (net && net.status === 200 && !DEV) {
+                    // Only an app page is evidence of which build the server is
+                    // on: a navigation to /robots.txt or an image opened in a tab
+                    // has no entry chunk to compare, and must not read as "the
+                    // server has moved on".
+                    if (net && net.status === 200 && !DEV && /text\/html/i.test(net.headers.get('content-type') || '')) {
                         // Decided BEFORE the page gets its response: the page's
                         // first requests must already see the right answer
                         // (`isThisBuilds`). Reading a ~40 KB document is cheap.
-                        const copy = net.clone();
-                        const own = await ownPage(net.clone()).catch(() => true);
+                        const page = await readPage(net);
+                        const own = ownPage(page.html);
                         await setServerAhead(!own).catch(() => {});
-                        if (own) (await caches.open(SHELL_CACHE)).put(path, copy).catch(() => {});
+                        if (own) (await caches.open(SHELL_CACHE)).put(path, page.fresh()).catch(() => {});
+                        return isolate(page.fresh());
                     }
                     return isolate(net);
                 } catch (err) {
