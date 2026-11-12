@@ -682,6 +682,11 @@ export default defineConfig({
   // failure mode: importScripts fetches no-cors, coi-serviceworker passes the
   // opaque response through, and COEP: require-corp then blocks the loader.
   worker: { format: 'es' },
+  // The JS/TS debugger instruments sources with acorn, reached only through a
+  // dynamic import on the first Debug click. Pre-bundle it at dev-server start,
+  // or Vite discovers it mid-session, re-optimizes, and that first import 504s
+  // ("Failed to fetch dynamically imported module"). Dev only; builds bundle it.
+  optimizeDeps: { include: ['acorn'] },
   server: {
     port: 8083,
     // Two reasons, both real: docs/design/tokens.css is imported in place from

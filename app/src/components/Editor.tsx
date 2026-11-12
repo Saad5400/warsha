@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { splitPath } from '../fs/project'
 import { createEditor, type EditorController } from '../editor/setup'
+import type { IndentDisplayPref } from '../editor/indentDisplay'
 import { Button } from './ui/Button'
 import { IconFileLines } from './ui/Icons'
 import { COPY } from '../copy'
@@ -33,6 +34,10 @@ export interface EditorProps {
   onCursor?(line: number, col: number): void
   /** Error/warning tally for the status bar's problems item. Fires only when it changes. */
   onDiagnostics?(counts: { errors: number; warnings: number }): void
+  /** Indentation display size (status bar "Spaces: N" menu). Visual only. */
+  indentDisplay: IndentDisplayPref
+  /** The open file's drawn indentation, for the status bar. Fires only when it changes. */
+  onIndent?(info: { tabs: boolean; size: number }): void
 }
 
 /**
@@ -50,12 +55,14 @@ export function Editor({
   projectWords,
   onCursor,
   onDiagnostics,
+  indentDisplay,
+  onIndent,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<EditorController | null>(null)
   // Refs, not deps: CodeMirror's view must not rebuild when a prop identity changes.
-  const handlers = useRef({ onChange, onSave, projectWords, onCursor, onDiagnostics })
-  handlers.current = { onChange, onSave, projectWords, onCursor, onDiagnostics }
+  const handlers = useRef({ onChange, onSave, projectWords, onCursor, onDiagnostics, onIndent })
+  handlers.current = { onChange, onSave, projectWords, onCursor, onDiagnostics, onIndent }
 
   useEffect(() => {
     const host = hostRef.current
@@ -67,6 +74,8 @@ export function Editor({
       projectWords: () => handlers.current.projectWords ?? [],
       onCursor: (line, col) => handlers.current.onCursor?.(line, col),
       onDiagnostics: (counts) => handlers.current.onDiagnostics?.(counts),
+      onIndent: (info) => handlers.current.onIndent?.(info),
+      indentDisplay,
     })
     controllerRef.current = controller
     onController(controller)
@@ -85,6 +94,10 @@ export function Editor({
   useEffect(() => {
     controllerRef.current?.setFontSize(fontSize)
   }, [fontSize])
+
+  useEffect(() => {
+    controllerRef.current?.setIndentDisplay(indentDisplay)
+  }, [indentDisplay])
 
   // Lets a student tell this tab apart from their course notes in another one.
   useEffect(() => {

@@ -282,9 +282,18 @@ function isExternal(spec: string): boolean {
   return /^(?:https?:)?\/\//i.test(spec) || /^(?:data|blob|node):/i.test(spec)
 }
 
+export type BundleLoader = 'ts' | 'tsx' | 'js' | 'jsx' | 'json' | 'css' | 'text'
+
 export interface BundleOptions {
   /** Output format: ESM (default) preserves top-level `await`, for a module worker or `<script type="module">`; IIFE suits a classic inline script. */
   format?: 'esm' | 'iife'
+  /**
+   * OPTIONAL per-file rewrite of a STUDENT source file before bundling (the JS
+   * debugger instruments here). Not called for injected framework runtimes,
+   * .svelte/.vue, JSON or CSS. Returning null keeps the file as-is. Absent → the
+   * bundle is exactly what it always was.
+   */
+  transform?: (path: string, contents: string, loader: BundleLoader) => Promise<{ contents: string; loader: BundleLoader } | null>
 }
 
 /** Bundles `entryPath` and its imports into one chunk. Throws an `Error` with human-readable build errors (path:line:col: text), so it prints like any other program error. */
@@ -363,7 +372,13 @@ export async function bundleProject(
             return { errors: [{ text: `${named}: ${err instanceof Error ? err.message : String(err)}` }] }
           }
         }
-        return { contents: content, loader: loaderFor(args.path) }
+        const plain = { contents: content, loader: loaderFor(args.path) }
+        const transform = opts.transform
+        if (!transform || args.path.startsWith('.warsha-') || !/^(ts|tsx|js|jsx)$/.test(plain.loader)) return plain
+        return transform(args.path, content, plain.loader).then(
+          (r) => r ?? plain,
+          () => plain,
+        )
       })
     },
   }

@@ -177,7 +177,7 @@ self.onmessage = (ev) => {
       const paths = Object.keys(msg.files)
       const contents = paths.map((p) => msg.files[p])
       const t0 = performance.now()
-      const code = exports.Runner.Run(paths, contents, msg.entry)
+      const code = exports.Runner.Run(paths, contents, msg.entry, 0)
       self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
     } catch (e) {
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })

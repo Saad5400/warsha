@@ -1,6 +1,7 @@
 import { useState, type SVGProps } from 'react'
 import { IconFilesStack } from './ui/Icons'
 import { Logo } from './Logo'
+import { IconDebugAlt } from './ui/DebugIcons'
 import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
 import { COPY } from '../copy'
 
@@ -26,7 +27,7 @@ const SLOT =
   // Inset ring: an outset one would be clipped by the rail's own edge.
   'focus-visible:outline-offset-[-1px]'
 
-export type SideView = 'explorer' | 'search' | 'extensions'
+export type SideView = 'explorer' | 'search' | 'debug' | 'extensions'
 
 export interface ActivityBarProps {
   /** Which sidebar view is showing, or null while the sidebar is hidden —
@@ -41,6 +42,8 @@ export interface ActivityBarProps {
   onShowSearch(): void
   /** Show the Extensions view (same toggle contract). */
   onShowExtensions(): void
+  /** Show the Run and Debug view (same toggle contract). */
+  onShowDebug(): void
   /** The gear's dropdown — built by App, which owns every action in it. */
   manageItems: MenuItem[]
 }
@@ -56,6 +59,7 @@ export function ActivityBar({
   onShowExplorer,
   onShowSearch,
   onShowExtensions,
+  onShowDebug,
   manageItems,
 }: ActivityBarProps) {
   const [manageOpen, setManageOpen] = useState(false)
@@ -92,6 +96,19 @@ export function ActivityBar({
         onClick={onShowSearch}
       >
         <IconSearch size={24} />
+      </button>
+
+      {/* Run and Debug — VS Code's rail order: Explorer, Search, (SCM), Run and Debug, Extensions. */}
+      <button
+        type="button"
+        className={SLOT}
+        aria-label={COPY.a11yRunDebug}
+        title={COPY.a11yRunDebug}
+        aria-pressed={activeView === 'debug'}
+        data-state={activeView === 'debug' ? 'active' : 'inactive'}
+        onClick={onShowDebug}
+      >
+        <IconDebugAlt size={24} strokeWidth={1.1} />
       </button>
 
       {/* Switches the sidebar to the Extensions list (enable/disable editor features). */}

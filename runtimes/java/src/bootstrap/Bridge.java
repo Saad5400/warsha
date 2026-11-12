@@ -69,6 +69,22 @@ public class Bridge {
     /** A file the program wrote that cannot come back: binary, or too large. */
     public static native void fileSkipped(String path);
 
+    /**
+     * Debugger (see Dbg): the program is parked. Posts the stop (JSON) to the
+     * page and blocks until the shell's next command: "continue", "stepOver",
+     * "stepInto", "stepOut" or "variables:&lt;ref&gt;".
+     */
+    public static native String debugStop(String json);
+
+    /** Answers a "variables:&lt;ref&gt;" command and blocks for the next command. */
+    public static native String debugReply(String json);
+
+    /**
+     * Debugger control that arrived while the program was running: null, or
+     * "pause\tentry\tbreakpoints" (see Dbg.poll). Never blocks.
+     */
+    public static native String debugPoll();
+
     public static void installStdin() {
         System.setIn(new InputStream() {
             private byte[] buf = new byte[0];

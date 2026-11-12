@@ -123,7 +123,7 @@ let javaParserPromise: Promise<Parser> | null = null
  *  ships, but `prettier-plugin-java`'s `exports` field hides its `dist/`, so
  *  Vite can't reach in — it is staged to public/ by `npm run assets` (like the
  *  other bypassed wasm/workers) and loaded by URL, same as the runtime workers. */
-function loadJavaParser(): Promise<Parser> {
+export function loadJavaParser(): Promise<Parser> {
   if (!javaParserPromise) {
     javaParserPromise = (async () => {
       await Parser.init({ locateFile: () => runtimeWasmUrl })

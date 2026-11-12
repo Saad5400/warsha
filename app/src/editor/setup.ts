@@ -31,7 +31,6 @@ import {
 import {
   indentOnInput,
   bracketMatching,
-  indentUnit,
   language,
   LanguageSupport,
   StreamLanguage,
@@ -54,7 +53,20 @@ import { enabledEditorExtensions } from '../extensions/registry'
 import type { CollabBinding } from '../collab/editorBridge'
 import { completionSources, type CompletionLang } from './completions'
 import { hoverDocs } from './hoverDocs'
+import { debugExtension, debugTheme, lineNumberToggle, toggleBreakpointAtCursor } from './debugExt'
 import { linting, refreshLint } from './lint'
+import {
+  DEFAULT_INDENT,
+  detectIndent,
+  fileIndent,
+  indentConfig,
+  indentDisplay,
+  indentFit,
+  indentStatus,
+  resolveDisplay,
+  type FileIndent,
+  type IndentDisplayPref,
+} from './indentDisplay'
 
 /**
  * Editor exception sink (M1). y-codemirror.next's remote-selection plugin can throw
@@ -742,6 +754,9 @@ const chromeTheme = EditorView.theme(
     // Line numbers breathe: 8px off the edge, 16px before the code. The
     // content's 12px replaces the 4px iOS-handle clearance (no handles here).
     '&.cm-editor.cm-desk .cm-lineNumbers .cm-gutterElement': { padding: '0 16px 0 8px' },
+    // With the breakpoint margin in front, it owns the edge breathing: the
+    // dot sits centred between the editor edge and the number, not 8px + slack away.
+    '&.cm-editor.cm-desk .cm-debug-gutter + .cm-lineNumbers .cm-gutterElement': { paddingLeft: '0', minWidth: '0' },
     '&.cm-editor.cm-desk .cm-content': { paddingLeft: '12px' },
     // No line wrap at desk (see `extensions()`), so the horizontal scrollbar
     // exists — keep it thin and dark rather than the chunky platform default.
@@ -1186,6 +1201,12 @@ export interface EditorController {
    */
   setExtensions(): void
   /**
+   * How wide one indentation level is DRAWN (editor/indentDisplay.ts) — the
+   * status bar's "Spaces: N" menu. Visual only: the file keeps its own
+   * indentation. Applies live to the open file and to cached ones when shown.
+   */
+  setIndentDisplay(pref: IndentDisplayPref): void
+  /**
    * Attach or detach the live-collaboration binding (contract edge #1). Passing
    * a binding invalidates the per-file `states` cache and rebuilds the on-screen
    * file so its EditorState gains (or loses) the yCollab extension bound to that
@@ -1246,6 +1267,10 @@ export function createEditor(
      * for the same reason as `onCursor` — not on every keystroke.
      */
     onDiagnostics?(counts: { errors: number; warnings: number }): void
+    /** The status bar's indentation item: display size, and whether the file uses tabs. */
+    onIndent?(info: { tabs: boolean; size: number }): void
+    /** Initial display preference (prefs.indentDisplay). */
+    indentDisplay?: IndentDisplayPref
   },
 ): EditorController {
   const fontTheme = new Compartment()
@@ -1253,6 +1278,8 @@ export function createEditor(
   // Holds the enabled toggleable extensions; `setExtensions` reconfigures it
   // when the student flips a switch in the Extensions view.
   const extConf = new Compartment()
+  const indentConf = new Compartment()
+  let indentPref: IndentDisplayPref = opts.indentDisplay ?? 'auto'
   const states = new Map<string, EditorState>()
   let path: string | null = null
   let applying = false
@@ -1368,7 +1395,7 @@ export function createEditor(
     ]
   }
 
-  const extensions = (lang: EditorLang | null, p: string) => {
+  const extensions = (lang: EditorLang | null, p: string, indent: FileIndent = DEFAULT_INDENT) => {
     // Is this file a live collab doc? If so, yCollab owns its history (its own
     // CRDT undo manager), so native history()/historyKeymap are dropped for it.
     const collabExt = p && collab?.isCollab(p) ? collab.extensionFor(p) : null
@@ -1430,7 +1457,11 @@ export function createEditor(
         return { top: r.top, left: r.left, bottom: r.bottom, right: r.right }
       },
     }),
-    lineNumbers(),
+    // Breakpoint glyph margin (left of the numbers, VS Code's order), the stop
+    // arrow/line, inline values and the paused hover — editor/debugExt.ts.
+    debugExtension(p),
+    debugTheme,
+    lineNumbers({ domEventHandlers: lineNumberToggle(p) }),
     highlightActiveLineGutter(),
     highlightActiveLine(),
     highlightSpecialChars(),
@@ -1462,7 +1493,12 @@ export function createEditor(
     window.matchMedia(DESK_MEDIA).matches
       ? EditorView.editorAttributes.of({ class: 'cm-desk' })
       : [],
-    indentUnit.of('    '),
+    // Per-file indentation (detected from the file, editor/indentDisplay.ts)
+    // plus the device's display size — one compartment, so the status bar's
+    // "Spaces: N" menu reconfigures it live. indentFit draws leading spaces
+    // at the display size without touching the text.
+    indentConf.of(indentConfig(indent, indentPref, window.matchMedia(DESK_MEDIA).matches)),
+    indentFit,
     // Wrap rather than scroll horizontally on touch: a wrapped line is readable
     // on a phone, a horizontally-scrolling one is not. At desk it is the
     // opposite — VS Code does not wrap — so the choice is evaluated once per
@@ -1494,6 +1530,8 @@ export function createEditor(
       // bubbles, so the shell's run-file handler fires — without this, running
       // via Ctrl+Enter also inserted a blank line at the caret.
       { key: 'Mod-Enter', run: () => true },
+      // F9: toggle a breakpoint on the caret's line (VS Code).
+      { key: 'F9', preventDefault: true, run: (v) => toggleBreakpointAtCursor(v, path) },
       ...searchKeymap,
       // VS Code muscle memory: Mod-h opens the same widget with the replace
       // row popped open (replace lives behind the chevron, not a separate
@@ -1561,7 +1599,26 @@ export function createEditor(
   }
 
   const stateFor = (p: string, content: string) =>
-    EditorState.create({ doc: content, extensions: extensions(editorLangForPath(p), p) })
+    EditorState.create({ doc: content, extensions: extensions(editorLangForPath(p), p, detectIndent(content)) })
+
+  /** Re-resolve the display size against the current pref and density — on every
+   *  file shown (a cached state may predate a pref change) and on a pref change. */
+  const syncIndent = () => {
+    const info = view.state.facet(fileIndent)
+    const desk = window.matchMedia(DESK_MEDIA).matches
+    if (view.state.facet(indentDisplay) !== resolveDisplay(indentPref, info, desk))
+      view.dispatch({ effects: indentConf.reconfigure(indentConfig(info, indentPref, desk)) })
+    reportIndent()
+  }
+  let reportedIndent = ''
+  const reportIndent = () => {
+    if (!opts.onIndent) return
+    const info = indentStatus(view.state)
+    const key = `${info.tabs}:${info.size}`
+    if (key === reportedIndent) return
+    reportedIndent = key
+    opts.onIndent(info)
+  }
 
   const view = new EditorView({ parent, state: stateFor('', '') })
 
@@ -1624,6 +1681,7 @@ export function createEditor(
       view.setState(next)
       applying = false
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(fontSize)) })
+      syncIndent()
       syncLanguage(p)
       // `setState` swaps the whole state rather than dispatching a selection, so
       // the update listener does not see the new file's caret. Switching tabs has
@@ -1660,6 +1718,10 @@ export function createEditor(
     setFontSize(px) {
       fontSize = px
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(px)) })
+    },
+    setIndentDisplay(pref) {
+      indentPref = pref
+      syncIndent()
     },
     setExtensions() {
       // Re-reads the registry (which reads prefs), so the caller just persists
@@ -1708,6 +1770,7 @@ export function createEditor(
       view.setState(stateFor(p, content))
       applying = false
       view.dispatch({ effects: fontTheme.reconfigure(themeFor(fontSize)) })
+      syncIndent()
       syncLanguage(p)
       reportCursor(view.state)
       reportDiagnostics(view.state)

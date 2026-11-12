@@ -13,6 +13,7 @@
  * what the student sees.
  */
 import { langForPath, runtimeFor } from '../runtime'
+import { detectIndent } from '../editor/indentDisplay'
 
 /** Thrown when a .py file is formatted before the student has ever run one —
  *  Pyodide is not booted, and booting it just to format would be a silent,
@@ -45,14 +46,19 @@ function loadJavaFormatter() {
 }
 
 /** Exported for `actions/generate.ts`, which builds a new source string (fields
- *  spliced into the class) and leans on this same tabWidth-4 pass to lay it out
+ *  spliced into the class) and leans on this same pass (at the file's own indent unit) to lay it out
  *  canonically — the generator writes rough Java, prettier makes it idiomatic. */
 export async function formatJava(source: string): Promise<string> {
   const { format, javaPlugin } = await loadJavaFormatter()
+  // Keep the file's own indentation (VS Code formats with the detected
+  // tabSize/insertSpaces): a 2-space file must not come back 4-space. A file
+  // with nothing indented yet detects as the 4-space default.
+  const indent = detectIndent(source)
   return format(source, {
     parser: 'java',
     plugins: [javaPlugin],
-    tabWidth: 4,
+    tabWidth: indent.tabs ? 4 : indent.unit,
+    useTabs: indent.tabs,
   })
 }
 

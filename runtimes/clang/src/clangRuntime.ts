@@ -1,4 +1,17 @@
-import type { LoadPhase, ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
+import type {
+  DebugBreakpoint,
+  DebugSession,
+  DebugStepCommand,
+  DebugStopped,
+  DebugValue,
+  LoadPhase,
+  ProgressReport,
+  RunIO,
+  RunOptions,
+  RunSession,
+  Runtime,
+  SourceFile,
+} from './types'
 
 /** Bytes reserved in the shared buffer for one stdin line (matches the worker). */
 const STDIN_CAPACITY = 64 * 1024
@@ -9,6 +22,24 @@ const STATE_EMPTY = 0
 const STATE_LINE = 1
 const STATE_EOF = 2
 
+/**
+ * The debugger's control buffer (layout documented in clang.worker.js). While a
+ * program runs, the worker's event loop is blocked, so resume / pause /
+ * breakpoints / variables requests all go through shared memory. State 0 = parked.
+ */
+const D_HEADER_BYTES = 32
+const D_BP_CAPACITY = 64 * 1024
+const D_STATE = 0
+const D_CMD = 1
+const D_PAUSE = 2
+const D_BPGEN = 3
+const D_BPLEN = 4
+const D_REQID = 5
+const D_REQREF = 6
+const ST_REQ = 1
+const ST_RESUME = 2
+const STEP_CODES: Record<DebugStepCommand, number> = { continue: 0, stepOver: 1, stepInto: 2, stepOut: 3 }
+
 type FromWorker =
   | { type: 'progress'; phase: LoadPhase; message: string; loaded?: number; total?: number }
   | { type: 'ready'; version: string; bootMs: number }
@@ -18,6 +49,21 @@ type FromWorker =
   | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; code: number; ms: number }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
+  | { type: 'dbg-stop'; stopped: DebugStopped }
+  | { type: 'dbg-vars'; id: number; vars?: DebugValue[]; error?: string }
+
+interface VarsRequest {
+  id: number
+  ref: number
+  resolve: (v: DebugValue[]) => void
+  reject: (e: Error) => void
+}
+
+interface DebugState {
+  parked: boolean
+  queue: VarsRequest[]
+  inflight: VarsRequest | null
+}
 
 export interface ClangRuntimeOptions {
   /**
@@ -38,6 +84,7 @@ interface Active {
   io: RunIO
   ended: boolean
   awaitingStdin: boolean
+  debug: DebugState | null
 }
 
 const NOT_ISOLATED =
@@ -64,6 +111,10 @@ export class ClangRuntime implements Runtime {
   private sab: SharedArrayBuffer | null = null
   private ctrl: Int32Array | null = null
   private data: Uint8Array | null = null
+  private dbgSab: SharedArrayBuffer | null = null
+  private dbgCtrl: Int32Array | null = null
+  private dbgBytes: Uint8Array | null = null
+  private varsSeq = 0
 
   private booting: Promise<void> | null = null
   private bootSettle: { resolve: () => void; reject: (e: Error) => void } | null = null
@@ -102,7 +153,12 @@ export class ClangRuntime implements Runtime {
     }
   }
 
-  async run(files: SourceFile[], entryPath: string, io: RunIO): Promise<RunSession> {
+  /** Any .c entry can run under the debugger (source instrumentation, see instrument.js). */
+  canDebug(entryPath: string): boolean {
+    return /\.c$/i.test(entryPath)
+  }
+
+  async run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession> {
     if (this.active && !this.active.ended) {
       throw new Error('A C program is already running; kill() it before running another.')
     }
@@ -122,20 +178,113 @@ export class ClangRuntime implements Runtime {
     const ctrl = this.ctrl
     if (!worker || !ctrl) throw new Error('C runtime is not ready.')
 
-    const active: Active = { io, ended: false, awaitingStdin: false }
+    const debugOpts = opts?.debug
+    const active: Active = {
+      io,
+      ended: false,
+      awaitingStdin: false,
+      debug: debugOpts ? { parked: false, queue: [], inflight: null } : null,
+    }
     this.active = active
 
     // A line submitted after a previous kill may still be sitting in the buffer.
     Atomics.store(ctrl, 0, STATE_EMPTY)
 
-    worker.postMessage({ type: 'run', files: payload, entry })
+    let debugMsg: { sab: SharedArrayBuffer; stopOnEntry: boolean } | undefined
+    if (debugOpts) {
+      const d = this.debugControl()
+      d.ctrl.fill(0)
+      this.writeBreakpoints(debugOpts.breakpoints)
+      debugMsg = { sab: d.sab, stopOnEntry: !!debugOpts.stopOnEntry }
+    }
+
+    worker.postMessage({ type: 'run', files: payload, entry, debug: debugMsg })
 
     const session: ClangRunSession = {
       kill: () => this.killSession(active),
       writeStdin: (line: string) => this.writeStdin(active, line),
       writeEof: () => this.writeEof(active),
     }
+    if (active.debug) session.debug = this.debugSession(active, active.debug)
     return session
+  }
+
+  // --- debugger ---------------------------------------------------------------
+
+  private debugControl(): { sab: SharedArrayBuffer; ctrl: Int32Array; bytes: Uint8Array } {
+    if (!this.dbgSab) {
+      this.dbgSab = new SharedArrayBuffer(D_HEADER_BYTES + D_BP_CAPACITY)
+      this.dbgCtrl = new Int32Array(this.dbgSab, 0, D_HEADER_BYTES / 4)
+      this.dbgBytes = new Uint8Array(this.dbgSab, D_HEADER_BYTES)
+    }
+    return { sab: this.dbgSab, ctrl: this.dbgCtrl!, bytes: this.dbgBytes! }
+  }
+
+  /** Publish the full breakpoint set; the worker picks it up at its next line. */
+  private writeBreakpoints(bps: DebugBreakpoint[]): void {
+    const d = this.debugControl()
+    const list: DebugBreakpoint[] = []
+    for (const bp of bps) {
+      try {
+        list.push({ path: normalizePath(bp.path), line: bp.line })
+      } catch {
+        /* a path outside the project can never be hit */
+      }
+    }
+    const encoded = this.encoder.encode(JSON.stringify(list))
+    const length = Math.min(encoded.byteLength, D_BP_CAPACITY)
+    d.bytes.set(encoded.subarray(0, length), 0)
+    Atomics.store(d.ctrl, D_BPLEN, length)
+    Atomics.add(d.ctrl, D_BPGEN, 1)
+  }
+
+  private debugSession(active: Active, state: DebugState): DebugSession {
+    return {
+      resume: (cmd: DebugStepCommand) => {
+        if (active.ended || !state.parked) return
+        state.parked = false
+        this.dropVarRequests(state, 'The program resumed.')
+        const { ctrl } = this.debugControl()
+        Atomics.store(ctrl, D_CMD, STEP_CODES[cmd] ?? 0)
+        Atomics.store(ctrl, D_STATE, ST_RESUME)
+        Atomics.notify(ctrl, D_STATE)
+        active.io.onDebugResume?.()
+      },
+      pause: () => {
+        if (active.ended || state.parked) return
+        Atomics.store(this.debugControl().ctrl, D_PAUSE, 1)
+      },
+      setBreakpoints: (bps: DebugBreakpoint[]) => {
+        if (active.ended) return
+        this.writeBreakpoints(bps)
+      },
+      variables: (ref: number) => {
+        if (active.ended || !state.parked) return Promise.reject(new Error('The program is not paused.'))
+        return new Promise<DebugValue[]>((resolve, reject) => {
+          state.queue.push({ id: ++this.varsSeq, ref, resolve, reject })
+          this.pumpVars(state)
+        })
+      },
+    }
+  }
+
+  /** One variables request in flight at a time: the parked worker serves them serially. */
+  private pumpVars(state: DebugState): void {
+    if (state.inflight || !state.parked || state.queue.length === 0) return
+    const req = state.queue.shift()!
+    state.inflight = req
+    const { ctrl } = this.debugControl()
+    Atomics.store(ctrl, D_REQID, req.id)
+    Atomics.store(ctrl, D_REQREF, req.ref)
+    Atomics.store(ctrl, D_STATE, ST_REQ)
+    Atomics.notify(ctrl, D_STATE)
+  }
+
+  private dropVarRequests(state: DebugState, why: string): void {
+    const pending = [...(state.inflight ? [state.inflight] : []), ...state.queue]
+    state.inflight = null
+    state.queue = []
+    for (const r of pending) r.reject(new Error(why))
   }
 
   isReady(): boolean {
@@ -233,6 +382,25 @@ export class ClangRuntime implements Runtime {
         this.finish(msg.code)
         return
 
+      case 'dbg-stop': {
+        const active = this.active
+        if (!active || active.ended || !active.debug) return
+        active.debug.parked = true
+        active.io.onDebugStop?.(msg.stopped)
+        return
+      }
+
+      case 'dbg-vars': {
+        const state = this.active?.debug
+        if (!state || !state.inflight || state.inflight.id !== msg.id) return
+        const req = state.inflight
+        state.inflight = null
+        if (msg.error !== undefined) req.reject(new Error(msg.error))
+        else req.resolve(msg.vars ?? [])
+        this.pumpVars(state)
+        return
+      }
+
       case 'fatal':
         if (msg.duringBoot) {
           this.failBoot(new Error(msg.text))
@@ -267,6 +435,10 @@ export class ClangRuntime implements Runtime {
     if (!active || active.ended) return
     active.ended = true
     active.awaitingStdin = false
+    if (active.debug) {
+      active.debug.parked = false
+      this.dropVarRequests(active.debug, 'The program has ended.')
+    }
     this.active = null
     if (stderrNote) active.io.onStderr(stderrNote)
     active.io.onExit(code)

@@ -355,6 +355,20 @@
    100%)` was invalid and resolved to `auto`, i.e. §4.3 rule 4 was doing nothing
    at all). Caught by audit.mjs reading `auto` where it expected a floor. */
 :root {
+  /* Debugger (editor/debugExt.ts, DebugView, DebugToolbar). VS Code's own
+     debug hues — breakpoint red, stop-arrow yellow, caller-frame green — kept
+     because they are signal, not chrome; the chrome stays monochrome. */
+  --debug-bp: #E51400;
+  --debug-bp-off: #8D8D9A;
+  --debug-stop: #FFCC00;
+  --debug-stop-line: rgba(255, 204, 0, 0.16);
+  --debug-frame: #7ABD7A;
+  --debug-frame-line: rgba(122, 189, 122, 0.18);
+  --debug-inline-fg: #8D8D9A;
+  --debug-name: #C586C0;
+  --debug-value-string: #CE9178;
+  --debug-value-number: #B5CEA8;
+  --debug-value-keyword: #569CD6;
   /* One stacking scale for the whole app. See STACKING above. */
   --z-scrim: 10;
   --z-drawer: 20;

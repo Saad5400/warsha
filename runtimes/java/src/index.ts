@@ -11,4 +11,6 @@
 
 export { JavaRuntime } from './javaRuntime'
 export type { JavaRuntimeOptions, JavaRunSession } from './javaRuntime'
-export type { LoadPhase, LoadProgress, ProgressReport, RunIO, RunSession, Runtime, SourceFile } from './types'
+export type { LoadPhase, LoadProgress, ProgressReport, RunIO, RunOptions, RunSession, Runtime, SourceFile } from './types'
+export type { DebugBreakpoint, DebugOptions, DebugSession, DebugStopped, DebugValue } from './types'
+export type { JavaParserLike } from './instrument'

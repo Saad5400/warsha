@@ -58,6 +58,10 @@ export interface Prefs {
    *  to the signed-in owner. A sign-in/out/switch never rewrites these: local files are
    *  never touched, and a different account simply isn't the owner (see useCloudSync). */
   projectOwners: Record<string, string>
+  /** How wide one indentation level is DRAWN in the editor (editor/indentDisplay.ts) —
+   *  visual only, files keep their own indentation. `auto` = 2 columns off-desk,
+   *  the file's own unit at desk. Per device, like fontSize. */
+  indentDisplay: 'auto' | 2 | 4 | 8
 }
 
 /** 14px (VS Code default), both densities — touch used to be 15. Function, not a constant, so it's read per-launch. */
@@ -83,6 +87,7 @@ const defaults: Omit<Prefs, 'fontSize'> = {
   deviceToken: null,
   syncAccountId: null,
   projectOwners: {},
+  indentDisplay: 'auto',
 }
 
 let cache: Prefs | null = null

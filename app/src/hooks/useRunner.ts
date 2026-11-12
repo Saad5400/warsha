@@ -6,6 +6,7 @@ import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
 import { COPY } from '../copy'
 import { langOfEntry, track } from '../analytics'
+import { debugStore } from '../debug/store'
 
 /**
  * Run status. Drives the single Run/Stop control and the status pill, and is
@@ -116,6 +117,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
         /* the engine is already the thing we do not trust */
       }
       activeRuntime.current = null
+      debugStore.end()
       if (note) buffer.line(note, failure ? 'err' : 'meta')
       // Must read true immediately — no paced reveal owing lines under an error already on screen.
       buffer.catchUp()
@@ -181,7 +183,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     abandonRun(null, COPY.runStopped, 'stopped')
   }, [state.busy, abandonRun, buffer])
 
-  const run = useCallback(async () => {
+  /** `debug: true` runs under the debugger when the entry's engine supports it (else a plain run). */
+  const run = useCallback(async (opts?: { debug?: boolean }) => {
     if (state.busy) return
     if (Date.now() - swapAt.current < SWAP_GUARD_MS) return
 
@@ -227,6 +230,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     const lang = langOfEntry(entry)
     track('run_started', { lang })
 
+    const debugging = !!opts?.debug && !!runtime.canDebug?.(entry)
+
     const mine = ++token.current
     awaiting.current = false
     typedAhead.current = []
@@ -234,6 +239,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     swapAt.current = Date.now()
     activeRuntime.current = runtime
     buffer.clear()
+    debugStore.begin(debugging)
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
     setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, previewDoc: null })
 
@@ -336,8 +342,19 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
             /* storage trouble surfaces through Project's own storage-problem banner */
           })
         },
+        onDebugStop: (stopped) => {
+          if (token.current !== mine) return
+          clearProgress()
+          // Everything printed up to the stop belongs on screen while parked.
+          buffer.catchUp()
+          debugStore.onStop(stopped)
+        },
+        onDebugResume: () => {
+          if (token.current === mine) debugStore.onResume()
+        },
         onExit: (code) => {
           if (token.current !== mine) return
+          debugStore.end()
           clearTimers()
           awaiting.current = false
           typedAhead.current = []
@@ -359,13 +376,14 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
             previewDoc: null,
           })
         },
-      })
+      }, debugging ? { debug: { breakpoints: debugStore.enabledBreakpoints() } } : undefined)
 
       if (token.current !== mine) {
         s.kill()
         return
       }
       session.current = s
+      if (debugging && s.debug) debugStore.attach(s.debug)
       for (const line of pendingWrites.current) s.writeStdin(line)
       pendingWrites.current = []
     } catch (e) {

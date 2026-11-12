@@ -1,5 +1,6 @@
 import { RangeSetBuilder } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { displayedLevel, drawnColumns, storedLevel } from './indentDisplay'
 
 /**
  * Indent guides — one hairline per nesting level, in `--code-indent-guide`.
@@ -26,13 +27,15 @@ const cache = new Map<string, Decoration>()
 
 function decoFor(depth: number, hang: number, active: number, unit: number): Decoration {
   const key = `${unit}:${depth}:${hang}:${active}`
+  // `unit` is the DISPLAYED level width (indentDisplay.ts) — a 4-space file
+  // drawn at 2 columns gets its guides every 2ch, on the compressed text.
   let deco = cache.get(key)
   if (!deco) {
     // Negative text-indent + matching padding-left is the hanging-indent trick:
     // the first row stays put, and wrapped rows line up with the code's own
     // indent instead of column 0 — the difference between reading a
     // continuation and mistaking it for a new statement.
-    let style = `--cm-guides:${depth}`
+    let style = `--cm-guides:${depth};--cm-guide-step:${unit}ch`
     if (hang > 0) style += `;padding-left:calc(${LINE_PAD} + ${hang}ch);text-indent:-${hang}ch`
     // The caret's level re-paints via a second background layer
     // (--code-indent-guide-active, see theme below); this just gives its
@@ -61,18 +64,21 @@ function leadingColumns(text: string, tabSize: number): number {
 /** The nesting level the caret sits in — its guide is the "active" one
  *  (VS Code's highlightActiveIndentation). A blank caret line inherits the
  *  nearest non-blank line above, matching the guides' own carried depth. */
-function caretDepth(view: EditorView, unit: number): number {
+function caretDepth(view: EditorView, stored: number): number {
   const { doc, tabSize, selection } = view.state
   let line = doc.lineAt(selection.main.head)
   let n = line.number
   while (n > 1 && line.text.trim().length === 0) line = doc.line(--n)
-  return Math.floor(leadingColumns(line.text, tabSize) / unit)
+  return Math.floor(leadingColumns(line.text, tabSize) / stored)
 }
 
-function build(view: EditorView, unit: number): DecorationSet {
+function build(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
   const { doc, tabSize } = view.state
-  const activeDepth = caretDepth(view, unit)
+  // Levels are counted in the file's own unit, drawn at the display width.
+  const stored = storedLevel(view.state)
+  const unit = displayedLevel(view.state)
+  const activeDepth = caretDepth(view, stored)
   for (const range of view.visibleRanges) {
     // A blank line inside a block has no indentation of its own; it inherits the
     // level above it, or the guides break into dashes down a function body.
@@ -82,15 +88,21 @@ function build(view: EditorView, unit: number): DecorationSet {
       const line = doc.lineAt(pos)
       const blank = line.text.trim().length === 0
       const cols = blank ? 0 : leadingColumns(line.text, tabSize)
-      const depth = blank ? carried : Math.floor(cols / unit)
+      const depth = blank ? carried : Math.floor(cols / stored)
       if (!blank) carried = depth
       // A blank line needs the guide but has nothing to wrap, so no hang.
+      // The hang is in DRAWN columns — the leading spaces may be compressed.
       // Only lines deep enough to *have* the active level's guide light it up.
       if (depth > 0)
         builder.add(
           line.from,
           line.from,
-          decoFor(depth, Math.min(cols, MAX_HANG), depth >= activeDepth ? activeDepth : 0, unit),
+          decoFor(
+            depth,
+            Math.min(drawnColumns(cols, stored, unit), MAX_HANG),
+            depth >= activeDepth ? activeDepth : 0,
+            unit,
+          ),
         )
       if (line.to + 1 <= pos) break
       pos = line.to + 1
@@ -99,17 +111,23 @@ function build(view: EditorView, unit: number): DecorationSet {
   return builder.finish()
 }
 
-export function indentGuides(unit = 4) {
+export function indentGuides() {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
       constructor(view: EditorView) {
-        this.decorations = build(view, unit)
+        this.decorations = build(view)
       }
       update(update: ViewUpdate) {
-        // selectionSet too: the active level follows the caret.
-        if (update.docChanged || update.viewportChanged || update.selectionSet)
-          this.decorations = build(update.view, unit)
+        // selectionSet too: the active level follows the caret; a reconfigure
+        // may have changed the indentation display size.
+        if (
+          update.docChanged ||
+          update.viewportChanged ||
+          update.selectionSet ||
+          update.transactions.some((tr) => tr.reconfigured)
+        )
+          this.decorations = build(update.view)
       }
     },
     { decorations: (value) => value.decorations },
@@ -122,7 +140,7 @@ export function indentGuides(unit = 4) {
       // active sits over its base twin.
       backgroundImage:
         'linear-gradient(var(--code-indent-guide-active), var(--code-indent-guide-active)), ' +
-        `repeating-linear-gradient(to right, var(--code-indent-guide) 0 1px, transparent 1px ${unit}ch)`,
+        'repeating-linear-gradient(to right, var(--code-indent-guide) 0 1px, transparent 1px var(--cm-guide-step, 4ch))',
       backgroundRepeat: 'no-repeat',
       // Padding-box, not content-box: the hanging indent moves the content edge
       // but guides must stay put. Clipping is left alone — clipping to
@@ -131,7 +149,7 @@ export function indentGuides(unit = 4) {
       backgroundOrigin: 'padding-box',
       backgroundPositionX: `var(--cm-guide-active-x, 0px), ${LINE_PAD}`,
       backgroundSize:
-        `var(--cm-guide-active-w, 0px) 100%, calc(var(--cm-guides, 0) * ${unit}ch) 100%`,
+        'var(--cm-guide-active-w, 0px) 100%, calc(var(--cm-guides, 0) * var(--cm-guide-step, 4ch)) 100%',
     },
   })
 

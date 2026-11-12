@@ -9,8 +9,8 @@
  * docs/engineering/python-runtime-spike.md.
  *
  * Protocol (main thread -> worker):
- *   { type: "init", sab, indexURL?, isatty? }
- *   { type: "run", files: { [path]: content }, entry: string }
+ *   { type: "init", sab, dbgSab, indexURL?, isatty? }
+ *   { type: "run", files: { [path]: content }, entry: string, debug?: { stopOnEntry } | null }
  *   { type: "format", id, code }            reformat one file's source with black
  * (worker -> main thread):
  *   { type: "progress", phase, message, loaded?, total? }   boot progress
@@ -23,6 +23,14 @@
  *   { type: "fatal", text }                 runtime-level failure
  *   { type: "formatted", id, code }         format succeeded
  *   { type: "format-error", id, message }   format failed (e.g. a syntax error)
+ *   { type: "debug-stop", stopped }         parked under the debugger (DebugStopped)
+ *   { type: "debug-resume" }                released from a debug stop
+ *   { type: "debug-reply", id, ok, result?, error? }  answer to variables/evaluate
+ *
+ * While a debug run is in flight every main -> worker debugger message (resume,
+ * pause, breakpoints, variables/evaluate requests) goes through the second
+ * SharedArrayBuffer (`dbgSab`), because this thread's event loop is blocked for
+ * the whole run. Layout is documented in pythonRuntime.ts (DBG_*).
  *
  * `format` is independent of the run protocol above: it does not touch
  * `_WARSHA_PROJ`, the stdin ring buffer or `resetFs`/`runEntry`, so it is safe
@@ -79,6 +87,62 @@ function requestStdinLine() {
   // Pyodide appends a newline to strings that lack one, but being explicit
   // keeps an empty line from looking like EOF.
   return text + '\n'
+}
+
+// --- debugger shared-memory bridge -------------------------------------------
+// Exposed to Python as the module _warsha_dbg; the Python half (DEBUGGER below)
+// owns every decision, this half only moves bytes. Constants MUST match
+// pythonRuntime.ts.
+const DBG_HEADER_BYTES = 64
+const DBG_REGION_BYTES = 64 * 1024
+const DBG_REQ = 0
+const DBG_REQLEN = 1
+const DBG_PAUSE = 2
+const DBG_BPGEN = 3
+const DBG_BPLEN = 4
+
+let dctl = null
+let dbytes = null
+const dbgDecoder = new TextDecoder()
+
+const debugBridge = {
+  /** bit 0: pause requested (consumed); bits 1+: breakpoint generation. */
+  poll() {
+    const pause = Atomics.exchange(dctl, DBG_PAUSE, 0) ? 1 : 0
+    return pause | ((Atomics.load(dctl, DBG_BPGEN) & 0x3fffffff) << 1)
+  },
+  clearPause() {
+    Atomics.store(dctl, DBG_PAUSE, 0)
+  },
+  /** Seqlocked read of the breakpoint JSON: '[["main.py", 3], ...]'. */
+  breakpoints() {
+    for (;;) {
+      const g1 = Atomics.load(dctl, DBG_BPGEN)
+      if (g1 & 1) continue
+      const len = Atomics.load(dctl, DBG_BPLEN)
+      const text = dbgDecoder.decode(dbytes.slice(0, len))
+      if (Atomics.load(dctl, DBG_BPGEN) === g1) return text || '[]'
+    }
+  },
+  stopped(json) {
+    self.postMessage({ type: 'debug-stop', stopped: JSON.parse(json) })
+  },
+  resumed() {
+    self.postMessage({ type: 'debug-resume' })
+  },
+  reply(json) {
+    self.postMessage({ type: 'debug-reply', ...JSON.parse(json) })
+  },
+  /** Park until main hands over a request (variables / evaluate / resume). */
+  wait() {
+    while (Atomics.load(dctl, DBG_REQ) === 0) {
+      Atomics.wait(dctl, DBG_REQ, 0, 250)
+    }
+    const len = Atomics.load(dctl, DBG_REQLEN)
+    const text = dbgDecoder.decode(dbytes.slice(DBG_REGION_BYTES, DBG_REGION_BYTES + len))
+    Atomics.store(dctl, DBG_REQ, 0)
+    return text
+  },
 }
 
 // --- output -----------------------------------------------------------------
@@ -216,10 +280,12 @@ async function boot() {
   pyodide.setStdin({ isatty, stdin: requestStdinLine })
 
   pyodide.FS.mkdirTree(PROJECT_DIR)
+  pyodide.registerJsModule('_warsha_dbg', debugBridge)
 
   // Define the runner once and pay the import cost of traceback/shutil now, so
   // the first Run is not noticeably slower than the second.
   pyodide.runPython(RUNNER)
+  pyodide.runPython(DEBUGGER)
   runEntry = pyodide.globals.get('_warsha_run')
   resetFs = pyodide.globals.get('_warsha_reset_fs')
 
@@ -242,7 +308,7 @@ async function boot() {
  * it instantly; `npm run check` in this package does exactly that.
  */
 const RUNNER = String.raw`
-import linecache, os, shutil, sys, traceback
+import json, linecache, os, shutil, sys, traceback
 
 _WARSHA_PROJ = ${JSON.stringify(PROJECT_DIR)}
 
@@ -360,7 +426,7 @@ def _warsha_install_asyncio_guard():
 _warsha_install_asyncio_guard()
 
 
-def _warsha_run(entry):
+def _warsha_run(entry, debug=None):
     proj = _WARSHA_PROJ
     if proj not in sys.path:
         sys.path.insert(0, proj)
@@ -402,9 +468,19 @@ def _warsha_run(entry):
         sys.stderr.write("".join(traceback.format_exception_only(type(e), e)))
         status = 1
 
+    dbg = None
+    if code is not None and debug is not None:
+        dbg = _WarshaDebugger(proj, bool(json.loads(debug).get("stopOnEntry")))
+
     if code is not None:
         try:
-            exec(code, g)
+            if dbg is not None:
+                sys.settrace(dbg.trace_call)
+            try:
+                exec(code, g)
+            finally:
+                if dbg is not None:
+                    sys.settrace(None)
         except SystemExit as e:
             c = e.code
             if c is None:
@@ -415,6 +491,14 @@ def _warsha_run(entry):
                 sys.stderr.write(str(c) + "\n")
                 status = 1
         except BaseException as e:
+            if dbg is not None:
+                # Post-mortem stop at the raising user frame: the traceback
+                # keeps every frame (and its locals) alive while parked.
+                try:
+                    dbg.stop_exception(e)
+                except Exception:
+                    pass
+                dbg = None
             # Drop this runner's own exec() frame so the student sees only their
             # own files, and strip the FS prefix so helper frames read
             # "helpers/shapes.py" not "/home/pyodide/project/helpers/shapes.py".
@@ -468,6 +552,380 @@ def _warsha_close_open_files(proj):
             obj.close()
         except Exception:
             pass
+`
+
+/* Debugger. Defines _WarshaDebugger in the Pyodide globals; _warsha_run builds
+ * one per debug run and installs its trace_call with sys.settrace (never for a
+ * plain run, so those pay nothing). The protocol is in app/src/runtime/debug.ts.
+ *
+ *  - Only frames whose code lives in a project file get a line tracer; library
+ *    and stdlib frames return None from the call event, so stepping into them
+ *    is stepping over them.
+ *  - "depth" counts USER frames on the stack, computed once per call event.
+ *    stepOver stops at depth <= start, stepOut at depth < start, stepInto at
+ *    any user line. Leaving a frame during a step stops in the caller at the
+ *    call line (the return event), as VS Code does with debugpy.
+ *  - Shared memory (pause flag, breakpoint generation) is polled through the
+ *    _warsha_dbg JS bridge every POLL_EVERY user lines and after every resume.
+ *  - While parked, the trace function is still on the stack, so CPython keeps
+ *    tracing disabled: evaluate() can call student functions without hitting
+ *    their breakpoints.
+ *
+ * Same String.raw caveat as RUNNER: no backticks anywhere below.
+ */
+const DEBUGGER = String.raw`
+import json as _wjson
+import reprlib as _wreprlib
+import types as _wtypes
+import collections as _wcollections
+import _warsha_dbg
+
+_WARSHA_MAX_CHILDREN = 200
+_WARSHA_MAX_FRAMES = 200
+_WARSHA_POLL_EVERY = 32
+_WARSHA_NOISE = (_wtypes.ModuleType, _wtypes.FunctionType, _wtypes.BuiltinFunctionType,
+                 _wtypes.MethodType, _wtypes.BuiltinMethodType, type)
+_WARSHA_LEAF = (str, bytes, bytearray, int, float, complex, bool, type(None), range) + _WARSHA_NOISE
+
+
+class _WarshaRepr(_wreprlib.Repr):
+    """VS Code-style one-line values: reprlib limits, insertion-ordered dicts,
+    and Point(x=1, y=2) for objects that never defined __repr__."""
+
+    def __init__(self):
+        super().__init__()
+        self.maxlevel = 3
+        self.maxlist = self.maxtuple = self.maxset = self.maxfrozenset = self.maxdeque = 30
+        self.maxdict = 30
+        self.maxstring = 300
+        self.maxlong = 100
+        self.maxother = 300
+
+    def repr_dict(self, x, level):
+        if not x:
+            return "{}"
+        if level <= 0:
+            return "{...}"
+        pieces = []
+        for i, (k, v) in enumerate(x.items()):
+            if i >= self.maxdict:
+                pieces.append("...")
+                break
+            pieces.append(self.repr1(k, level - 1) + ": " + self.repr1(v, level - 1))
+        return "{" + ", ".join(pieces) + "}"
+
+    def repr_instance(self, x, level):
+        t = type(x)
+        if isinstance(x, _wtypes.ModuleType):
+            return "<module '" + x.__name__ + "'>"
+        if isinstance(x, (_wtypes.FunctionType, _wtypes.BuiltinFunctionType)):
+            return "<function " + getattr(x, "__qualname__", x.__name__) + ">"
+        if isinstance(x, type):
+            return "<class '" + x.__qualname__ + "'>"
+        if t.__repr__ is object.__repr__:
+            d = getattr(x, "__dict__", None)
+            if isinstance(d, dict):
+                if level <= 0:
+                    return t.__name__ + "(...)"
+                pieces = []
+                for k, v in d.items():
+                    if k.startswith("__"):
+                        continue
+                    if len(pieces) >= self.maxdict:
+                        pieces.append("...")
+                        break
+                    pieces.append(str(k) + "=" + self.repr1(v, level - 1))
+                return t.__name__ + "(" + ", ".join(pieces) + ")"
+            return "<" + t.__name__ + " object>"
+        try:
+            s = repr(x)
+        except Exception as e:
+            return "<" + t.__name__ + " object (repr failed: " + type(e).__name__ + ")>"
+        if len(s) > self.maxother:
+            s = s[: self.maxother - 3] + "..."
+        return s
+
+
+_warsha_repr = _WarshaRepr()
+
+
+def _warsha_safe_repr(v):
+    try:
+        return _warsha_repr.repr(v)
+    except Exception as e:
+        return "<" + type(v).__name__ + " object (repr failed: " + type(e).__name__ + ")>"
+
+
+def _warsha_visible_global(name, v):
+    if name.startswith("__") and name.endswith("__"):
+        return False
+    if name.startswith("_warsha") or name.startswith("_WARSHA"):
+        return False
+    return not isinstance(v, _WARSHA_NOISE)
+
+
+class _WarshaDebugger:
+    def __init__(self, proj, stop_on_entry):
+        self.proj = proj
+        self.prefix = proj + "/"
+        self.paths = {}
+        self.mode = "entry" if stop_on_entry else None
+        self.step_depth = 0
+        self.tick = 0
+        self.bp_gen = -1
+        self.bps = {}
+        self.refs = []
+        self.frames = []
+        self.poll(True)
+
+    # --- shared memory -------------------------------------------------------
+
+    def poll(self, ignore_pause=False):
+        word = _warsha_dbg.poll()
+        if (word & 1) and not ignore_pause:
+            self.mode = "pause"
+        gen = word >> 1
+        if gen != self.bp_gen:
+            self.bp_gen = gen
+            bps = {}
+            try:
+                for path, line in _wjson.loads(_warsha_dbg.breakpoints()):
+                    bps.setdefault(path, set()).add(int(line))
+            except Exception:
+                pass
+            self.bps = bps
+
+    # --- tracing -------------------------------------------------------------
+
+    def user_path(self, code):
+        try:
+            return self.paths[code]
+        except KeyError:
+            pass
+        fn = code.co_filename
+        p = None
+        if fn.startswith(self.prefix):
+            p = fn[len(self.prefix):]
+        elif fn and not fn.startswith("<") and not os.path.isabs(fn) and os.path.isfile(os.path.join(self.proj, fn)):
+            p = fn
+        self.paths[code] = p
+        return p
+
+    def trace_call(self, frame, event, arg):
+        path = self.user_path(frame.f_code)
+        if path is None:
+            return None
+        depth = 1
+        f = frame.f_back
+        while f is not None:
+            if self.user_path(f.f_code) is not None:
+                depth += 1
+            f = f.f_back
+        dbg = self
+
+        def trace_local(frame, event, arg):
+            if event == "line":
+                dbg.tick += 1
+                if dbg.tick >= _WARSHA_POLL_EVERY:
+                    dbg.tick = 0
+                    dbg.poll()
+                mode = dbg.mode
+                if mode is not None:
+                    if mode == "over":
+                        hit = depth <= dbg.step_depth
+                    elif mode == "out":
+                        hit = depth < dbg.step_depth
+                    else:
+                        hit = True
+                    if hit:
+                        reason = "step" if mode in ("over", "out", "into") else mode
+                        dbg.stop(dbg.collect(frame), reason, depth)
+                        return trace_local
+                lines = dbg.bps.get(path)
+                if lines and frame.f_lineno in lines:
+                    dbg.stop(dbg.collect(frame), "breakpoint", depth)
+            elif event == "return":
+                mode = dbg.mode
+                if mode is not None and mode in ("over", "out", "into") and depth <= dbg.step_depth:
+                    caller = frame.f_back
+                    if caller is not None and dbg.user_path(caller.f_code) is not None:
+                        dbg.stop(dbg.collect(caller), "step", depth - 1)
+            return trace_local
+
+        return trace_local
+
+    # --- stopping ------------------------------------------------------------
+
+    def collect(self, frame):
+        out = []
+        f = frame
+        while f is not None and len(out) < _WARSHA_MAX_FRAMES:
+            p = self.user_path(f.f_code)
+            if p is not None:
+                out.append((f, p, f.f_lineno))
+            f = f.f_back
+        return out
+
+    def stop_exception(self, exc):
+        frames = []
+        tb = exc.__traceback__
+        while tb is not None:
+            p = self.user_path(tb.tb_frame.f_code)
+            if p is not None:
+                frames.append((tb.tb_frame, p, tb.tb_lineno))
+            tb = tb.tb_next
+        if not frames:
+            return
+        frames.reverse()
+        msg = str(exc)
+        desc = type(exc).__name__ + (": " + msg if msg else "")
+        self.stop(frames[:_WARSHA_MAX_FRAMES], "exception", 0, desc)
+
+    def stop(self, frames, reason, depth, description=None):
+        self.mode = None
+        self.refs = []
+        self.frames = frames
+        payload = {"reason": reason, "frames": [self.frame_json(f, p, line) for f, p, line in frames]}
+        if description is not None:
+            payload["description"] = description
+        _warsha_dbg.stopped(_wjson.dumps(payload))
+        while True:
+            req = _wjson.loads(_warsha_dbg.wait())
+            kind = req.get("kind")
+            if kind == "resume":
+                cmd = req.get("cmd")
+                self.refs = []
+                self.frames = []
+                self.mode = {"stepOver": "over", "stepInto": "into", "stepOut": "out"}.get(cmd)
+                self.step_depth = depth
+                self.tick = 0
+                _warsha_dbg.clearPause()
+                self.poll(True)
+                _warsha_dbg.resumed()
+                return
+            reply = {"id": req.get("id")}
+            try:
+                if kind == "variables":
+                    reply["result"] = self.children(int(req["ref"]))
+                elif kind == "evaluate":
+                    reply["result"] = self.evaluate(str(req["expr"]), int(req.get("frame") or 0))
+                else:
+                    raise ValueError("unknown request " + repr(kind))
+                reply["ok"] = True
+            except BaseException as e:
+                reply["ok"] = False
+                reply["error"] = _warsha_error_text(e)
+            try:
+                text = _wjson.dumps(reply)
+            except Exception as e:
+                text = _wjson.dumps({"id": req.get("id"), "ok": False, "error": _warsha_error_text(e)})
+            _warsha_dbg.reply(text)
+
+    # --- values --------------------------------------------------------------
+
+    def frame_json(self, f, path, line):
+        code = f.f_code
+        name = getattr(code, "co_qualname", code.co_name)
+        g = f.f_globals
+        module_level = code.co_name == "<module>"
+        if module_level:
+            local_items = [(k, v) for k, v in list(g.items()) if _warsha_visible_global(k, v)]
+        else:
+            local_items = [(k, v) for k, v in list(f.f_locals.items())
+                           if not (k.startswith("__") and k.endswith("__"))]
+        global_items = [(k, v) for k, v in list(g.items()) if _warsha_visible_global(k, v)]
+        return {
+            "name": name,
+            "path": path,
+            "line": line,
+            "scopes": [
+                {"name": "Locals", "variables": [self.value(k, v) for k, v in local_items]},
+                {"name": "Globals", "variables": [self.value(k, v) for k, v in global_items], "expensive": True},
+            ],
+        }
+
+    def value(self, name, v):
+        out = {"name": str(name), "value": _warsha_safe_repr(v), "type": type(v).__name__}
+        if self.expandable(v):
+            self.refs.append(v)
+            out["ref"] = len(self.refs)
+        return out
+
+    def expandable(self, v):
+        if isinstance(v, _WARSHA_LEAF):
+            return False
+        if isinstance(v, (list, tuple, dict, set, frozenset, _wcollections.deque)):
+            return len(v) > 0
+        d = getattr(v, "__dict__", None)
+        if isinstance(d, dict) and any(not str(k).startswith("__") for k in d):
+            return True
+        return bool(self.slot_names(v))
+
+    def slot_names(self, v):
+        names = []
+        for cls in type(v).__mro__:
+            slots = cls.__dict__.get("__slots__", ())
+            if isinstance(slots, str):
+                slots = (slots,)
+            for s in slots:
+                if s not in ("__dict__", "__weakref__") and hasattr(v, s):
+                    names.append(s)
+        return names
+
+    def children(self, ref):
+        if ref < 1 or ref > len(self.refs):
+            raise ValueError("That value is no longer available.")
+        v = self.refs[ref - 1]
+        items = []
+        total = 0
+        if isinstance(v, dict):
+            total = len(v)
+            for i, (k, x) in enumerate(v.items()):
+                if i >= _WARSHA_MAX_CHILDREN:
+                    break
+                items.append((_warsha_safe_repr(k), x))
+        elif isinstance(v, tuple) and hasattr(type(v), "_fields"):
+            total = len(v)
+            items = list(zip(type(v)._fields, v))[:_WARSHA_MAX_CHILDREN]
+        elif isinstance(v, (list, tuple, set, frozenset, _wcollections.deque)):
+            total = len(v)
+            for i, x in enumerate(v):
+                if i >= _WARSHA_MAX_CHILDREN:
+                    break
+                items.append((str(i), x))
+        else:
+            d = getattr(v, "__dict__", None)
+            if isinstance(d, dict):
+                items = [(str(k), x) for k, x in list(d.items()) if not str(k).startswith("__")]
+            for s in self.slot_names(v):
+                items.append((s, getattr(v, s)))
+            total = len(items)
+            items = items[:_WARSHA_MAX_CHILDREN]
+        out = [self.value(k, x) for k, x in items]
+        if total > len(items):
+            out.append({"name": "...", "value": str(total - len(items)) + " more"})
+        return out
+
+    def evaluate(self, expr, index):
+        if index < 0 or index >= len(self.frames):
+            raise ValueError("No such frame.")
+        f = self.frames[index][0]
+        g = f.f_globals
+        l = g if f.f_code.co_name == "<module>" else f.f_locals
+        try:
+            code = compile(expr, "<watch>", "eval")
+        except SyntaxError:
+            # A statement (x = 5) runs for its effect, like the debug console.
+            exec(compile(expr, "<watch>", "exec"), g, l)
+            return {"name": expr, "value": ""}
+        return self.value(expr, eval(code, g, l))
+
+
+def _warsha_error_text(e):
+    if isinstance(e, SyntaxError):
+        return "SyntaxError: " + str(e.msg)
+    msg = str(e)
+    return type(e).__name__ + (": " + msg if msg else "")
 `
 
 // --- formatting (black) ------------------------------------------------------
@@ -628,6 +1086,8 @@ self.onmessage = (ev) => {
   if (msg.type === 'init') {
     ctrl = new Int32Array(msg.sab, 0, 2)
     data = new Uint8Array(msg.sab, 8)
+    dctl = new Int32Array(msg.dbgSab, 0, DBG_HEADER_BYTES >> 2)
+    dbytes = new Uint8Array(msg.dbgSab, DBG_HEADER_BYTES)
     if (msg.isatty === true) isatty = true
     if (typeof msg.indexURL === 'string' && msg.indexURL) indexURL = msg.indexURL
     boot().catch((e) =>
@@ -643,7 +1103,8 @@ self.onmessage = (ev) => {
       resetFs()
       writeProjectFiles(msg.files)
       const t0 = performance.now()
-      const status = runEntry(msg.entry)
+      // JSON, not an object: a JsProxy has no .get(), and undefined -> None.
+      const status = runEntry(msg.entry, msg.debug ? JSON.stringify(msg.debug) : undefined)
       // Even a crashed program keeps whatever it wrote before the crash, exactly
       // like a real disk. Best effort: a failure here must not eat the exit code.
       try {

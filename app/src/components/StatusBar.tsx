@@ -22,6 +22,10 @@ export interface StatusBarProps {
   /** Moves the caret via go-to-line. Optional: until the controller grows `gotoLine()`,
    *  the Ln/Col item renders as plain text rather than a dead button. */
   onGotoLine?(): void
+  /** The open file's drawn indentation (editor/indentDisplay.ts); null hides the item. */
+  indent?: { tabs: boolean; size: number } | null
+  /** Opens the indentation display-size menu, anchored to the item. */
+  onIndentMenu?(anchor: { x: number; y: number; fromRight?: boolean }): void
 }
 
 /** "Java 17" / "Python 3.14" for the two real engines, honest for everything else. */
@@ -48,8 +52,8 @@ const BAR =
 /* Full height so every item inside can paint VSCode's full-height hover fill. */
 const GROUP = 'status-bar__group flex h-full items-center min-w-0'
 // Overflow priority: run state, Ln/Col and language always stay; the entry NAME gives way
-// first (leading flex-1 cell absorbs lost pixels). "Spaces: 4" and the font stepper hide
-// below 480px — both have other homes.
+// first (leading flex-1 cell absorbs lost pixels). The font stepper hides below 480px
+// (its home is the View menu); "Spaces: N" stays — the phone is where it matters.
 const GROUP_LEAD = ' flex-1'
 const GROUP_END = 'status-bar__group--end ms-auto flex-none overflow-hidden pr-[env(safe-area-inset-right)]'
 
@@ -64,7 +68,7 @@ const STATUS_ITEM =
   'hover:bg-statusbar-item-hover hover:text-white active:bg-statusbar-item-active ' +
   'focus-visible:outline-offset-[-1px]'
 
-// Hidden below 480px like "Spaces: 4" — text size keeps its ≥44px home in the View menu.
+// Hidden below 480px — text size keeps its ≥44px home in the View menu.
 const STEPPER = 'status-stepper flex h-full items-center flex-none max-[479px]:hidden'
 
 // Same fill affordance as STATUS_ITEM; disabled at the font range's edges is real state, hence the not-disabled guards.
@@ -95,6 +99,8 @@ export function StatusBar({
   fontSize,
   onFontSize,
   onGotoLine,
+  indent,
+  onIndentMenu,
 }: StatusBarProps) {
   const problemCount = problems ? problems.errors + problems.warnings : 0
   return (
@@ -150,9 +156,22 @@ export function StatusBar({
             <span className={ITEM + ' tabular-nums'}>{COPY.cursorAt(cursor.line, cursor.col)}</span>
           )
         ) : null}
-        {/* Plain text, not a button: indentation is a single global constant (setup.ts), not
-            configurable yet. Hidden below 480px as the lowest-priority item. */}
-        {activePath ? <span className={ITEM + ' flex-none max-[479px]:hidden'}>{COPY.statusBarIndent}</span> : null}
+        {/* VS Code's "Spaces: 4": how wide one level is drawn. A button — it opens the
+            display-size menu (Auto/2/4/8). Kept on phones: that is where it matters. */}
+        {activePath && indent && onIndentMenu ? (
+          <button
+            type="button"
+            className={STATUS_ITEM + ' status-indent tabular-nums'}
+            title={COPY.indentMenuLabel}
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect()
+              onIndentMenu({ x: r.right, y: r.top, fromRight: true })
+            }}
+          >
+            {COPY.statusBarIndent(indent.tabs, indent.size)}
+          </button>
+        ) : null}
         <span className={ITEM + ' flex-none'}>{languageLabel(activePath)}</span>
         <span className={STEPPER}>
           <button

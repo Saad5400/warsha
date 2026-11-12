@@ -157,6 +157,35 @@ Roslyn ~9.5 MB); ~37 MB is actually fetched, brotli-compressing to roughly
   `Environment.Exit`, `1` on a compile error or unhandled exception, `null` when
   killed.
 
+## 9. Debugging (`run(..., { debug })`)
+
+Debug runs only (plain runs compile the untouched trees, zero overhead):
+
+- **Instrumentation** (`harness/Instrumenter.cs`): after a clean compile of the
+  student's own trees (so diagnostics keep their lines), each tree is rewritten
+  with a probe before every statement, on the same line:
+  `if (Dbg.H(file, line)) Dbg.S(names, values, this);`. Locals = the enclosing
+  function's parameters + locals definitely assigned on entry (Roslyn data flow)
+  and declared before the statement; ref structs/pointers skipped. Bodies of
+  methods, constructors, local functions, block lambdas and top-level programs
+  are wrapped in `try { Dbg.E(..) … } catch when (Dbg.T(..)) { throw; } finally { Dbg.X(); }`
+  for the call stack; the entry method's filter (first pass, before unwinding)
+  is the uncaught-exception stop. Async/iterator bodies, property/operator
+  bodies and expression-bodied members are not instrumented (stepped over).
+  If the instrumented compile fails for any reason the program runs plain with
+  a one-line stderr note; the cause goes to the browser console.
+- **Runtime** (`harness/Dbg.cs`, namespace `__Warsha`, reached via
+  `extern alias __wdbg` so nothing leaks into user code): frame stack,
+  breakpoint bitmaps, step modes, VS Code C#-style values and reflection
+  children. The worker references `Warsha.CSharp.dll` only for debug compiles.
+- **Shared memory**: a second SAB (`dsab`, layout in `dotnet.worker.js`) carries
+  the pause flag, the breakpoint set (+ generation counter, polled every 2048
+  lines) and one command slot. A stop posts `debug-stop` and parks on
+  `Atomics.wait`; `variables(ref)` is a `v <id> <ref>` command answered by
+  `debug-vars` while still parked. stdin keeps its own SAB, so `ReadLine` works
+  under the debugger. Cost: ~4x on a call-heavy 100k loop (32 → 132 ms).
+- QA: `tools/qa/debug-csharp.mjs` (dev server; see its header).
+
 ## Open items (M3)
 
 - **QA parity**: ✅ done. `tools/qa/verify-csharp.mjs` (34 checks, `npm run csharp`,

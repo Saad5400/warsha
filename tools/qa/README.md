@@ -76,3 +76,10 @@ the second one survives closing the tab.
 exactly two things and say so: the `/favicon.ico` 404 (the app declares no favicon)
 and ~38 `Network error for null` console errors per Java session, which are CheerpJ
 probing optional JVM paths absent from its CDN. Anything else fails the run.
+
+## Debugger suites
+
+`debug-{js,python,java,csharp,c}.mjs` drive each engine's `DebugSession` directly; `debug-ui.mjs`
+covers the gutter, toolbar, sidebar and keys. They need the **dev server** (`npm run dev`), because
+they use the dev-only `window.__warshaRuntime` seam. Same `WARSHA_URL`/`CHROME`/`WARSHA_SHOTS` env
+vars. Run them one at a time — the C engine is memory-hungry.

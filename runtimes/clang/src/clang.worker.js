@@ -21,7 +21,7 @@
  *
  * Protocol (main -> worker):
  *   { type: "init", sab }
- *   { type: "run", files: { [path]: content }, entry: string }
+ *   { type: "run", files: { [path]: content }, entry: string, debug?: { sab, stopOnEntry } }
  * (worker -> main):
  *   { type: "progress", phase, message, loaded?, total? }
  *   { type: "ready", version, bootMs }
@@ -30,6 +30,22 @@
  *   { type: "files", written, deleted, skipped }   sent before "done"; see below
  *   { type: "done", code, ms }
  *   { type: "fatal", text, duringBoot? }
+ *   { type: "dbg-stop", stopped }       debug runs only: the program is parked
+ *   { type: "dbg-vars", id, vars?, error? }   answer to a variables(ref) request
+ *
+ * DEBUG RUNS (see runtimes/clang/src/instrument.js + app/src/runtime/debug.ts): the
+ * sources are instrumented (tree-sitter-c, loaded on the first debug run only) and
+ * compiled at -O0; the instrumentation calls `warsha.*` wasm imports served by
+ * DebugEngine below. A stop PARKS the program inside the `line` import on
+ * Atomics.wait over a second SharedArrayBuffer — the worker's event loop is blocked
+ * for the whole run, so every control message (resume, pause, breakpoints, variables
+ * requests) travels through that buffer, never postMessage. Layout (Int32 slots):
+ *   [0] state  0 parked/idle · 1 variables request pending · 2 resume
+ *   [1] resume command  0 continue · 1 stepOver · 2 stepInto · 3 stepOut
+ *   [2] pause flag (main sets, worker clears when it stops)
+ *   [3] breakpoint generation · [4] breakpoint JSON byte length
+ *   [5] request id · [6] request ref
+ *   bytes 32.. breakpoint JSON: [{ path, line }]
  */
 import { init, Wasmer, Directory } from 'https://unpkg.com/@wasmer/sdk@0.10.0/dist/index.mjs'
 import {
@@ -69,7 +85,11 @@ __attribute__((constructor)) static void __warsha_unbuffer(void){
 // The guest's stdout is unbuffered (above), so a no-newline prompt reaches us as a
 // write; we buffer host-side for throughput and flush on threshold, before the guest
 // blocks on stdin, and at exit — so prompts are never stranded behind buffering.
+// A completed line also goes out if the last flush was >= FLUSH_INTERVAL_MS ago, so
+// `printf("Working...\n");` before a long computation shows up while it runs (no
+// timer can fire in a busy worker), yet a tight print loop still batches.
 const FLUSH_THRESHOLD = 8192
+const FLUSH_INTERVAL_MS = 50
 
 class OutFd extends Fd {
   constructor(kind) {
@@ -77,10 +97,13 @@ class OutFd extends Fd {
     this.kind = kind // 'stdout' | 'stderr'
     this.decoder = new TextDecoder('utf-8', { fatal: false })
     this.pending = ''
+    this.lastFlush = 0
   }
   fd_write(dataBytes) {
-    this.pending += this.decoder.decode(dataBytes, { stream: true })
+    const text = this.decoder.decode(dataBytes, { stream: true })
+    this.pending += text
     if (this.pending.length >= FLUSH_THRESHOLD) this.flush()
+    else if (text.includes('\n') && performance.now() - this.lastFlush >= FLUSH_INTERVAL_MS) this.flush()
     return { ret: 0, nwritten: dataBytes.byteLength }
   }
   fd_fdstat_get() { return { ret: 0, fdstat: new wasiDefs.Fdstat(CHARDEV, 0) } }
@@ -88,6 +111,7 @@ class OutFd extends Fd {
     if (this.pending.length === 0) return
     self.postMessage({ type: this.kind, text: this.pending })
     this.pending = ''
+    this.lastFlush = performance.now()
   }
 }
 
@@ -233,16 +257,18 @@ function memoryImportLimits(bytes) {
  *  Atomics.wait when the program reads stdin; a Stop is the worker being terminated.
  *  `projectDir` (a Map from buildProjectTree) is preopened as the program's cwd and
  *  mutated in place by the program's file writes. */
-function runWasm(wasmBytes, projectDir) {
+function runWasm(wasmBytes, projectDir, makeDebugger) {
   const out = new OutFd('stdout')
   const err = new OutFd('stderr')
   const flushAll = () => { out.flush(); err.flush() }
+  const dbg = makeDebugger ? makeDebugger(flushAll) : null
   const stdin = new StdinFd(flushAll)
   const wasi = new WASI(['program'], [], [stdin, out, err, new PreopenDirectory('/', projectDir)], { debug: false })
 
   const mod = new WebAssembly.Module(wasmBytes)
   const imports = WebAssembly.Module.imports(mod)
   const importObj = { wasi_snapshot_preview1: wasi.wasiImport }
+  if (dbg) importObj.warsha = dbg.imports()
 
   const wasixNames = imports.filter((i) => i.module === 'wasix_32v1').map((i) => i.name)
   if (wasixNames.length) {
@@ -288,6 +314,7 @@ function runWasm(wasmBytes, projectDir) {
   if (!(instance.exports.memory instanceof WebAssembly.Memory) && mem) {
     Object.defineProperty(instance.exports, 'memory', { value: mem, configurable: true })
   }
+  if (dbg) dbg.mem = mem || instance.exports.memory
 
   // start() returns the process exit code: it catches WASIProcExit (proc_exit,
   // which is how a normal `return N` from main arrives via crt's _start) and
@@ -297,10 +324,376 @@ function runWasm(wasmBytes, projectDir) {
     code = wasi.start(instance)
   } catch (e) {
     flushAll()
+    if (dbg) dbg.trap(e)
     throw e
   }
   flushAll()
   return code
+}
+
+// --- debugger -----------------------------------------------------------------------
+
+const D_STATE = 0, D_CMD = 1, D_PAUSE = 2, D_BPGEN = 3, D_BPLEN = 4, D_REQID = 5, D_REQREF = 6
+const D_HEADER = 32
+const ST_PARKED = 0, ST_REQ = 1, ST_RESUME = 2
+const STEP_MODES = ['continue', 'over', 'into', 'out']
+
+const BASE_SIZES = {
+  char: 1, 'signed char': 1, 'unsigned char': 1, _Bool: 1, short: 2, 'unsigned short': 2,
+  int: 4, 'unsigned int': 4, long: 4, 'unsigned long': 4, 'long long': 8, 'unsigned long long': 8,
+  float: 4, double: 8, 'long double': 16,
+}
+const CHARS = new Set(['char', 'signed char', 'unsigned char'])
+const MAX_CHILDREN = 1000
+const MAX_STRING = 200
+const latin1 = new TextDecoder('utf-8', { fatal: false })
+
+function charLiteral(v) {
+  const c = v & 0xff
+  const named = { 0: '\\0', 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 11: '\\v', 12: '\\f', 13: '\\r', 39: "\\'", 92: '\\\\' }
+  if (named[c]) return `'${named[c]}'`
+  if (c >= 32 && c < 127) return `'${String.fromCharCode(c)}'`
+  return `'\\x${c.toString(16).padStart(2, '0')}'`
+}
+
+function quoteC(s) {
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r').replace(/[\x00-\x1f]/g, (c) => '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0')) + '"'
+}
+
+const fmtFloat = (v) => (Number.isFinite(v) ? String(parseFloat(v.toPrecision(7))) : String(v).replace('Infinity', 'inf'))
+const fmtDouble = (v) => (Number.isFinite(v) ? String(v) : String(v).replace('Infinity', 'inf'))
+
+/** Serves the instrumentation's `warsha.*` imports: a shadow call stack with the
+ *  address + type descriptor of every live variable, the line/step/breakpoint logic,
+ *  and value decoding straight out of wasm memory while parked. */
+class DebugEngine {
+  constructor(sab, meta, stopOnEntry, flush) {
+    this.i32 = new Int32Array(sab, 0, D_HEADER / 4)
+    this.bpBytes = new Uint8Array(sab, D_HEADER)
+    this.meta = meta
+    this.flush = flush
+    this.mem = null
+    this.frames = []        // { name, fid, line, vars: [{ name, addr, desc, dims }] }
+    this.globals = []
+    this.structs = new Map() // key -> { size, fields: [{ name, off, desc, dims }] }
+    this.strs = new Map()
+    this.types = new Map()
+    this.mode = stopOnEntry ? 'entry' : 'continue'
+    this.startDepth = 0
+    this.lastF = -1; this.lastL = -1; this.lastD = -1
+    this.bpGen = -1
+    this.bps = new Map()     // fid -> Set(line)
+    this.refs = [null]
+    this.pathFid = new Map(meta.paths.map((p, i) => [p, i]))
+  }
+
+  imports() {
+    return {
+      line: (f, l) => this.line(f, l),
+      enter: (name, f, l) => { this.frames.push({ name: this.str(name), fid: f, line: l, vars: [] }); return this.frames.length },
+      leave: (d) => { if (d - 1 < this.frames.length) this.frames.length = Math.max(0, d - 1) },
+      mark: () => { const t = this.frames[this.frames.length - 1]; return t ? t.vars.length : 0 },
+      unreg: (m) => { const t = this.frames[this.frames.length - 1]; if (t && m < t.vars.length) t.vars.length = m },
+      reg: (name, addr, desc, d0, d1, d2) => {
+        const t = this.frames[this.frames.length - 1]
+        if (!t) return
+        const v = { name: this.str(name), addr: addr >>> 0, desc: this.str(desc), dims: [d0, d1, d2] }
+        // Unguarded registrations (switch bodies, goto functions) re-run: replace, don't pile up.
+        const i = t.vars.findIndex((x) => x.name === v.name && x.addr === v.addr)
+        if (i >= 0) t.vars[i] = v
+        else t.vars.push(v)
+      },
+      greg: (name, addr, desc, d0, d1, d2) => {
+        const n = this.str(name)
+        if (!this.globals.some((g) => g.name === n)) this.globals.push({ name: n, addr: addr >>> 0, desc: this.str(desc), dims: [d0, d1, d2] })
+      },
+      ssize: (key, size) => {
+        const k = this.str(key)
+        if (!this.structs.has(k)) this.structs.set(k, { size, fields: [] })
+      },
+      sfield: (key, name, desc, off, d0, d1, d2) => {
+        const s = this.structs.get(this.str(key))
+        const n = this.str(name)
+        if (s && !s.fields.some((f) => f.name === n)) s.fields.push({ name: n, off, desc: this.str(desc), dims: [d0, d1, d2] })
+      },
+    }
+  }
+
+  // --- memory -------------------------------------------------------------------
+  u8() { return new Uint8Array(this.mem.buffer) }
+  view() { return new DataView(this.mem.buffer) }
+  inBounds(addr, size) { return addr > 0 && addr + Math.max(size, 1) <= this.mem.buffer.byteLength }
+  cstring(ptr, max) {
+    const u8 = this.u8()
+    let end = ptr
+    const lim = Math.min(u8.length, ptr + max)
+    while (end < lim && u8[end] !== 0) end++
+    return { text: latin1.decode(u8.slice(ptr, end)), truncated: end === lim && u8[end] !== 0 }
+  }
+  /** Interned C string (names, descriptors: string literals with stable addresses). */
+  str(ptr) {
+    let s = this.strs.get(ptr)
+    if (s === undefined) { s = this.cstring(ptr >>> 0, 4096).text; this.strs.set(ptr, s) }
+    return s
+  }
+
+  // --- breakpoints & stepping ---------------------------------------------------
+  reloadBps() {
+    const gen = Atomics.load(this.i32, D_BPGEN)
+    const len = Atomics.load(this.i32, D_BPLEN)
+    this.bpGen = gen
+    let list = []
+    try { list = JSON.parse(new TextDecoder().decode(this.bpBytes.slice(0, len))) } catch { list = [] }
+    const bps = new Map()
+    for (const bp of list) {
+      const fid = this.pathFid.get(bp.path)
+      if (fid === undefined) continue
+      const line = this.snap(fid, bp.line)
+      if (line == null) continue
+      if (!bps.has(fid)) bps.set(fid, new Set())
+      bps.get(fid).add(line)
+    }
+    this.bps = bps
+  }
+  /** A breakpoint on a line with no code (blank, `{`, a declaration without an
+   *  initializer) moves to the next line that has some, within the same function. */
+  snap(fid, line) {
+    const lines = this.meta.lines[fid] || []
+    if (lines.includes(line)) return line
+    const next = lines.find((l) => l > line)
+    if (next == null) return null
+    const fn = (this.meta.funcs[fid] || []).find(([s, e]) => next >= s && next <= e)
+    if (!fn) return null
+    return fn[0] <= line || fn[0] - line <= 2 ? next : null
+  }
+
+  line(f, l) {
+    const depth = this.frames.length
+    const top = this.frames[depth - 1]
+    if (top) { top.line = l; top.fid = f }
+    // Several hooks on one line (`a++; b++;`, a one-line loop, a for header's init +
+    // condition) are one stop, not several: a repeat of the previous event is skipped.
+    const same = f === this.lastF && l === this.lastL && depth === this.lastD
+    this.lastF = f; this.lastL = l; this.lastD = depth
+    if (Atomics.load(this.i32, D_BPGEN) !== this.bpGen) this.reloadBps()
+    const paused = Atomics.load(this.i32, D_PAUSE) !== 0
+    if (same && !paused) return
+    let reason = null
+    if (paused) reason = 'pause'
+    else if (this.mode === 'entry') reason = 'entry'
+    else if (this.bps.get(f)?.has(l)) reason = 'breakpoint'
+    else if (this.mode === 'into' || (this.mode === 'over' && depth <= this.startDepth) || (this.mode === 'out' && depth < this.startDepth)) reason = 'step'
+    if (reason) this.stop(reason)
+  }
+
+  /** Park the program: report the stop, serve variables requests, return on resume. */
+  stop(reason, description) {
+    this.flush()
+    Atomics.store(this.i32, D_PAUSE, 0)
+    this.refs = [null]
+    const stopped = { reason, frames: this.buildFrames() }
+    if (description) stopped.description = description
+    Atomics.store(this.i32, D_STATE, ST_PARKED)
+    self.postMessage({ type: 'dbg-stop', stopped })
+    for (;;) {
+      Atomics.wait(this.i32, D_STATE, ST_PARKED)
+      const s = Atomics.load(this.i32, D_STATE)
+      if (s === ST_REQ) {
+        const id = Atomics.load(this.i32, D_REQID)
+        const ref = Atomics.load(this.i32, D_REQREF)
+        let reply
+        try {
+          reply = { type: 'dbg-vars', id, vars: this.children(ref) }
+        } catch (e) {
+          reply = { type: 'dbg-vars', id, error: String((e && e.message) || e) }
+        }
+        // Back to PARKED *before* replying: the main thread sends the next queued
+        // request the moment this reply lands, and resetting after it would wipe
+        // that request out (both sides then wait forever). The CAS still leaves a
+        // RESUME that raced in untouched.
+        Atomics.compareExchange(this.i32, D_STATE, ST_REQ, ST_PARKED)
+        self.postMessage(reply)
+        continue
+      }
+      if (s === ST_RESUME) break
+    }
+    Atomics.store(this.i32, D_STATE, ST_PARKED)
+    this.mode = STEP_MODES[Atomics.load(this.i32, D_CMD)] || 'continue'
+    this.startDepth = this.frames.length
+    this.refs = [null]
+  }
+
+  /** A trap (segfault, divide by zero, abort) — the shadow stack is still intact
+   *  (cleanups never ran), so show where it happened before the run ends. */
+  trap(e) {
+    if (!this.mem || !this.frames.length) return
+    const msg = String((e && e.message) || e)
+    const desc = /out of bounds/i.test(msg) ? `Segmentation fault: ${msg}`
+      : /divide by zero/i.test(msg) ? `Arithmetic exception: ${msg}`
+      : /unreachable/i.test(msg) ? `Aborted (${msg})`
+      : msg
+    try { this.stop('exception', desc) } catch { /* reporting is best-effort */ }
+  }
+
+  // --- values -------------------------------------------------------------------
+  type(desc, dims) {
+    const key = desc + '|' + dims.join(',')
+    let t = this.types.get(key)
+    if (t) return t
+    let i = 0, di = 0
+    const go = () => {
+      if (desc[i] === '*') { i++; return { k: 'ptr', to: go() } }
+      if (desc[i] === '[') {
+        const j = desc.indexOf(']', i)
+        const inner = desc.slice(i + 1, j)
+        i = j + 1
+        const n = inner === '' ? (dims[di++] | 0) : parseInt(inner, 10) || 0
+        return { k: 'arr', n, of: go() }
+      }
+      return { k: 'base', name: desc.slice(i) }
+    }
+    t = go()
+    this.types.set(key, t)
+    return t
+  }
+  sizeOf(t) {
+    if (t.k === 'ptr') return 4
+    if (t.k === 'arr') return t.n * this.sizeOf(t.of)
+    return BASE_SIZES[t.name] ?? this.structs.get(t.name)?.size ?? 0
+  }
+  typeName(t) {
+    if (t.k === 'base') return t.name.startsWith('?') ? (t.name === '?fn' ? 'function' : t.name.slice(1)) : t.name
+    if (t.k === 'ptr') return t.to.k === 'arr' ? `${this.typeName(t.to)}*` : `${this.typeName(t.to)}*`
+    let dims = ''
+    let e = t
+    while (e.k === 'arr') { dims += `[${e.n}]`; e = e.of }
+    return this.typeName(e) + dims
+  }
+  isScalar(t) { return t.k === 'ptr' || (t.k === 'base' && t.name in BASE_SIZES) }
+  newRef(addr, t, name) { this.refs.push({ addr, t, name }); return this.refs.length - 1 }
+
+  scalar(addr, name) {
+    const dv = this.view()
+    switch (name) {
+      case 'char': case 'signed char': { const v = dv.getInt8(addr); return `${v} ${charLiteral(v)}` }
+      case 'unsigned char': { const v = dv.getUint8(addr); return `${v} ${charLiteral(v)}` }
+      case '_Bool': return dv.getUint8(addr) ? 'true' : 'false'
+      case 'short': return String(dv.getInt16(addr, true))
+      case 'unsigned short': return String(dv.getUint16(addr, true))
+      case 'int': case 'long': return String(dv.getInt32(addr, true))
+      case 'unsigned int': case 'unsigned long': return String(dv.getUint32(addr, true))
+      case 'long long': return String(dv.getBigInt64(addr, true))
+      case 'unsigned long long': return String(dv.getBigUint64(addr, true))
+      case 'float': return fmtFloat(dv.getFloat32(addr, true))
+      case 'double': return fmtDouble(dv.getFloat64(addr, true))
+      case 'long double': return '<long double>'
+    }
+    return '?'
+  }
+
+  /** One-line display of a value; `deep` limits nested previews. */
+  display(addr, t, deep = 0) {
+    const size = this.sizeOf(t)
+    if (!this.inBounds(addr, size)) return `<unreadable 0x${addr.toString(16)}>`
+    if (t.k === 'base') {
+      if (t.name in BASE_SIZES) return this.scalar(addr, t.name)
+      const s = this.structs.get(t.name)
+      if (!s) return t.name.startsWith('?') ? `{…}` : `${t.name} {…}`
+      if (deep > 1) return '{…}'
+      const parts = s.fields.slice(0, 6).map((f) => `${f.name}: ${this.display(addr + f.off, this.type(f.desc, f.dims), deep + 1)}`)
+      return `{${parts.join(', ')}${s.fields.length > 6 ? ', …' : ''}}`
+    }
+    if (t.k === 'ptr') {
+      const p = this.view().getUint32(addr, true)
+      if (p === 0) return 'NULL'
+      const hex = '0x' + p.toString(16)
+      if (t.to.k === 'base' && CHARS.has(t.to.name) && this.inBounds(p, 1)) {
+        const { text, truncated } = this.cstring(p, MAX_STRING)
+        return `${hex} ${quoteC(text)}${truncated ? '…' : ''}`
+      }
+      return hex
+    }
+    // array
+    if (t.of.k === 'base' && CHARS.has(t.of.name)) {
+      const { text, truncated } = this.cstring(addr, Math.min(t.n, MAX_STRING))
+      return quoteC(text) + (truncated && t.n > MAX_STRING ? '…' : '')
+    }
+    if (deep > 1) return '[…]'
+    const es = this.sizeOf(t.of)
+    const n = Math.min(t.n, 10)
+    const parts = []
+    for (let i = 0; i < n; i++) parts.push(this.display(addr + i * es, t.of, deep + 1))
+    return `[${parts.join(', ')}${t.n > n ? ', …' : ''}]`
+  }
+
+  expandable(addr, t) {
+    if (t.k === 'arr') return t.n > 0
+    if (t.k === 'base') return !!this.structs.get(t.name)?.fields.length
+    // pointer: expandable to *p when it points at something we can decode
+    if (t.to.k === 'base' && (t.to.name === 'void' || t.to.name.startsWith('?'))) return false
+    if (!this.inBounds(addr, 4)) return false
+    const p = this.view().getUint32(addr, true)
+    return p !== 0 && this.inBounds(p, Math.max(1, this.sizeOf(t.to)))
+  }
+
+  value(name, addr, t) {
+    const v = { name, value: this.display(addr, t), type: this.typeName(t) }
+    if (this.inBounds(addr, this.sizeOf(t)) && this.expandable(addr, t)) v.ref = this.newRef(addr, t, name)
+    return v
+  }
+
+  children(ref) {
+    const r = this.refs[ref]
+    if (!r) throw new Error('This value is no longer available (the program has moved on).')
+    const { addr, t } = r
+    if (t.k === 'arr') {
+      const es = this.sizeOf(t.of)
+      const out = []
+      for (let i = 0; i < Math.min(t.n, MAX_CHILDREN); i++) out.push(this.value(`[${i}]`, addr + i * es, t.of))
+      return out
+    }
+    if (t.k === 'ptr') {
+      const p = this.view().getUint32(addr, true)
+      return [this.value(`*${r.name}`, p, t.to)]
+    }
+    const s = this.structs.get(t.name)
+    return s ? s.fields.map((f) => this.value(f.name, addr + f.off, this.type(f.desc, f.dims))) : []
+  }
+
+  buildFrames() {
+    const globals = this.globals.map((g) => this.value(g.name, g.addr, this.type(g.desc, g.dims)))
+    const frames = []
+    for (let i = this.frames.length - 1; i >= 0; i--) {
+      const fr = this.frames[i]
+      // An inner block's variable shadows an outer one of the same name: show the live one.
+      const latest = new Map()
+      for (const v of fr.vars) latest.set(v.name, v)
+      const locals = [...latest.values()].map((v) => this.value(v.name, v.addr, this.type(v.desc, v.dims)))
+      const scopes = [{ name: 'Locals', variables: locals }]
+      if (globals.length) scopes.push({ name: 'Globals', variables: globals, expensive: true })
+      frames.push({ name: fr.name, path: this.meta.paths[fr.fid] ?? '', line: fr.line, scopes })
+    }
+    return frames
+  }
+}
+
+// The C parser + instrumenter, loaded on the first DEBUG run only (plain runs never
+// pay for it). Same-origin assets staged into public/ by `npm run assets`.
+let instrumenterPromise = null
+function loadInstrumenter() {
+  if (!instrumenterPromise) {
+    instrumenterPromise = (async () => {
+      const at = (name) => new URL(name, self.location.href).href
+      const TS = await import(at('warsha-web-tree-sitter.js'))
+      await TS.Parser.init({ locateFile: () => at('warsha-web-tree-sitter.wasm') })
+      const parser = new TS.Parser()
+      parser.setLanguage(await TS.Language.load(at('warsha-tree-sitter-c.wasm')))
+      const mod = await import(at('warsha-clang-instrument.js'))
+      return { parser, instrument: mod.instrument, prelude: mod.PRELUDE }
+    })()
+    instrumenterPromise.catch(() => { instrumenterPromise = null })
+  }
+  return instrumenterPromise
 }
 
 // --- compile ---------------------------------------------------------------------
@@ -309,7 +702,7 @@ const decodeMaybe = (x) => (typeof x === 'string' ? x : new TextDecoder().decode
 
 /** Compile all .c files (plus the rt shim) into one WASIX executable. Returns the
  *  wasm bytes, or null after streaming clang's diagnostics if compilation failed. */
-async function compile(files) {
+async function compile(files, opts = {}) {
   const dir = new Directory()
   await dir.writeFile('__warsha_rt.c', RT_SHIM)
   const cfiles = ['/project/__warsha_rt.c']
@@ -317,15 +710,72 @@ async function compile(files) {
     await dir.writeFile(path, content)
     if (path.endsWith('.c')) cfiles.push('/project/' + path)
   }
-  const args = ['-Wl,--export-memory', '-O1', ...cfiles, '-lm', '-o', '/project/out.wasm']
-  const inst = await clang.entrypoint.run({ args, mount: { '/project': dir } })
+  // A debug build: the instrumented sources + the hook prelude force-included into
+  // every TU (so no line moves), -O0, and -w — any warning would quote the
+  // instrumented line; the plain build's diagnostics are the student-facing ones.
+  const extra = []
+  if (opts.prelude) {
+    await dir.writeFile('__wd_prelude.h', opts.prelude)
+    extra.push('-include', '/project/__wd_prelude.h', '-w')
+  }
+  const args = ['-Wl,--export-memory', opts.prelude ? '-O0' : '-O1', ...extra, ...cfiles, '-lm', '-o', '/project/out.wasm']
+  // `stdin: ''` hands clang a CLOSED stdin. Left open, an invocation that doesn't
+  // end in a wasm-ld spawn (e.g. a compile error in any .c but the first, or
+  // -fsyntax-only) sat ~20 s in inst.wait() before returning.
+  const inst = await clang.entrypoint.run({ args, mount: { '/project': dir }, stdin: '' })
   const res = await inst.wait()
   const diag = decodeMaybe(res.stderr)
+  if (opts.quiet) {
+    if (res.code !== 0) { opts.quiet.diag = diag; return null }
+    return await dir.readFile('out.wasm')
+  }
   if (diag) self.postMessage({ type: 'stderr', text: diag.endsWith('\n') ? diag : diag + '\n' })
   if (res.code !== 0) return null
   // `dir` is mounted AT /project inside the guest, so its OWN paths are relative to
   // its root: the guest wrote /project/out.wasm, which is `out.wasm` here.
   return await dir.readFile('out.wasm')
+}
+
+/** Debug build. Returns { wasm, meta } to debug; null after a real compile error;
+ *  or { plainWasm } when only the instrumentation failed — the program still runs,
+ *  just without stopping, and the console says so.
+ *  The instrumented build is compiled quietly (-w; its diagnostics would quote
+ *  instrumented lines). Only if it fails is the PLAIN source compiled, and that
+ *  build's diagnostics are the ones shown — the student's own lines and columns. One
+ *  clang invocation per successful debug run, same as Run (each invocation is costly
+ *  in clang-wasm, so no separate syntax pass). */
+async function compileForDebug(files) {
+  let why = ''
+  for (const layouts of [true, false]) {
+    let instr = null
+    try {
+      const { parser, instrument, prelude } = await loadInstrumenter()
+      const { files: out, meta } = instrument(parser, files, { layouts })
+      instr = { files: { ...files, ...out }, meta, prelude }
+    } catch (e) {
+      why = String((e && e.message) || e)
+      break
+    }
+    const quiet = {}
+    const wasm = await compile(instr.files, { prelude: instr.prelude, quiet })
+    if (wasm) return { wasm, meta: instr.meta }
+    why = quiet.diag || 'unknown'
+    // Only the struct-layout constructor broke (a struct the parser saw but the
+    // preprocessor dropped): retry without layouts — structs then show as `{…}`.
+    if (layouts && /__wd_init_/.test(why)) continue
+    // wasm-ld only runs once every TU compiled, so a link error (undefined function,
+    // two mains) is the student's own; it quotes no source line, so its text is exact.
+    if (/wasm-ld: error:/.test(why) && !/__wd_/.test(why)) {
+      self.postMessage({ type: 'stderr', text: why.endsWith('\n') ? why : why + '\n' })
+      return null
+    }
+    break
+  }
+  const plainWasm = await compile(files)
+  if (!plainWasm) return null
+  console.warn('[warsha c debugger] instrumentation failed:', why)
+  self.postMessage({ type: 'stderr', text: '[Warsha: could not prepare this program for debugging; running it without breakpoints.]\n' })
+  return { plainWasm }
 }
 
 // --- boot -------------------------------------------------------------------------
@@ -408,8 +858,21 @@ self.onmessage = (ev) => {
     ;(async () => {
       const t0 = performance.now()
       let wasm
+      let makeDebugger = null
       try {
-        wasm = await compile(msg.files)
+        if (msg.debug) {
+          const built = await compileForDebug(msg.files)
+          if (built && built.wasm) {
+            wasm = built.wasm
+            makeDebugger = (flush) => new DebugEngine(msg.debug.sab, built.meta, !!msg.debug.stopOnEntry, flush)
+          } else if (built === null) {
+            wasm = null // a genuine compile error, already reported from the plain build
+          } else {
+            wasm = built.plainWasm
+          }
+        } else {
+          wasm = await compile(msg.files)
+        }
       } catch (e) {
         self.postMessage({ type: 'fatal', text: 'compile: ' + String((e && e.stack) || e) })
         return
@@ -417,7 +880,7 @@ self.onmessage = (ev) => {
       if (!wasm) { self.postMessage({ type: 'done', code: 1, ms: Math.round(performance.now() - t0) }); return }
       const projectDir = buildProjectTree(msg.files)
       try {
-        const code = runWasm(wasm, projectDir)
+        const code = runWasm(wasm, projectDir, makeDebugger)
         postFileChanges(msg.files, projectDir)
         self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
       } catch (e) {

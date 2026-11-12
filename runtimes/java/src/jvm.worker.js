@@ -234,6 +234,46 @@ function flushFileChanges() {
   }
 }
 
+// --- debugger (bootstrap/Dbg.java) -------------------------------------------
+// A debug run parks the program inside debugStop exactly like a Scanner read
+// parks it inside readLine: the native returns a promise that the page's next
+// debugger command resolves. Control that arrives while the program RUNS
+// (pause, breakpoint edits) waits in `debugControl` until Dbg polls for it.
+
+/** null on a plain run; otherwise what Dbg has not collected yet. */
+let debugControl = null
+/** Resolves the parked program's pending debugStop/debugReply. */
+let debugWaiter = null
+const debugQueue = []
+
+function debugNextCommand() {
+  if (debugQueue.length) return debugQueue.shift()
+  return new Promise((resolve) => {
+    debugWaiter = resolve
+  })
+}
+
+async function Java_warsha_Bridge_debugStop(lib, json) {
+  post({ type: 'debug-stop', json: String(json) })
+  return await debugNextCommand()
+}
+
+async function Java_warsha_Bridge_debugReply(lib, json) {
+  post({ type: 'debug-vars', json: String(json) })
+  return await debugNextCommand()
+}
+
+/** "pause\tentry\tbreakpoints" (breakpoints "-" = unchanged), or null when nothing is pending. */
+async function Java_warsha_Bridge_debugPoll() {
+  const c = debugControl
+  if (!c || (!c.pause && !c.entry && c.bps === null)) return null
+  const control = `${c.pause ? 1 : 0}\t${c.entry ? 1 : 0}\t${c.bps === null ? '-' : c.bps}`
+  c.pause = false
+  c.entry = false
+  c.bps = null
+  return control
+}
+
 async function Java_warsha_Bridge_writeInternal(lib, text) {
   post({ type: 'internal', level: 'log', text: String(text), noise: false })
 }
@@ -290,6 +330,25 @@ self.onmessage = (event) => {
       )
       return
 
+    case 'debug-cmd': {
+      const waiter = debugWaiter
+      if (waiter) {
+        debugWaiter = null
+        waiter(message.cmd)
+      } else {
+        debugQueue.push(message.cmd)
+      }
+      return
+    }
+
+    case 'debug-bps':
+      if (debugControl) debugControl.bps = message.bps
+      return
+
+    case 'debug-pause':
+      if (debugControl) debugControl.pause = true
+      return
+
     case 'stdin': {
       // message.line === null is EOF.
       const waiter = stdinWaiter
@@ -339,6 +398,9 @@ async function boot(cdnBase) {
       Java_warsha_Bridge_fileWritten,
       Java_warsha_Bridge_fileDeleted,
       Java_warsha_Bridge_fileSkipped,
+      Java_warsha_Bridge_debugStop,
+      Java_warsha_Bridge_debugReply,
+      Java_warsha_Bridge_debugPoll,
     },
   })
   const initMs = performance.now() - started
@@ -568,7 +630,7 @@ async function warmCompiler() {
 
 // --- run -------------------------------------------------------------------
 
-async function compileAndRun({ runId, files, entryPath }) {
+async function compileAndRun({ runId, files, entryPath, debug }) {
   // The Server main died earlier in the session (a student System.exit whose
   // run already reported, or a fatal). The runtime replaces this worker when
   // told; make sure it is told rather than hanging a run forever.
@@ -589,6 +651,9 @@ async function compileAndRun({ runId, files, entryPath }) {
   // stdin design is required to prevent, so the queue is per-run.
   stdinQueue.length = 0
   stdinWaiter = null
+  debugQueue.length = 0
+  debugWaiter = null
+  debugControl = debug ? { pause: false, entry: !!debug.entry, bps: debug.bps || '' } : null
   fileChanges = { written: [], deleted: [], skipped: [] }
 
   // 1. Every project file into /str/, the only mount JS can write. Build
@@ -638,6 +703,7 @@ async function compileAndRun({ runId, files, entryPath }) {
     post({ type: 'compile-failed', code: compileStatus, compileMs })
     return
   }
+  post({ type: 'compiled' })
 
   // 3. Run. The Server launches immediately after reporting the compile, so
   //    the clock starts here. A settled Server main during this wait means the
