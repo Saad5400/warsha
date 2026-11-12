@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { joinText, type NbOutput } from '../../notebook/nbformat'
 import { parseAnsi } from '../../notebook/ansi'
-import { renderMarkdown } from '../../notebook/markdown'
+import { streamDisplay } from '../../notebook/outputs'
+import { renderMarkdown, safeUrl } from '../../notebook/markdown'
 import { texToMathML } from '../../notebook/tex'
 import { COPY } from '../../copy'
 import { MD_PROSE, useMarkdownOptions } from './markdownProse'
@@ -101,6 +102,18 @@ function HtmlFrame({ html }: { html: string }) {
       setHeight(Math.max(16, Math.ceil(d.documentElement.scrollHeight)))
     }
     const onLoad = () => {
+      // Scripts never run in here, but a link is followed by the browser: every one goes through
+      // the markdown sanitizer, so a javascript:/data: URL in a notebook's HTML is inert.
+      for (const a of frame.contentDocument?.querySelectorAll('a, area') ?? []) {
+        for (const attr of ['href', 'xlink:href']) {
+          const v = a.getAttribute(attr)
+          if (v === null) continue
+          const safe = safeUrl(v, {}, false)
+          if (safe && !safe.startsWith('#')) a.setAttribute(attr, safe)
+          else if (!safe) a.removeAttribute(attr)
+        }
+        a.setAttribute('rel', 'noopener noreferrer')
+      }
       measure()
       const d = frame.contentDocument
       if (d?.body) {
@@ -118,8 +131,9 @@ function HtmlFrame({ html }: { html: string }) {
     <iframe
       ref={ref}
       title={COPY.nbOutputLabel}
-      // No allow-scripts: nothing in here ever runs. allow-same-origin only lets us measure it.
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      // No allow-scripts: nothing in here ever runs. allow-same-origin only lets us measure it and
+      // vet its links. Popups stay sandboxed too (no escape), so nothing a link opens can script.
+      sandbox="allow-same-origin allow-popups"
       srcDoc={doc}
       style={{ height }}
       className="block w-full border-0 bg-transparent"
@@ -193,7 +207,7 @@ export function OutputView({ output }: { output: NbOutput }) {
           data-stream={err ? 'stderr' : 'stdout'}
           className={PRE + (err ? ' -mx-2 px-2 bg-danger-soft/60 border-s-2 border-danger' : '')}
         >
-          <Ansi text={joinText(output.text)} />
+          <Ansi text={streamDisplay(joinText(output.text))} />
         </pre>
       )
     }

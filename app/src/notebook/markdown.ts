@@ -30,13 +30,38 @@ export interface MarkdownOptions {
 export const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
-function safeUrl(raw: string, opts: MarkdownOptions, image: boolean): string | null {
-  const url = raw.trim().replace(/^<|>$/g, '')
+/**
+ * A URL from a notebook, read the way the browser will read it, then allowed
+ * only if it is http(s), mailto, an in-page #fragment or a relative path.
+ *
+ * The browser strips leading and trailing C0 controls and spaces and removes
+ * every tab, CR and LF before it parses a URL — so "\u0001javascript:…" and
+ * "java\tscript:…" ARE javascript: URLs, and a check on the raw text calls
+ * them relative. Cleaning first and then allowlisting (never blocklisting
+ * schemes) is what makes the check see what the browser sees. A backslash is
+ * refused outright (`\\host` parses as `//host`), and a protocol-relative
+ * `//host` is spelled out as https.
+ */
+export function safeUrl(raw: string, opts: MarkdownOptions, image: boolean): string | null {
+  const url = raw
+    .replace(/^<|>$/g, '')
+    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
+    .replace(/[\t\n\r]/g, '')
+  if (!url || /[\u0000-\u001f\u007f\\]/.test(url)) return null
   if (url.startsWith('attachment:')) return opts.attachment?.(url.slice('attachment:'.length)) ?? null
-  if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml);/i.test(url)) return image ? url : null
+  if (/^data:image\/(png|jpe?g|gif|webp);/i.test(url)) return image ? url : null
   if (/^(https?:|mailto:)/i.test(url)) return url
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return null // javascript:, vbscript:, file:, …
+  if (url.startsWith('//')) return 'https:' + url
+  // Anything else with a scheme (javascript:, data:, vbscript:, file:, a made-up one) is refused.
+  if (/^[^/?#]*:/.test(url)) return null
   return url
+}
+
+/** An anchor to a sanitised URL. Every link but an in-page #fragment opens in a new tab:
+ *  a relative or remote one in this tab would navigate the IDE away from the student's work. */
+function anchor(href: string, inner: string, title?: string): string {
+  const away = !href.startsWith('#')
+  return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}${away ? ' target="_blank" rel="noopener noreferrer"' : ''}>${inner}</a>`
 }
 
 /* ------------------------------------------------------------ inline */
@@ -67,13 +92,22 @@ function sanitizeTag(tag: string, opts: MarkdownOptions): string {
       attrs.push(`style="text-align:${value.toLowerCase()}"`)
     }
   }
-  if (name === 'a') attrs.push('target="_blank" rel="noopener noreferrer"')
+  if (name === 'a' && attrs.some((a) => a.startsWith('href="') && !a.startsWith('href="#'))) attrs.push('target="_blank" rel="noopener noreferrer"')
   return `<${out}${attrs.length ? ' ' + attrs.join(' ') : ''}>`
 }
 
 /** Inline spans. Code spans and math are cut out first so nothing inside them is formatted. */
 export function renderInline(src: string, opts: MarkdownOptions = {}): string {
   const held: string[] = []
+  let s = inline(src, opts, held)
+  // Held pieces can hold placeholders of their own (a code span inside link text).
+  while (/\u0000\d+\u0000/.test(s)) s = s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => held[Number(i)])
+  return s
+}
+
+/** One inline pass. Pieces cut out are parked in `held` (shared with any nested pass, so a
+ *  placeholder from link text resolves in the outer string) and put back by renderInline. */
+function inline(src: string, opts: MarkdownOptions, held: string[]): string {
   const hold = (html: string) => `\u0000${held.push(html) - 1}\u0000`
   let s = src
   // Code spans (any run of backticks, matched by an equal run).
@@ -84,7 +118,7 @@ export function renderInline(src: string, opts: MarkdownOptions = {}): string {
   // Backslash escapes.
   s = s.replace(/\\([\\`*_{}[\]()#+\-.!|~<>$])/g, (_, c: string) => hold(escapeHtml(c)))
   // Inline HTML tags, sanitized; and autolinks.
-  s = s.replace(/<(https?:\/\/[^>\s]+)>/g, (_, url: string) => hold(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`))
+  s = s.replace(/<(https?:\/\/[^>\s]+)>/g, (_, url: string) => hold(anchor(url, escapeHtml(url))))
   s = s.replace(/<\/?[a-zA-Z][^<>]*>/g, (tag) => hold(sanitizeTag(tag, opts)))
   // Images, then links.
   s = s.replace(/!\[([^\]]*)\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)/g, (_, alt: string, url: string, title?: string) => {
@@ -93,13 +127,11 @@ export function renderInline(src: string, opts: MarkdownOptions = {}): string {
   })
   s = s.replace(/\[([^\]]+)\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)/g, (_, text: string, url: string, title?: string) => {
     const safe = safeUrl(url, opts, false)
-    const inner = renderInline(text, opts)
-    if (!safe) return hold(inner)
-    const external = /^(https?:|mailto:)/i.test(safe)
-    return hold(`<a href="${escapeHtml(safe)}"${title ? ` title="${escapeHtml(title)}"` : ''}${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>${inner}</a>`)
+    const inner = inline(text, opts, held)
+    return hold(safe ? anchor(safe, inner, title) : inner)
   })
   // Bare URLs.
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?'"])/g, (_, pre: string, url: string) => pre + hold(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`))
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?'"])/g, (_, pre: string, url: string) => pre + hold(anchor(url, escapeHtml(url))))
   s = escapeHtml(s)
   // Emphasis on the escaped text (markers are not touched by escaping).
   s = s.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '<strong>$2</strong>')
@@ -108,7 +140,7 @@ export function renderInline(src: string, opts: MarkdownOptions = {}): string {
   s = s.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>')
   // Hard breaks: two trailing spaces or a backslash before a newline.
   s = s.replace(/(?: {2,}|\\)\n/g, '<br>\n')
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => held[Number(i)])
+  return s
 }
 
 /* ------------------------------------------------------------- blocks */
