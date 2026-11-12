@@ -52,6 +52,7 @@ type FromWorker =
   | { type: 'ready'; version: string; bootMs: number }
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
+  | { type: 'started' }
   | { type: 'stdin-request' }
   | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'done'; code: number; ms: number }
@@ -488,6 +489,11 @@ export class PythonRuntime implements Runtime, NotebookKernel {
 
       case 'stderr':
         this.active?.io.onStderr(msg.text)
+        return
+
+      case 'started':
+        // The imported packages are in and the program's own code is starting.
+        if (this.active && !this.active.ended) this.active.io.onStarted?.()
         return
 
       case 'stdin-request':

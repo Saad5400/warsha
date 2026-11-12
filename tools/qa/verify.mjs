@@ -120,7 +120,7 @@ else fail('template output is correct', `missing: ${JSON.stringify(missing)}`)
 
 // The stdin row must be in its waiting state, and the prompt must already be visible.
 const waiting = await page.locator('[aria-label="Program input"]').getAttribute('placeholder')
-if (waiting === 'Type your answer, then press Enter') pass('stdin row switched to waiting state', `placeholder: "${waiting}"`)
+if (waiting === 'Type here, then Enter') pass('stdin row switched to waiting state', `placeholder: "${waiting}"`)
 else fail('stdin row switched to waiting state', `placeholder: "${waiting}"`)
 if (beforeInput.includes('Your name:') && !beforeInput.includes('Hello,'))
   pass('input() prompt appeared BEFORE input was requested', 'partial line painted with no trailing newline')

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '../fs/project'
-import { entryCandidates, runtimeFor } from '../runtime'
+import { entryCandidates, langForPath, languageName, runtimeFor } from '../runtime'
 import { normalizeProgress, type LoadProgress, type RunSession, type Runtime } from '../runtime/types'
 import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
 import { COPY } from '../copy'
 import { langOfEntry, track } from '../analytics'
 import { debugStore } from '../debug/store'
+import { createStallWatchdog, type StallWatchdog } from '../runtime/stallWatchdog'
 
 /**
  * Run status. Drives the single Run/Stop control and the status pill, and is
@@ -34,6 +35,10 @@ export interface RunnerState {
   busy: boolean
   /** Set when the last run could not start. Cleared by the next Run. */
   failure: RunFailure | null
+  /** How long the last program ran, from its start (after loading) to its exit; null while running or if it never started. */
+  durationMs: number | null
+  /** The file the current (or last) run started — not the picker's selection, which can change mid-run. */
+  entry: string | null
   /** The `kind: 'preview'` run's document, for the shell's iframe; null for console runs and between runs. `console.log` still goes through stdout, unaffected. */
   previewDoc: string | null
 }
@@ -44,15 +49,18 @@ const SWAP_GUARD_MS = 250
 /** Backstop for Stop when `onExit` never comes — e.g. the worker was already killed (iPad memory pressure). Without it, `busy` stays true forever with no way to recover but reloading. */
 const FORCE_STOP_MS = 2000
 
-/** Deliberately generous (Pyodide is ~11.6MB on slow wifi) — resets on every report, so only a truly dead (blackholed) connection trips it. */
-const LOAD_STALL_MS = 45_000
-
 /** Turns a raw engine error (e.g. `TypeError: Failed to fetch`, a CheerpJ stack trace) into something a student can act on. */
 export function classifyRunFailure(error: unknown, lang: string): RunFailure {
   const detail = String((error as { message?: string } | null)?.message ?? error ?? '')
 
   if (/cross-origin isolation|SharedArrayBuffer/i.test(detail)) {
     return { kind: 'isolation', message: COPY.engineIsolation, hint: COPY.engineIsolationHint, detail }
+  }
+  // The browser knowing it is offline outranks any error text: an offline first run
+  // can fail before a single fetch, e.g. the engine's worker script not loading,
+  // which says only "worker failed to start" and would read as a broken engine.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { kind: 'offline', message: COPY.engineOffline(lang), hint: COPY.engineOfflineHint, detail }
   }
   if (
     /failed to fetch|networkerror|load failed|err_|net::|importScripts|Failed to load|ERR_INTERNET/i.test(detail) ||
@@ -70,6 +78,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     progress: null,
     busy: false,
     failure: null,
+    durationMs: null,
+    entry: null,
     previewDoc: null,
   })
 
@@ -84,6 +94,10 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
   /** The engine of the run in flight, so a forced recovery can dispose it. */
   const activeRuntime = useRef<Runtime | null>(null)
   const forceStopTimer = useRef(0)
+  /** Watches the run's loading for a stall (see stallWatchdog.ts); stopped with the other timers. */
+  const watchdog = useRef<StallWatchdog | null>(null)
+  /** When the program's own code began (after any download or compile), for `durationMs`. */
+  const programStart = useRef(0)
 
   /** The Console registers how to focus its input row. */
   const bindStdinFocus = useCallback((fn: (() => void) | null) => {
@@ -97,6 +111,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       clearTimeout(forceStopTimer.current)
       forceStopTimer.current = 0
     }
+    watchdog.current?.stop()
   }
 
   useEffect(() => clearTimers, [])
@@ -121,7 +136,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       if (note) buffer.line(note, failure ? 'err' : 'meta')
       // Must read true immediately — no paced reveal owing lines under an error already on screen.
       buffer.catchUp()
-      setState({ status, exitCode: null, progress: null, busy: false, failure, previewDoc: null })
+      setState((s) => ({ status, exitCode: null, progress: null, busy: false, failure, durationMs: null, entry: s.entry, previewDoc: null }))
     },
     [buffer],
   )
@@ -156,9 +171,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     [state.busy, deliverStdin],
   )
 
-  const stop = useCallback(() => {
+  /** `force` skips the swap guard, which is for a thumb's double tap on the control that
+   *  just turned into Stop — never for the app's own stops (a project switch right after
+   *  Run used to leave the old project's program running). */
+  const halt = useCallback((force: boolean) => {
     if (!state.busy) return
-    if (Date.now() - swapAt.current < SWAP_GUARD_MS) return
+    if (!force && Date.now() - swapAt.current < SWAP_GUARD_MS) return
     clearTimers()
     awaiting.current = false
     typedAhead.current = []
@@ -168,6 +186,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     if (session.current) {
       const mine = token.current
       session.current.kill()
+      // Python's kill() reports onExit synchronously, before this line, and onExit
+      // has already cleared the timers and the session. Arming the backstop now
+      // would fire 2 s later on a run that ended cleanly: "stopped responding",
+      // and Stopped by you turned into Stopped early.
+      if (!session.current) return
       // A live engine clears this timer via onExit fast; a dead one never answers,
       // so this is what makes Stop actually recover.
       forceStopTimer.current = window.setTimeout(() => {
@@ -182,6 +205,10 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     // Killed during engine load: invalidate so nothing lands later.
     abandonRun(null, COPY.runStopped, 'stopped')
   }, [state.busy, abandonRun, buffer])
+  /** The Stop control (tap-guarded). */
+  const stop = useCallback(() => halt(false), [halt])
+  /** The app's own stop: a project switch, a shared link landing, a debug restart. */
+  const forceStop = useCallback(() => halt(true), [halt])
 
   /** `debug: true` runs under the debugger when the entry's engine supports it (else a plain run). */
   const run = useCallback(async (opts?: { debug?: boolean }) => {
@@ -203,13 +230,13 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     const entry = entryPath && candidates.includes(entryPath) ? entryPath : candidates[0]
     if (!entry) {
       buffer.line(COPY.noEntry, 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, previewDoc: null })
+      setState((s) => ({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, entry: s.entry, previewDoc: null }))
       return
     }
     const runtime = runtimeFor(entry)
     if (!runtime) {
       buffer.line(COPY.cannotRun(entry), 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, previewDoc: null })
+      setState((s) => ({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, entry: s.entry, previewDoc: null }))
       return
     }
 
@@ -242,7 +269,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     buffer.clear()
     debugStore.begin(debugging)
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
-    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, previewDoc: null })
+    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, durationMs: null, entry, previewDoc: null })
 
     // Loading speaks only through ProgressBlock (single progress voice) — nothing
     // else lands in the transcript while booting; the stall watchdog is the only
@@ -250,53 +277,73 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     clearTimers()
 
     try {
-      // A blackholed connection (dropped, not refused, packets) never errors or
-      // times out on its own — we watch for the *absence* of progress instead,
-      // resetting on every report.
-      let stall = 0
-      const armStall = () => {
-        clearTimeout(stall)
-        stall = window.setTimeout(() => {
-          if (token.current !== mine) return
-          const failure = classifyRunFailure(new Error('timed out'), langName(entry))
-          track('run_failed', { lang, kind: failure.kind })
-          abandonRun(failure, failure.message, 'failed')
-        }, LOAD_STALL_MS)
-        timers.current.push(stall)
-      }
-      armStall()
+      // Loading only — see stallWatchdog.ts for every case it does and does not
+      // fire on. `loaded` tells a stuck package download (inside run()) apart
+      // from a stuck language download, so the message names the right thing.
+      let loaded = false
+      const dog = createStallWatchdog((kind) => {
+        if (token.current !== mine) return
+        const failure: RunFailure =
+          kind === 'busy'
+            ? { kind: 'engine', message: COPY.engineBroken(langName(entry)), hint: COPY.engineStuckHint }
+            : loaded
+              ? { kind: 'offline', message: COPY.packagesOffline, hint: COPY.engineOfflineHint }
+              : classifyRunFailure(new Error('timed out'), langName(entry))
+        track('run_failed', { lang, kind: failure.kind })
+        abandonRun(failure, failure.message, 'failed')
+      })
+      watchdog.current = dog
+      dog.report(null)
 
       await runtime.load(
         (report) => {
           if (token.current !== mine) return
-          armStall()
           const p = normalizeProgress(report)
+          dog.report(p)
           setState((s) => ({ ...s, progress: p }))
         },
         { files, entry },
       )
       if (token.current !== mine) return
       clearTimers()
+      loaded = true
+      programStart.current = Date.now()
 
       // No "Running…" row (read as program output). Status flips immediately so
-      // Stop always works; `progress` isn't cleared yet — Java compiles inside
-      // run(), so clearing early blanked the console for ~20s.
-      setState((s) => ({ ...s, status: 'running' }))
+      // Stop always works. The boot's last report goes with it: left up, C#'s
+      // "Getting the compiler ready" sat over a running program, counter climbing,
+      // until its first output. (Java's compile, which runs inside run(), now
+      // reports through onProgress within 250 ms, so the console no longer blanks.)
+      setState((s) => ({ ...s, status: 'running', progress: null }))
 
-      // The program has spoken, so whatever onProgress reported is over: drop the
-      // block and the stall watchdog with it. A run-phase report (Java's compile,
-      // Python's numpy download) re-arms the watchdog, and left armed it abandoned
-      // a program parked in input() 45 s later as "could not download".
+      // The program has started (or spoken), so whatever onProgress reported is
+      // over: drop the block and the stall watchdog with it. A run-phase report
+      // (Java's compile, Python's numpy download) re-arms the watchdog, and left
+      // armed it abandoned a program parked in input(), or computing in silence,
+      // 45 s later as "could not download".
+      let loadingInRun = false
       const clearProgress = () => {
-        clearTimeout(stall)
-        if (token.current === mine) setState((s) => (s.progress ? { ...s, progress: null } : s))
+        dog.stop()
+        if (token.current !== mine) return
+        // The clock restarts at the end of an in-run compile or package
+        // download, so "Finished · 2s" times the program and not the wait.
+        if (loadingInRun) {
+          loadingInRun = false
+          programStart.current = Date.now()
+        }
+        setState((s) => (s.progress ? { ...s, progress: null } : s))
       }
 
       const s = await runtime.run(files, entry, {
         onProgress: (report) => {
           if (token.current !== mine) return
-          armStall()
-          setState((s) => ({ ...s, progress: normalizeProgress(report) }))
+          loadingInRun = true
+          const p = normalizeProgress(report)
+          dog.report(p)
+          setState((s) => ({ ...s, progress: p }))
+        },
+        onStarted: () => {
+          if (token.current === mine) clearProgress()
         },
         onStdout: (t) => {
           if (token.current !== mine) return
@@ -373,14 +420,16 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           // The exit code itself is not sent — a non-zero code is a student's
           // own bug, and how it failed is their business. Only that it did.
           track('run_finished', { lang, result: code === null ? 'stopped' : code === 0 ? 'ok' : 'error' })
-          setState({
+          setState((s) => ({
+            entry: s.entry,
             status: code === null ? 'stopped' : code === 0 ? 'ok' : 'failed',
             exitCode: code,
             progress: null,
             busy: false,
             failure: null,
+            durationMs: Date.now() - programStart.current,
             previewDoc: null,
-          })
+          }))
         },
       }, debugging ? { debug: { breakpoints: debugStore.enabledBreakpoints() } } : undefined)
 
@@ -405,17 +454,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
   /** Dismiss the failure block without starting a run. */
   const clearFailure = useCallback(() => setState((s) => (s.failure ? { ...s, failure: null } : s)), [])
 
-  return { ...state, run, stop, submitStdin, bindStdinFocus, clearFailure }
+  return { ...state, run, stop, forceStop, submitStdin, bindStdinFocus, clearFailure }
 }
 
 /** The language name, for a sentence a student reads in a failure message. */
 function langName(entryPath: string): string {
-  if (entryPath.endsWith('.java')) return 'Java'
-  if (entryPath.endsWith('.py')) return 'Python'
-  if (entryPath.endsWith('.cs')) return 'C#'
-  if (/\.(tsx?|mts|cts)$/i.test(entryPath)) return 'TypeScript'
-  if (/\.(m?js|cjs|jsx)$/i.test(entryPath)) return 'JavaScript'
-  if (/\.html?$/i.test(entryPath)) return 'the web preview'
-  if (/\.css$/i.test(entryPath)) return 'the web preview'
-  return 'the language'
+  if (langForPath(entryPath) === 'web') return 'the web preview'
+  return languageName(entryPath) ?? 'the language'
 }

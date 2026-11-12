@@ -1,15 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LoadProgress } from '../runtime/types'
+import { progressPercent, type LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
+import { useAfter } from '../ui/useAfter'
 
 // The engine's own `message` is deliberately never rendered — showing it alongside
-// this phase label would read as two competing progress reports.
-const phaseLabel = (phase: LoadProgress['phase']): string =>
+// this phase label would read as two competing progress reports. `inRun` is what
+// tells the same phase apart: a download inside a run is Python's packages (the
+// language is already here), and a compile during boot is C/C#'s compiler warm-up,
+// not the student's code.
+const phaseLabel = (phase: LoadProgress['phase'], inRun: boolean, language: string | null): string =>
   ({
-    download: COPY.phaseDownloading,
+    download: inRun ? COPY.phasePackages : language ? COPY.phaseDownloadingLang(language) : COPY.phaseDownloading,
     unpack: COPY.phaseUnpacking,
-    boot: COPY.phaseStarting,
-    compile: COPY.phaseCompiling,
+    boot: language ? COPY.phaseStartingLang(language) : COPY.phaseStarting,
+    compile: inRun ? COPY.phaseCompiling : COPY.phasePreparingCompiler,
+  })[phase]
+
+/** The sentence that says a long phase is expected, and how soon it may show. Unpack is too short to need one. */
+const phaseNote = (phase: LoadProgress['phase'], inRun: boolean): { text: string; afterMs: number } | null =>
+  ({
+    // Soon, not instantly: a cached engine's download is over before this would show.
+    download: { text: inRun ? COPY.phasePackagesNote : COPY.runtimeFirstRunNote, afterMs: 2000 },
+    unpack: null,
+    boot: { text: COPY.phaseBootNote, afterMs: 5000 },
+    compile: { text: inRun ? COPY.phaseCompileNote : COPY.phaseCompilerNote, afterMs: 5000 },
   })[phase]
 
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -26,7 +40,9 @@ const META = 'font-code text-meta leading-normal tabular-nums text-text-3'
 /* `progress-block` and `progress-track` carry no styling — tools/qa reads them. */
 const TRACK = 'progress-track relative flex-1 h-1 overflow-hidden rounded-pill bg-surface-4'
 const FILL = 'h-full rounded-pill bg-accent transition-[width] duration-200 ease-linear'
-const SWEEP = 'w-[30%] animate-sweep motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
+/** The indeterminate sweep, shared with the console header's activity line (RunBar). */
+export const SWEEP =
+  'w-[30%] animate-sweep motion-safe:rtl:animate-sweep-rtl motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
 
 /**
  * First-run engine download (spec §7.6), rendered in the console rather than a modal.
@@ -34,29 +50,45 @@ const SWEEP = 'w-[30%] animate-sweep motion-reduce:animate-none motion-reduce:w-
  * student assumes the site is broken and closes the tab — so an indeterminate bar
  * always pairs with a live byte counter, or elapsed seconds when there are no bytes at all.
  */
-export function ProgressBlock({ progress }: { progress: LoadProgress }) {
+export function ProgressBlock({
+  progress,
+  inRun = false,
+  language = null,
+}: {
+  progress: LoadProgress
+  /** Reported from inside run() (Java's compile, Python's packages) rather than the language's own boot. */
+  inRun?: boolean
+  /** "Python", "Java" — null where there is no language name to give. */
+  language?: string | null
+}) {
   const { loaded, total, phase } = progress
-  const determinate = typeof loaded === 'number' && typeof total === 'number' && total > 0
-  const pct = determinate ? Math.min(100, Math.round((loaded! / total!) * 100)) : null
-  const elapsed = useElapsedSeconds(phase, !determinate)
+  const pct = progressPercent(progress)
+  const determinate = pct !== null
+  // A determinate bar is its own clock — until the bytes stop moving for a moment (a
+  // slow file's headers, a congested link). Then the seconds show, so the line never sits still.
+  const bytesIdle = useAfter(determinate, 2000, loaded)
+  const elapsed = useElapsedSeconds(phase, !determinate || bytesIdle)
   const eta = useEta(phase, determinate ? loaded! : null, determinate ? total! : null)
-  const slowFirstRun = useSlowFirstDownload(phase)
+  const note = phaseNote(phase, inRun)
+  const showNote = useAfter(note !== null, note?.afterMs ?? 0, phase)
 
   // One line of numbers only — the headline above already names the phase.
   const detail = [
     typeof loaded === 'number'
       ? determinate
-        ? `${mb(loaded)} of ${mb(total!)}`
+        ? COPY.progressOf(mb(loaded), mb(total!))
         : mb(loaded)
       : null,
     pct !== null ? `${pct}%` : null,
     eta,
-    elapsed !== null ? `${elapsed}s` : null,
+    elapsed !== null ? COPY.elapsedSeconds(elapsed) : null,
   ].filter(Boolean)
 
   return (
-    <div data-phase={phase} className={BLOCK}>
-      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel(phase)}</p>
+    // aria-live off: the block sits in the transcript's polite log, and its counters
+    // would be read out every second. Only the headline speaks, when the phase changes.
+    <div data-phase={phase} className={BLOCK} aria-live="off">
+      <p aria-live="polite" className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel(phase, inRun, language)}</p>
 
       <div className="mt-2 flex items-center gap-2">
         <div className={TRACK}>
@@ -70,9 +102,7 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
       </div>
 
       <p className={META + ' mt-2'}>{detail.join(' · ')}</p>
-      {slowFirstRun ? (
-        <p className="m-0 font-ui text-meta leading-normal text-text-3">{COPY.runtimeFirstRunNote}</p>
-      ) : null}
+      {note && showNote ? <p className="m-0 font-ui text-meta leading-normal text-text-3">{note.text}</p> : null}
     </div>
   )
 }
@@ -85,36 +115,25 @@ export function ProgressBlock({ progress }: { progress: LoadProgress }) {
  */
 function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): number | null {
   const [elapsed, setElapsed] = useState(0)
+  // Counted from the phase's start, not from when the counter appears: a counter that
+  // shows up at "0s" twenty seconds into a download would undersell the wait.
+  const [started, setStarted] = useState(() => Date.now())
 
   useEffect(() => {
+    setStarted(Date.now())
     setElapsed(0)
+  }, [phase])
+
+  useEffect(() => {
     if (!active) return
-    const started = Date.now()
-    const id = window.setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000)
+    const tick = () => setElapsed(Math.round((Date.now() - started) / 1000))
+    tick()
+    const id = window.setInterval(tick, 1000)
     return () => window.clearInterval(id)
-  }, [phase, active])
+  }, [started, active])
 
   // From zero, not one: the line under the bar must never be empty (§7.6).
   return active ? elapsed : null
-}
-
-/**
- * True once `download` has run 8s without finishing — a cached engine clears it well
- * under that, so this only fires on a genuine slow first run.
- */
-function useSlowFirstDownload(phase: LoadProgress['phase']): boolean {
-  const [slow, setSlow] = useState(false)
-
-  useEffect(() => {
-    if (phase !== 'download') {
-      setSlow(false)
-      return
-    }
-    const id = window.setTimeout(() => setSlow(true), 8000)
-    return () => window.clearTimeout(id)
-  }, [phase])
-
-  return slow
 }
 
 /**
@@ -151,8 +170,8 @@ function useEta(phase: LoadProgress['phase'], loaded: number | null, total: numb
 
 function humanEta(seconds: number): string | null {
   if (!Number.isFinite(seconds)) return null
-  if (seconds < 10) return 'a few seconds left'
-  if (seconds < 90) return `about ${Math.round(seconds / 5) * 5}s left`
-  if (seconds < 150) return 'about a minute left'
-  return `about ${Math.round(seconds / 60)} min left`
+  if (seconds < 10) return COPY.etaFewSeconds
+  if (seconds < 90) return COPY.etaSeconds(Math.round(seconds / 5) * 5)
+  if (seconds < 150) return COPY.etaMinute
+  return COPY.etaMinutes(Math.round(seconds / 60))
 }

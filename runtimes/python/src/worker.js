@@ -21,6 +21,7 @@
  *                                           after "ready" the download of the
  *                                           packages a run imports (before it starts)
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
+ *   { type: "started" }                     packages loaded; the program's own code begins
  *   { type: "stdout" | "stderr", text }     one message per Python write
  *   { type: "stdin-request" }               parked in input()
  *   { type: "files", written, deleted, skipped }  what the program did to the
@@ -261,14 +262,17 @@ function postDownloadProgress(force) {
   if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
   lastProgressAt = now
   // bytesAnnounced only grows as each Content-Length is seen, so clamp with
-  // the floor to keep the bar from jumping backwards.
+  // the floor to keep the bar from jumping backwards. Packages have no floor:
+  // their total would only count the files already started, and the bar read
+  // "100%" with megabytes still to come. So they report bytes alone, and the
+  // shell shows an indeterminate sweep with a live counter instead.
   const expected = Math.max(downloadFloor, bytesAnnounced)
   self.postMessage({
     type: 'progress',
     phase: 'download',
     message: downloadMessage,
     loaded: bytesLoaded,
-    ...(expected > 0 ? { total: Math.max(expected, bytesLoaded) } : {}),
+    ...(downloadFloor > 0 ? { total: Math.max(expected, bytesLoaded) } : {}),
   })
 }
 
@@ -1411,6 +1415,9 @@ async function runProgram(msg) {
       self.postMessage({ type: 'done', code: 1, ms: 0 })
       return
     }
+    // From here on it is the student's code, not loading: the shell drops the
+    // package progress (and its stall watchdog) on this, not on first output.
+    self.postMessage({ type: 'started' })
     resetFs()
     writeProjectFiles(msg.files)
     const t0 = performance.now()

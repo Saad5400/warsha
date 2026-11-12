@@ -625,6 +625,8 @@
      site. The keyframes themselves are at the end of this file. */
   --animate-dot-pulse: warsha-pulse 1.4s var(--ease) infinite;
   --animate-sweep: warsha-sweep 1.4s var(--ease) infinite;
+  /* Its mirror, for `rtl:` — an Arabic page's bar fills right to left, so its sweep runs that way too. */
+  --animate-sweep-rtl: warsha-sweep-rtl 1.4s var(--ease) infinite;
   --animate-spinner: warsha-spin 700ms linear infinite;
 
   /* Overlay motion, for the Radix primitives in components/ui. Enter is the
@@ -1267,10 +1269,31 @@
      rather than a red line. It reuses `.note--danger`'s anatomy so it reads as
      part of the same product as the import dialog's warnings, and it sits INSIDE
      the transcript so it cannot cover the output a student is reading. */
-  .console-failure {
+  .console-failure,
+  .console-quiet {
     margin: var(--sp-2) 0;
   }
-  .console-failure__title {
+  /* Warsha's own blocks in the transcript (loading, still running, failure) are
+     interface text, not stdout: they take the interface's direction, which the
+     transcript's own LTR would otherwise force on an Arabic sentence. */
+  html[dir='rtl'] .console-transcript :is(.progress-block, .note) {
+    direction: rtl;
+  }
+  /* "Still running" — a program quiet for 30 s. Not a warning: it carries the
+     accent rule a running process has everywhere else (DESIGN-SPEC §1.3), the
+     same anatomy as the failure block so the two read as one family. */
+  /* Compound: `.note` is declared later in this layer and would win the colour back. */
+  .note.console-quiet {
+    border-inline-start-color: var(--accent);
+  }
+  /* Warsha speaking, not the program: the UI face, though it sits in the
+     monospace transcript. */
+  .console-failure .note__text,
+  .console-quiet .note__text {
+    font-family: var(--font-ui);
+  }
+  /* Title and button row, shared by the failure and still-running blocks. */
+  .console-note__title {
     font-family: var(--font-ui);
     font-size: var(--fs-meta);
     line-height: 1.55;
@@ -1278,13 +1301,13 @@
     color: var(--text-1);
     margin: 0 0 var(--sp-1);
   }
-  .console-failure__actions {
+  .console-note__actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2);
     margin-top: var(--sp-2);
   }
-  .console-failure__actions .console-earlier {
+  .console-note__actions .console-earlier {
     margin-bottom: 0;
   }
   /* The engine's own words. Wrapped, not scrolled sideways: a student on a phone
@@ -1438,6 +1461,9 @@
      job for the value; this covers the placeholder too. */
   .stdin-input {
     unicode-bidi: plaintext;
+    /* A long prompt can still squeeze the field: end the placeholder with "…"
+       rather than cutting a word in half. */
+    text-overflow: ellipsis;
     flex: 1 1 14ch;
     min-width: 8ch;
     /* The one concession to touch: the line the student types on is a 44px
@@ -1462,6 +1488,27 @@
   .stdin-input::placeholder {
     color: var(--text-3);
     font-style: italic;
+  }
+  /* Arabic has no italic: the browser slants the glyphs itself, which reads as
+     broken text, not as a hint. Under the Arabic interface every italic hint
+     stands upright and its muted colour carries the difference. The echo keeps
+     its --info hue, and a typed answer's own direction still sets it apart. */
+  html[lang='ar'] :is(
+      .console-empty,
+      .console-row[data-kind='meta'] .console-row__text,
+      [data-seg='meta'],
+      [data-seg='echo']
+    ),
+  html[lang='ar'] .stdin-input::placeholder {
+    font-style: normal;
+  }
+  /* And Warsha's own Arabic sentences in the transcript (the empty-state hint, the
+     Finished/Stopped lines) take the interface face: the monospace stack has no
+     Arabic, and its fallback spaced the letters apart. A program's output keeps
+     the code face — it is the program's text, not Warsha's. */
+  html[lang='ar'] :is(.console-empty, .console-row[data-kind='meta'] .console-row__text),
+  html[lang='ar'] .stdin-input::placeholder {
+    font-family: var(--font-ui);
   }
   /* The ring stays (§4.1 rule 3 — never outline-none), but it is re-tuned, and
      both changes are deliberate.

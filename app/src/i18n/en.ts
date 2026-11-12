@@ -25,12 +25,39 @@ export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
+/** Whole seconds as "42s" / "2m 05s". */
+const clock = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`)
+
 export const EN = {
   // ---- runtime bootstrap (§7.6, §8) ----
   // One progress voice (founder ruling 2026-08-05): ProgressBlock is the only
   // place loading speaks. This is its one auxiliary sentence, shown only once
   // a first-run download runs long; nothing about loading is ever a transcript row.
   runtimeFirstRunNote: 'First-time download — next run starts instantly, even offline.',
+  /** ProgressBlock's headlines. The language is named where we know it ("Downloading Python"). */
+  phaseDownloadingLang: (lang: string) => `Downloading ${lang}`,
+  phaseStartingLang: (lang: string) => `Starting ${lang}`,
+  /** C and C# warm their compiler up during boot — that is not the student's code compiling. */
+  phasePreparingCompiler: 'Getting the compiler ready',
+  /** Python's packages, downloaded inside a run, after the language itself is ready. */
+  phasePackages: 'Downloading the packages your code imports',
+  // One sentence per slow phase, shown once it has run a few seconds, saying the
+  // wait is expected. A wait that is explained is a wait students sit through.
+  phaseBootNote: 'Getting it ready to run — up to a minute the first time. Then it stays ready while this tab is open.',
+  phaseCompilerNote: 'A warm-up each time you open Warsha. It can take half a minute on a phone.',
+  phaseCompileNote: 'The first compile after opening Warsha is the slow one. After that it is quick.',
+  phasePackagesNote: 'Only the first time — after that they load from this device.',
+  /** The numbers line: "12.3 MB of 40.0 MB". */
+  progressOf: (loaded: string, total: string) => `${loaded} of ${total}`,
+  // Deliberately vague: a precise-looking wrong ETA reads worse than an approximate right one.
+  etaFewSeconds: 'a few seconds left',
+  etaSeconds: (s: number) => `about ${s}s left`,
+  etaMinute: 'about a minute left',
+  etaMinutes: (m: number) => `about ${m} min left`,
+  /** A live counter in whole seconds: "42s", "1m 05s". */
+  elapsedSeconds: (s: number) => clock(s),
+  /** A finished program's time: "0.4s", "12s", "2m 05s". */
+  durationShort: (ms: number) => (ms < 10_000 ? `${(Math.max(ms, 100) / 1000).toFixed(1)}s` : clock(Math.round(ms / 1000))),
 
   // ---- engine failures the student can act on (see useRunner's RunFailure) ----
   // Headline plus one hint; the engine's raw error ("TypeError: Failed to
@@ -44,9 +71,13 @@ export const EN = {
     'Reload the page once. If it still will not work, use Chrome on Android or on a computer.',
   engineBroken: (lang: string) => `Warsha could not start ${lang}.`,
   engineBrokenHint: 'Try again. If it keeps happening, reload the page.',
+  /** Boot or compile went quiet for minutes with no progress — the engine is wedged, not offline. */
+  engineStuckHint: 'Getting it ready stopped moving. Try again — if it stops again, reload Warsha.',
+  /** A stuck download of the packages a Python program imports (numpy, pandas). */
+  packagesOffline: 'Warsha could not download the packages your program imports. They need the internet the first time.',
   /** Worker the browser killed, usually for memory. A single red transcript
    * line, no failure card — not the student's fault, and Run is the only next step. */
-  engineLost: 'The language engine stopped responding, so Warsha shut it down.',
+  engineLost: 'The language engine stopped responding, so Warsha shut it down. Tap Run to start it again.',
   engineRetry: 'Try again',
   engineDetails: 'Details',
   /** Run went ahead on what is on screen because a save did not land. */
@@ -72,6 +103,13 @@ export const EN = {
 
   // ---- console (§8) ----
   consoleEmpty: 'Output will appear here when you run your code.',
+  /** The same empty transcript while a program runs and has printed nothing yet — "when you run" would be wrong. */
+  consoleRunning: 'Your program is running. What it prints will appear here.',
+  /** A running program that has printed nothing for a while. Not an error: it may be
+   *  computing, or in an endless loop — only the student can tell, so offer Stop. */
+  runQuietTitle: 'Still running',
+  runQuiet: (silence: string) =>
+    `Your program has not printed anything for ${silence}. It may be busy, or stuck in a loop — Stop ends it.`,
   consoleCleared: 'Cleared.',
   consoleActionsMenu: 'Console actions',
 
@@ -90,10 +128,12 @@ export const EN = {
   stdinQueued: 'Saved — your program has not asked for input yet.',
   /** PLACEHOLDER — for typing with nothing running. */
   stdinIdle: 'Nothing is running yet. Tap Run first.',
-  // The only placeholder left — no idle input exists to hold one. Asserted
-  // verbatim by verify.mjs, verify-java.mjs and console-check.mjs (no ?lang=
+  // The only placeholder left — no idle input exists to hold one. Short enough
+  // to fit beside a prompt on a 390px phone (the longer "Type your answer, then
+  // press Enter" was cut mid-word). Asserted verbatim by verify.mjs,
+  // verify-java.mjs, verify-csharp.mjs and console-check.mjs (no ?lang=
   // override, so they read exactly this).
-  stdinWaitingPlaceholder: 'Type your answer, then press Enter',
+  stdinWaitingPlaceholder: 'Type here, then Enter',
 
   // ---- transcript controls ----
   copyOutput: 'Copy output',
@@ -476,12 +516,16 @@ export const EN = {
 
   // ---- the status pill's seven states (§7.3) ----
   pillReady: 'Ready',
-  pillPreparing: 'Preparing',
   pillRunning: 'Running',
   pillWaiting: 'Waiting for you',
   pillFinished: 'Finished',
   pillFailed: 'Stopped early',
   pillStopped: 'Stopped by you',
+  // While loading, the pill names the step, short enough for a phone's status bar.
+  pillDownloading: 'Downloading',
+  pillUnpacking: 'Unpacking',
+  pillStarting: 'Starting',
+  pillCompiling: 'Compiling',
 
   // ---- tabs ----
   tabsCloseOthers: 'Close others',

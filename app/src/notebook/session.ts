@@ -16,7 +16,8 @@
 import { useSyncExternalStore } from 'react'
 import type { CellOutputKind, DebugStopped, FilesChange, LoadProgress, NotebookKernel, RunSession, SourceFile } from '../runtime/types'
 import { COPY } from '../copy'
-import { normalizeProgress } from '../runtime/types'
+import { normalizeProgress, type ProgressReport } from '../runtime/types'
+import { createStallWatchdog, type StallKind } from '../runtime/stallWatchdog'
 import { debugStore } from '../debug/store'
 import { transformCell } from './magics'
 import { addOutput, appendStream, echoInput, hasDisplayId } from './outputs'
@@ -281,6 +282,28 @@ export class NotebookSession {
   }
 
   private flushStreams: (() => void) | null = null
+  /** Rejects the kernel boot this session is waiting on — the boot itself never settles once stalled. */
+  private bootStalled: ((e: Error) => void) | null = null
+
+  /**
+   * Loading went quiet past the watchdog's budget. A stuck boot: the engine is
+   * discarded and the boot's wait rejected, which fails the cell like any boot
+   * failure (run it again to retry). A stuck package download inside a cell: the
+   * cell is killed, as a forced stop would. 'timed out' / 'stalled' are what the
+   * shell's failure classifier reads (offline / engine).
+   */
+  private stalled(kind: StallKind, booting: boolean) {
+    const message = kind === 'download' ? 'timed out' : 'stalled'
+    if (booting) {
+      this.kernel.dispose?.()
+      this.bootStalled?.(new Error(message))
+      this.bootStalled = null
+      return
+    }
+    if (!this.disposed) this.host.onFailure(message, message)
+    if (this.session) this.session.kill()
+    else this.kernel.dispose?.()
+  }
 
   private async execute(id: string, debug: boolean): Promise<void> {
     const cell = this.host.cell(id)
@@ -296,9 +319,26 @@ export class NotebookSession {
     this.host.update(id, (c) => ({ ...c, outputs: [], executionCount: null }))
     this.clearPending = false
 
+    // The program runner's stall watchdog, on the kernel's loading: its boot, then any
+    // packages or pip installs the cell downloads before its code starts. A black-holed
+    // network otherwise left the notebook on "Starting" for good. It never watches the
+    // cell's own code (stopped at In[n], output, input() or exit).
+    let booting = true
+    const dog = createStallWatchdog((kind) => this.stalled(kind, booting))
+    const watch = (p: ProgressReport) => {
+      const n = normalizeProgress(p)
+      dog.report(n)
+      return n
+    }
     try {
-      await this.kernel.load((p) => this.set({ progress: normalizeProgress(p), kernel: 'starting' }))
+      dog.report(null)
+      await new Promise<void>((resolve, reject) => {
+        this.bootStalled = reject
+        this.kernel.load((p) => this.set({ progress: watch(p), kernel: 'starting' })).then(resolve, reject)
+      })
     } catch (e) {
+      dog.stop()
+      this.bootStalled = null
       this.set({ running: null, kernel: 'off', progress: null })
       this.setCell(id, { state: 'error' })
       this.dropQueue()
@@ -308,6 +348,9 @@ export class NotebookSession {
     // A new interpreter (first boot, or after a forced stop) holds none of this notebook's variables.
     if (this.epoch !== -1 && this.epoch !== this.kernel.epoch) this.set({ notice: this.messages().lost })
     this.epoch = this.kernel.epoch
+    dog.stop()
+    booting = false
+    this.bootStalled = null
     this.set({ kernel: 'busy', progress: null })
 
     const t = transformCell(cell.source)
@@ -359,15 +402,24 @@ export class NotebookSession {
           this.host.files(),
           { notebook: this.key, workspace: this.host.workspace(), cellPath: path, source: cell.source, code: t.code, cellMagic: t.cellMagic, pip: t.pip },
           {
-            onStdout: (text) => live() && stream('stdout', text),
-            onStderr: (text) => live() && stream('stderr', text),
-            onProgress: (p) => this.set({ progress: normalizeProgress(p) }),
+            onStdout: (text) => {
+              dog.stop()
+              if (live()) stream('stdout', text)
+            },
+            onStderr: (text) => {
+              dog.stop()
+              if (live()) stream('stderr', text)
+            },
+            onProgress: (p) => this.set({ progress: watch(p) }),
+            onStarted: () => dog.stop(),
             onExecuteInput: before((n: number) => {
+              dog.stop()
               this.started = true
               this.set({ progress: null })
               this.host.update(id, (c) => ({ ...c, executionCount: n }))
             }),
             onOutput: before((kind: CellOutputKind, output: Record<string, unknown>) => {
+              dog.stop()
               this.set({ progress: null })
               const out = output as NbOutput
               if (kind === 'update') {
@@ -384,11 +436,15 @@ export class NotebookSession {
               if (wait) this.clearPending = true
               else this.host.update(id, (c) => ({ ...c, outputs: [] }))
             }),
-            onStdinRequest: before(() => this.set({ waiting: id })),
+            onStdinRequest: before(() => {
+              dog.stop()
+              this.set({ waiting: id })
+            }),
             onFilesChanged: before((change: FilesChange) => this.host.onFilesChanged(change)),
             onDebugStop: before((stopped: DebugStopped) => debugStore.onStop(stopped, this)),
             onDebugResume: () => live() && debugStore.onResume(this),
             onExit: (c) => {
+              dog.stop()
               flush()
               resolve(c)
             },

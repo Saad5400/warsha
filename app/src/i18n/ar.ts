@@ -95,9 +95,27 @@ const files = (n: number) => arCount(n, 'ملف واحد', 'ملفان', 'ملف
 const items = (n: number) => arCount(n, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
 const results = (n: number) => arCount(n, 'نتيجة واحدة', 'نتيجتان', 'نتائج', 'نتيجةً')
 
+/** Whole seconds as «42 ث» / «2 د 05 ث» — Western digits, like every number beside code. */
+const clock = (s: number) => (s < 60 ? `${s} ث` : `${Math.floor(s / 60)} د ${String(s % 60).padStart(2, '0')} ث`)
+
 export const AR: Bundle = {
   // ---- runtime bootstrap ----
   runtimeFirstRunNote: 'تنزيل لمرة واحدة — بعده يبدأ التشغيل فورًا، حتى بلا إنترنت.',
+  phaseDownloadingLang: (lang) => `جارٍ تنزيل ${iso(lang)}`,
+  phaseStartingLang: (lang) => `جارٍ تشغيل ${iso(lang)}`,
+  phasePreparingCompiler: 'جارٍ تجهيز المترجم',
+  phasePackages: 'جارٍ تنزيل الحزم التي يستوردها كودك',
+  phaseBootNote: 'نجهّزها للتشغيل — قد يستغرق ذلك دقيقة في المرة الأولى، ثم تبقى جاهزة ما دامت هذه الصفحة مفتوحة.',
+  phaseCompilerNote: 'تهيئة تحدث كلما فتحت ورشة، وقد تستغرق نصف دقيقة على الهاتف.',
+  phaseCompileNote: 'أول ترجمة بعد فتح ورشة هي البطيئة، وما بعدها سريع.',
+  phasePackagesNote: 'في المرة الأولى فقط — بعدها تُحمَّل من جهازك.',
+  progressOf: (loaded, total) => `${iso(loaded)} من ${iso(total)}`,
+  etaFewSeconds: 'بقيت ثوانٍ قليلة',
+  etaSeconds: (s) => `بقي نحو ${s} ث`,
+  etaMinute: 'بقيت دقيقة تقريبًا',
+  etaMinutes: (m) => `بقي نحو ${m} د`,
+  elapsedSeconds: (s) => clock(s),
+  durationShort: (ms) => (ms < 10_000 ? `${(Math.max(ms, 100) / 1000).toFixed(1)} ث` : clock(Math.round(ms / 1000))),
 
   // ---- engine failures ----
   engineOffline: (lang) => `لم يكتمل تنزيل ${iso(lang)}. المرة الأولى وحدها تحتاج إلى إنترنت.`,
@@ -106,7 +124,9 @@ export const AR: Bundle = {
   engineIsolationHint: 'أعد تحميل الصفحة مرة واحدة. فإن بقي الحال، استخدم Chrome على Android أو على حاسوب.',
   engineBroken: (lang) => `تعثّر تجهيز ${iso(lang)}.`,
   engineBrokenHint: 'أعد المحاولة. وإن تكرّر الأمر، أعد تحميل الصفحة.',
-  engineLost: 'توقّف محرّك اللغة عن الاستجابة، فأغلقته ورشة.',
+  engineStuckHint: 'توقّف التجهيز عن التقدّم. أعد المحاولة، وإن توقّف ثانيةً فأعد تحميل ورشة.',
+  packagesOffline: 'لم يكتمل تنزيل الحزم التي يستوردها برنامجك. المرة الأولى وحدها تحتاج إلى إنترنت.',
+  engineLost: 'توقّف محرّك اللغة عن الاستجابة، فأغلقته ورشة. اضغط زر التشغيل لتبدأ من جديد.',
   engineRetry: 'أعد المحاولة',
   engineDetails: 'التفاصيل',
   runUnsaved: `لم يُحفظ عملك على هذا الجهاز، فشُغّل ما هو ظاهر أمامك. صدّر ملف ${ZIP} لتحتفظ بنسخة.`,
@@ -124,6 +144,10 @@ export const AR: Bundle = {
 
   // ---- console ----
   consoleEmpty: 'شغّل كودك وستظهر مخرجاته هنا.',
+  consoleRunning: 'برنامجك يعمل الآن، وستظهر مخرجاته هنا.',
+  runQuietTitle: 'ما زال يعمل',
+  runQuiet: (silence) =>
+    `لم يطبع برنامجك شيئًا منذ ${iso(silence)}. قد يكون منشغلًا بحساب، أو عالقًا في حلقة — زر الإيقاف ينهيه.`,
   consoleCleared: 'مُسحت المخرجات.',
   consoleActionsMenu: 'إجراءات وحدة التحكم',
 
@@ -136,7 +160,9 @@ export const AR: Bundle = {
   truncated: 'أُخفيت الأسطر الأقدم (الحدّ 5000 سطر).',
   stdinQueued: 'سطرك محفوظ — برنامجك لم يطلب إدخالًا بعد.',
   stdinIdle: 'لا شيء يعمل الآن — اضغط زر التشغيل أولًا.',
-  stdinWaitingPlaceholder: 'اكتب إجابتك ثم اضغط Enter',
+  // Isolated: the input sits in the transcript's LTR line, which otherwise put
+  // «Enter» after the Arabic at the far right — read last, but placed first.
+  stdinWaitingPlaceholder: iso('اكتب هنا ثم Enter'),
 
   // ---- transcript controls ----
   copyOutput: 'نسخ المخرجات',
@@ -427,12 +453,15 @@ export const AR: Bundle = {
 
   // ---- the status pill's seven states ----
   pillReady: 'جاهزة',
-  pillPreparing: 'قيد التجهيز',
   pillRunning: 'قيد التشغيل',
   pillWaiting: 'بانتظارك',
   pillFinished: 'انتهى',
   pillFailed: 'توقّف مبكرًا',
   pillStopped: 'أوقفته أنت',
+  pillDownloading: 'جارٍ التنزيل',
+  pillUnpacking: 'جارٍ فكّ الحزمة',
+  pillStarting: 'جارٍ البدء',
+  pillCompiling: 'جارٍ الترجمة',
 
   // ---- tabs ----
   tabsCloseOthers: 'إغلاق الأخرى',

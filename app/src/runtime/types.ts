@@ -45,6 +45,15 @@ export interface RunIO extends DebugIO {
   onRender?(srcdoc: string): void
   /** OPTIONAL — progress from inside a run, not the boot before it. Java needs this: its compiler takes ~12s before any output, and without it the console sits on the empty-state placeholder the whole time. */
   onProgress?(report: ProgressReport): void
+  /**
+   * OPTIONAL — the program's own code has begun, so whatever `onProgress`
+   * reported (Java's compile, Python's package download) is over. Without it
+   * the shell can only learn that from the first output, and a program that
+   * computes in silence went on showing "Compiling your code" with its
+   * counter climbing — and, 45 s in, was reported as a failed download.
+   * Engines that report no run-phase progress need not call it.
+   */
+  onStarted?(): void
 }
 export interface RunSession {
   kill(): void
@@ -96,6 +105,12 @@ export function normalizeProgress(p: ProgressReport): LoadProgress {
   return typeof p === 'string' ? { phase: 'boot', message: p } : p
 }
 
+/** Percent done, when the report carries both byte counts; null for an indeterminate phase. */
+export function progressPercent(p: LoadProgress): number | null {
+  if (typeof p.loaded !== 'number' || typeof p.total !== 'number' || p.total <= 0) return null
+  return Math.min(100, Math.round((p.loaded / p.total) * 100))
+}
+
 /** Files a run created, modified or removed — see `RunIO.onFilesChanged`. */
 export interface FilesChange {
   written: SourceFile[]
@@ -130,6 +145,8 @@ export interface NotebookKernel {
   isReady?(): boolean
   /** OPTIONAL — true while a run (or cell) occupies the engine; `format` would refuse then. */
   isBusy?(): boolean
+  /** OPTIONAL — throw the engine away (a boot that stalled will never settle); the next load() starts fresh. */
+  dispose?(): void
 }
 
 export interface CellRequest {

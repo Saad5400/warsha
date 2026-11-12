@@ -9,7 +9,7 @@ import { splitPath } from './fs/project'
 import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, rememberOwnedRoom, rememberProjectOwner, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
+import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, languageName, runtimeFor } from './runtime'
 import { classifyRunFailure } from './hooks/useRunner'
 import { createNotebook, isNotebookPath, parseCellPath, readableText, serializeNotebook } from './notebook/nbformat'
 import { closeNotebooksExcept, closeNotebooksForSwitch, flushNotebooks, notebookDocument, notebookFileChanged, notebookModel, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
@@ -768,7 +768,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   const applyShared = useCallback(
     async (shared: SharedProject): Promise<boolean> => {
       await whenReady()
-      if (runner.busy) runner.stop()
+      if (runner.busy) runner.forceStop()
       // A live room must end before the workspace re-points — see stopCollabBeforeSwitch.
       await stopCollabBeforeSwitch()
       const before = currentProject?.id
@@ -1648,7 +1648,7 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   /** A program from the project being left must not outlive it. */
   const stopIfRunning = () => {
-    if (runner.busy) runner.stop()
+    if (runner.busy) runner.forceStop()
   }
 
   /** A deleted project takes its collab room state with it: both prefs mappings
@@ -2385,6 +2385,23 @@ function Ide({ report }: { report: CapabilityReport }) {
           onStop: runner.stop,
         }
 
+  // One reading of the run's state for the console's two liveness signals. A web
+  // preview's run never ends (the page stays live), so it is never "working" and
+  // never "quiet"; a breakpoint parks a program on purpose, so neither applies there.
+  // A notebook's cells drive the activity line too (they share the console header),
+  // but not the quiet note: a cell's silence shows in the cell, not the console.
+  const debugPaused = debug.phase === 'paused'
+  const previewRun = !nbStatus && !!runner.entry && isPreviewEntry(runner.entry) && runner.status === 'running'
+  const working = (runControl.status === 'preparing' || runControl.status === 'running') && !debugPaused && !previewRun
+  const watchSilence = runner.status === 'running' && !debugPaused && !(runner.entry && isPreviewEntry(runner.entry))
+
+  // A program asking for input needs the console on screen, or the student is left
+  // with "Waiting for you" and nowhere to type. Opening it mounts the input, which
+  // focuses itself (Console's `waiting` layout effect).
+  useEffect(() => {
+    if (runner.status === 'waiting') setConsoleOpen(true)
+  }, [runner.status])
+
   // ---- debugger ----
   const canDebugEntry = nbDoc ? !nbReadOnly : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
   /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
@@ -2411,7 +2428,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   const restartDebugging = () => {
     if (!runner.busy) return startDebugging()
     restartPending.current = true
-    runner.stop()
+    runner.forceStop()
   }
   useEffect(() => {
     if (runner.busy || !restartPending.current) return
@@ -3583,6 +3600,9 @@ function Ide({ report }: { report: CapabilityReport }) {
             <RunBar
               status={runner.status}
               exitCode={runner.exitCode}
+              progress={runner.progress}
+              durationMs={runner.durationMs}
+              working={working}
               candidates={candidates}
               entryPath={entryPath}
               consoleOpen={consoleOpen}
@@ -3622,6 +3642,9 @@ function Ide({ report }: { report: CapabilityReport }) {
                 buffer={buffer}
                 status={runner.status}
                 progress={runner.progress}
+                // The run's own entry: the picker may already name another file.
+                language={runner.entry ? languageName(runner.entry) : null}
+                watchSilence={watchSilence}
                 // A run that never started has no engine/output for the transcript to show —
                 // its own block with a retry button instead.
                 failure={runner.failure}
@@ -3645,6 +3668,9 @@ function Ide({ report }: { report: CapabilityReport }) {
         <StatusBar
           status={runControl.status}
           exitCode={nbStatus ? null : runner.exitCode}
+          // A notebook on screen owns the status bar, its kernel's loading included.
+          progress={nbStatus ? nbState!.progress : runner.progress}
+          durationMs={nbStatus ? null : runner.durationMs}
           activePath={activePath}
           entryPath={runControl.entry}
           kernelLabel={nbKernelLabel}

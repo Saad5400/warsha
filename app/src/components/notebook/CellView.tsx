@@ -328,7 +328,7 @@ function CellViewImpl(p: CellViewProps) {
           // Markup built from escaped text only (notebook/markdown.ts).
           <SafeHtml className={MD_PROSE + ' px-2 py-1.5'} html={rendered} />
         ) : (
-          <p className="m-0 px-2 py-2 text-meta italic text-text-3">{p.desk ? COPY.nbEmptyText : COPY.nbEmptyTextTouch}</p>
+          <p className="m-0 px-2 py-2 text-meta italic rtl:not-italic text-text-3">{p.desk ? COPY.nbEmptyText : COPY.nbEmptyTextTouch}</p>
         )}
 
         {/* Running: a sweep on the cell, and what is downloading if anything is. */}

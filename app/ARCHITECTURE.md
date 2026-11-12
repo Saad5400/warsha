@@ -533,7 +533,7 @@ style choice, and re-adding an always-visible input bar is a regression:
 
 The stable handles, all relied on by `tools/qa`: `aria-label="Program output"` (the scroller),
 `aria-label="Program input"` (the live input), the placeholder string
-**`Type your answer, then press Enter`** verbatim, `.stdin-row` / `.stdin-input` (kept from the old
+**`Type here, then Enter`** verbatim, `.stdin-row` / `.stdin-input` (kept from the old
 input bar — it is the same thing, moved into the stream), `.console-transcript`,
 `section[aria-label="Console"][data-state]`, and the exact button names `Run` / `Stop` (tab-strip
 corner).
