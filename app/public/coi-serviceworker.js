@@ -2,10 +2,13 @@
  *
  * MODIFIED for Warsha. Three changes, all additive; the original logic is intact:
  *
- *   1. An offline caching layer wraps the fetch handler. The COOP/COEP header
- *      transform below (now `isolate()`) still runs on every response we serve —
- *      from the network OR the cache — so cross-origin isolation holds offline
- *      exactly as it does online.
+ *   1. An offline caching layer wraps the fetch handler: cache-first only for
+ *      URLs whose bytes cannot change (content-hashed /assets/, version-pinned
+ *      CDNs), revalidated with the server for everything else, so a deploy
+ *      reaches a returning student instead of being shadowed by the cache (see
+ *      `isImmutable`). The COOP/COEP header transform below (now `isolate()`)
+ *      still runs on every response we serve — from the network OR the cache —
+ *      so cross-origin isolation holds offline exactly as it does online.
  *   2. The window-side script now registers even when the origin already sends
  *      the isolation headers (production nginx). Upstream returned early there
  *      because header injection was its only job; Warsha also needs the worker
@@ -49,6 +52,12 @@ if (typeof window === 'undefined') {
         // that without failing the whole install.
         './ar/',
         './en/',
+        // This very file, as the page's first <script>: an offline reload asks
+        // for it before anything else. It used to be served offline only by
+        // luck, from a heuristically-fresh HTTP cache entry; with the server's
+        // `no-cache` and our `no-store` revalidation that door is shut, so it
+        // has to be in the shell like every other boot file.
+        './coi-serviceworker.js',
         './manifest.webmanifest',
         './favicon.svg',
         './favicon.ico',
@@ -74,12 +83,124 @@ if (typeof window === 'undefined') {
     const isRuntimeHost = (url) => RUNTIME_HOSTS.some((h) => url.startsWith(h));
 
     // What we are willing to store: GET only, and either same-origin or a
-    // runtime CDN. The fetch handler additionally refuses to store an opaque
-    // response — see there for why.
+    // runtime CDN. `storable` below decides which RESPONSES get kept.
     const cacheable = (request) => {
         if (request.method !== 'GET') return false;
         const url = request.url;
         return new URL(url).origin === self.location.origin || isRuntimeHost(url);
+    };
+
+    // Which cached copies may be served without asking the network first. Only
+    // a URL whose bytes can never change: Vite's content-hashed /assets/ (a new
+    // build is a new name) and the runtime CDNs, whose URLs pin a version
+    // (pyodide/v0.x/…, leaningtech/4.3/…). Every other same-origin file keeps its
+    // name across deploys — the public/ runtime files (warsha-jvm.worker.js,
+    // warsha-dotnet/**, warsha-esbuild.wasm, the framework JSON…), the icons, the
+    // pages — and is revalidated instead; see `revalidate`.
+    //
+    // This split is the fix for a live bug. Everything same-origin used to be
+    // cache-first, so an unhashed worker cached under one build was served, as
+    // is, to the next build's bundle: an old Java worker driving a new jar, a
+    // .NET boot manifest whose files no longer matched. And because the cache
+    // name only changes when a HASHED file does, a deploy that touched only a
+    // runtime file never reached returning students at all.
+    const isImmutable = (url) =>
+        isRuntimeHost(url) || new URL(url).pathname.startsWith('/assets/');
+
+    // Past this, a revalidation that has not even answered with headers is given
+    // up on and the cached copy served: on a connection that is technically up
+    // but carrying nothing, a student who has the file must not wait on it.
+    const REVALIDATE_TIMEOUT_MS = 6000;
+
+    // Fetch-spec null-body statuses: `new Response(body, {status})` throws for
+    // these, and CheerpJ's conditional Range reads come back 304 — the crash that
+    // surfaced as "Warsha could not start Java".
+    const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
+    // Whether a network response may go into Cache Storage. Only a complete,
+    // readable, real answer:
+    //   - `ok` and not partial. Range requests never reach here (see the fetch
+    //     handler), but a `206`/`Content-Range` must never be stored and later
+    //     replayed as if it were the whole resource.
+    //   - not opaque. An opaque response cannot carry the CORP that isolate()
+    //     needs, and Chrome PADS an opaque entry to a large phantom size for
+    //     quota accounting — a handful would blow the origin quota and evict the
+    //     student's OPFS files. (So CheerpJ, whose loader arrives via a no-cors
+    //     `importScripts()`, is only partially cached and not guaranteed
+    //     offline. See tools/qa/offline-check.mjs and ARCHITECTURE §2.5.)
+    //   - not an HTML page answering for a script, wasm or dll. That is a host's
+    //     SPA fallback covering a missing file (a chunk an old page still asks
+    //     for after a deploy deleted it); stored, it would be replayed as that
+    //     file for the life of the cache. Pages themselves end in `/` or `.html`.
+    const storable = (request, response) => {
+        if (!response || !response.ok || response.status === 206 || response.type === 'opaque') return false;
+        if (response.headers.has('content-range')) return false;
+        const path = new URL(request.url).pathname;
+        const isPage = path.endsWith('/') || path.endsWith('.html');
+        return isPage || !/text\/html/i.test(response.headers.get('content-type') || '');
+    };
+
+    // Awaited by callers so the copy is taken (and the write under way) before
+    // the response goes back to the page; the write itself is not awaited, so a
+    // 37 MB runtime is not held back until it is on disk.
+    const store = async (request, response) => {
+        if (!storable(request, response)) return;
+        const cache = await caches.open(isRuntimeHost(request.url) ? RUNTIME_CACHE : SHELL_CACHE);
+        cache.put(request, response.clone()).catch(() => {});
+    };
+
+    // Cache-first, for immutable URLs only. Once a student has run a language
+    // online its engine is served from Cache Storage — which
+    // requestPersistence() (app/src/fs/health.ts) keeps from being evicted — so
+    // it works offline and is never re-downloaded.
+    const cacheFirst = async (r, request) => {
+        const cached = await caches.match(r);
+        if (cached) return isolate(cached);
+        const net = await fetch(request);
+        await store(r, net);
+        return isolate(net);
+    };
+
+    // For a URL that keeps its name across deploys: ask the server whether the
+    // cached copy is still the deployed one — a conditional request, so an
+    // unchanged file costs a 304 and no body — and serve the cache only when it
+    // says yes, or when it cannot be asked (offline, which is what keeps the
+    // installed app working with no network).
+    //
+    // `cache: 'no-store'` on both requests: the HTTP cache must not answer for
+    // the server. It is exactly what used to hand back a heuristically "fresh"
+    // file from the previous deploy, and it would hold a second copy of a 37 MB
+    // runtime we already keep here.
+    const revalidate = async (r, request) => {
+        const cached = await caches.match(r);
+        if (!cached) {
+            const net = await fetch(request, { cache: 'no-store' });
+            await store(r, net);
+            return isolate(net);
+        }
+        const headers = new Headers();
+        const etag = cached.headers.get('etag');
+        const modified = cached.headers.get('last-modified');
+        if (etag) headers.set('if-none-match', etag);
+        if (modified) headers.set('if-modified-since', modified);
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), REVALIDATE_TIMEOUT_MS);
+        let net;
+        try {
+            // By URL, not by cloning `request`: a no-cors request (a classic
+            // <script>, an <img>) would silently drop the conditional headers.
+            net = await fetch(r.url, { headers, cache: 'no-store', credentials: 'same-origin', signal: abort.signal });
+        } catch {
+            return isolate(cached);
+        } finally {
+            clearTimeout(timer);
+        }
+        // 304: still current. 5xx: the server is having a moment, and the copy we
+        // have beats an error page. Anything else (200, 404) is the deploy's
+        // answer and wins over the cache.
+        if (net.status === 304 || net.status >= 500) return isolate(cached);
+        await store(r, net);
+        return isolate(net);
     };
 
     self.addEventListener("install", (event) => {
@@ -125,11 +246,6 @@ if (typeof window === 'undefined') {
             coepCredentialless = ev.data.value;
         }
     });
-
-    // Fetch-spec null-body statuses: `new Response(body, {status})` throws for
-    // these, and CheerpJ's conditional Range reads come back 304 — the crash that
-    // surfaced as "Warsha could not start Java".
-    const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
 
     // The upstream coi transform: rewrites a response so it can live in a
     // cross-origin-isolated page. Opaque responses (status 0) pass through as
@@ -208,7 +324,15 @@ if (typeof window === 'undefined') {
                 // document to a later offline navigation to `/`.
                 const path = new URL(request.url).pathname;
                 try {
-                    const net = await fetch(request);
+                    // `no-cache`: always ask the server, never take the HTTP
+                    // cache's word for it. A document that host sent without
+                    // Cache-Control is heuristically "fresh" for days, and an
+                    // old document after a deploy is the root of the whole
+                    // stale-build failure: it asks for hashed chunks that no
+                    // longer exist. (`fetch(navigateRequest, init)` downgrades
+                    // the mode to same-origin; redirects stay manual, so a 3xx
+                    // still reaches the browser as an opaqueredirect it follows.)
+                    const net = await fetch(request, { cache: 'no-cache' });
                     if (net && net.status === 200) {
                         const cache = await caches.open(SHELL_CACHE);
                         cache.put(path, net.clone()).catch(() => {});
@@ -230,39 +354,10 @@ if (typeof window === 'undefined') {
             return;
         }
 
-        // Cache-first for the shell and the runtime CDNs. Once a student has run
-        // a language online its engine is served from Cache Storage — which
-        // requestPersistence() (app/src/fs/health.ts) keeps from being evicted —
-        // so it works offline and is never re-downloaded.
-        //
-        // We store only `ok`, non-opaque responses. Two reasons an opaque
-        // response is refused: it cannot carry the CORP that isolate() needs, and
-        // Chrome PADS an opaque entry to a large phantom size for quota
-        // accounting — a handful would blow the origin quota and evict the
-        // student's OPFS files. This means Pyodide (fetched CORS from jsdelivr)
-        // caches fully and works offline, while CheerpJ — which pulls its loader
-        // via a no-cors `importScripts()` and lazily fetches runtime pieces it
-        // did not touch on the first run — is only partially cached and is not
-        // guaranteed offline. See tools/qa/offline-check.mjs and ARCHITECTURE §2.5.
+        // The shell and the runtime CDNs: cache-first where the URL pins its
+        // bytes, revalidated where it does not — see `isImmutable`.
         if (!DEV && cacheable(r)) {
-            event.respondWith((async () => {
-                const cached = await caches.match(r);
-                if (cached) return isolate(cached);
-
-                const net = await fetch(request);
-                // Never store a partial response. Range requests are handled
-                // above and never reach here; this is belt-and-suspenders so a
-                // `206`/`Content-Range` can never be cached and later replayed as
-                // if it were the whole resource. (`cache.put` already rejects a
-                // 206, but the guard makes the intent explicit and covers a 200
-                // that still carries Content-Range.)
-                if (net && net.ok && net.status !== 206 && net.type !== "opaque"
-                    && !net.headers.has("content-range")) {
-                    const cache = await caches.open(isRuntimeHost(r.url) ? RUNTIME_CACHE : SHELL_CACHE);
-                    cache.put(r, net.clone()).catch(() => {});
-                }
-                return isolate(net);
-            })());
+            event.respondWith(isImmutable(r.url) ? cacheFirst(r, request) : revalidate(r, request));
             return;
         }
 

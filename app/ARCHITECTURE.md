@@ -192,9 +192,19 @@ a real Vite build and a real dev server.
   header transform is byte-identical). On `install` it precaches the app shell — the build-hashed
   JS/CSS, injected as `self.__WARSHA_PRECACHE__` by the `warsha:sw-precache` plugin in
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
-  for the shell and the two runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) and
-  network-first for navigations with a cached-`index.html` fallback, so after one online visit the
-  app shell opens with **no network**. One carve-out is load-bearing: **requests carrying a `Range`
+  only for URLs whose bytes cannot change — Vite's content-hashed `/assets/` and the two
+  version-pinned runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) — and
+  **revalidates** every other same-origin file (the unhashed `public/` runtimes: the engine workers,
+  `warsha-dotnet/**`, `warsha-esbuild.wasm`, the framework JSON, icons) with a conditional request,
+  serving its copy on a `304` or with no network. Navigations are network-first (bypassing the HTTP
+  cache) with a cached-`index.html` fallback, so after one online visit the app shell opens with
+  **no network**, and a deploy reaches a returning student on their next visit instead of being
+  shadowed by a cached worker from the build before. The server half of the same contract is
+  `deploy/nginx.conf`: `/assets/` immutable, everything else `no-cache`, and a missing file a `404`
+  rather than the SPA shell. A page that still outlives its deploy (a tab left open) heals itself:
+  when an engine fails to start, a chunk fails to load or the shell crashes, `ui/staleBuild.ts`
+  compares the build this page booted with the one the server serves and reloads once onto the new
+  one. `tools/qa/deploy-upgrade-check.mjs` plays a real deploy against all of it. One carve-out is load-bearing: **requests carrying a `Range`
   header bypass the cache entirely** (network only, never stored). CheerpJ reads `/app/ecj.jar` — a
   same-origin GET, so otherwise cache-first — in many HTTP Range requests and needs a `206` +
   `Content-Range` on each; the Cache API ignores the `Range` header and would replay the full stored
