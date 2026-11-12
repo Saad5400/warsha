@@ -9,8 +9,8 @@
  *
  * Two renderings now live here:
  *
- * - The CHIP — the surface-4 box with a monochrome glyph or letter pair — is
- *   the touch rendering, and stays the only rendering for the welcome cards
+ * - The CHIP — the surface-4 box with the same glyph as the desk icon, drawn
+ *   monochrome (generic document for an unknown ending) — is the touch rendering, and stays the only rendering for the welcome cards
  *   (via badgeClass/LangBadge, which are untouched).
  * - The BARE icon — a 16px colored glyph from LangIcons' FileIcon, each file
  *   type in its language's brand ink (VS Code parity) — is what the tab strip,
@@ -21,7 +21,7 @@
  * The `bare` prop skips the chip entirely — for desk-only surfaces like the
  * breadcrumbs, where a hidden chip would be dead weight in the DOM.
  */
-import { FileIcon, LangIcon, type IconLang } from './ui/LangIcons'
+import { FileIcon, LangIcon, hasFileIcon, type IconLang } from './ui/LangIcons'
 
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.')
@@ -49,21 +49,6 @@ export function badgeClass(size: BadgeSize, tone: BadgeTone): string {
   return `${BADGE} ${BADGE_SIZE[size]} ${BADGE_TONE[tone]}`
 }
 
-const letters: Record<string, string> = {
-  md: 'M',
-  txt: 'T',
-  json: '{}',
-  // Web files stay lettered: no vendor glyph reads well at 20px.
-  html: '<>',
-  htm: '<>',
-  css: '#',
-  js: 'JS',
-  mjs: 'JS',
-  jsx: 'JS',
-  ts: 'TS',
-  tsx: 'TS',
-}
-
 /** Inset inside the 20px / 24px badge box so the glyph is not flush to the fill. */
 const ICON_SIZE = { sm: 18, md: 20 } as const
 
@@ -77,18 +62,16 @@ export function FileBadge({ name, size = 'sm', bare = false }: { name: string; s
   )
   if (bare) return icon
 
-  // A notebook has no language glyph of its own but does have a file mark; the chip carries it.
-  const chip = ext === 'ipynb' ? (
-    <span aria-hidden="true" className={`${badgeClass(size, 'plain')} desk:hidden`}>
-      <FileIcon ext={ext} size={ICON_SIZE[size] - 2} />
-    </span>
-  ) : lang ? (
-    <span aria-hidden="true" className={`${badgeClass(size, lang === 'java' ? 'java' : 'py')} desk:hidden`}>
-      <LangIcon lang={lang} size={ICON_SIZE[size]} />
-    </span>
-  ) : (
-    <span aria-hidden="true" className={`${badgeClass(size, 'plain')} desk:hidden`}>
-      {letters[ext] ?? '·'}
+  // The touch chip draws the SAME glyph the desk icon does, monochrome on the chip:
+  // one icon set for every type. It used to letter the web types and show a bare
+  // dot for everything else — a .csv read as an empty, broken square.
+  const chip = (
+    <span aria-hidden="true" className={`${badgeClass(size, hasFileIcon(ext) ? 'py' : 'plain')} desk:hidden`}>
+      {lang ? (
+        <LangIcon lang={lang} size={ICON_SIZE[size]} />
+      ) : (
+        <FileIcon ext={ext} size={ICON_SIZE[size] - 2} style={{ color: 'currentColor' }} />
+      )}
     </span>
   )
   return (

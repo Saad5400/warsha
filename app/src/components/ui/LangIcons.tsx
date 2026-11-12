@@ -253,6 +253,38 @@ const IconNotebookMark = (p: IconProps) => (
   </Mark>
 )
 
+/** Tabular data (csv/tsv): a sheet ruled into cells. */
+const IconTableMark = (p: IconProps) => (
+  <Mark {...p}>
+    <rect x="3.25" y="4.25" width="13.5" height="11.5" rx="1.2" />
+    <path d="M3.5 8.25h13M3.5 12h13M8.25 4.5v11" />
+  </Mark>
+)
+
+/** A picture: frame, sun, hill — shown even for the images a project leaves out. */
+const IconImageMark = (p: IconProps) => (
+  <Mark {...p}>
+    <rect x="3.25" y="4.25" width="13.5" height="11.5" rx="1.2" />
+    <circle cx="7.6" cy="8.3" r="1.3" />
+    <path d="m3.6 14.2 4.1-3.6 2.7 2.4 2.2-1.9 3.8 3.3" />
+  </Mark>
+)
+
+/** Vue's chevron-in-chevron. */
+const IconVueMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M2.8 5h3.4L10 11.6 13.8 5h3.4L10 16.2Z" />
+    <path d="M6.2 5 10 11.6 13.8 5" />
+  </Mark>
+)
+
+/** Svelte's swash S, as one bold stroke. */
+const IconSvelteMark = (p: IconProps) => (
+  <Mark {...p}>
+    <path d="M13.9 5.6c-1.5-1.6-4.6-1.5-5.9.3-1.2 1.6-.4 3.3 1.5 4.1l1.8.7c1.9.8 2.7 2.5 1.5 4.1-1.3 1.8-4.4 1.9-5.9.3" />
+  </Mark>
+)
+
 /** The plain-document outline for txt and anything unrecognised. */
 const IconDocMark = (p: IconProps) => (
   <Mark {...p}>
@@ -279,7 +311,22 @@ const FILE_FILLS: Record<string, string> = {
   json: '#cbcb41',
   md: '#519aba',
   ipynb: '#f37726',
+  csv: '#8dc149',
+  tsv: '#8dc149',
+  vue: '#8dc149',
+  svelte: '#e44d26',
+  png: '#a074c4',
+  jpg: '#a074c4',
+  jpeg: '#a074c4',
+  gif: '#a074c4',
+  webp: '#a074c4',
+  svg: '#a074c4',
+  bmp: '#a074c4',
+  ico: '#a074c4',
 }
+
+/** An ending with a glyph of its own (not the generic document). */
+export const hasFileIcon = (ext: string): boolean => ext in FILE_FILLS
 
 /** txt and unknown extensions: the neutral document grey. */
 const DOC_FILL = '#c5c5c5'
@@ -318,6 +365,22 @@ export function FileIcon({ ext, size = 16, style, ...rest }: { ext: string } & I
       return <IconMarkdownMark {...props} />
     case 'ipynb':
       return <IconNotebookMark {...props} />
+    case 'csv':
+    case 'tsv':
+      return <IconTableMark {...props} />
+    case 'vue':
+      return <IconVueMark {...props} />
+    case 'svelte':
+      return <IconSvelteMark {...props} />
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'webp':
+    case 'svg':
+    case 'bmp':
+    case 'ico':
+      return <IconImageMark {...props} />
     default:
       return <IconDocMark {...props} />
   }

@@ -81,6 +81,13 @@ const toast = (page) => page.locator('[role="status"], [role="alert"]').allInner
  *  editor code and picker cards painted there in Arabic). Two readings: what is hit at
  *  points down the column, and every rendered element whose box enters it. The modal
  *  scrim, portalled dialogs/menus/toasts and the layout's own ancestors are allowed. */
+/** Every file row's icon is a drawn glyph, never a bare letter or "·" (QA: a .csv
+ *  showed an empty dark square on touch). Reads the VISIBLE badge, chip or icon. */
+const fileIconsDrawn = (page) =>
+  page.evaluate(() => {
+    const rows = [...document.querySelectorAll('[role="treeitem"]:not([aria-expanded])')]
+    return rows.length > 0 && rows.every((row) => [...row.querySelectorAll('svg')].some((svg) => svg.getBoundingClientRect().width >= 14))
+  })
 const railClean = (page) =>
   page.evaluate(() => {
     const nav = document.querySelector('nav')
@@ -253,6 +260,7 @@ for (const lang of ['en', 'ar']) {
   await page.screenshot({ path: join(SHOTS, 'shell-add-drop-hover-1366.png') })
   await page.evaluate(() => document.querySelector('[role="treeitem"][data-path="data"]').dispatchEvent(new DragEvent('drop', window.__drop)))
   await page.waitForTimeout(600)
+  await check('desk: every file row has a drawn icon (csv included)', () => fileIconsDrawn(page))
   await check('a desktop drag lights the folder and says where the drop lands', async () => dropped.lit && dropped.hint)
   await check('dropping files on a folder adds them there', async () => exists('data/dropped.csv'))
   await page.screenshot({ path: join(SHOTS, 'shell-add-files-tree-1366.png') })
@@ -350,6 +358,7 @@ for (const lang of ['en', 'ar']) {
   await check('phone: Add files opens the device picker', async () => !!(await chooser))
   await (await chooser).setFiles([{ name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from('a\n1\n') }])
   await page.waitForTimeout(600)
+  await check('phone: every file row has a drawn icon (csv included), not a dot', () => fileIconsDrawn(page))
   await check('phone: the picked file lands in the project', async () =>
     (await page.locator('[role="treeitem"][data-path="data.csv"]').count()) === 1)
 

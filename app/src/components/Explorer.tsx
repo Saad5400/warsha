@@ -614,7 +614,7 @@ function DragChip({ node, x, y, touch }: { node: DndNode; x: number; y: number; 
       }}
     >
       <span className="grid size-5 shrink-0 place-items-center text-text-3">
-        {node.isDir ? <IconFiles size={20} /> : <FileBadge name={node.name} />}
+        {node.isDir ? <IconFolderOpen size={20} /> : <FileBadge name={node.name} />}
       </span>
       <span className="truncate">{node.name}</span>
     </div>
