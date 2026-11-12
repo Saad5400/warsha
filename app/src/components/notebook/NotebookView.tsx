@@ -502,7 +502,7 @@ export function NotebookView(props: NotebookViewProps) {
   ]
 
   return (
-    <section aria-label={COPY.nbToolbar} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
+    <section aria-label={path} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
       <div role="toolbar" aria-label={COPY.nbToolbar} className={BAR + (props.readOnly ? ' hidden' : '')}>
         <BarButton label={COPY.nbAddCode} icon={<IconCode size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'code')} aria-label={COPY.nbAddCodeCell} />
         <BarButton label={COPY.nbAddText} icon={<IconText size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'markdown')} aria-label={COPY.nbAddTextCell} />

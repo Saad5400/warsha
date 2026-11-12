@@ -355,6 +355,19 @@ if (ONLY.includes('U')) {
   const fmt = await dcell.locator('.cm-content').innerText()
   check('U: Format cell runs black and keeps the !shell line', fmt.includes('x = [1, 2, 3]') && fmt.includes('!echo hi'), J(fmt))
 
+  // An error: red state on the cell, the traceback as an error output, the queue stops.
+  await dcell.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('def ratio(a, b):\n    return a / b\n\nratio(1, 0)')
+  await page.keyboard.press('Control+Enter')
+  await kernelIdle(page, 20000)
+  await page.waitForTimeout(300)
+  const errState = await dcell.getAttribute('data-state')
+  const errText = await dcell.locator('[data-error]').innerText().catch(() => '')
+  check('U: a failing cell shows its traceback (cell lines) and an error state', errState === 'error' && /Cell In\[\d+\], line 4/.test(errText) && errText.includes('ZeroDivisionError'), J({ errState, errText: errText.slice(0, 160) }))
+  await dcell.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-error.png') })
+
   // The file on disk: valid nbformat 4.5 with outputs.
   const text = await page.evaluate(async () => {
     await new Promise((r) => setTimeout(r, 700))
