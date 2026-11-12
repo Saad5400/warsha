@@ -88,6 +88,7 @@ export class NotebookSession {
   private escalate = 0
   private clearPending = false
   private pumping = false
+  private debugCell: string | null = null
 
   constructor(
     public path: string,
@@ -152,6 +153,21 @@ export class NotebookSession {
         this.session.kill()
       }
     }, INTERRUPT_ESCALATE_MS)
+  }
+
+  /** The debug toolbar's Restart: stop the cell being debugged and debug it again from the top. */
+  restartDebugging() {
+    const id = this.debugCell
+    if (!id) return
+    const again = () => this.run([id], { debug: true })
+    if (!this.state.running) return again()
+    const off = this.subscribe(() => {
+      if (!this.state.running) {
+        off()
+        again()
+      }
+    })
+    this.interrupt()
   }
 
   /** Fresh namespace for this notebook. Interrupts first; outputs stay (as in Jupyter). */
@@ -283,6 +299,7 @@ export class NotebookSession {
           this.session = s
           if (debug && s.debug) {
             debugOwner = this
+            this.debugCell = id
             this.set({ debugging: true })
             debugStore.attach(s.debug)
           }

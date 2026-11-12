@@ -849,6 +849,7 @@ export const AR: Bundle = {
   nbRunCell: 'شغّل الخلية',
   nbStopCell: 'أوقف الخلية',
   nbDebugCell: 'تتبّع الخلية بالمصحّح',
+  nbFormatCell: 'نسّق الخلية',
   nbRunAbove: 'شغّل الخلايا التي فوقها',
   nbRunBelow: 'شغّل هذه الخلية وما تحتها',
   nbMoveUp: 'انقل الخلية لأعلى',

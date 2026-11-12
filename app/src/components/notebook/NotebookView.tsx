@@ -38,6 +38,10 @@ export interface NotebookViewProps {
   onDownload(): void
   /** A cell is about to run under the debugger (the shell opens Run and Debug). */
   onDebugStart(): void
+  /** Reformat a cell's source (actions/format.ts); rejects when it cannot. */
+  formatCell(source: string): Promise<string>
+  /** Tell the student how a format went — the shell's toast. */
+  onFormatResult(result: 'formatted' | 'unchanged' | Error): void
 }
 
 /* Cells the student cut or copied (C / X / V in command mode), shared by every notebook. */
@@ -314,6 +318,21 @@ export function NotebookView(props: NotebookViewProps) {
         case 'edit':
           setEditingText((s) => new Set(s).add(id))
           return focusCell(id, 'edit', 'end')
+        case 'format': {
+          const cell = modelRef.current?.cells[i]
+          if (!cell || cell.type !== 'code') return
+          const before = cell.source
+          props.formatCell(before).then(
+            (after) => {
+              if (after === before) return props.onFormatResult('unchanged')
+              // Only if nobody typed in the meantime.
+              doc.updateCell(id, (c) => (c.source === before ? { ...c, source: after } : c))
+              props.onFormatResult('formatted')
+            },
+            (e: Error) => props.onFormatResult(e),
+          )
+          return
+        }
         case 'addCode':
         case 'addText':
           insertAt(i + 1, a === 'addCode' ? 'code' : 'markdown')

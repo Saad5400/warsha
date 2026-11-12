@@ -12,7 +12,8 @@
  * editor. `App.tsx` calls `formatFile`, catches what it throws, and decides
  * what the student sees.
  */
-import { langForPath, runtimeFor } from '../runtime'
+import { kernelFor, langForPath, runtimeFor } from '../runtime'
+import { maskMagicsForFormat } from '../notebook/magics'
 import { detectIndent } from '../editor/indentDisplay'
 
 /** Thrown when a .py file is formatted before the student has ever run one —
@@ -63,12 +64,25 @@ export async function formatJava(source: string): Promise<string> {
 }
 
 async function formatPython(path: string, source: string): Promise<string> {
-  const runtime = runtimeFor(path)
-  if (!runtime?.format) throw new Error('Python formatting is unavailable.')
-  if (runtime.isReady && !runtime.isReady()) {
-    throw new PythonNotLoadedError('Python has not been loaded yet.')
-  }
-  return runtime.format(source)
+  // Either Python engine can format — the program runner or the notebook kernel, whichever
+  // is already booted (a student working only in a notebook never booted the runner).
+  const engines = [runtimeFor(path), kernelFor('.ipynb')].filter((e) => !!e?.format)
+  const ready = engines.find((e) => !e!.isReady || e!.isReady())
+  if (!engines.length) throw new Error('Python formatting is unavailable.')
+  if (!ready) throw new PythonNotLoadedError('Python has not been loaded yet.')
+  return ready.format!(source)
+}
+
+/**
+ * Reformat one notebook cell: its IPython lines are masked from black and put
+ * back, and the trailing newline black adds is dropped (a cell does not end in one).
+ * A cell whose body is data (`%%writefile`, `%%html`) comes back unchanged.
+ */
+export async function formatCell(source: string): Promise<string> {
+  const mask = maskMagicsForFormat(source)
+  if (!mask) return source
+  const formatted = await formatPython('cell.py', mask.masked)
+  return mask.restore(formatted).replace(/\n+$/, '')
 }
 
 /**

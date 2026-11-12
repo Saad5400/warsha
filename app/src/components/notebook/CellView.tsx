@@ -7,7 +7,7 @@ import type { LoadProgress } from '../../runtime/types'
 import { COPY } from '../../copy'
 import { OutputView } from './OutputView'
 import { MD_PROSE, useMarkdownOptions } from './markdownProse'
-import { IconPlus, IconChevronDown, IconChevronRight, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
+import { IconWand, IconPlus, IconChevronDown, IconChevronRight, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
 import { IconDebugAlt } from '../ui/DebugIcons'
 import { Menu, type MenuAnchor, type MenuItem } from '../ui/Menu'
 
@@ -27,6 +27,7 @@ export type CellAction =
   | 'doneEditing'
   | 'addCode'
   | 'addText'
+  | 'format'
 
 export interface CellViewProps {
   cell: NbCell
@@ -72,6 +73,7 @@ function CellEditorHost(props: {
   onLeave(dir: -1 | 1): void
   onFocus(): void
   onSave(): void
+  onFormat(): void
   register(editor: CellEditor | null): void
 }) {
   const host = useRef<HTMLDivElement>(null)
@@ -95,6 +97,7 @@ function CellEditorHost(props: {
       onLeave: (d) => live.current.onLeave(d),
       onFocus: () => live.current.onFocus(),
       onSave: () => live.current.onSave(),
+      onFormat: () => live.current.onFormat(),
     })
     editor.current = ed
     live.current.register(ed)
@@ -225,6 +228,7 @@ function CellViewImpl(p: CellViewProps) {
     ...(code
       ? [
           { label: COPY.nbDebugCell, icon: <IconDebugAlt size={18} />, onSelect: act('debug') },
+          { label: COPY.nbFormatCell, icon: <IconWand size={18} />, hint: 'Shift+Alt+F', onSelect: act('format') },
           { label: COPY.nbRunAbove, onSelect: act('runAbove'), startsGroup: true },
           { label: COPY.nbRunBelow, onSelect: act('runBelow') },
           { label: COPY.nbClearOutput, onSelect: act('clearOutput'), startsGroup: true },
@@ -309,6 +313,7 @@ function CellViewImpl(p: CellViewProps) {
               onLeave={(d) => p.onLeave(cell.id, d)}
               onFocus={() => p.onSelect(cell.id)}
               onSave={p.onSave}
+              onFormat={act('format')}
               register={(e) => p.registerEditor(cell.id, e)}
             />
           </div>

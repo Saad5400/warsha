@@ -11,10 +11,11 @@ import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
 import { classifyRunFailure } from './hooks/useRunner'
-import { isNotebookPath, parseCellPath, parseNotebook, readableText } from './notebook/nbformat'
+import { createNotebook, isNotebookPath, parseCellPath, parseNotebook, readableText, serializeNotebook } from './notebook/nbformat'
 import { closeNotebooksExcept, flushNotebooks, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
 import { notebookDebugOwner } from './notebook/session'
 import { NotebookView } from './components/notebook/NotebookView'
+
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
 import { exportZip } from './zip'
@@ -31,7 +32,7 @@ import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
 import { documentedWordAt, explainAt } from './editor/hoverDocs'
 import { setProjectSource } from './editor/projectSource'
-import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
+import { canFormat, formatCell, formatFile, PythonNotLoadedError } from './actions/format'
 import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
 import { shareProjectAsPdf } from './actions/sharePdf'
@@ -1178,6 +1179,19 @@ function Ide({ report }: { report: CapabilityReport }) {
     return ext ? `${name}.${ext}` : name
   }
 
+  /** File ▸ New Notebook: `Untitled.ipynb` (then 1, 2, …) at the root, opened in the notebook view. */
+  const newNotebook = async () => {
+    let name = 'Untitled.ipynb'
+    for (let i = 1; project.has(name); i++) name = `Untitled${i}.ipynb`
+    try {
+      await whenReady()
+      await project.createFile(name, serializeNotebook(createNotebook()))
+      openFile(name)
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    }
+  }
+
   // `presetName` arrives from the explorer's inline create row; without one we
   // fall back to the prompt dialog. Validation stays here either way.
   const newFile = async (dir: string, presetName?: string) => {
@@ -2300,6 +2314,18 @@ function Ide({ report }: { report: CapabilityReport }) {
       onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
       messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost }),
     })
+  /** A notebook cell reads as "lab.ipynb [3]" (its position) in the debugger; a file as its name. */
+  const debugName = (path: string): string => {
+    const cell = parseCellPath(path)
+    if (!cell) return splitPath(path).name
+    let index = -1
+    try {
+      index = parseNotebook(project.read(cell.notebook) ?? '').cells.findIndex((c) => c.id === cell.cellId)
+    } catch {
+      /* an unreadable notebook still names itself */
+    }
+    return `${splitPath(cell.notebook).name} [${index >= 0 ? index + 1 : '?'}]`
+  }
   /** One cell's source, for the debugger's breakpoint rows. */
   const cellSource = (notebook: string, cellId: string): string => {
     try {
@@ -2562,6 +2588,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: () => setDrawerOpen(false),
     },
     { id: 'file.newFile', title: COPY.cmdFileNewFile, run: () => void newFile('') },
+    { id: 'file.newNotebook', title: COPY.cmdFileNewNotebook, run: () => void newNotebook() },
     { id: 'file.saveAll', title: COPY.cmdFileSaveAll, keys: ['Mod+S'], run: saveAllQuiet },
     {
       id: 'file.format',
@@ -2919,6 +2946,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       label: COPY.menuFile,
       items: [
         { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, onSelect: () => void newFile('') },
+        { label: COPY.menuNewNotebook, icon: <FileIcon ext="ipynb" size={18} />, onSelect: () => void newNotebook() },
         // Opens the picker regardless of list size; language and starter are chosen there.
         { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
@@ -3289,6 +3317,7 @@ function Ide({ report }: { report: CapabilityReport }) {
               onStartDebugging={startDebugging}
               onReveal={revealLine}
               lineText={lineText}
+              nameOf={debugName}
             />
           ) : sideView === 'search' ? (
             <SearchView project={project} revision={revision} onOpenMatch={openAt} />
@@ -3391,6 +3420,16 @@ function Ide({ report }: { report: CapabilityReport }) {
                     projectWords={notebookWords}
                     onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
                     onDownload={() => void downloadFile(activeNotebook)}
+                    formatCell={formatCell}
+                    onFormatResult={(r) =>
+                      r === 'formatted'
+                        ? notify(COPY.noteFormatted)
+                        : r === 'unchanged'
+                          ? notify(COPY.noteAlreadyFormatted)
+                          : r instanceof PythonNotLoadedError
+                            ? notify(COPY.noteFormatNeedsPython)
+                            : notify(COPY.noteFormatFailed, 'error')
+                    }
                     onDebugStart={() => {
                       if (!narrow) {
                         setSideView('debug')
@@ -3436,7 +3475,11 @@ function Ide({ report }: { report: CapabilityReport }) {
                 </div>
                 {/* VS Code's floating debug toolbar, over the editor while a session runs. */}
                 <DebugToolbar
-                  onRestart={restartDebugging}
+                  onRestart={() => {
+                    const nb = notebookDebugOwner()
+                    if (nb) nb.restartDebugging()
+                    else restartDebugging()
+                  }}
                   // A notebook cell under the debugger stops by interrupting it, not by killing its kernel.
                   onStop={() => {
                     const nb = notebookDebugOwner()

@@ -36,9 +36,11 @@ export interface DebugViewProps {
   onReveal(path: string, line: number): void
   /** Text of a line, for the breakpoint row's preview. */
   lineText(path: string, line: number): string
+  /** How a path reads in a row — a file's name, or a notebook cell's "nb.ipynb [3]". Defaults to the file name. */
+  nameOf?(path: string): string
 }
 
-export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, lineText }: DebugViewProps) {
+export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, lineText, nameOf = (p) => splitPath(p).name }: DebugViewProps) {
   const s = useDebugState()
   const active = s.phase !== 'inactive'
 
@@ -73,7 +75,7 @@ export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, l
             </Section>
             <WatchSection />
             <Section title={COPY.debugCallStack} id="stack" badge={s.phase === 'paused' ? reasonLabel(s.stopped?.reason) : COPY.debugRunning}>
-              <CallStack onReveal={onReveal} />
+              <CallStack onReveal={onReveal} nameOf={nameOf} />
             </Section>
           </>
         ) : (
@@ -123,12 +125,12 @@ export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, l
                         type="checkbox"
                         className="size-3.5 flex-none accent-(--debug-bp) cursor-pointer"
                         checked={b.enabled}
-                        aria-label={COPY.debugBreakpointEnabled(splitPath(b.path).name, b.line)}
+                        aria-label={COPY.debugBreakpointEnabled(nameOf(b.path), b.line)}
                         onClick={(e) => e.stopPropagation()}
                         onChange={(e) => debugStore.setEnabled(b.path, b.line, e.target.checked)}
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        <span className="text-text-1">{splitPath(b.path).name}</span>{' '}
+                        <span className="text-text-1">{nameOf(b.path)}</span>{' '}
                         <span className="font-mono text-[12px] text-text-3">{lineText(b.path, b.line).trim()}</span>
                       </span>
                       <span className="flex-none rounded-sm px-1 text-[11px] tabular-nums text-text-2 desk:group-hover/row:hidden">{b.line}</span>
@@ -487,7 +489,7 @@ function WatchInput({ initial, onDone }: { initial: string; onDone(text: string 
 
 // ---- call stack ----
 
-function CallStack({ onReveal }: { onReveal(path: string, line: number): void }) {
+function CallStack({ onReveal, nameOf }: { onReveal(path: string, line: number): void; nameOf(path: string): string }) {
   const s = useDebugState()
   if (s.phase !== 'paused' || !s.stopped) return <Empty>{COPY.debugStackWhenPaused}</Empty>
   return (
@@ -522,7 +524,7 @@ function CallStack({ onReveal }: { onReveal(path: string, line: number): void })
             </span>
             <span className="min-w-0 flex-1 truncate text-text-1">{f.name}</span>
             <span className="flex-none truncate ps-2 text-[11px] text-text-3">
-              {splitPath(f.path).name}:{f.line}
+              {nameOf(f.path)}:{f.line}
             </span>
           </div>
         </li>

@@ -176,3 +176,16 @@ test('parse errors say what is wrong', () => {
   assert.throws(() => parseNotebook('{"nbformat": 3, "worksheets": []}'), /nbformat 3/)
   assert.throws(() => parseNotebook('[]'), /not a notebook/)
 })
+
+test('import: a .ipynb inside a .zip (and on its own) arrives byte-for-byte and still round-trips', async () => {
+  const { zipSync, strToU8 } = await import('fflate')
+  const { importZip, importFiles } = await import('../../src/zip.ts')
+  const zipped = zipSync({ 'lab/colab-export.ipynb': strToU8(COLAB), 'lab/data.csv': strToU8('a,b\n1,2\n') })
+  const res = await importZip(new File([zipped], 'lab.zip', { type: 'application/zip' }))
+  const nb = res.snapshot.files.find((f) => f.path === 'lab/colab-export.ipynb')
+  assert.equal(nb?.content, COLAB)
+  assert.deepEqual(res.skipped, [])
+  assert.equal(serializeNotebook(parseNotebook(nb!.content)), COLAB)
+  const loose = await importFiles([{ path: 'jupyter-4.5.ipynb', file: new File([JUPYTER], 'jupyter-4.5.ipynb') }])
+  assert.equal(loose.snapshot.files[0].content, JUPYTER)
+})

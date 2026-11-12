@@ -67,6 +67,8 @@ export interface CellEditorOptions {
   onLeave(direction: -1 | 1): void
   onFocus(): void
   onSave(): void
+  /** Shift+Alt+F — the file editor's Format chord, for this cell. */
+  onFormat(): void
 }
 
 export interface CellEditor {
@@ -133,6 +135,7 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       { key: 'ArrowUp', run: (v) => atEdge(v, -1) },
       { key: 'ArrowDown', run: (v) => atEdge(v, 1) },
       { key: 'Mod-s', preventDefault: true, run: () => (opts.onSave(), true) },
+      { key: 'Shift-Alt-f', preventDefault: true, run: () => (code ? (opts.onFormat(), true) : false) },
       { key: 'F9', preventDefault: true, run: (v) => (code ? toggleBreakpointAtCursor(v, opts.path) : false) },
     ]),
   )

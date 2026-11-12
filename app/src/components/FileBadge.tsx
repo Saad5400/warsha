@@ -51,6 +51,8 @@ export function badgeClass(size: BadgeSize, tone: BadgeTone): string {
 
 const letters: Record<string, string> = {
   md: 'M',
+  // A notebook: the bracket of a Jupyter input prompt.
+  ipynb: '[ ]',
   txt: 'T',
   json: '{}',
   // Web files stay lettered: no vendor glyph reads well at 20px.

@@ -931,6 +931,7 @@ export const EN = {
   nbRunCell: 'Run cell',
   nbStopCell: 'Interrupt cell',
   nbDebugCell: 'Debug cell',
+  nbFormatCell: 'Format cell',
   nbRunAbove: 'Run cells above',
   nbRunBelow: 'Run this cell and below',
   nbMoveUp: 'Move cell up',
