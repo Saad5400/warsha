@@ -618,9 +618,12 @@ function renderPrerendered(root: string, origin: string, m: Prerendered): string
 /**
  * Feeds the offline service worker its precache list at build time.
  *
- * public/coi-serviceworker.js reads `self.__WARSHA_PRECACHE__` (the hashed
- * JS/CSS this build emitted) and `self.__WARSHA_VERSION__` (a content hash that
- * names its caches, so a new deploy evicts the old ones). Those globals cannot
+ * public/coi-serviceworker.js reads `self.__WARSHA_ASSETS__` (every
+ * content-hashed file this build emitted under assets/ — it precaches the JS/CSS
+ * among them, and prunes cached assets/ files no longer in the list) and
+ * `self.__WARSHA_VERSION__` (a hash of that list, naming the per-build shell
+ * cache — and, by changing the worker's bytes, what makes a deploy install a new
+ * worker at all). Those globals cannot
  * be known until the bundle exists, so rather than tokenise the vendored SW we
  * PREPEND a two-line header to the copy Vite has already placed in dist/. The
  * source file in public/ is never touched; in dev the globals are simply
@@ -633,7 +636,7 @@ function warshaServiceWorkerPrecache(): Plugin {
     apply: 'build',
     generateBundle(_options, bundle) {
       assets = Object.keys(bundle)
-        .filter((name) => name.endsWith('.js') || name.endsWith('.css'))
+        .filter((name) => name.startsWith('assets/'))
         .map((name) => `./${name}`)
         .sort()
     },
@@ -649,7 +652,7 @@ function warshaServiceWorkerPrecache(): Plugin {
       const version = createHash('sha1').update(assets.join('|')).digest('hex').slice(0, 8)
       const header =
         `self.__WARSHA_VERSION__=${JSON.stringify(version)};` +
-        `self.__WARSHA_PRECACHE__=${JSON.stringify(assets)};\n`
+        `self.__WARSHA_ASSETS__=${JSON.stringify(assets)};\n`
       writeFileSync(swPath, header + source)
     },
   }

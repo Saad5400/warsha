@@ -29,19 +29,49 @@ if (typeof window === 'undefined') {
     // both fall back: precaching is skipped and runtime caching does the rest —
     // dev is never run offline, so that is fine.
     const VERSION = self.__WARSHA_VERSION__ || 'dev';
-    const PRECACHE = self.__WARSHA_PRECACHE__ || [];
-    const SHELL_CACHE = `warsha-shell-${VERSION}`;
-    const RUNTIME_CACHE = `warsha-runtime-${VERSION}`;
+    // Every file this build emitted under /assets/ (content-hashed, so a name is
+    // a version). The JS/CSS among them is precached; the whole list is what
+    // says which /assets/ entries a deploy has retired (see `prune`).
+    const ASSETS = self.__WARSHA_ASSETS__ || [];
+    const ASSET_PATHS = new Set(ASSETS.map((a) => new URL(a, self.location.href).pathname));
     // Under `vite dev` neither global is injected, so VERSION stays 'dev'. In that
     // mode we MUST NOT cache: every module Vite serves is same-origin, so cache-first
     // would pin the first build and silently swallow every later edit (HMR included).
     // Isolation still holds — isolate() stamps COOP/COEP on the live network response.
     const DEV = VERSION === 'dev';
 
-    // The app shell: the build-hashed JS/CSS (injected above) plus the stable
-    // entry and icon set from public/. `./` and `./index.html` are both listed
-    // because a navigation to the origin root and one to /index.html are cached
-    // under different keys, and the navigation fallback below tries both.
+    // Two caches, split by how long their contents stay true.
+    //
+    // SHELL_CACHE is per build: the documents and boot files a navigation needs
+    // offline. A deploy replaces it whole, which is right — it is small, and it
+    // is the shell OF that build.
+    //
+    // KEEP_CACHE is NOT per build, and that is the point of it. It holds the
+    // downloads: the hashed /assets/ chunks, the language runtimes from their
+    // version-pinned CDN URLs, and the public/ runtime files (the .NET bundle,
+    // the esbuild wasm…). These used to live in per-build caches too, so every
+    // deploy threw them away — each language re-downloaded after every release
+    // (the C toolchain alone is ~47 MB over the wire), and a student who went
+    // offline before re-running a language online found it gone. Keyed by URL
+    // instead, an entry is either still exactly right (an immutable URL), or is
+    // revalidated before use (`revalidate`), so nothing about a deploy makes it
+    // wrong. It is pruned by reference and by size (`prune`), never wholesale.
+    const SHELL_CACHE = `warsha-shell-${VERSION}`;
+    const KEEP_CACHE = 'warsha-keep';
+    // Last-use time and size per KEEP_CACHE entry, for the LRU cap. Its own tiny
+    // cache so it is never mistaken for a download.
+    const KEEP_INDEX_CACHE = 'warsha-keep-index';
+    const KEEP_INDEX_KEY = new URL('/__warsha-keep-index', self.location.href).href;
+    // Everything Warsha runs today is ~200 MB decoded (the C toolchain image is
+    // ~110 MB of it). The cap leaves room for one generation of runtime version
+    // bumps beside the current one; past it, the least recently used entries go.
+    const KEEP_CAP_BYTES = 500 * 1024 * 1024;
+
+    // The app shell: the stable entry and icon set from public/, plus this
+    // build's hashed JS/CSS (which goes to KEEP_CACHE, see install). `./` and
+    // `./index.html` are both listed because a navigation to the origin root and
+    // one to /index.html are cached under different keys, and the navigation
+    // fallback below tries both.
     const SHELL = [
         './',
         './index.html',
@@ -70,33 +100,41 @@ if (typeof window === 'undefined') {
         // face mid-session.
         './fonts/readex-pro-latin-wght-normal.woff2',
         './fonts/readex-pro-arabic-wght-normal.woff2',
-        ...PRECACHE,
     ];
+    const PRECACHE = ASSETS.filter((a) => /\.(js|css)$/.test(a));
 
-    // Cross-origin origins we cache-first: the two runtime CDNs, and nothing
-    // else. Pyodide (jsdelivr) and CheerpJ (leaningtech) are what a student
-    // downloads once and must keep working with offline.
-    const RUNTIME_HOSTS = [
-        'https://cdn.jsdelivr.net/pyodide/',
-        'https://cjrtnc.leaningtech.com/',
+    // Cross-origin URLs we cache, all of them immutable by construction — the
+    // version (or the content hash) is IN the URL, so a cached copy can never
+    // be out of date and is served without asking. A runtime a student has
+    // downloaded once keeps working offline and is never re-downloaded.
+    //   - Pyodide: cdn.jsdelivr.net/pyodide/v<version>/…
+    //   - CheerpJ: cjrtnc.leaningtech.com/<version>/…
+    //   - the C engine's JS: unpkg.com/<pkg>@<exact x.y.z>/… — only an exact
+    //     version; a bare or ranged one is a redirect to whatever is latest
+    //   - the C toolchain image: cdn.wasmer.io/webcimages/<sha256>.webc,
+    //     content-addressed. (Its registry lookup is a POST and cannot be
+    //     cached, which is why C still needs the network to start.)
+    const PINNED = [
+        /^https:\/\/cdn\.jsdelivr\.net\/pyodide\/v\d[^/]*\//,
+        /^https:\/\/cjrtnc\.leaningtech\.com\/\d[^/]*\//,
+        /^https:\/\/unpkg\.com\/(@[^/]+\/)?[^/@]+@\d+\.\d+\.\d+[^/]*\//,
+        /^https:\/\/cdn\.wasmer\.io\/webcimages\/[0-9a-f]{64}\.webc$/,
     ];
-    const isRuntimeHost = (url) => RUNTIME_HOSTS.some((h) => url.startsWith(h));
+    const isPinned = (url) => PINNED.some((re) => re.test(url));
+    const isSameOrigin = (url) => new URL(url).origin === self.location.origin;
 
-    // What we are willing to store: GET only, and either same-origin or a
-    // runtime CDN. `storable` below decides which RESPONSES get kept.
-    const cacheable = (request) => {
-        if (request.method !== 'GET') return false;
-        const url = request.url;
-        return new URL(url).origin === self.location.origin || isRuntimeHost(url);
-    };
+    // What we are willing to store: GET only, and either same-origin or pinned.
+    // `storable` below decides which RESPONSES get kept.
+    const cacheable = (request) =>
+        request.method === 'GET' && (isSameOrigin(request.url) || isPinned(request.url));
 
     // Which cached copies may be served without asking the network first. Only
     // a URL whose bytes can never change: Vite's content-hashed /assets/ (a new
-    // build is a new name) and the runtime CDNs, whose URLs pin a version
-    // (pyodide/v0.x/…, leaningtech/4.3/…). Every other same-origin file keeps its
-    // name across deploys — the public/ runtime files (warsha-jvm.worker.js,
-    // warsha-dotnet/**, warsha-esbuild.wasm, the framework JSON…), the icons, the
-    // pages — and is revalidated instead; see `revalidate`.
+    // build is a new name) and the pinned CDN URLs above. Every other
+    // same-origin file keeps its name across deploys — the public/ runtime files
+    // (warsha-jvm.worker.js, warsha-dotnet/**, warsha-esbuild.wasm, the
+    // framework JSON…), the icons, the pages — and is revalidated instead; see
+    // `revalidate`.
     //
     // This split is the fix for a live bug. Everything same-origin used to be
     // cache-first, so an unhashed worker cached under one build was served, as
@@ -105,7 +143,7 @@ if (typeof window === 'undefined') {
     // name only changes when a HASHED file does, a deploy that touched only a
     // runtime file never reached returning students at all.
     const isImmutable = (url) =>
-        isRuntimeHost(url) || new URL(url).pathname.startsWith('/assets/');
+        isPinned(url) || (isSameOrigin(url) && new URL(url).pathname.startsWith('/assets/'));
 
     // Past this, a revalidation that has not even answered with headers is given
     // up on and the cached copy served: on a connection that is technically up
@@ -140,13 +178,106 @@ if (typeof window === 'undefined') {
         return isPage || !/text\/html/i.test(response.headers.get('content-type') || '');
     };
 
-    // Awaited by callers so the copy is taken (and the write under way) before
-    // the response goes back to the page; the write itself is not awaited, so a
-    // 37 MB runtime is not held back until it is on disk.
-    const store = async (request, response) => {
+    // ---- the KEEP_CACHE index (LRU) --------------------------------------
+    // url -> [lastUsedMs, bytes]. Held in memory, written back after a quiet
+    // second: a worker killed before the write loses only some recency, which
+    // makes the cap slightly less fair, never wrong.
+    let index = null;
+    const loadIndex = () => (index ??= (async () => {
+        try {
+            const res = await (await caches.open(KEEP_INDEX_CACHE)).match(KEEP_INDEX_KEY);
+            return res ? await res.json() : {};
+        } catch {
+            return {};
+        }
+    })());
+    let persistTimer = 0;
+    const persistIndex = () => {
+        clearTimeout(persistTimer);
+        persistTimer = setTimeout(async () => {
+            const body = JSON.stringify(await loadIndex());
+            const cache = await caches.open(KEEP_INDEX_CACHE);
+            await cache.put(KEEP_INDEX_KEY, new Response(body, { headers: { 'content-type': 'application/json' } }));
+        }, 1000);
+    };
+    // Entries this worker has served: the cap never evicts what is in use.
+    const usedNow = new Set();
+    const touch = async (url, bytes) => {
+        const idx = await loadIndex();
+        usedNow.add(url);
+        idx[url] = [Date.now(), bytes ?? idx[url]?.[1] ?? 0];
+        persistIndex();
+    };
+
+    // Store into KEEP_CACHE, counting the bytes as they stream into the cache
+    // (the decoded size, which is what quota sees — Content-Length is the
+    // compressed one, and reading a 110 MB body twice to measure it is not on).
+    // Awaited by callers so the copy is taken before the response goes back to
+    // the page; the write itself is not awaited, so a large runtime is not held
+    // back until it is on disk.
+    const keep = async (request, response) => {
         if (!storable(request, response)) return;
-        const cache = await caches.open(isRuntimeHost(request.url) ? RUNTIME_CACHE : SHELL_CACHE);
-        cache.put(request, response.clone()).catch(() => {});
+        const cache = await caches.open(KEEP_CACHE);
+        let bytes = 0;
+        const counted = response.clone().body.pipeThrough(new TransformStream({
+            transform(chunk, ctl) {
+                bytes += chunk.byteLength;
+                ctl.enqueue(chunk);
+            },
+        }));
+        const copy = new Response(counted, { status: response.status, statusText: response.statusText, headers: response.headers });
+        cache.put(request, copy)
+            .then(() => touch(request.url, bytes))
+            .then(() => schedulePrune())
+            .catch(() => {});
+    };
+
+    // Retire what no build uses any more, then hold KEEP_CACHE under its cap.
+    //   1. A /assets/ entry this build did not emit is a chunk of an older build
+    //      (content-hashed names are never reused); nothing current asks for it.
+    //   2. Past KEEP_CAP_BYTES, least recently used first — the only way a
+    //      pinned CDN version a runtime has moved on from ever leaves (the worker
+    //      cannot know which versions the runtimes pin; recency tells it).
+    // Serialized, and debounced after stores, so a burst of downloads is one pass.
+    let pruning = Promise.resolve();
+    let pruneTimer = 0;
+    const schedulePrune = () => {
+        clearTimeout(pruneTimer);
+        pruneTimer = setTimeout(() => { pruning = pruning.then(prune, prune); }, 5000);
+    };
+    const prune = async () => {
+        if (DEV) return;
+        const cache = await caches.open(KEEP_CACHE);
+        const idx = await loadIndex();
+        const present = new Set();
+        for (const req of await cache.keys()) {
+            const u = new URL(req.url);
+            if (ASSET_PATHS.size && u.origin === self.location.origin && u.pathname.startsWith('/assets/')
+                && !ASSET_PATHS.has(u.pathname)) {
+                await cache.delete(req);
+                continue;
+            }
+            present.add(req.url);
+        }
+        for (const url of Object.keys(idx)) if (!present.has(url)) delete idx[url];
+        // Entries with no record (moved over from an older worker's caches):
+        // oldest possible use, size read once from the stored body.
+        for (const url of present) {
+            if (idx[url]) continue;
+            const res = await cache.match(url);
+            idx[url] = [0, res ? (await res.blob()).size : 0];
+        }
+        let total = 0;
+        for (const url of present) total += idx[url][1];
+        const byAge = [...present].sort((a, b) => idx[a][0] - idx[b][0]);
+        for (const url of byAge) {
+            if (total <= KEEP_CAP_BYTES) break;
+            if (usedNow.has(url)) continue;
+            await cache.delete(url);
+            total -= idx[url][1];
+            delete idx[url];
+        }
+        persistIndex();
     };
 
     // Cache-first, for immutable URLs only. Once a student has run a language
@@ -155,9 +286,12 @@ if (typeof window === 'undefined') {
     // it works offline and is never re-downloaded.
     const cacheFirst = async (r, request) => {
         const cached = await caches.match(r);
-        if (cached) return isolate(cached);
+        if (cached) {
+            touch(r.url);
+            return isolate(cached);
+        }
         const net = await fetch(request);
-        await store(r, net);
+        await keep(r, net);
         return isolate(net);
     };
 
@@ -175,7 +309,7 @@ if (typeof window === 'undefined') {
         const cached = await caches.match(r);
         if (!cached) {
             const net = await fetch(request, { cache: 'no-store' });
-            await store(r, net);
+            await keep(r, net);
             return isolate(net);
         }
         const headers = new Headers();
@@ -191,6 +325,7 @@ if (typeof window === 'undefined') {
             // <script>, an <img>) would silently drop the conditional headers.
             net = await fetch(r.url, { headers, cache: 'no-store', credentials: 'same-origin', signal: abort.signal });
         } catch {
+            touch(r.url);
             return isolate(cached);
         } finally {
             clearTimeout(timer);
@@ -198,8 +333,11 @@ if (typeof window === 'undefined') {
         // 304: still current. 5xx: the server is having a moment, and the copy we
         // have beats an error page. Anything else (200, 404) is the deploy's
         // answer and wins over the cache.
-        if (net.status === 304 || net.status >= 500) return isolate(cached);
-        await store(r, net);
+        if (net.status === 304 || net.status >= 500) {
+            touch(r.url);
+            return isolate(cached);
+        }
+        await keep(r, net);
         return isolate(net);
     };
 
@@ -210,23 +348,48 @@ if (typeof window === 'undefined') {
         // `cache: 'reload'` skips the HTTP cache so a fresh deploy is precached,
         // not a stale copy.
         event.waitUntil((async () => {
-            const cache = await caches.open(SHELL_CACHE);
-            await Promise.all(
-                SHELL.map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => {})),
-            );
+            const shell = await caches.open(SHELL_CACHE);
+            const kept = await caches.open(KEEP_CACHE);
+            await Promise.all([
+                ...SHELL.map((url) => shell.add(new Request(url, { cache: 'reload' })).catch(() => {})),
+                // A chunk an earlier build already brought is the same bytes under
+                // the same name: only what this deploy actually changed downloads.
+                ...PRECACHE.map(async (url) => {
+                    const req = new Request(url, { cache: 'reload' });
+                    if (await kept.match(req)) return;
+                    await keep(req, await fetch(req)).catch(() => {});
+                }),
+            ]);
         })());
     });
 
     self.addEventListener("activate", (event) => {
         event.waitUntil((async () => {
-            // Drop caches from older builds — their names carry the old VERSION.
-            // In dev, keep nothing: a stale dev cache is exactly what we must purge.
-            const keep = DEV ? new Set() : new Set([SHELL_CACHE, RUNTIME_CACHE]);
-            const names = await caches.keys();
-            await Promise.all(
-                names.map((n) => (n.startsWith('warsha-') && !keep.has(n) ? caches.delete(n) : undefined)),
-            );
             await self.clients.claim();
+            if (DEV) {
+                // In dev, keep nothing: a stale dev cache is exactly what we must purge.
+                await Promise.all((await caches.keys())
+                    .filter((n) => n.startsWith('warsha-'))
+                    .map((n) => caches.delete(n)));
+                return;
+            }
+            // Older builds' caches go — but anything immutable in them moves to
+            // KEEP_CACHE first. That covers the caches of workers from before
+            // KEEP_CACHE existed (warsha-runtime-<v> held Pyodide and CheerpJ), so
+            // the deploy that introduces it costs no student a re-download either.
+            const kept = await caches.open(KEEP_CACHE);
+            const live = new Set([SHELL_CACHE, KEEP_CACHE, KEEP_INDEX_CACHE]);
+            for (const name of await caches.keys()) {
+                if (!name.startsWith('warsha-') || live.has(name)) continue;
+                const old = await caches.open(name);
+                for (const req of await old.keys()) {
+                    if (!isImmutable(req.url) || (await kept.match(req))) continue;
+                    const res = await old.match(req);
+                    if (res) await kept.put(req, res).catch(() => {});
+                }
+                await caches.delete(name);
+            }
+            await (pruning = pruning.then(prune, prune));
         })());
     });
 

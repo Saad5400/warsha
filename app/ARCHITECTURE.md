@@ -192,8 +192,9 @@ a real Vite build and a real dev server.
   header transform is byte-identical). On `install` it precaches the app shell — the build-hashed
   JS/CSS, injected as `self.__WARSHA_PRECACHE__` by the `warsha:sw-precache` plugin in
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
-  only for URLs whose bytes cannot change — Vite's content-hashed `/assets/` and the two
-  version-pinned runtime CDNs (`cdn.jsdelivr.net/pyodide/`, `cjrtnc.leaningtech.com`) — and
+  only for URLs whose bytes cannot change — Vite's content-hashed `/assets/` and the version-pinned
+  runtime URLs (`cdn.jsdelivr.net/pyodide/v…/`, `cjrtnc.leaningtech.com/<v>/`, exact-version
+  `unpkg.com` packages, content-addressed `cdn.wasmer.io/webcimages/<sha256>.webc`) — and
   **revalidates** every other same-origin file (the unhashed `public/` runtimes: the engine workers,
   `warsha-dotnet/**`, `warsha-esbuild.wasm`, the framework JSON, icons) with a conditional request,
   serving its copy on a `304` or with no network. Navigations are network-first (bypassing the HTTP
@@ -204,7 +205,12 @@ a real Vite build and a real dev server.
   rather than the SPA shell. A page that still outlives its deploy (a tab left open) heals itself:
   when an engine fails to start, a chunk fails to load or the shell crashes, `ui/staleBuild.ts`
   compares the build this page booted with the one the server serves and reloads once onto the new
-  one. `tools/qa/deploy-upgrade-check.mjs` plays a real deploy against all of it. One carve-out is load-bearing: **requests carrying a `Range`
+  one. Downloads outlive deploys: everything the worker fetches (assets, runtimes, the `public/`
+  runtime files) lives in one URL-keyed `warsha-keep` cache, not a per-build one — a deploy only
+  replaces the small per-build shell cache, prunes `/assets/` files the new build no longer emits,
+  and holds the rest under a 500 MB least-recently-used cap. So a language a student already ran is
+  neither re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
+  a real deploy against all of it, counting every runtime byte fetched again. One carve-out is load-bearing: **requests carrying a `Range`
   header bypass the cache entirely** (network only, never stored). CheerpJ reads `/app/ecj.jar` — a
   same-origin GET, so otherwise cache-first — in many HTTP Range requests and needs a `206` +
   `Content-Range` on each; the Cache API ignores the `Range` header and would replay the full stored
