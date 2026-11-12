@@ -24,6 +24,10 @@
  *      student goes back to the OLD tab and presses Run in
  *      every language. The page may heal itself by reloading onto v2 — that is a
  *      pass, the student just presses Run again — but an error is not.
+ *   D. AN INSTALL CUT SHORT. The network drops mid-install; the browser is
+ *      closed mid-install; an older container still answers the pages during a
+ *      rollout. Offline afterwards, whichever build boots must get only its own
+ *      files — an unfinished install may change nothing the old build serves.
  *   C. OFFLINE RIGHT AFTER THE UPGRADE. On that first v2 visit, before anything
  *      has run on v2, the network goes and every language the student used on
  *      v1 is run again. Runtimes must outlive a deploy; Java and C have known
@@ -57,7 +61,7 @@
  * Overridable:
  *   WARSHA_V1_DIST, WARSHA_V2_DIST  the two builds                       (required)
  *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind,notebook (default all)
- *   WARSHA_SCENARIOS    comma list of A,B,C                              (default all)
+ *   WARSHA_SCENARIOS    comma list of A,B,C,D                            (default all)
  *   WARSHA_NGINX_CONF   nginx server block    (default ../../app/deploy/nginx.conf)
  *   WARSHA_PORT         host port for nginx                              (default 8291)
  *   WARSHA_V1_AGE_DAYS  how old v1's Last-Modified is                    (default 10)
@@ -86,13 +90,14 @@ const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 const BASE = `http://127.0.0.1:${PORT}/`
 const RUN_TIMEOUT_MS = Number(process.env.WARSHA_RUN_TIMEOUT_MS ?? 240000)
 const SHOTS = process.env.WARSHA_SHOTS ?? join(HERE, 'screenshots')
-const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C').split(',').map((s) => s.trim().toUpperCase())
+const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C,D').split(',').map((s) => s.trim().toUpperCase())
 
 const results = []
 const pass = (name, detail = '') => { results.push(true); console.log(`PASS  ${name}${detail ? ' :: ' + detail : ''}`) }
 const fail = (name, detail = '') => { results.push(false); console.log(`FAIL  ${name}${detail ? ' :: ' + detail : ''}`) }
 const check = (name, ok, detail = '') => (ok ? pass : fail)(name, detail)
 const info = (m) => console.log(`      ${m}`)
+const warn = (name, detail = '') => console.log(`WARN  ${name}${detail ? ' :: ' + detail : ''}`)
 
 // ------------------------------------------------------------------ the programs
 // One small program per engine, each printing a marker the check waits for. They
@@ -181,6 +186,8 @@ const shareLink = (lang) => {
 }
 
 // ------------------------------------------------------------------ the server
+const sha = (buf) => createHash('sha256').update(buf).digest('hex')
+
 const SERVE = mkdtempSync(join(tmpdir(), 'warsha-upgrade-serve-'))
 // mkdtemp makes it 0700; nginx's worker runs as another user and would 403.
 chmodSync(SERVE, 0o755)
@@ -218,6 +225,29 @@ function startNginx() {
 }
 const stopNginx = () => { try { execFileSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) } catch { /* gone */ } }
 
+/** What nginx actually sent since `since` (a Date), from its own access log:
+ *  the server's view of every download, service-worker requests included. */
+function served(since) {
+  const log = execFileSync('docker', ['logs', '--since', since.toISOString(), CONTAINER], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  return [...log.matchAll(/"GET (\S+) HTTP\/[\d.]+" (\d{3}) (\d+)/g)]
+    .map((m) => ({ path: decodeURIComponent(m[1].split('?')[0]), status: Number(m[2]), bytes: Number(m[3]) }))
+}
+
+/** A deploy that is "the same build again": every file re-stamped with a new
+ *  mtime, which is what production does on every deploy — and what changes
+ *  nginx's ETag (mtime + size) for bytes that did not change at all. */
+function restamp() {
+  const when = new Date()
+  for (const f of walk(SERVE)) utimesSync(join(SERVE, f), when, when)
+}
+
+/** A rollout overlap: `dist` deployed, but its pages still answered by the
+ *  previous container — v1's documents in front of v2's everything else. */
+function deployMixed(dist, pagesFrom) {
+  deploy(dist, 0)
+  for (const f of walk(pagesFrom)) if (f.endsWith('.html')) cpSync(join(pagesFrom, f), join(SERVE, f))
+}
+
 /** The hashed entry script a document boots — the cheapest exact "which build is
  *  this page" fingerprint, since its name changes whenever any bundled code does. */
 const entryOf = (html) => html.match(/<script type="module"[^>]*src="([^"]+)"/)?.[1] ?? null
@@ -239,6 +269,25 @@ const POISON_URLS = readdirSync(join(V2, 'assets')).filter((f) => f.endsWith('.w
 const V1_SHELL = shellCacheOf(V1)
 const V2_SHELL = shellCacheOf(V2)
 
+/** The files every install fetches by design: the worker's own shell list,
+ *  read from the worker source rather than restated here. */
+const SHELL_PATHS = new Set(
+  [...(readFileSync(join(V2, 'coi-serviceworker.js'), 'utf8').match(/const SHELL = \[([\s\S]*?)\];/)?.[1] ?? '').matchAll(/'\.(\/[^']*)'/g)].map((m) => m[1]),
+)
+/** Runtime files byte-identical in v1 and v2 (outside assets/, pages and the
+ *  shell): an upgrade has no reason to download any of them again. */
+const UNCHANGED = new Set(
+  walk(V2)
+    .map((f) => '/' + f)
+    .filter((p) => !p.startsWith('/assets/') && !p.endsWith('.html') && p !== '/coi-serviceworker.js' && !SHELL_PATHS.has(p))
+    .filter((p) => existsSync(join(V1, p)) && sha(readFileSync(join(V1, p))) === sha(readFileSync(join(V2, p)))),
+)
+const unchangedBytes = (lines) => {
+  const hits = lines.filter((l) => l.status === 200 && UNCHANGED.has(l.path))
+  return { n: hits.length, bytes: hits.reduce((t, l) => t + l.bytes, 0), sample: hits.slice(0, 3).map((l) => l.path) }
+}
+const mb = (b) => (b / 1e6).toFixed(1) + ' MB'
+
 /** Until `name` is the one shell cache present: that build's worker has
  *  installed, activated and evicted the other build's caches. */
 async function waitShell(page, name, timeout = 90000) {
@@ -251,7 +300,6 @@ async function waitShell(page, name, timeout = 90000) {
   return false
 }
 
-const sha = (buf) => createHash('sha256').update(buf).digest('hex')
 
 // ------------------------------------------------------------------ the browser
 const PROFILE = mkdtempSync(join(tmpdir(), 'warsha-upgrade-profile-'))
@@ -533,9 +581,16 @@ try {
     await ctx.close()
 
     deploy(V2, 0)
-    info('deployed v2')
+    info(`deployed v2 (${UNCHANGED.size} runtime files byte-identical to v1, every one re-stamped)`)
 
     for (const visit of ['first visit after deploy', 'second visit after deploy']) {
+      if (visit === 'second visit after deploy') {
+        // The same build deployed again, as production redeploys: new mtimes on
+        // every file, so a new ETag on every file, for the very same bytes.
+        restamp()
+        info('redeployed v2 unchanged (every mtime re-stamped)')
+      }
+      const since = new Date()
       await launch()
       page = ctx.pages()[0] ?? (await ctx.newPage())
       const errors = watch(page)
@@ -544,6 +599,13 @@ try {
       await page.waitForSelector('button:has-text("New project"), .cm-content', { timeout: 60000 })
         .then(() => pass(`A ${visit}: the shell booted`))
         .catch(() => fail(`A ${visit}: the shell booted`, 'no welcome panel or editor within 60s'))
+      if (visit === 'first visit after deploy') {
+        check('A: the v2 service worker installed', await waitShell(page, V2_SHELL))
+        const all = served(since)
+        const u = unchangedBytes(all)
+        check('A: the upgrade\'s install downloaded no runtime file that did not change', u.bytes === 0,
+          `${u.n} unchanged files, ${mb(u.bytes)}${u.n ? ': ' + u.sample.join(', ') : ''} — install total ${mb(all.filter((l) => l.status === 200).reduce((t, l) => t + l.bytes, 0))}`)
+      }
 
       if (visit === 'first visit after deploy' && SCENARIOS.includes('C')) {
         // C. Right after the upgrade, before ANY language has run on v2: the v2
@@ -591,6 +653,73 @@ try {
           ? `${again.length} refetched, ${(again.reduce((n, r) => n + r.bytes, 0) / 1e6).toFixed(1)} MB: ${again.slice(0, 4).map((r) => r.url).join(', ')}`
           : `0 of ${v1Downloads.size} refetched, 0 bytes`)
       check(`A ${visit}: no platform errors in the console`, errors.length === 0, errors.slice(0, 3).join(' | '))
+      // Every language ran: not one byte of a runtime file that did not change
+      // may have come from the server, whatever its ETag now says.
+      const u = unchangedBytes(served(since))
+      check(`A ${visit}: running every language downloaded no unchanged runtime file`, u.bytes === 0,
+        `${u.n} files, ${mb(u.bytes)}${u.n ? ': ' + u.sample.join(', ') : ''}`)
+      await ctx.close()
+    }
+  }
+
+  if (SCENARIOS.includes('D')) {
+    // D. An install that does not finish must change nothing the running build
+    // serves. Each variant: v1 in use (with runtimes kept), v2 deployed, the
+    // update's install cut short — then the student goes offline and opens
+    // Warsha. Whichever build boots, every file served must be THAT build's.
+    const D_LANGS = ['python', 'java', 'js', 'csharp'].filter((l) => LANGS.includes(l))
+    const variants = [
+      ['the network drops mid-install', 'offline'],
+      ['the browser is closed mid-install', 'closed'],
+      ['an older container still answers the pages (rollout overlap)', 'mixed'],
+    ]
+    for (const [label, how] of variants) {
+      console.log(`\n-- D. install interrupted: ${label}`)
+      deploy(V1, AGE_DAYS)
+      const profile = mkdtempSync(join(tmpdir(), 'warsha-upgrade-cut-'))
+      await launch(profile)
+      let page = ctx.pages()[0] ?? (await ctx.newPage())
+      await page.goto(BASE, { waitUntil: 'load' })
+      await waitControlled(page)
+      await waitShell(page, V1_SHELL)
+      for (const lang of D_LANGS) await runLang(page, lang)
+      await page.waitForTimeout(2000) // let the last downloads land in the cache
+
+      if (how === 'mixed') deployMixed(V2, V1)
+      else deploy(V2, 0)
+      const probe = await ctx.newPage()
+      await probe.goto(BASE, { waitUntil: 'load' })
+      // Cut the install off the moment it starts.
+      let caught = false
+      for (const end = Date.now() + 30000; Date.now() < end && !caught; await probe.waitForTimeout(25)) {
+        caught = await probe.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.installing).catch(() => false)
+      }
+      if (how === 'offline') {
+        await ctx.setOffline(true)
+        await probe.waitForTimeout(5000)
+      } else if (how === 'closed') {
+        await ctx.close()
+        await launch(profile)
+        await ctx.setOffline(true)
+      } else {
+        // The pages are another build's: install must refuse, not finish.
+        await probe.waitForTimeout(8000)
+        await ctx.setOffline(true)
+      }
+      if (!caught && how !== 'mixed') warn(`D ${label}`, 'install finished before it could be interrupted — inconclusive')
+      page = ctx.pages()[0] ?? (await ctx.newPage())
+      await page.goto(BASE, { waitUntil: 'load' }).catch(() => {})
+      const booted = await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 }).then(() => true).catch(() => false)
+      check(`D ${label}: Warsha opens offline`, booted)
+      const entry = await page.evaluate(() => document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute('src') ?? null)
+      const build = entry === V2_ENTRY ? V2 : V1
+      info(`offline, the ${entry === V2_ENTRY ? 'v2' : entry === V1_ENTRY ? 'v1' : '?'} page booted (${entry})`)
+      if (how === 'mixed') check(`D ${label}: the update did not take over with another build's pages`, entry === V1_ENTRY, String(entry))
+      assertFresh(`D ${label}`, await cacheAudit(page), build)
+      const r = booted
+        ? await runLang(page, 'python').catch((e) => ({ kind: `threw: ${String(e.message).split('\n')[0]}` }))
+        : { kind: 'not booted' }
+      check(`D ${label}: Python runs offline`, r.kind === 'ok', r.kind)
       await ctx.close()
     }
   }
