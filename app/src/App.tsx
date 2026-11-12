@@ -12,8 +12,8 @@ import type { FsSnapshot } from './fs/types'
 import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
 import { classifyRunFailure } from './hooks/useRunner'
 import { createNotebook, isNotebookPath, parseCellPath, parseNotebook, readableText, serializeNotebook } from './notebook/nbformat'
-import { closeNotebooksExcept, flushNotebooks, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
-import { notebookDebugOwner } from './notebook/session'
+import { closeNotebooksExcept, flushNotebooks, notebookDocument, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
+import { notebookDebugOwner, runStatusOf, useOptionalSession } from './notebook/session'
 // The notebook UI (cells, outputs, markdown, math) loads the first time a notebook opens.
 const NotebookView = lazy(() => import('./components/notebook/NotebookView').then((m) => ({ default: m.NotebookView })))
 
@@ -2338,25 +2338,60 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
   }
 
+  // A notebook on screen owns Run: Run runs all its cells, Debug debugs its selected (or
+  // first) code cell, Stop interrupts, and the status bar shows its kernel — never the
+  // project's entry point, which a notebook-only project does not have.
+  const nbDoc = activeNotebook ? notebookDocument(activeNotebook, kernelFor(activeNotebook)!, ioFor(activeNotebook)) : null
+  const nbState = useOptionalSession(nbDoc?.session ?? null)
+  const nbStatus = nbState ? runStatusOf(nbState) : null
+  const kernelLabel = nbState
+    ? nbState.kernel === 'starting'
+      ? COPY.nbKernelStarting
+      : nbState.kernel === 'interrupting'
+        ? COPY.nbKernelInterrupting
+        : nbStatus !== 'idle'
+          ? COPY.nbKernelBusy
+          : nbState.kernel === 'off'
+            ? COPY.nbKernelOff
+            : COPY.nbKernelIdle
+    : null
+
   // Single state object so Run/Stop in the tab strip (Tabs.tsx), the Run menu, and
   // F5/Shift+F5 all share the same handlers and can't drift apart.
-  const runControl: RunControlState = {
-    status: runner.status,
-    busy: runner.busy,
-    canRun: candidates.length > 0,
-    entry: resolveEntry(entryPath, candidates),
-    onRun: () => {
-      setConsoleOpen(true)
-      void runner.run()
-    },
-    onStop: runner.stop,
-  }
+  const runControl: RunControlState =
+    nbDoc && nbStatus
+      ? {
+          status: nbStatus,
+          busy: nbStatus !== 'idle',
+          canRun: true,
+          entry: activeNotebook,
+          onRun: () => nbDoc.runAll(),
+          onStop: () => nbDoc.session.interrupt(),
+        }
+      : {
+          status: runner.status,
+          busy: runner.busy,
+          canRun: candidates.length > 0,
+          entry: resolveEntry(entryPath, candidates),
+          onRun: () => {
+            setConsoleOpen(true)
+            void runner.run()
+          },
+          onStop: runner.stop,
+        }
 
   // ---- debugger ----
-  const canDebugEntry = !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
+  const canDebugEntry = nbDoc ? true : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
   /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
   const startDebugging = () => {
-    if (runner.busy || !canDebugEntry) return
+    if (runControl.busy || !canDebugEntry) return
+    if (nbDoc) {
+      if (!narrow) {
+        setSideView('debug')
+        setExplorerDocked(true)
+      }
+      return nbDoc.debugCurrent()
+    }
     setConsoleOpen(true)
     // VS Code shows Run and Debug when a session starts — docked only; on a phone the
     // drawer would cover the very line the program stops on.
@@ -2754,14 +2789,11 @@ function Ide({ report }: { report: CapabilityReport }) {
       // Run Without Debugging, Mod+Enter the historic run binding. Busy: same key stops.
       keys: ['Ctrl+F5', 'Mod+Enter'],
       enabled: () => runControl.canRun,
+      // Through runControl, so a notebook on screen runs all its cells instead of the entry.
       run: () => {
-        const r = runnerRef.current
-        if (r.busy) {
-          if (debugStore.get().phase === 'inactive') r.stop()
-        } else {
-          setConsoleOpen(true)
-          void r.run()
-        }
+        if (runControl.busy) {
+          if (debugStore.get().phase === 'inactive') runControl.onStop()
+        } else runControl.onRun()
       },
     },
     {
@@ -2773,26 +2805,19 @@ function Ide({ report }: { report: CapabilityReport }) {
       keys: ['F5'],
       enabled: () => runControl.canRun || debugStore.get().phase !== 'inactive',
       run: () => {
-        const r = runnerRef.current
         const phase = debugStore.get().phase
         if (phase === 'paused') return debugStore.resume('continue')
         if (phase === 'running') return
-        if (r.busy) return r.stop()
+        if (runControl.busy) return runControl.onStop()
         if (canDebugEntry && debugStore.enabledBreakpoints().length) startDebugging()
-        else {
-          setConsoleOpen(true)
-          void r.run()
-        }
+        else runControl.onRun()
       },
     },
     {
       id: 'debug.runNoDebug',
       title: COPY.cmdDebugRunNoDebug,
-      enabled: () => runControl.canRun && !runnerRef.current.busy,
-      run: () => {
-        setConsoleOpen(true)
-        void runnerRef.current.run()
-      },
+      enabled: () => runControl.canRun && !runControl.busy,
+      run: () => runControl.onRun(),
     },
     { id: 'debug.continue', title: COPY.cmdDebugContinue, enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('continue') },
     { id: 'debug.pause', title: COPY.cmdDebugPause, keys: ['F6'], enabled: () => debugStore.get().phase === 'running', run: () => debugStore.pause() },
@@ -3316,11 +3341,12 @@ function Ide({ report }: { report: CapabilityReport }) {
             <DebugView
               canDebug={canDebugEntry}
               entry={runControl.entry}
-              busy={runner.busy}
+              busy={runControl.busy}
               onStartDebugging={startDebugging}
               onReveal={revealLine}
               lineText={lineText}
               nameOf={debugName}
+              hint={activeNotebook ? COPY.debugNotebookHint : undefined}
             />
           ) : sideView === 'search' ? (
             <SearchView project={project} revision={revision} onOpenMatch={openAt} />
@@ -3392,7 +3418,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // Run + file-scoped "⋯" — VS Code's editor-actions corner; Run's one home now
                 // (left the title bar and console header).
                 runControl={runControl}
-                debugControl={{ can: canDebugEntry && !runner.busy, entry: runControl.entry, onDebug: startDebugging }}
+                debugControl={{ can: canDebugEntry && !runControl.busy, entry: runControl.entry, onDebug: startDebugging }}
                 moreItems={deskMoreItems}
               />
 
@@ -3482,6 +3508,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 </div>
                 {/* VS Code's floating debug toolbar, over the editor while a session runs. */}
                 <DebugToolbar
+                  belowBar={!!activeNotebook}
                   onRestart={() => {
                     const nb = notebookDebugOwner()
                     if (nb) nb.restartDebugging()
@@ -3611,10 +3638,11 @@ function Ide({ report }: { report: CapabilityReport }) {
           §4.3 rule 4's console floor claims those pixels first. */}
       {keyboardOpen ? null : (
         <StatusBar
-          status={runner.status}
-          exitCode={runner.exitCode}
+          status={runControl.status}
+          exitCode={nbStatus ? null : runner.exitCode}
           activePath={activePath}
           entryPath={runControl.entry}
+          kernelLabel={kernelLabel}
           // A notebook has no single caret, problems list or indentation — its cells are many editors.
           cursor={empty || !activePath || activeNotebook ? null : cursor}
           // Same gate as the caret: a problems count belongs to an open file.

@@ -145,6 +145,26 @@ export class NotebookDocument {
     this.io.write(text)
   }
 
+  /** The cell the view has selected — what the shell's Debug starts from. */
+  selected: string | null = null
+
+  private codeIds(from = 0): string[] {
+    return (this.model?.cells ?? []).slice(from).filter((c) => c.type === 'code').map((c) => c.id)
+  }
+
+  /** Run every code cell, top to bottom — the notebook's Run all, and the shell's Run. */
+  runAll() {
+    this.session.run(this.codeIds())
+  }
+
+  /** Debug the selected code cell, else the first one — the shell's Debug (F5, Run and Debug). */
+  debugCurrent() {
+    const cells = this.model?.cells ?? []
+    const sel = cells.find((c) => c.id === this.selected && c.type === 'code')
+    const id = sel?.id ?? this.codeIds()[0]
+    if (id) this.session.run([id], { debug: true })
+  }
+
   private revealers = new Set<(cellId: string, line: number) => void>()
   private pendingReveal: { cellId: string; line: number } | null = null
 

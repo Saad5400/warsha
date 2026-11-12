@@ -332,3 +332,16 @@ export class NotebookSession {
 export function useSession(session: NotebookSession): SessionState {
   return useSyncExternalStore(session.subscribe, session.get)
 }
+
+const noSession = () => () => {}
+/** `useSession` for a session that may not exist (no notebook open): null then. */
+export function useOptionalSession(session: NotebookSession | null): SessionState | null {
+  return useSyncExternalStore(session ? session.subscribe : noSession, () => (session ? session.get() : null))
+}
+
+/** A session's state in the shell's run vocabulary (status bar, Run/Stop control). */
+export function runStatusOf(s: SessionState): 'idle' | 'preparing' | 'running' | 'waiting' {
+  if (s.kernel === 'starting') return 'preparing'
+  if (s.waiting) return 'waiting'
+  return s.running || Object.values(s.cells).some((c) => c.state === 'queued') ? 'running' : 'idle'
+}

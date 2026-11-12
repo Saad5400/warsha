@@ -50,7 +50,7 @@ export interface NotebookViewProps {
 let clipboard: NbCell[] = []
 
 const BAR =
-  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar items-center gap-1 px-2 bg-surface-1 ' +
+  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center gap-1 px-2 bg-surface-1 ' +
   'shadow-[inset_0_-1px_0_0_var(--border-subtle)] min-w-0'
 
 const BAR_BTN =
@@ -352,7 +352,11 @@ export function NotebookView(props: NotebookViewProps) {
     [doc, move, removeCell, insertAt, focusCell],
   )
 
-  const runAll = () => doc.session.run(codeIds())
+  const runAll = () => doc.runAll()
+  // The shell's Debug (F5, Run and Debug) starts from the selected cell.
+  useEffect(() => {
+    doc.selected = selected
+  }, [doc, selected])
   const restart = () => void doc.session.restart()
   const restartRunAll = async () => {
     await doc.session.restart()

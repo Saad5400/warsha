@@ -38,9 +38,11 @@ export interface DebugViewProps {
   lineText(path: string, line: number): string
   /** How a path reads in a row — a file's name, or a notebook cell's "nb.ipynb [3]". Defaults to the file name. */
   nameOf?(path: string): string
+  /** Replaces the idle hint — a notebook explains debugging a cell, not a program. */
+  hint?: string
 }
 
-export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, lineText, nameOf = (p) => splitPath(p).name }: DebugViewProps) {
+export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, lineText, nameOf = (p) => splitPath(p).name, hint }: DebugViewProps) {
   const s = useDebugState()
   const active = s.phase !== 'inactive'
 
@@ -63,7 +65,7 @@ export function DebugView({ canDebug, entry, busy, onStartDebugging, onReveal, l
               {COPY.debugTitle}
             </Button>
             <p className="text-micro leading-snug text-text-3">
-              {canDebug ? COPY.debugIdleHint : entry ? COPY.debugUnsupported(splitPath(entry).name) : COPY.debugNoEntry}
+              {hint ?? (canDebug ? COPY.debugIdleHint : entry ? COPY.debugUnsupported(splitPath(entry).name) : COPY.debugNoEntry)}
             </p>
           </div>
         )}

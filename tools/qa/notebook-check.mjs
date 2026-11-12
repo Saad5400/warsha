@@ -178,6 +178,12 @@ if (ONLY.includes('K')) {
   r = await page.evaluate(() => window.__K.rec)
   check('K: Interrupt reaches a cell parked in input()', errorOf(r)?.ename === 'KeyboardInterrupt', J({ exit: r.exit, e: errorOf(r) }))
 
+  // A function keeps quoting the lines it was compiled from after its cell is edited and re-run.
+  await cell('def g():\n    return 1 / 0', 'stale')
+  await cell('# g was here; this cell now says something else\nprint("edited")', 'stale')
+  r = await cell('g()', 'stale2')
+  check('K: a traceback through a function from an edited cell quotes its original line', !!errorOf(r) && errorOf(r).traceback.some((l) => l.includes('return 1 / 0')) && !errorOf(r).traceback.some((l) => l.includes('print("edited")')), J(errorOf(r)?.traceback))
+
   r = await cell('x', 'u', { nb: 'other.ipynb' })
   check('K: another notebook has its own namespace', errorOf(r)?.ename === 'NameError')
   await page.evaluate(() => window.__K.k.restart('nb.ipynb'))
@@ -248,9 +254,14 @@ if (ONLY.includes('U')) {
   check('U: markdown cells are rendered (a heading, inline code)', (await page.locator('.nb-md h1').count()) === 1 && (await page.locator('.nb-md code').count()) >= 1)
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-open.png') })
 
-  await page.getByRole('button', { name: 'Run all' }).click()
+  const statusText = () => page.locator('footer').first().innerText()
+  const st0 = await statusText()
+  check('U: the status bar shows the kernel, not "No entry point"', st0.includes('Python not started') && !st0.includes('No entry point'), J(st0))
+  // The tab strip's Run (the project's one Run) runs all cells when a notebook is the active tab.
+  await page.locator('button[aria-label="Run notebook.ipynb"]').first().click()
   await kernelIdle(page)
   await page.waitForTimeout(500)
+  check('U: …and follows it to "Python ready"', (await statusText()).includes('Python ready'))
   const counts = await page.$$eval('[data-count]', (els) => els.map((e) => e.textContent))
   check('U: Run all numbers every code cell in order', J(counts) === J(['[1]', '[2]', '[3]', '[4]', '[5]', '[6]']), J(counts))
   check('U: the DataFrame renders as a table in a script-less sandbox', await page.evaluate(() => {
@@ -340,10 +351,18 @@ if (ONLY.includes('U')) {
   }, dcellId)
   check('U: Debug cell stops at the breakpoint, the arrow is in that cell, Run and Debug names it', stopped.arrow && stopped.frames.some((f) => /:2$/.test(f)), J(stopped))
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-debug.png') })
+  const overlap = await page.evaluate(() => {
+    const a = document.querySelector('.debug-toolbar')?.getBoundingClientRect()
+    const b = document.querySelector('.notebook-toolbar')?.getBoundingClientRect()
+    return !a || !b ? 'missing' : a.top < b.bottom && a.bottom > b.top && a.left < b.right && a.right > b.left
+  })
+  check('U: the debug toolbar docks below the notebook toolbar, not over it', overlap === false, J(overlap))
   await page.getByRole('button', { name: /^Continue/ }).first().click()
   await kernelIdle(page, 15000)
   await page.waitForTimeout(300)
   check('U: Continue finishes the cell with its result', (await dcell.innerText()).includes('20'))
+  const hint = await page.locator('[data-debug-phase]').innerText()
+  check('U: Run and Debug explains debugging a notebook cell', hint.includes('in a cell') && !hint.includes('Open a program'), J(hint.slice(0, 120)))
   await dcell.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^2$/ }).click()
 
   // Format cell: black through the kernel, IPython lines untouched.
@@ -406,6 +425,11 @@ if (ONLY.includes('U')) {
     await isolated(b.page, `?lang=${lang}`)
     await newNotebookProject(b.page, lang === 'en' ? 'Plotting with matplotlib' : 'الرسوم مع matplotlib', lang)
     await b.page.screenshot({ path: join(SHOTS, `notebook-${tag}-open.png`) })
+    if (mobile) check(`U[${tag}]: the notebook tab's badge is the notebook icon, not a placeholder`, await b.page.evaluate(() => {
+      const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.includes('.ipynb'))
+      const chip = tab && [...tab.querySelectorAll('span[aria-hidden="true"]')].find((e) => getComputedStyle(e).display !== 'none' && e.querySelector('svg'))
+      return !!chip && !tab.textContent.includes('[ ]') && !tab.textContent.includes('·')
+    }))
     await b.page.locator('[role="toolbar"] button').filter({ has: b.page.locator('svg') }).nth(2).click() // Run all
     await kernelIdle(b.page)
     await b.page.waitForTimeout(800)
