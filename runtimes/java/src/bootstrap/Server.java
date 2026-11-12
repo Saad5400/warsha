@@ -1,5 +1,6 @@
 package warsha;
 
+import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.LinkedHashMap;
@@ -115,9 +116,12 @@ public class Server {
 
     /** What the running program's workspace was staged with; null between runs. */
     private static volatile Map<String, String> activeStaged = null;
+    /** Where it was staged (Workspace.rootFor the run). */
+    private static volatile File activeRoot = null;
 
     /** Mirrors the project's data files into the workspace and makes it the cwd. Never fatal. */
     private static Map<String, String> stageWorkspace(String runId) {
+        File root = Workspace.rootFor(runId);
         Map<String, String> staged = new LinkedHashMap<String, String>();
         try {
             for (String[] entry : Build.readManifest(runId)) {
@@ -126,14 +130,15 @@ public class Server {
                 }
             }
             long started = System.currentTimeMillis();
-            int writes = Workspace.stage(Workspace.ROOT, staged);
+            int writes = Workspace.stage(root, staged);
             Bridge.writeInternal("warsha-workspace: staged " + staged.size() + " file(s), wrote " + writes
                     + " in " + (System.currentTimeMillis() - started) + "ms");
         } catch (Throwable t) {
             // The program can still run; it just may not find its data files.
             Bridge.writeInternal("warsha-workspace: staging failed: " + t);
         }
-        Bridge.writeInternal(Workspace.enter(Workspace.ROOT) + " " + Workspace.probeRelative(Workspace.ROOT, staged));
+        Bridge.writeInternal(Workspace.enter(root) + " " + Workspace.probeRelative(root, staged));
+        activeRoot = root;
         activeStaged = staged;
         return staged;
     }
@@ -145,7 +150,7 @@ public class Server {
             activeStaged = null;
         }
         try {
-            Workspace.Changes changes = Workspace.diff(Workspace.ROOT, staged);
+            Workspace.Changes changes = Workspace.diff(activeRoot, staged);
             for (Map.Entry<String, String> written : changes.written.entrySet()) {
                 Bridge.fileWritten(written.getKey(), written.getValue());
             }

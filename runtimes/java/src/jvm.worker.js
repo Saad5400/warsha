@@ -51,9 +51,13 @@ const JAVA_VERSION = 17
  * resolves nothing. See build-bootstrap.sh. */
 const DEFAULT_BOOT_JAR_PATH = '/app/warsha-boot.jar'
 
-/* The student program's working directory -- MUST equal Workspace.ROOT in
- * bootstrap/Workspace.java, plus the trailing slash. */
-const WORKDIR = '/files/warsha-work/'
+/* The student program's working directory, set per run from its id -- MUST
+ * match Workspace.rootFor in bootstrap/Workspace.java, plus the trailing slash. */
+let workdir = '/files/warsha-work/'
+const workdirFor = (runId) => {
+  const scope = /^([0-9a-z]+)_/.exec(runId)
+  return scope ? `/files/warsha-work-${scope[1]}/` : '/files/warsha-work/'
+}
 
 /* Engine assets worth measuring, for a determinate progress bar.
  *
@@ -395,7 +399,7 @@ function anchorRelativePaths() {
     return
   }
   self.cheerpjNormalizePath = (path) =>
-    normalize(typeof path === 'string' && path !== '' && !path.startsWith('/') ? WORKDIR + path : path)
+    normalize(typeof path === 'string' && path !== '' && !path.startsWith('/') ? workdir + path : path)
 }
 
 // --- boot ------------------------------------------------------------------
@@ -667,6 +671,7 @@ async function warmCompiler() {
 // --- run -------------------------------------------------------------------
 
 async function compileAndRun({ runId, files, entryPath, debug }) {
+  workdir = workdirFor(runId)
   // The Server main died earlier in the session (a student System.exit whose
   // run already reported, or a fatal). The runtime replaces this worker when
   // told; make sure it is told rather than hanging a run forever.

@@ -52,7 +52,41 @@ public class Build {
     private static final String RUN_PREFIX = "warsha-run-";
 
     /** Matches exactly what runDir produces, and nothing else. */
-    private static final Pattern RUN_DIR = Pattern.compile("^" + RUN_PREFIX + "[A-Za-z0-9]+$");
+    private static final Pattern RUN_DIR = Pattern.compile("^" + RUN_PREFIX + "[A-Za-z0-9_]+$");
+
+    /**
+     * A run id is "&lt;scope&gt;_&lt;unique&gt;", the scope naming the browser tab
+     * (javaRuntime.ts tabScope): /files/ is one IndexedDB shared by every tab,
+     * so each tab only ever cleans up after itself. The warm-up's id and the
+     * ids from before scopes existed carry none.
+     */
+    private static final Pattern SCOPED = Pattern.compile("^([0-9a-z]+)_");
+
+    /** A tab that has not run anything for this long is gone; its directories are fair game. */
+    private static final long SCOPE_ABANDONED_MS = 7L * 24 * 60 * 60 * 1000;
+
+    /** The tab scope `runId` belongs to, or null for an unscoped id. */
+    static String scopeOf(String runId) {
+        java.util.regex.Matcher m = SCOPED.matcher(runId);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * Whether a directory of tab `theirs` may be deleted by tab `mine`: always
+     * its own (older runs), unscoped leftovers, and another tab's only once that
+     * tab is long gone. A scope starts with its minting time as eight base-36
+     * digits; one that cannot be dated is never assumed dead.
+     */
+    static boolean reclaimable(String theirs, String mine) {
+        if (theirs == null || theirs.equals(mine)) return true;
+        if (theirs.length() < 8) return false;
+        try {
+            long minted = Long.parseLong(theirs.substring(0, 8), 36);
+            return System.currentTimeMillis() - minted > SCOPE_ABANDONED_MS;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
 
     static File runDir(String runId) {
         return new File("/files/" + RUN_PREFIX + runId);
@@ -152,7 +186,7 @@ public class Build {
                 // A hashing failure must never block a build; it only costs the reuse.
             }
 
-            if (allowReuse) recoverReuse();
+            if (allowReuse) recoverReuse(scopeOf(runId));
 
             if (allowReuse && key != null && key.equals(lastGoodKey)
                     && lastGoodRunId != null && outDir(lastGoodRunId).isDirectory()) {
@@ -279,7 +313,7 @@ public class Build {
      * compares, so a truncated, stale or hand-edited key.txt cannot make Warsha
      * run the wrong classes. It can only cost a compile that was skippable.
      */
-    private static void recoverReuse() {
+    private static void recoverReuse(String mine) {
         if (reuseRecovered) return;
         reuseRecovered = true;
         if (lastGoodKey != null) return; // this JVM already compiled something
@@ -291,6 +325,11 @@ public class Build {
                 String name = child.getName();
                 if (!RUN_DIR.matcher(name).matches()) continue;
                 String runId = name.substring(RUN_PREFIX.length());
+                // Only this tab's own (a reload keeps its scope) or an unscoped
+                // leftover: another live tab's directory could be deleted by
+                // that tab's next build while this one runs from it.
+                String theirs = scopeOf(runId);
+                if (theirs != null && !theirs.equals(mine)) continue;
                 File key = projectKeyFile(runId);
                 if (!key.isFile() || !outDir(runId).isDirectory()) continue;
                 String stored = readAll(key).trim();
@@ -538,6 +577,9 @@ public class Build {
      * this line.
      */
     private static void gcOldRuns(String runId) {
+        String mine = scopeOf(runId);
+        // The warm-up has no tab to speak for, so it deletes nothing.
+        if (mine == null) return;
         File[] children = new File("/files").listFiles();
         if (children == null) {
             Bridge.writeInternal("warsha-gc: cannot list /files");
@@ -548,7 +590,18 @@ public class Build {
         int failed = 0;
         for (File child : children) {
             String name = child.getName();
-            if (name.equals(keep) || !RUN_DIR.matcher(name).matches()) continue;
+            String theirs;
+            if (RUN_DIR.matcher(name).matches()) {
+                if (name.equals(keep)) continue;
+                theirs = scopeOf(name.substring(RUN_PREFIX.length()));
+            } else if (Workspace.isWorkspaceDir(name)) {
+                // A workspace is never this run's to delete: Server stages it next.
+                theirs = Workspace.scopeOfDir(name);
+                if (mine.equals(theirs)) continue;
+            } else {
+                continue;
+            }
+            if (!reclaimable(theirs, mine)) continue;
             deleteTree(child);
             if (child.exists()) failed++;
             else deleted++;

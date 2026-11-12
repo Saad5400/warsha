@@ -24,8 +24,8 @@ import java.util.Map;
  * Main.java, and {@code new FileWriter("out.txt")} creates a file the student
  * then sees in the explorer.
  *
- * <p>It lives at /files/warsha-work -- /files/ is the only mount Java can write
- * -- and it is PERSISTENT rather than per-run, for cost: an IndexedDB create is
+ * <p>It lives at /files/warsha-work-&lt;tab scope&gt; (rootFor) -- /files/ is the
+ * only mount Java can write -- and it is PERSISTENT rather than per-run, for cost: an IndexedDB create is
  * measured at over a second (INTEGRATION.md), so {@link #stage} only writes a
  * file whose bytes actually differ and only deletes what the project no longer
  * has. A project whose data files did not change costs reads, not writes.
@@ -45,7 +45,29 @@ import java.util.Map;
  */
 public final class Workspace {
 
-    static final File ROOT = new File("/files/warsha-work");
+    /** Unscoped runs (none since tab scopes) and the directory from before them. */
+    private static final String LEGACY_NAME = "warsha-work";
+    private static final String SCOPED_PREFIX = LEGACY_NAME + "-";
+
+    /**
+     * The run's working directory: one per browser tab, named for the tab scope
+     * its run id carries (see Build.scopeOf), so two tabs never stage over each
+     * other's data files. jvm.worker.js (workdirFor) derives the same path.
+     */
+    static File rootFor(String runId) {
+        String scope = Build.scopeOf(runId);
+        return new File("/files/" + (scope == null ? LEGACY_NAME : SCOPED_PREFIX + scope));
+    }
+
+    /** Whether a /files/ entry is a workspace (this tab's or another's). */
+    static boolean isWorkspaceDir(String name) {
+        return name.equals(LEGACY_NAME) || (name.startsWith(SCOPED_PREFIX) && name.length() > SCOPED_PREFIX.length());
+    }
+
+    /** The tab scope a workspace directory belongs to; null for the legacy one. */
+    static String scopeOfDir(String name) {
+        return name.startsWith(SCOPED_PREFIX) ? name.substring(SCOPED_PREFIX.length()) : null;
+    }
 
     /** Larger files are reported as skipped: the editor is not a hex viewer. */
     static final int WRITE_BACK_LIMIT_BYTES = 1024 * 1024;

@@ -141,6 +141,8 @@ export class JavaRuntime implements Runtime {
 
   private active: Active | null = null
   private runCounter = 0
+  /** This tab's share of /files/ (see tabScope); resolved by the first run. */
+  private scope: string | null = null
 
   /** A run() that has been accepted but has not reached the worker yet. */
   private starting = false
@@ -227,6 +229,7 @@ export class JavaRuntime implements Runtime {
 
     // Normally already done by the caller's load(); kept for a caller that runs without one.
     if (this.tainted) this.replaceWorker()
+    this.scope ??= await tabScope()
 
     // Debug run: rewrite the sources (same lines, extra calls) before they go
     // to the worker. The parser loads alongside the engine.
@@ -244,7 +247,7 @@ export class JavaRuntime implements Runtime {
     const worker = this.worker
     if (!worker) throw new Error('Java runtime is not ready.')
 
-    const runId = `${Date.now().toString(36)}${(this.runCounter++).toString(36)}`
+    const runId = this.nextRunId()
     const active: Active = { io, runId, ended: false, awaitingStdin: false, debug }
     this.active = active
     this.lastRun = null
@@ -387,6 +390,15 @@ export class JavaRuntime implements Runtime {
   }
 
   /**
+   * `<scope>_<time><n>`: the scope keeps this tab's run directories and
+   * workspace apart from another tab's (Build.gcOldRuns, Workspace.rootFor),
+   * the time keeps ids unique across reloads of the same tab.
+   */
+  private nextRunId(): string {
+    return `${this.scope ?? 'legacy'}_${Date.now().toString(36)}${(this.runCounter++).toString(36)}`
+  }
+
+  /**
    * The instrumented sources did not compile. Usually the student's own error;
    * either way the diagnostics must quote THEIR code, not ours. So compile the
    * original sources instead, as a plain run: a genuine error is reported
@@ -400,7 +412,7 @@ export class JavaRuntime implements Runtime {
       text: `java debugger: instrumented compile failed:\n${debug.diags.join('')}`,
       noise: false,
     })
-    const runId = `${Date.now().toString(36)}${(this.runCounter++).toString(36)}`
+    const runId = this.nextRunId()
     active.runId = runId
     this.worker?.postMessage({ type: 'run', runId, files: debug.original, entryPath: debug.entry })
   }
@@ -630,6 +642,59 @@ export class JavaRuntime implements Runtime {
     active.awaitingStdin = false
     this.worker?.postMessage({ type: 'stdin', line: null })
   }
+}
+
+/**
+ * This tab's name for its directories under CheerpJ's /files/ -- its run
+ * directories and the program's working directory.
+ *
+ * /files/ is one IndexedDB shared by every tab of the origin, and the JVM in
+ * each tab used to treat it as its own: a second tab's build deleted the first
+ * tab's run directory mid-run (NoClassDefFoundError for a class not yet loaded),
+ * and both staged their data files into the same /files/warsha-work, so the
+ * first tab's program read the second project's data.txt and then reported it
+ * back as a file it had written -- overwriting its own project's copy.
+ *
+ * Stable across reloads (sessionStorage), so a refreshed tab keeps its
+ * workspace and its compile cache; unique among live tabs (a Web Lock held for
+ * the page's lifetime), because "Duplicate tab" copies sessionStorage. Starts
+ * with the minting time in base 36, eight digits, which is how Build ages out
+ * the directories of tabs that have since closed.
+ */
+let scopePromise: Promise<string> | null = null
+function tabScope(): Promise<string> {
+  return (scopePromise ??= (async () => {
+    const KEY = 'warsha-java-scope'
+    const mint = () => Date.now().toString(36).padStart(8, '0') + Math.random().toString(36).slice(2, 6).padEnd(4, '0')
+    let scope: string | null = null
+    try {
+      scope = sessionStorage.getItem(KEY)
+    } catch {
+      /* storage blocked: a fresh scope per page load is still correct, just colder */
+    }
+    if (!scope || !/^[0-9a-z]{12}$/.test(scope)) scope = mint()
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+    if (locks) {
+      const claim = (name: string) =>
+        new Promise<boolean>((resolve) => {
+          void locks.request(`warsha-java-scope:${name}`, { ifAvailable: true }, (lock) => {
+            resolve(lock !== null)
+            // Held until the page goes away.
+            return lock ? new Promise<void>(() => {}) : undefined
+          })
+        })
+      if (!(await claim(scope))) {
+        scope = mint()
+        await claim(scope)
+      }
+    }
+    try {
+      sessionStorage.setItem(KEY, scope)
+    } catch {
+      /* see above */
+    }
+    return scope
+  })())
 }
 
 /**
