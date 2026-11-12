@@ -12,7 +12,7 @@ import { isNotebookPath } from '../notebook/nbformat'
 import { badgeClass } from './FileBadge'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
-import { IconArrowRight, IconChevronRight, IconFilePlus, IconImport, IconUser } from './ui/Icons'
+import { IconChevronRight, IconFilePlus, IconImport, IconUser } from './ui/Icons'
 import { LangIcon, type IconLang } from './ui/LangIcons'
 
 /**
@@ -126,7 +126,9 @@ function LanguageStep({
         <span className="text-micro uppercase tracking-[0.08em] text-text-3">{COPY.pickerOr}</span>
         <span className="h-px flex-1 bg-border-subtle" />
       </div>
-      <div className="mt-3 grid gap-2 min-[560px]:grid-cols-2">
+      {/* Two-up only when there are two: a lone Import tile at half width sat off-centre
+          under the centred "or", reading like a leftover. */}
+      <div className={'mt-3 grid grid-cols-1 gap-2' + (onSignIn ? ' min-[560px]:grid-cols-2' : '')}>
         <AltTile
           icon={<IconImport size={18} />}
           title={COPY.pickerImport}
@@ -230,7 +232,9 @@ function ReadyTile({ language, onChoose }: { language: Language; onChoose(): voi
       <span className="min-w-0 flex-1">
         <span className="block truncate text-btn leading-[1.2] font-semibold text-text-1">{language.label}</span>
         {language.version ? (
-          <span className="block truncate text-micro leading-[1.3] text-text-3">{language.version}</span>
+          // Two lines before an ellipsis: Web's "HTML · CSS · JS · TS · React · Vue · Svelte"
+          // is the list a student scans for, and one line cut it at "TS…".
+          <span className="line-clamp-2 text-micro leading-[1.3] text-text-3">{language.version}</span>
         ) : null}
       </span>
       <IconChevronRight
@@ -342,7 +346,10 @@ function StarterGrid({ templates: list, onPick }: { templates: Template[]; onPic
     .filter((t) => t.level !== 'empty')
     .sort((a, b) => LEVEL_ORDER.indexOf(a.level) - LEVEL_ORDER.indexOf(b.level))
   return (
-    <div className="grid gap-2 min-[560px]:grid-cols-2">
+    // grid-cols-1 is `minmax(0, 1fr)`: an implicit `auto` column grows to its widest
+    // card's min-content (a nowrap manifest line), which on a phone pushed the cards
+    // 102px past the dialog edge.
+    <div className="grid grid-cols-1 gap-2 min-[560px]:grid-cols-2">
       {empty ? <EmptyCard template={empty} onPick={() => onPick(empty)} /> : null}
       {starters.map((t, i) => (
         <TemplateCard
@@ -402,7 +409,7 @@ function EmptyCard({ template, onPick }: { template: Template; onPick(): void })
           {COPY.templates[template.id]?.blurb ?? template.blurb}
         </span>
       </span>
-      <IconArrowRight
+      <IconChevronRight
         size={16}
         className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
       />
@@ -411,7 +418,7 @@ function EmptyCard({ template, onPick }: { template: Template; onPick(): void })
 }
 
 const TEMPLATE_CARD =
-  'template-card group grid grid-rows-[auto_1fr_auto] gap-1.5 min-h-[84px] p-3 text-start border border-border-control ' +
+  'template-card group grid min-w-0 grid-cols-1 grid-rows-[auto_1fr_auto] gap-1.5 min-h-[84px] p-3 text-start border border-border-control ' +
   'rounded-lg bg-surface-3 cursor-pointer touch-manipulation transition-[background-color,border-color,transform] ' +
   'duration-(--dur-fast) ease-standard hover:bg-surface-4 hover:border-text-3 active:bg-surface-4 active:scale-99'
 
@@ -434,7 +441,7 @@ function TemplateCard({
         <span className="min-w-0 flex-1 text-btn leading-[1.25] font-semibold text-text-1">
           {COPY.templates[template.id]?.name ?? template.name}
         </span>
-        <IconArrowRight
+        <IconChevronRight
           size={16}
           className="flex-none text-text-3 rtl:-scale-x-100 transition-[color] duration-(--dur-fast) ease-standard group-hover:text-accent"
         />
