@@ -178,6 +178,11 @@ export class JavaRuntime implements Runtime {
    * including the silent respawn started by `kill()`.
    */
   async load(onProgress: (p: ProgressReport) => void): Promise<void> {
+    // A JVM that a previous program exited (System.exit, or a fatal error) cannot
+    // run anything else. Replacing it HERE, not in run(), makes the reboot a load
+    // the shell can see: its progress reaches the caller's listener and the
+    // shell's stall watchdog. Done inside run() it was ~26 s of a silent "Running".
+    if (this.tainted && !(this.active && !this.active.ended)) this.replaceWorker()
     this.progressListeners.add(onProgress)
     if (this.booting && this.lastProgress) onProgress(this.lastProgress)
     const boot = this.booting ?? (this.booting = this.spawn())
@@ -220,7 +225,7 @@ export class JavaRuntime implements Runtime {
       throw new Error(`Entry file ${entryPath} is not a .java file.`)
     }
 
-    // A JVM that a previous program exited cannot run anything else.
+    // Normally already done by the caller's load(); kept for a caller that runs without one.
     if (this.tainted) this.replaceWorker()
 
     // Debug run: rewrite the sources (same lines, extra calls) before they go

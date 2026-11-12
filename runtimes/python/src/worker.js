@@ -262,14 +262,17 @@ function postDownloadProgress(force) {
   if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
   lastProgressAt = now
   // bytesAnnounced only grows as each Content-Length is seen, so clamp with
-  // the floor to keep the bar from jumping backwards.
+  // the floor to keep the bar from jumping backwards. Packages have no floor:
+  // their total would only count the files already started, and the bar read
+  // "100%" with megabytes still to come. So they report bytes alone, and the
+  // shell shows an indeterminate sweep with a live counter instead.
   const expected = Math.max(downloadFloor, bytesAnnounced)
   self.postMessage({
     type: 'progress',
     phase: 'download',
     message: downloadMessage,
     loaded: bytesLoaded,
-    ...(expected > 0 ? { total: Math.max(expected, bytesLoaded) } : {}),
+    ...(downloadFloor > 0 ? { total: Math.max(expected, bytesLoaded) } : {}),
   })
 }
 
