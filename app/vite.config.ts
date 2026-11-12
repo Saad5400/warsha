@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
@@ -659,43 +659,80 @@ function warshaServiceWorkerPrecache(): Plugin {
 }
 
 /**
- * Keeps the CSP's script hashes honest. deploy/nginx.conf allows index.html's
+ * Keeps the CSP's script hashes honest. deploy/nginx.conf allows the pages'
  * inline <script>s by their sha256 (a hash is the only way to allow exactly
- * those two scripts and not an injected one). The hash is of the exact bytes,
- * so editing a comment inside either script changes it, and the policy would
- * quietly stop covering the splash or the recorder gate — invisible while the
- * policy is Report-Only, a dead splash the day it is enforced. So every build
- * hashes the built page's inline scripts and fails, naming the new hash, when
- * nginx.conf does not list it. nginx.conf stays the one place the policy lives.
- * JSON-LD blocks are data, not script, and are skipped. Build-only.
+ * those scripts and not an injected one). The hash is of the exact bytes, so
+ * editing a comment inside one changes it, and the policy would quietly stop
+ * covering the splash or the recorder gate — invisible while the policy is
+ * Report-Only, a dead splash the day it is enforced.
+ *
+ * So every build reads the script-src of each CSP the config actually sends
+ * (the values of the `$warsha_csp*` maps, not any text that merely appears in
+ * the file), hashes the inline scripts of EVERY built page (index, the locale
+ * entries, the prerendered tutorials), and fails on either drift: a page script
+ * whose hash is missing, or a listed hash no page uses any more. nginx.conf
+ * stays the one place the policy lives. JSON-LD blocks are data, not script,
+ * and are skipped. Build-only.
  */
 function warshaCspHashes(): Plugin {
   return {
     name: 'warsha:csp-hashes',
     apply: 'build',
     closeBundle() {
-      let html: string
-      try {
-        html = readFileSync(resolve(__dirname, 'dist/index.html'), 'utf8')
-      } catch {
-        return // No HTML in this output (a library build); nothing to check.
-      }
+      const distDir = resolve(__dirname, 'dist')
+      const pages = htmlFiles(distDir)
+      if (pages.length === 0) return // No HTML in this output (a library build).
+
       const conf = readFileSync(resolve(__dirname, 'deploy/nginx.conf'), 'utf8')
-      const missing: string[] = []
-      for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
-        const attrs = m[1] ?? ''
-        if (/\bsrc=/i.test(attrs) || /application\/ld\+json/i.test(attrs)) continue
-        const hash = `'sha256-${createHash('sha256').update(m[2], 'utf8').digest('base64')}'`
-        if (!conf.includes(hash)) missing.push(hash)
+      const policies = [...conf.matchAll(/^\s*map\s+\S+\s+\$warsha_csp\w*\s*\{([\s\S]*?)^\s*\}/gm)]
+        .flatMap((m) => [...m[1].matchAll(/"([^"]*)"\s*;/g)].map((v) => v[1]))
+        .filter((p) => /script-src/.test(p))
+      if (policies.length === 0) throw new Error('warsha:csp-hashes: no script-src found in the $warsha_csp maps of app/deploy/nginx.conf')
+      const allowed = new Set(
+        policies.flatMap((p) => (/script-src([^;]*)/.exec(p)?.[1] ?? '').match(/'sha256-[^']+'/g) ?? []),
+      )
+
+      const used = new Map<string, string>() // hash -> first page that needs it
+      for (const page of pages) {
+        const html = readFileSync(page, 'utf8')
+        for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+          const attrs = m[1] ?? ''
+          if (/\bsrc=/i.test(attrs) || /application\/ld\+json/i.test(attrs)) continue
+          const hash = `'sha256-${createHash('sha256').update(m[2], 'utf8').digest('base64')}'`
+          if (!used.has(hash)) used.set(hash, page.slice(distDir.length + 1))
+        }
       }
-      if (missing.length) {
+      const missing = [...used].filter(([h]) => !allowed.has(h))
+      const stale = [...allowed].filter((h) => !used.has(h))
+      if (missing.length || stale.length) {
         throw new Error(
-          `An inline <script> in index.html changed, so its CSP hash did too. Put ${missing.join(' and ')} ` +
-            `in script-src in app/deploy/nginx.conf (and drop the stale one).`,
+          'An inline <script> changed, so its CSP hash did too. In script-src in app/deploy/nginx.conf, ' +
+            [
+              ...missing.map(([h, page]) => `add ${h} (inline script in ${page})`),
+              ...stale.map((h) => `remove ${h} (no built page uses it)`),
+            ].join('; ') +
+            '.',
         )
       }
     },
   }
+}
+
+/** Every .html file under a folder. */
+function htmlFiles(dir: string): string[] {
+  let out: string[] = []
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return out
+  }
+  for (const name of names) {
+    const path = resolve(dir, name)
+    if (statSync(path).isDirectory()) out = out.concat(htmlFiles(path))
+    else if (name.endsWith('.html')) out.push(path)
+  }
+  return out
 }
 
 export default defineConfig({
