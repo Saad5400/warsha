@@ -24,11 +24,14 @@
  *      student goes back to the OLD tab and presses Run in
  *      every language. The page may heal itself by reloading onto v2 — that is a
  *      pass, the student just presses Run again — but an error is not.
- *   C. OFFLINE AFTER THE UPGRADE. The upgraded profile goes offline, reopens and
- *      runs Python from the cached v2 runtime.
+ *   C. OFFLINE RIGHT AFTER THE UPGRADE. On that first v2 visit, before anything
+ *      has run on v2, the network goes and every language the student used on
+ *      v1 is run again. Runtimes must outlive a deploy; Java and C have known
+ *      offline limits (OFFLINE_LIMITS) and are reported, not asserted.
  *
  * What "works" means, per visit: the output arrives and the run exits clean; the
- * page is the v2 document; every same-origin runtime file the service worker
+ * page is the v2 document; nothing v1 downloaded from a runtime CDN is
+ * downloaded again (every service-worker network request is watched); every same-origin runtime file the service worker
  * hands the page is byte-identical to v2 on disk (no v1 worker under a v2
  * bundle); and Cache Storage holds no HTML under a script/wasm/dll URL (the
  * SPA-fallback poison).
@@ -53,7 +56,7 @@
  *
  * Overridable:
  *   WARSHA_V1_DIST, WARSHA_V2_DIST  the two builds                       (required)
- *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web        (default all)
+ *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind (default all)
  *   WARSHA_SCENARIOS    comma list of A,B,C                              (default all)
  *   WARSHA_NGINX_CONF   nginx server block    (default ../../app/deploy/nginx.conf)
  *   WARSHA_PORT         host port for nginx                              (default 8291)
@@ -115,6 +118,39 @@ const PROGRAMS = {
     files: [
       ['index.html', '<!doctype html>\n<html><body><div id="root"></div><script type="module" src="main.tsx"></script></body></html>\n'],
       ['main.tsx', 'import { createRoot } from "react-dom/client";\nconst el = document.getElementById("root");\nif (el) createRoot(el).render(<p>upgrade-ok web</p>);\n'],
+    ],
+  },
+  // The two other bundled frameworks and the on-device Tailwind, each a staged
+  // public/ file of its own (warsha-vue/svelte.json, warsha-tailwind.js).
+  vue: {
+    entry: 'index.html',
+    preview: true,
+    files: [
+      ['index.html', '<!doctype html>\n<html><body><div id="app"></div><script type="module" src="main.js"></script></body></html>\n'],
+      ['main.js', 'import { createApp } from "vue";\nimport App from "./App.vue";\ncreateApp(App).mount("#app");\n'],
+      ['App.vue', '<script setup>\nimport { ref } from "vue";\nconst who = ref("vue");\n</script>\n\n<template>\n  <p>upgrade-ok {{ who }}</p>\n</template>\n'],
+    ],
+  },
+  svelte: {
+    entry: 'index.html',
+    preview: true,
+    files: [
+      ['index.html', '<!doctype html>\n<html><body><div id="app"></div><script type="module" src="main.js"></script></body></html>\n'],
+      ['main.js', 'import { mount } from "svelte";\nimport App from "./App.svelte";\nmount(App, { target: document.getElementById("app") });\n'],
+      ['App.svelte', '<script>\n  let who = $state("svelte");\n</script>\n\n<p>upgrade-ok {who}</p>\n'],
+    ],
+  },
+  // The CDN tag is the one students paste; the runtime swaps it for the staged
+  // build. Passing means the utility class actually styled the text.
+  tailwind: {
+    entry: 'index.html',
+    preview: true,
+    previewOk: () => {
+      const el = document.querySelector('#tw')
+      return !!el && getComputedStyle(el).fontWeight === '700'
+    },
+    files: [
+      ['index.html', '<!doctype html>\n<html><head><script src="https://cdn.tailwindcss.com"></script></head><body><p id="tw" class="font-bold">upgrade-ok tailwind</p></body></html>\n'],
     ],
   },
 }
@@ -202,11 +238,19 @@ const sha = (buf) => createHash('sha256').update(buf).digest('hex')
 // ------------------------------------------------------------------ the browser
 const PROFILE = mkdtempSync(join(tmpdir(), 'warsha-upgrade-profile-'))
 let ctx = null
+/** Every Content-Security-Policy violation the browser logged, across all
+ *  pages, frames and workers of every context, enforced or report-only. Split at
+ *  the end into Warsha's own pages and the Web preview: the preview is a srcdoc
+ *  frame, which inherits the page's policy while running the student's code. */
+const cspViolations = []
 const launch = async (profile = PROFILE) => {
   ctx = await chromium.launchPersistentContext(profile, {
     executablePath: CHROME,
     headless: true,
     viewport: { width: 1280, height: 900 },
+  })
+  ctx.on('console', (m) => {
+    if (/Content Security Policy/i.test(m.text())) cspViolations.push({ text: m.text(), where: m.location()?.url ?? '' })
   })
   return ctx
 }
@@ -277,7 +321,7 @@ async function runLang(page, lang, { allowHeal = false } = {}) {
               for (const f of page.frames()) {
                 if (f === page.mainFrame()) continue
                 const t = await f.evaluate(() => document.body?.innerText ?? '').catch(() => '')
-                if (t.includes(marker)) return { kind: 'ok' }
+                if (t.includes(marker) && (!p.previewOk || (await f.evaluate(p.previewOk).catch(() => false)))) return { kind: 'ok' }
               }
             }
           }
@@ -363,6 +407,62 @@ function reportRun(label, lang, r) {
   check(`${label}: ${lang} runs`, r.kind === 'ok', r.kind === 'ok' ? `ok${how}` : `${r.kind}${r.text ? ': ' + r.text.replace(/\s+/g, ' ').slice(0, 160) : ''}`)
 }
 
+/** Engines that cannot start offline however well the worker caches, and why.
+ *  Run anyway and reported as WARN, so a change that fixes one shows up. */
+const OFFLINE_LIMITS = {
+  java: "CheerpJ's loader arrives via a no-cors importScripts() (opaque, never stored) and lazily range-reads JVM modules a first run did not touch",
+  c: 'Wasmer resolves clang/clang with a POST to registry.wasmer.io/graphql, which no cache can answer',
+}
+
+/** The cross-origin URLs sitting in Warsha's caches: the runtime CDN downloads. */
+async function crossOriginCached(page) {
+  const urls = await page.evaluate(async () => {
+    const out = []
+    for (const n of await caches.keys()) {
+      if (!n.startsWith('warsha-')) continue
+      for (const req of await (await caches.open(n)).keys()) {
+        if (new URL(req.url).origin !== location.origin) out.push(req.url)
+      }
+    }
+    return out
+  })
+  return new Set(urls)
+}
+
+const summarizeHosts = (urls) => {
+  const by = {}
+  for (const u of urls) by[new URL(u).host] = (by[new URL(u).host] ?? 0) + 1
+  return Object.entries(by).map(([h, n]) => `${h} ${n}`).join(', ')
+}
+
+/** Every network request the service worker makes for one of `urls` from now
+ *  until stop() — i.e. a runtime download the cache should have answered. Range
+ *  reads are left out: they bypass the cache by design (tools/qa/sw-range.mjs). */
+function watchRefetches(urls) {
+  const hits = []
+  const pending = []
+  const on = (req) => {
+    if (!req.serviceWorker() || req.method() !== 'GET' || !urls.has(req.url()) || req.headers().range) return
+    pending.push(req.response().then(async (res) => {
+      // sizes() reports -1 for a service worker's requests; the header, else
+      // the body itself, is the honest count of what came down the wire.
+      const sizes = await req.sizes().catch(() => ({ responseBodySize: -1 }))
+      let bytes = sizes.responseBodySize
+      if (!(bytes > 0)) bytes = Number(res?.headers()['content-length'] ?? 0)
+      if (!(bytes > 0)) bytes = (await res?.body().catch(() => null))?.length ?? 0
+      hits.push({ url: req.url(), status: res?.status(), bytes })
+    }).catch(() => hits.push({ url: req.url(), status: 'failed', bytes: 0 })))
+  }
+  ctx.on('request', on)
+  return {
+    async stop() {
+      ctx.off('request', on)
+      await Promise.all(pending)
+      return hits
+    },
+  }
+}
+
 // ------------------------------------------------------------------ the scenarios
 process.on('exit', stopNginx)
 startNginx()
@@ -385,6 +485,10 @@ try {
       const r = await runLang(page, lang)
       check(`A v1 warm-up: ${lang} runs`, r.kind === 'ok', r.kind)
     }
+    // What v1 left downloaded from the runtime CDNs. A deploy changes none of
+    // these URLs, so v2 must never fetch one of them again.
+    const v1Downloads = await crossOriginCached(page)
+    info(`v1 cached ${v1Downloads.size} cross-origin runtime files: ${summarizeHosts([...v1Downloads])}`)
     await ctx.close()
 
     deploy(V2, 0)
@@ -394,31 +498,45 @@ try {
       await launch()
       page = ctx.pages()[0] ?? (await ctx.newPage())
       const errors = watch(page)
+      const refetched = watchRefetches(v1Downloads)
       await page.goto(BASE, { waitUntil: 'load' })
       await page.waitForSelector('button:has-text("New project"), .cm-content', { timeout: 60000 })
         .then(() => pass(`A ${visit}: the shell booted`))
         .catch(() => fail(`A ${visit}: the shell booted`, 'no welcome panel or editor within 60s'))
-      for (const lang of LANGS) reportRun(`A ${visit}`, lang, await runLang(page, lang, { allowHeal: true }))
-      await assertOnV2(`A ${visit}`, page)
-      assertFresh(`A ${visit}`, await cacheAudit(page), V2)
-      check(`A ${visit}: no platform errors in the console`, errors.length === 0, errors.slice(0, 3).join(' | '))
-      if (visit === 'second visit after deploy' && SCENARIOS.includes('C')) {
-        console.log('\n-- C. offline after the upgrade')
+
+      if (visit === 'first visit after deploy' && SCENARIOS.includes('C')) {
+        // C. Right after the upgrade, before ANY language has run on v2: the v2
+        // worker is in (and has evicted v1's per-build cache), then the network
+        // goes. Every language the student already used must still be there.
+        console.log('\n-- C. offline right after the upgrade, nothing run on v2 yet')
+        check('C: the v2 service worker is installed', await waitShell(page, V2_SHELL))
         await ctx.setOffline(true)
         await page.reload({ waitUntil: 'load' }).catch(() => {})
         await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 })
           .then(() => pass('C offline: the upgraded shell boots'))
           .catch(() => fail('C offline: the upgraded shell boots'))
         await assertOnV2('C offline', page)
-        // Python is the engine the offline guarantee covers (ARCHITECTURE §2.5).
-        // Re-open its project from the local list, not a link: an offline student
-        // has no link to click, just their own project.
-        await page.evaluate(() => { location.href = '/' })
-        await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 }).catch(() => {})
-        const r = LANGS.includes('python') ? await runLang(page, 'python') : { kind: 'skipped' }
-        check('C offline: Python runs from the cached v2 runtime', r.kind === 'ok' || r.kind === 'skipped', r.kind)
+        for (const lang of LANGS) {
+          const r = await runLang(page, lang)
+          if (OFFLINE_LIMITS[lang]) {
+            console.log(`${r.kind === 'ok' ? 'PASS' : 'WARN'}  C offline: ${lang} runs :: ${r.kind}${r.kind === 'ok' ? '' : ' — known limit: ' + OFFLINE_LIMITS[lang]}`)
+          } else {
+            reportRun('C offline', lang, r)
+          }
+        }
         await ctx.setOffline(false)
+        console.log('\n-- A (cont.) back online')
       }
+
+      for (const lang of LANGS) reportRun(`A ${visit}`, lang, await runLang(page, lang, { allowHeal: true }))
+      await assertOnV2(`A ${visit}`, page)
+      assertFresh(`A ${visit}`, await cacheAudit(page), V2)
+      const again = await refetched.stop()
+      check(`A ${visit}: no runtime file v1 downloaded is downloaded again`, again.length === 0,
+        again.length
+          ? `${again.length} refetched, ${(again.reduce((n, r) => n + r.bytes, 0) / 1e6).toFixed(1)} MB: ${again.slice(0, 4).map((r) => r.url).join(', ')}`
+          : `0 of ${v1Downloads.size} refetched, 0 bytes`)
+      check(`A ${visit}: no platform errors in the console`, errors.length === 0, errors.slice(0, 3).join(' | '))
       await ctx.close()
     }
   }
@@ -462,6 +580,20 @@ try {
   if (ctx) await ctx.close().catch(() => {})
   stopNginx()
   rmSync(SERVE, { recursive: true, force: true })
+}
+
+{
+  const inPreview = (v) => v.where.startsWith('about:srcdoc') || /about:srcdoc/.test(v.text)
+  const own = cspViolations.filter((v) => !inPreview(v))
+  const preview = cspViolations.filter(inPreview)
+  console.log('\n-- Content-Security-Policy')
+  const distinct = (list) => [...new Set(list.map((v) => `${v.where || '?'} :: ${v.text.replace(/\s+/g, ' ').slice(0, 160)}`))]
+  check('CSP: no violation on Warsha\'s own pages, workers included', own.length === 0,
+    own.length ? `${own.length}: ${distinct(own).slice(0, 4).join(' || ')}` : `${cspViolations.length} violations seen in total`)
+  if (preview.length) {
+    info(`${preview.length} in the Web preview (student code, inheriting the page policy):`)
+    for (const t of distinct(preview).slice(0, 6)) info(`  ${t}`)
+  }
 }
 
 const failed = results.filter((r) => !r).length
