@@ -34,8 +34,9 @@ function bootedEntry(): string | null {
  *  cannot be learned (offline, a non-200) — which reads as "not stale". */
 async function deployedEntry(): Promise<string | null> {
   try {
-    // `no-store` past the HTTP cache; the service worker revalidates `/` with
-    // the server too, and only falls back to its copy when there is no network.
+    // Straight to the server: `no-store` keeps the HTTP cache out of it, and the
+    // service worker never caches a page fetched as data (only navigations, in
+    // its per-build shell). Offline this throws, and offline we cannot know.
     const res = await fetch('/', { cache: 'no-store' })
     if (!res.ok) return null
     const src = ENTRY_RE.exec(await res.text())?.[1]
@@ -45,11 +46,39 @@ async function deployedEntry(): Promise<string | null> {
   }
 }
 
-/** One automatic reload per deployed build, per tab. If a reload onto build X
- *  still leaves the page stale (something between us and the server keeps
- *  serving the old document), a second one would only loop — so the guard
- *  remembers X and the next failure is shown to the student as itself. */
+/**
+ * The loop guard. Every build this tab has auto-reloaded onto, with when, in
+ * sessionStorage (it survives the reload; it dies with the tab). A build already
+ * in the set is never reloaded onto again within GUARD_WINDOW_MS — not only the
+ * last one: during a rollout two builds can be served at once (old and new
+ * containers behind the proxy), and a guard that remembered one entry would let
+ * the tab ping-pong A → B → A for as long as the overlap lasts. Past the window
+ * a build may be tried again, so a tab left open for days still heals on a
+ * later deploy of the same build name.
+ */
 const GUARD_KEY = 'warsha.staleReload'
+const GUARD_WINDOW_MS = 10 * 60_000
+
+function tried(): Record<string, number> {
+  const raw = JSON.parse(sessionStorage.getItem(GUARD_KEY) ?? '{}') as unknown
+  const now = Date.now()
+  const out: Record<string, number> = {}
+  if (raw && typeof raw === 'object') {
+    for (const [build, at] of Object.entries(raw)) {
+      if (typeof at === 'number' && now - at < GUARD_WINDOW_MS) out[build] = at
+    }
+  }
+  return out
+}
+
+/** Flushes whatever the student has not saved yet; registered by the app shell
+ *  (App), which owns the project and the live session. One hook for every
+ *  caller — the run path, a failed chunk, the crash screen — so no caller can
+ *  forget it. */
+let saveBeforeReload: (() => Promise<unknown>) | null = null
+export function setStaleBuildSaver(save: (() => Promise<unknown>) | null): void {
+  saveBeforeReload = save
+}
 
 let checking: Promise<boolean> | null = null
 
@@ -60,14 +89,16 @@ let checking: Promise<boolean> | null = null
  * Concurrent failures share one check, so a burst of failed chunks is one
  * request and at most one reload.
  */
-export function reloadIfStale(beforeReload?: () => Promise<unknown>): Promise<boolean> {
+export function reloadIfStale(): Promise<boolean> {
   checking ??= (async () => {
     const mine = bootedEntry()
     const deployed = await deployedEntry()
     if (!mine || !deployed || mine === deployed) return false
     try {
-      if (sessionStorage.getItem(GUARD_KEY) === deployed) return false
-      sessionStorage.setItem(GUARD_KEY, deployed)
+      const seen = tried()
+      if (deployed in seen) return false
+      seen[deployed] = Date.now()
+      sessionStorage.setItem(GUARD_KEY, JSON.stringify(seen))
     } catch {
       // No sessionStorage (a locked-down browser) means no loop guard, so no
       // automatic reload either: the error the caller shows still says to reload.
@@ -75,7 +106,7 @@ export function reloadIfStale(beforeReload?: () => Promise<unknown>): Promise<bo
     }
     // Pending edits first: a reload the student did not ask for must not cost
     // them the keystrokes still inside the save debounce.
-    await beforeReload?.().catch(() => {})
+    await saveBeforeReload?.().catch(() => {})
     location.reload()
     return true
   })().finally(() => {
@@ -87,8 +118,9 @@ export function reloadIfStale(beforeReload?: () => Promise<unknown>): Promise<bo
 /**
  * Hand Vite's failed-chunk event to `reloadIfStale`. Vite fires
  * `vite:preloadError` when a dynamic import's chunk cannot be fetched — the
- * signature failure of a stale page, whose chunks the deploy deleted. Call once,
- * at startup.
+ * signature failure of a stale page, whose chunks the deploy deleted (and the
+ * service worker, pruning the old build's /assets/, no longer holds). Call
+ * once, at startup.
  */
 export function watchForStaleBuild(): void {
   window.addEventListener('vite:preloadError', () => {

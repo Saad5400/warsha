@@ -459,7 +459,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       // gone or no longer matches) and only a reload fixes it — so if the server
       // serves a newer build, reload onto it instead of reporting an engine
       // failure the student cannot act on. See ui/staleBuild.ts.
-      if (await reloadIfStale(() => project.saveAll())) return
+      if (await reloadIfStale()) return
       if (token.current !== mine) return
       // Covers anything that blocked startup (CDN down, not isolated, worker won't
       // boot) — discard the engine and surface an actionable message.
