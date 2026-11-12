@@ -1,11 +1,12 @@
 import {
-  JAVA_MODIFIERS,
-  JAVA_TYPE,
   baseOf,
-  isJavaTypeWord,
+  isTypeWord,
   maskCode,
   matchBracket,
+  modifiersOf,
   splitTopLevel,
+  stripNullable,
+  typeRe,
   type TextLang,
 } from './codeText'
 import { projectFiles, projectRevision } from './projectSource'
@@ -56,9 +57,10 @@ export interface ClassInfo {
 
 export type TypeIndex = Map<string, ClassInfo>
 
-/* -------------------------------------------------------------------- java */
+/* -------------------------------------------------------------- java, c# */
 
-const MODIFIER_WORDS = new RegExp(`(?<![\\w-])(?:${JAVA_MODIFIERS.join('|')})(?![\\w-])`, 'g')
+const modifierWords = (lang: 'java' | 'csharp') => new RegExp(`(?<![\\w-])(?:${modifiersOf(lang).join('|')})(?![\\w-])`, 'g')
+const MODIFIER_WORDS = { java: modifierWords('java'), csharp: modifierWords('csharp') }
 
 /** The text of a block body at its own depth: nested `{…}` collapsed to `{}`. */
 function topLevel(text: string, from: number, to: number): string {
@@ -73,22 +75,50 @@ function topLevel(text: string, from: number, to: number): string {
   return out
 }
 
-function scanJavaInto(src: string, index: TypeIndex): void {
-  const text = maskCode('java', src)
-  const head = /\b(class|interface|enum|record)\s+([A-Za-z_$][\w$]*)\s*(<[^{]*?>)?\s*(\([^)]*\))?([^{;]*)\{/g
+/**
+ * Java and C# classes: the same scan, with C#'s spelling where it differs —
+ * `class Dog : Animal, IPet` for parents, `struct`, `{ get; set; }` properties
+ * (collapsed to `{}` like a method body, so they read as fields), `const` /
+ * `static readonly` constants, `[Attributes]`, and positional `record P(int X);`.
+ */
+function scanJavaInto(src: string, index: TypeIndex, lang: 'java' | 'csharp' = 'java'): void {
+  const cs = lang === 'csharp'
+  const TYPE = typeRe(lang)
+  const clean = (t: string) => (cs ? stripNullable(t) : t.replace(/\s+/g, ''))
+  const text = maskCode(lang, src)
+  const head = cs
+    ? /\b(class|interface|enum|record|struct)\s+([A-Za-z_$][\w$]*)\s*(<[^{;]*?>)?\s*(\([^)]*\))?([^{;]*)\{/g
+    : /\b(class|interface|enum|record)\s+([A-Za-z_$][\w$]*)\s*(<[^{]*?>)?\s*(\([^)]*\))?([^{;]*)\{/g
+  if (cs) {
+    // `record Point(int X, int Y);` — no body: its parameters are its properties.
+    for (const r of text.matchAll(/\brecord\s+(?:(?:class|struct)\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?::[^;{]*)?;/g)) {
+      const members: MemberInfo[] = []
+      for (const p of splitTopLevel(r[2])) {
+        const pm = new RegExp(`^(${TYPE})\\s+([A-Za-z_$][\\w$]*)$`).exec(p.trim())
+        if (pm) members.push({ name: pm[2], kind: 'field', type: stripNullable(pm[1]), isStatic: false })
+      }
+      index.set(r[1], { name: r[1], kind: 'record', supers: [], members, bodyFrom: r.index!, bodyTo: r.index! + r[0].length })
+    }
+  }
   let m: RegExpExecArray | null
   while ((m = head.exec(text))) {
-    const [, kind, name, , recordParams, tail] = m
+    const [, rawKind, name, , recordParams, tail] = m
+    const kind = rawKind === 'struct' ? 'class' : rawKind
     const open = m.index + m[0].length - 1
     const close = matchBracket(text, open)
     const supers: string[] = []
-    const ext = /\bextends\s+([^{]*?)(?=\bimplements\b|\bpermits\b|$)/.exec(tail)
-    const impl = /\bimplements\s+([^{]*?)(?=\bpermits\b|$)/.exec(tail)
+    if (cs) {
+      // `class Dog : Animal, IPet where T : …` — the base class (if any) first, as written.
+      const colon = /^\s*:\s*([^{]*?)(?=\bwhere\b|$)/.exec(tail)
+      if (colon) for (const s of splitTopLevel(colon[1])) supers.push(baseOf(s))
+    }
+    const ext = cs ? null : /\bextends\s+([^{]*?)(?=\bimplements\b|\bpermits\b|$)/.exec(tail)
+    const impl = cs ? null : /\bimplements\s+([^{]*?)(?=\bpermits\b|$)/.exec(tail)
     for (const part of [ext?.[1], impl?.[1]]) {
       if (part) for (const s of splitTopLevel(part)) supers.push(baseOf(s))
     }
     // An enum is-a java.lang.Enum (name(), ordinal()…); `values`/`valueOf` are its synthetic statics.
-    if (kind === 'enum') supers.unshift('Enum')
+    if (kind === 'enum' && !cs) supers.unshift('Enum')
     const members: MemberInfo[] = []
     const body = topLevel(text, open + 1, close)
     let rest = body
@@ -101,46 +131,84 @@ function scanJavaInto(src: string, index: TypeIndex): void {
         if (id) members.push({ name: id[1], kind: 'constant', type: name, isStatic: true })
       }
       rest = semi === -1 ? '' : body.slice(semi + 1)
-      members.push(
+      if (!cs) members.push(
         { name: 'values', kind: 'method', type: `${name}[]`, params: '', isStatic: true },
         { name: 'valueOf', kind: 'method', type: name, params: 'String name', isStatic: true },
       )
     }
     if (kind === 'record' && recordParams) {
       for (const p of splitTopLevel(recordParams.slice(1, -1))) {
-        const pm = new RegExp(`^(${JAVA_TYPE})\\s+([A-Za-z_$][\\w$]*)$`).exec(p.trim())
+        const pm = new RegExp(`^(${TYPE})\\s+([A-Za-z_$][\\w$]*)$`).exec(p.trim())
         if (pm) {
-          members.push({ name: pm[2], kind: 'method', type: pm[1], params: '', isStatic: false })
+          // Java's record components are accessor methods (`p.x()`); C#'s are properties (`p.X`).
+          if (cs) members.push({ name: pm[2], kind: 'field', type: stripNullable(pm[1]), isStatic: false })
+          else members.push({ name: pm[2], kind: 'method', type: pm[1], params: '', isStatic: false })
         }
       }
     }
     // Each top-level statement ends at `;` or a collapsed `{}` body.
     for (const raw of rest.split(/;|\{\}/)) {
-      const stmt = raw.replace(/@[\w.]+(?:\([^)]*\))?/g, ' ').replace(/\s+/g, ' ').trim()
+      let stmt = raw.replace(/@[\w.]+(?:\([^)]*\))?/g, ' ').replace(/\s+/g, ' ').trim()
+      if (cs) stmt = stmt.replace(/^(?:\[[^\]]*\]\s*)+/, '') // `[Obsolete] public void X()`
       // A nested class/interface/enum is its own entry (the head regex finds it), not a field.
-      if (!stmt || /\b(?:class|interface|enum|record)\s+[A-Za-z_$]/.test(stmt)) continue
-      const isStatic = /\bstatic\b/.test(stmt) || kind === 'interface' && !/\(/.test(stmt)
+      if (!stmt || (cs ? /\b(?:class|interface|enum|record|struct)\s+[A-Za-z_$]/ : /\b(?:class|interface|enum|record)\s+[A-Za-z_$]/).test(stmt)) continue
+      const isStatic = cs ? /\b(?:static|const)\b/.test(stmt) : /\bstatic\b/.test(stmt) || kind === 'interface' && !/\(/.test(stmt)
       const isPrivate = /\bprivate\b/.test(stmt)
-      const plain = stmt.replace(MODIFIER_WORDS, ' ').replace(/^\s*<[^>]*>\s*/, '').trim()
-      const meth = new RegExp(`^(${JAVA_TYPE})\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^)]*)\\)`).exec(plain)
-      if (meth && (meth[1] === 'void' || isJavaTypeWord(meth[1]))) {
-        members.push({ name: meth[2], kind: 'method', type: meth[1].replace(/\s+/g, ''), params: meth[3].trim(), isStatic, isPrivate })
+      const plain = stmt.replace(MODIFIER_WORDS[lang], ' ').replace(/^\s*<[^>]*>\s*/, '').trim()
+      const meth = new RegExp(`^(${TYPE})\\s+([A-Za-z_$][\\w$]*)\\s*(?:<[^>()]*>\\s*)?\\(([^)]*)\\)`).exec(plain)
+      if (meth && (meth[1] === 'void' || isTypeWord(lang, meth[1]))) {
+        members.push({ name: meth[2], kind: 'method', type: clean(meth[1]), params: meth[3].trim(), isStatic, isPrivate })
         continue
       }
       if (/^[A-Za-z_$][\w$]*\s*\(/.test(plain)) continue // a constructor
-      const field = new RegExp(`^(${JAVA_TYPE})\\s+(.+)$`).exec(plain)
-      if (field && isJavaTypeWord(field[1])) {
-        const type = field[1].replace(/\s+/g, '')
+      const field = new RegExp(`^(${TYPE})\\s+(.+)$`).exec(plain)
+      if (field && isTypeWord(lang, field[1])) {
+        const type = clean(field[1])
         for (const decl of splitTopLevel(field[2])) {
           const id = /^([A-Za-z_$][\w$]*)\s*(\[\s*\])*\s*(?:=|$)/.exec(decl)
           if (id) {
-            const constant = isStatic && /\bfinal\b/.test(stmt)
+            const constant = cs ? /\bconst\b/.test(stmt) || (isStatic && /\breadonly\b/.test(stmt)) : isStatic && /\bfinal\b/.test(stmt)
             members.push({ name: id[1], kind: constant ? 'constant' : 'field', type: type + (id[2] ? '[]' : ''), isStatic, isPrivate })
           }
         }
       }
     }
     index.set(name, { name, kind: kind as ClassInfo['kind'], supers, members, bodyFrom: open, bodyTo: close })
+  }
+}
+
+/* ----------------------------------------------------------------------- c */
+
+/**
+ * C structs: `struct Point { int x, y; };`, `typedef struct [Tag] { … } Point;` —
+ * each filed under its tag and its typedef name. Fields keep the type as written
+ * (`char[50]`, `struct Node *`) for display; codeText's cTypeKey reads them when a chain goes on.
+ */
+function scanCInto(src: string, index: TypeIndex): void {
+  const text = maskCode('c', src)
+  for (const m of text.matchAll(/\b(typedef\s+)?(?:struct|union)\s+([A-Za-z_]\w*)?\s*\{/g)) {
+    const open = m.index! + m[0].length - 1
+    const close = matchBracket(text, open)
+    const members: MemberInfo[] = []
+    for (const raw of topLevel(text, open + 1, close).split(';')) {
+      const stmt = raw.replace(/\s+/g, ' ').trim()
+      // `int x, y` / `char name[50]` / `struct Node *next` — the type, then the declarators.
+      const fm = /^((?:(?:const|unsigned|signed|long|short|volatile)\s+)*(?:(?:struct|union|enum)\s+)?[A-Za-z_]\w*)\s*(.+)$/.exec(stmt)
+      if (!fm || /\(/.test(fm[2])) continue
+      for (const decl of splitTopLevel(fm[2])) {
+        const dm = /^(\**)\s*([A-Za-z_]\w*)\s*((?:\[[^\]]*\])*)/.exec(decl)
+        if (dm) members.push({ name: dm[2], kind: 'field', type: `${fm[1]}${dm[1] ? ' ' + dm[1] : ''}${dm[3]}`, isStatic: false })
+      }
+    }
+    const info = (name: string): ClassInfo => ({ name, kind: 'class', supers: [], members, bodyFrom: open, bodyTo: close })
+    if (m[2]) index.set(m[2], info(m[2]))
+    const alias = m[1] ? /^\s*([A-Za-z_]\w*)\s*;/.exec(text.slice(close + 1, close + 200))?.[1] : undefined
+    if (alias) index.set(alias, info(alias))
+  }
+  // `typedef struct Point Point;` — a second name for a struct declared elsewhere.
+  for (const m of text.matchAll(/\btypedef\s+(?:struct|union)\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*;/g)) {
+    const tagged = index.get(m[1])
+    if (tagged) index.set(m[2], { ...tagged, name: m[2] })
   }
 }
 
@@ -261,26 +329,29 @@ function scanPythonModule(path: string, src: string, index: TypeIndex): void {
 /* ------------------------------------------------------------------- cache */
 
 const scanInto = (lang: TextLang, src: string, index: TypeIndex) =>
-  lang === 'java' ? scanJavaInto(src, index) : scanPythonInto(src, index)
+  lang === 'python' ? scanPythonInto(src, index) : lang === 'c' ? scanCInto(src, index) : scanJavaInto(src, index, lang)
 
-let projectCache: { rev: number; java: TypeIndex; python: TypeIndex } | null = null
+/** Which project files feed each language's index. */
+const PROJECT_FILES: Record<TextLang, RegExp> = { java: /\.java$/, python: /\.py$/, csharp: /\.cs$/, c: /\.[ch]$/ }
+
+let projectCache: { rev: number; byLang: Record<TextLang, TypeIndex> } | null = null
 let docCache: { doc: string; lang: TextLang; index: TypeIndex } | null = null
 let mergedCache: { doc: string; lang: TextLang; rev: number; index: TypeIndex } | null = null
 
 function projectIndex(lang: TextLang): TypeIndex {
   const rev = projectRevision()
   if (!projectCache || projectCache.rev !== rev) {
-    const java: TypeIndex = new Map()
-    const python: TypeIndex = new Map()
+    const byLang: Record<TextLang, TypeIndex> = { java: new Map(), python: new Map(), csharp: new Map(), c: new Map() }
+    const langs = Object.keys(PROJECT_FILES) as TextLang[]
     for (const f of projectFiles()) {
-      if (f.path.endsWith('.java')) scanJavaInto(f.content, java)
-      else if (f.path.endsWith('.py')) scanPythonInto(f.content, python)
+      const l = langs.find((k) => PROJECT_FILES[k].test(f.path))
+      if (l) scanInto(l, f.content, byLang[l])
     }
     // Modules after classes, so a class never loses its name to a same-named file.
-    for (const f of projectFiles()) if (f.path.endsWith('.py')) scanPythonModule(f.path, f.content, python)
-    projectCache = { rev, java, python }
+    for (const f of projectFiles()) if (f.path.endsWith('.py')) scanPythonModule(f.path, f.content, byLang.python)
+    projectCache = { rev, byLang }
   }
-  return projectCache[lang]
+  return projectCache.byLang[lang]
 }
 
 /** The classes of the open document alone (re-scanned only when it changes). */

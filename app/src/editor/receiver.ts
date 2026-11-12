@@ -1,11 +1,19 @@
 import {
+  CS_PRIMS,
+  C_PRIMS,
   JAVA_TYPE,
-  isJavaTypeWord,
+  cTypeKey,
+  curly,
+  isTypeWord,
   javaCatchRe,
+  javaLike,
   maskCode,
   matchBack,
   matchBracket,
   splitTopLevel,
+  stripNullable,
+  typeArgs,
+  typeRe,
   type TextLang,
 } from './codeText'
 import { pythonLiteralType, enclosingClass, typeIndexFor, type TypeIndex } from './typeIndex'
@@ -25,6 +33,8 @@ import { pythonLiteralType, enclosingClass, typeIndexFor, type TypeIndex } from 
  *   self.speed            Python: the enclosing class, attributes included
  *   with open(p) as f     Python: f is a file
  *   line = line.strip()   Python: a rebinding reads the binding before it
+ *   foreach (var x in xs) C#: the element of what is iterated (Java's resolver, C# spelling)
+ *   p->next->value        C: a struct's fields, through `.` or `->`
  *
  * The receiver expression is parsed backwards from the dot into segments
  * (`name`, `call`, `index`, literal…) over the *masked* document (comments and
@@ -76,8 +86,9 @@ const MAX_DEPTH = 6
  * Parse the receiver chain that ends just before `end` (the dot) in masked text.
  * Returns the segments left-to-right and where the expression starts, or null
  * when what precedes the dot is not an expression (`3.` — a decimal point).
+ * `arrow`: C, where `->` joins a chain the same way `.` does (`end` is then the `-`).
  */
-export function parseChain(text: string, end: number): { segs: Segment[]; from: number } | null {
+export function parseChain(text: string, end: number, arrow = false): { segs: Segment[]; from: number } | null {
   const segs: Segment[] = []
   let i = end
   for (;;) {
@@ -162,7 +173,11 @@ export function parseChain(text: string, end: number): { segs: Segment[]; from: 
     } else {
       return null
     }
-    // Continue only across another dot; anything else ends the expression.
+    // Continue only across another dot (or C's `->`); anything else ends the expression.
+    if (arrow && text[i - 1] === '>' && text[i - 2] === '-') {
+      i -= 2
+      continue
+    }
     if (text[i - 1] !== '.') return { segs, from: i }
     i--
   }
@@ -260,15 +275,24 @@ function pythonVisible(masked: string, at: number, pos: number): boolean {
   return pos > defStart
 }
 
-/** The nearest declaration of `name` before `pos` in masked Java. */
-function javaBinding(masked: string, name: string, pos: number): Binding | null {
+/** The nearest declaration of `name` before `pos` in masked Java (or C#: same shapes, its own type words). */
+function javaBinding(masked: string, name: string, pos: number, lang: 'java' | 'csharp' = 'java'): Binding | null {
   const before = masked.slice(0, pos)
   const esc = name.replace(/\$/g, '\\$')
   const found: Binding[] = []
+  const TYPE = typeRe(lang)
+  if (lang === 'csharp') {
+    // `foreach (var x in xs)` / `foreach (string s in names)` — scoped to the loop, like a Java for-each header.
+    for (const m of before.matchAll(new RegExp(`\\bforeach\\s*\\(\\s*(${TYPE})\\s+${esc}\\s+in\\s+([^)]*)\\)`, 'g'))) {
+      const t = stripNullable(m[1])
+      const at = m.index! + m[0].indexOf('(') + 1
+      found.push(t === 'var' ? { at, expr: m[2], element: true } : { at, type: t })
+    }
+  }
   // `Type name =|;|,|)|:|[` — locals, fields, parameters, for-each, pattern variables.
-  for (const m of before.matchAll(new RegExp(`(?:^|[^\\w$.])(${JAVA_TYPE})\\s+${esc}\\s*(?=[=;,):]|\\[)`, 'g'))) {
-    const t = m[1].replace(/\s+/g, '')
-    if (!isJavaTypeWord(t)) continue
+  for (const m of before.matchAll(new RegExp(`(?:^|[^\\w$.])(${TYPE})\\s+${esc}\\s*(?=[=;,):]|\\[)`, 'g'))) {
+    const t = lang === 'csharp' ? stripNullable(m[1]) : m[1].replace(/\s+/g, '')
+    if (!isTypeWord(lang, t)) continue
     if (t === 'var') {
       const eq = before.indexOf('=', m.index! + m[0].length)
       if (eq === -1) continue
@@ -282,6 +306,28 @@ function javaBinding(masked: string, name: string, pos: number): Binding | null 
   // `int... nums` — varargs are an array.
   for (const m of before.matchAll(new RegExp(`(?:^|[^\\w$.])(${JAVA_TYPE})\\s*\\.\\.\\.\\s*${esc}\\s*(?=[,)])`, 'g')))
     found.push({ at: m.index! + m[0].length, type: `${m[1].replace(/\s+/g, '')}[]` })
+  // C#'s varargs: `params int[] nums` is already an array, caught above.
+  return nearest(found, (at) => javaVisible(masked, at, pos))
+}
+
+/**
+ * The nearest declaration of `name` in masked C: `int x`, `struct Point p`,
+ * `Point *p`, `char name[50]`, a parameter. Visibility is the same block rule as
+ * Java's. The type comes back as a key (`Point[]` for a pointer or array).
+ */
+function cBinding(masked: string, name: string, pos: number): Binding | null {
+  const before = masked.slice(0, pos)
+  const found: Binding[] = []
+  const re = new RegExp(
+    `(?:^|[^\\w.>])((?:(?:const|unsigned|signed|long|short|static|register|volatile)\\s+)*(?:(?:struct|union|enum)\\s+)?[A-Za-z_]\\w*)\\s*(\\**)\\s*\\b${name}\\s*((?:\\[[^\\]]*\\])*)\\s*(?=[=;,)\\[])`,
+    'g',
+  )
+  for (const m of before.matchAll(re)) {
+    const word = m[1].replace(/^.*\s/, '')
+    if (!C_PRIMS.has(word) && !/\b(?:struct|union|enum)\s/.test(m[1]) && !/^[A-Z]/.test(word) && !/_t$/.test(word)) continue
+    const key = cTypeKey(`${m[1]} ${m[2]}${m[3]}`)
+    if (key) found.push({ at: m.index! + m[0].length, type: key })
+  }
   return nearest(found, (at) => javaVisible(masked, at, pos))
 }
 
@@ -343,6 +389,13 @@ function evalText(scope: Scope, expr: string, at: number): Resolved | null {
     if (/^-?\d+[lL]?$/.test(e)) return val(/[lL]$/.test(e) ? 'long' : 'int')
     if (/^-?\d*\.\d+[dDfF]?$/.test(e)) return val(/[fF]$/.test(e) ? 'float' : 'double')
     if (e === 'true' || e === 'false') return val('boolean')
+  } else if (scope.lang === 'csharp') {
+    if (/^-?\d+[lL]?$/.test(e)) return val(/[lL]$/.test(e) ? 'long' : 'int')
+    if (/^-?\d*\.?\d+[dDfFmM]$|^-?\d*\.\d+$/.test(e)) return val(/[fF]$/.test(e) ? 'float' : /[mM]$/.test(e) ? 'decimal' : 'double')
+    if (e === 'true' || e === 'false') return val('bool')
+    if (/^\$?@?\$?"/.test(e)) return val('string')
+  } else if (scope.lang === 'c') {
+    return null
   } else {
     const lit = pythonLiteralType(e)
     if (lit && !lit.endsWith('()')) return val(lit === 'list' ? listOfLiteral(e) : lit)
@@ -373,6 +426,20 @@ function pyElement(t: string): string | null {
   return null
 }
 
+/** C#: what `foreach` over a value of type `t` yields — `List<T>` → T, `T[]` → T, a Dictionary's pairs. */
+function csElement(t: string): string | null {
+  const s = t.replace(/\s+/g, '')
+  if (/\[\]$/.test(s)) return s.slice(0, -2)
+  if (s === 'string' || s === 'String') return 'char'
+  const base = s.replace(/<.*$/, '')
+  const args = typeArgs(s)
+  if (/Dictionary$/.test(base) && args.length === 2) return `KeyValuePair<${args[0]},${args[1]}>`
+  return args.length === 1 ? args[0] : null
+}
+
+/** C# reaches these through their keyword (`int.Parse`, `string.Join`) — lowercase, yet a type. */
+const csKeywordType = (name: string) => CS_PRIMS.has(name)
+
 function evaluate(scope: Scope, segs: Segment[]): Resolved | null {
   let cur = base(scope, segs[0])
   for (let i = 1; i < segs.length && cur; i++) cur = step(scope, cur, segs[i])
@@ -388,36 +455,40 @@ function fromBinding(scope: Scope, b: Binding): Resolved | null {
     return scope.table.isKnownType(scope.lang, last, scope.index) ? { type: last, isStatic: true } : null
   }
   const r = evalText(scope, b.expr, b.at)
-  return b.element ? val(r ? pyElement(r.type) : null) : r
+  if (!b.element) return r
+  return val(r ? (scope.lang === 'csharp' ? csElement(r.type) : pyElement(r.type)) : null)
 }
 
 function base(scope: Scope, seg: Segment): Resolved | null {
   const { lang, index, table } = scope
-  const java = lang === 'java'
+  // `java` below means the Java-like engine (Java and C#); `curly` adds C.
+  const java = javaLike(lang)
+  const cs = lang === 'csharp'
   switch (seg.k) {
     case 'string':
-      return val(java ? 'String' : 'str')
+      return lang === 'c' ? null : val(lang === 'java' ? 'String' : cs ? 'string' : 'str')
     case 'char':
-      return val(java ? 'char' : 'str')
+      return lang === 'c' ? null : val(java ? 'char' : 'str')
     case 'list':
-      return val('list')
+      return lang === 'c' || lang === 'csharp' ? null : val('list')
     case 'brace':
-      return java ? null : val(seg.inner.trim() === '' || /:/.test(seg.inner) ? 'dict' : 'set')
+      return curly(lang) ? null : val(seg.inner.trim() === '' || /:/.test(seg.inner) ? 'dict' : 'set')
     case 'new':
-      return val(seg.type)
+      return lang === 'c' ? null : val(cs ? stripNullable(seg.type) : seg.type)
     case 'paren': {
-      const cast = java ? new RegExp(`^\\s*\\(\\s*(${JAVA_TYPE})\\s*\\)`).exec(seg.inner) : null
-      return cast ? val(cast[1].replace(/\s+/g, '')) : evalText(scope, seg.inner, scope.at)
+      const cast = java ? new RegExp(`^\\s*\\(\\s*(${typeRe(lang)})\\s*\\)`).exec(seg.inner) : null
+      if (cast) return val(cs ? stripNullable(cast[1]) : cast[1].replace(/\s+/g, ''))
+      return lang === 'c' ? null : evalText(scope, seg.inner, scope.at)
     }
     case 'index':
       return null
     case 'call': {
       const cls = enclosingClass(lang, scope.raw, scope.at)
-      if (!java && seg.name === 'super') return val(cls?.supers[0])
+      if (lang === 'python' && seg.name === 'super') return val(cls?.supers[0])
       // A bare call: a method of the enclosing class first.
-      const own = cls ? table.memberType(lang, { type: cls.name, isStatic: false }, seg.name, true, index) : null
+      const own = cls && lang !== 'c' ? table.memberType(lang, { type: cls.name, isStatic: false }, seg.name, true, index) : null
       if (own) return val(own)
-      if (java) return null
+      if (curly(lang)) return null
       if (index.has(seg.name)) return val(seg.name)
       const b = pythonBinding(scope.masked, seg.name, scope.at)
       if (b && 'from' in b) return val(table.callResult(lang, b.from) ?? b.from.split('.').pop())
@@ -426,18 +497,22 @@ function base(scope: Scope, seg: Segment): Resolved | null {
     case 'name': {
       const name = seg.name
       const cls = enclosingClass(lang, scope.raw, scope.at)
+      if (lang === 'c') {
+        const b = cBinding(scope.masked, name, scope.at)
+        return b ? fromBinding(scope, b) : null
+      }
       if (java ? name === 'this' : name === 'self' || name === 'cls') return cls ? { type: cls.name, isStatic: name === 'cls' } : null
-      if (java && name === 'super') return val(cls?.supers.find((s) => s !== 'Enum'))
-      const b = java ? javaBinding(scope.masked, name, scope.at) : pythonBinding(scope.masked, name, scope.at)
+      if (java && name === (cs ? 'base' : 'super')) return val(cls?.supers.find((s) => s !== 'Enum'))
+      const b = java ? javaBinding(scope.masked, name, scope.at, lang) : pythonBinding(scope.masked, name, scope.at)
       if (b) return fromBinding(scope, b)
       if (java && cls) {
         // A field of the enclosing class (or one it inherits).
         const field = table.memberType(lang, { type: cls.name, isStatic: false }, name, false, index)
         if (field) return val(field)
       }
-      if (table.isKnownType(lang, name, index) && (!java || /^[A-Z]/.test(name))) return { type: name, isStatic: true }
+      if (table.isKnownType(lang, name, index) && (!java || /^[A-Z]/.test(name) || (cs && csKeywordType(name)))) return { type: name, isStatic: true }
       // `@voltage.setter` inside the class that declared `@property def voltage`.
-      if (!java && cls?.members.some((m) => m.name === name && m.property)) return { type: 'property', isStatic: true }
+      if (lang === 'python' && cls?.members.some((m) => m.name === name && m.property)) return { type: 'property', isStatic: true }
       return null
     }
   }
@@ -447,7 +522,14 @@ function step(scope: Scope, cur: Resolved, seg: Segment): Resolved | null {
   const { lang, index, table } = scope
   if (seg.k === 'index') {
     const t = cur.type.replace(/\s+/g, '')
-    if (lang === 'java') return /\[\]$/.test(t) ? val(t.slice(0, -2)) : null
+    if (curly(lang) && /\[\]$/.test(t)) return val(t.slice(0, -2))
+    if (lang === 'java' || lang === 'c') return null
+    if (lang === 'csharp') {
+      // An indexer: `list[0]` is a T, `dict[key]` a TValue, `s[0]` a char.
+      if (t === 'string' || t === 'String') return val('char')
+      const args = typeArgs(t)
+      return val(/Dictionary$/.test(t.replace(/<.*$/, '')) ? args[1] : args.length === 1 ? args[0] : null)
+    }
     // `df["score"]` is a column; `s[0]` of a str is a str.
     const el = /^(?:list|tuple)\[(.+)\]$/.exec(t)?.[1] ?? (t === 'str' ? 'str' : t === 'DataFrame' ? 'Series' : null)
     return val(el ?? /^dict\[.+?,(.+)\]$/.exec(t)?.[1])
@@ -476,7 +558,7 @@ export function resolveReceiver(
   table: MemberTypes,
 ): { resolved: Resolved | null; from: number } | null {
   const masked = maskedDoc(lang, doc)
-  const parsed = parseChain(masked, dotPos)
+  const parsed = parseChain(masked, dotPos, lang === 'c')
   if (!parsed) return null
   const scope: Scope = { lang, raw: doc, masked, at: parsed.from, index: typeIndexFor(lang, doc), table, depth: 0 }
   return { resolved: evaluate(scope, parsed.segs), from: parsed.from }
