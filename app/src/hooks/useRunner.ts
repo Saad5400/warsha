@@ -63,6 +63,17 @@ export function classifyRunFailure(error: unknown, lang: string): RunFailure {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { kind: 'offline', message: COPY.engineOffline(lang), hint: COPY.engineOfflineHint, detail }
   }
+  // An engine file answered with a web PAGE (a host's index.html fallback for a
+  // file it does not have: a stale page after a deploy, a misconfigured server).
+  // The engine reports it as e.g. `Failed to load config file … Unexpected token
+  // '<', "<!doctype"…`, which the offline test below would claim — telling a
+  // student who is online to check their Wi-Fi. The network delivered fine; the
+  // file is wrong, and a reload is the fix (useRunner has already tried the
+  // automatic one by the time this runs — ui/staleBuild.ts). Checked before the
+  // error-text offline test.
+  if (/Unexpected token '<'|<!doctype|<html|MIME type .*text\/html/i.test(detail)) {
+    return { kind: 'engine', message: COPY.engineBroken(lang), hint: COPY.engineBrokenHint, detail }
+  }
   if (
     /failed to fetch|networkerror|load failed|err_|net::|importScripts|Failed to load|ERR_INTERNET/i.test(detail) ||
     /timed out/i.test(detail)
