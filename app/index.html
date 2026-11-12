@@ -294,8 +294,8 @@
          stacking context that plays Warsha's core loop (code → compile → binary →
          scatter → console output) on its own requestAnimationFrame loop, entirely
          independent of the React bundle. The app calls window.__appReady() after it
-         has mounted and painted (see src/main.tsx); the splash then finishes its
-         current scene, fades via a CSS opacity transition, and removes itself. A
+         has mounted and painted (see src/main.tsx); the splash then fades at once
+         (240 ms CSS opacity) and removes itself — it never outstays the load. A
          ~15s failsafe force-dismisses it so it can never strand the app behind it.
          Dark-only to match the fixed `color-scheme: dark` shell above; honours
          prefers-reduced-motion with a static mark and no rAF loop.
@@ -310,7 +310,7 @@
         place-items: center;
         background: #09090b;
         opacity: 1;
-        transition: opacity 480ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition: opacity 240ms cubic-bezier(0.4, 0, 0.2, 1);
         overflow: hidden;
       }
       #warsha-splash.warsha-splash--done {
@@ -389,16 +389,11 @@
         var reduce =
           window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-        // Play the full animation on a first visit only; on return visits dismiss as
-        // soon as the app is ready. localStorage so it persists across sessions — and
-        // because the flag is only set once the splash actually begins dismissing, a
-        // genuine first visit (which coi-serviceworker reloads once, before the app
-        // boots) still plays in full on the post-reload load. Blocked storage falls
-        // back to treating the load as a first visit — the safe, more-generous default.
-        var SEEN_KEY = 'warsha:splash-seen'
-        var firstVisit = true
-        try { firstVisit = !localStorage.getItem(SEEN_KEY) } catch (e) {}
-        var markSeen = function () { try { localStorage.setItem(SEEN_KEY, '1') } catch (e) {} }
+        // The splash is a loading screen, never a show: it fades the moment the app is
+        // ready, first visit included. (It used to hold a first visit until the shot's
+        // finished frame — at least one 6.5 s cycle, played again after
+        // coi-serviceworker's one reload — so a student waited 6-10 s on an app that
+        // was already there.)
 
         /* ---- palette (v5 monochrome tokens) ---- */
         var C = {
@@ -542,10 +537,15 @@
           var cam = camAt(T)
           var fitW = VW / 1920, fitH = VH / 1080
           var fit = Math.min(Math.max(fitW, fitH), fitW * 1.4)
-          var s = fit * cam.s
+          var s = fit * cam.s, fx = cam.fx
+          // On a phone even that zooms the 1000-wide editor pane past the glass, and the
+          // camera's opening focus (the line starts, left of centre) pushed the shot
+          // off the right edge. Where the pane cannot fit, fit it and centre on it.
+          var paneFit = (VW * 0.9) / 1000
+          if (s > paneFit) { s = paneFit; fx = 1040 }
           ctx.setTransform(
             dpr * s, 0, 0, dpr * s,
-            dpr * (VW / 2 - s * cam.fx), dpr * (VH / 2 - s * cam.fy)
+            dpr * (VW / 2 - s * fx), dpr * (VH / 2 - s * cam.fy)
           )
 
           // ---- editor pane (grounds the shot in Warsha's own UI) ----
@@ -662,15 +662,8 @@
         }
 
         /* ---- lifecycle: rAF loop, ready handshake, fade-out, failsafe ---- */
-        var raf = 0, startTs = null, elapsed = 0, dismissing = false, fadeAt = null
+        var raf = 0, startTs = null, elapsed = 0, dismissing = false
         var frozenT = null // animation time held (frozen) under the fade — no restart shows through
-        // Absolute time of the next finale (the landed, finished frame) at/after `from`.
-        var nextFinale = function (from) {
-          var k = Math.floor(from / PERIOD)
-          var cand = k * PERIOD + FINALE
-          if (cand < from) cand += PERIOD
-          return cand
-        }
 
         var cleanup = function () {
           if (raf) cancelAnimationFrame(raf)
@@ -678,42 +671,30 @@
           if (host && host.parentNode) host.parentNode.removeChild(host)
           try { delete window.__appReady } catch (e) { window.__appReady = undefined }
         }
-        // Freeze the frame we fade from so the loop never visibly restarts underneath the
-        // fade: holdAt = FINALE for a settled first-visit exit, or the current frame for
-        // an immediate dismiss.
-        var beginFade = function (holdAt) {
+        // Freeze the frame we fade from so the loop never visibly restarts underneath the fade.
+        var beginFade = function () {
           if (dismissing) return
           dismissing = true
-          frozenT = holdAt != null ? holdAt : timeAt(elapsed % PERIOD)
-          markSeen() // this visit has now seen the splash; future visits fast-dismiss
+          frozenT = timeAt(elapsed % PERIOD)
           host.classList.add('warsha-splash--done')
           var done = false
           var finish = function () { if (done) return; done = true; cleanup() }
           host.addEventListener('transitionend', finish)
-          setTimeout(finish, 700) // fallback if transitionend never fires
+          setTimeout(finish, 400) // fallback if transitionend never fires
         }
-        // force (failsafe) or reduced-motion dismiss immediately. A return visitor
-        // dismisses as soon as the app is ready. A first-time visitor holds until the
-        // animation lands on its finished frame — playing at least one full cycle — and
-        // fades from that settled frame rather than from a fresh loop's opening.
-        var requestDismiss = function (force) {
-          if (dismissing) return
-          if (force || reduce || !firstVisit) { beginFade(); return }
-          if (fadeAt === null) fadeAt = nextFinale(elapsed)
-        }
+        var requestDismiss = function () { beginFade() }
 
         var frame = function (ts) {
           if (startTs === null) startTs = ts
           elapsed = (ts - startTs) / 1000
-          if (fadeAt !== null && !dismissing && elapsed >= fadeAt) beginFade(FINALE)
           draw(dismissing ? frozenT : timeAt(elapsed % PERIOD))
           raf = requestAnimationFrame(frame)
         }
 
         // The app signals it has mounted and painted real content (see src/main.tsx).
-        window.__appReady = function () { requestDismiss(false) }
+        window.__appReady = requestDismiss
         // Failsafe: never let the splash cover the app forever.
-        var failsafe = setTimeout(function () { requestDismiss(true) }, 15000)
+        var failsafe = setTimeout(requestDismiss, 15000)
 
         if (reduce) {
           // Static fallback: the mark stays, no animation loop runs.
