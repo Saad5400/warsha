@@ -150,7 +150,7 @@ for (const [label, needle] of [
   else fail(`template output: ${label}`, `missing "${needle}"`)
 }
 const ph = await page.locator('[aria-label="Program input"]').getAttribute('placeholder')
-if (beforeIn.trimEnd().endsWith('Your name:') && ph === 'Type your answer, then press Enter')
+if (beforeIn.trimEnd().endsWith('Your name:') && ph === 'Type here, then Enter')
   pass('Scanner prompt painted BEFORE the read blocked', 'partial line, stdin row waiting')
 else fail('Scanner prompt painted BEFORE the read blocked', `ends "${beforeIn.trimEnd().slice(-20)}" / placeholder "${ph}"`)
 

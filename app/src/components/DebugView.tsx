@@ -264,7 +264,7 @@ function ScopeNode({ name, vars, startOpen, stopSeq }: { name: string; vars: Deb
             ))}
           </div>
         ) : (
-          <div className="ps-9 py-0.5 text-micro italic text-text-3">{COPY.debugNoVariables}</div>
+          <div className="ps-9 py-0.5 text-micro italic rtl:not-italic text-text-3">{COPY.debugNoVariables}</div>
         )
       ) : null}
     </div>
@@ -337,7 +337,7 @@ export function ValueNode({
               …
             </div>
           ) : kids.length === 0 ? (
-            <div className="py-0.5 text-micro italic text-text-3" style={{ paddingInlineStart: 4 + (depth + 1) * 12 + 16 }}>
+            <div className="py-0.5 text-micro italic rtl:not-italic text-text-3" style={{ paddingInlineStart: 4 + (depth + 1) * 12 + 16 }}>
               {COPY.debugEmptyValue}
             </div>
           ) : (
@@ -454,7 +454,7 @@ function WatchRow({
       <span className="min-w-0 flex-1 truncate">
         <span className="text-(--debug-name)">{expr}</span>
         <span className="text-text-3">: </span>
-        <span className="italic text-text-3">{result && 'error' in result ? result.error : COPY.debugWatchUnavailable}</span>
+        <span className="italic rtl:not-italic text-text-3">{result && 'error' in result ? result.error : COPY.debugWatchUnavailable}</span>
       </span>
       {remove}
     </div>

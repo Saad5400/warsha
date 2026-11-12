@@ -160,7 +160,9 @@ export const AR: Bundle = {
   truncated: 'أُخفيت الأسطر الأقدم (الحدّ 5000 سطر).',
   stdinQueued: 'سطرك محفوظ — برنامجك لم يطلب إدخالًا بعد.',
   stdinIdle: 'لا شيء يعمل الآن — اضغط زر التشغيل أولًا.',
-  stdinWaitingPlaceholder: 'اكتب إجابتك ثم اضغط Enter',
+  // Isolated: the input sits in the transcript's LTR line, which otherwise put
+  // «Enter» after the Arabic at the far right — read last, but placed first.
+  stdinWaitingPlaceholder: iso('اكتب هنا ثم Enter'),
 
   // ---- transcript controls ----
   copyOutput: 'نسخ المخرجات',

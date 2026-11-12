@@ -128,10 +128,12 @@ export const EN = {
   stdinQueued: 'Saved — your program has not asked for input yet.',
   /** PLACEHOLDER — for typing with nothing running. */
   stdinIdle: 'Nothing is running yet. Tap Run first.',
-  // The only placeholder left — no idle input exists to hold one. Asserted
-  // verbatim by verify.mjs, verify-java.mjs and console-check.mjs (no ?lang=
+  // The only placeholder left — no idle input exists to hold one. Short enough
+  // to fit beside a prompt on a 390px phone (the longer "Type your answer, then
+  // press Enter" was cut mid-word). Asserted verbatim by verify.mjs,
+  // verify-java.mjs, verify-csharp.mjs and console-check.mjs (no ?lang=
   // override, so they read exactly this).
-  stdinWaitingPlaceholder: 'Type your answer, then press Enter',
+  stdinWaitingPlaceholder: 'Type here, then Enter',
 
   // ---- transcript controls ----
   copyOutput: 'Copy output',

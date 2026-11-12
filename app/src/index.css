@@ -1461,6 +1461,9 @@
      job for the value; this covers the placeholder too. */
   .stdin-input {
     unicode-bidi: plaintext;
+    /* A long prompt can still squeeze the field: end the placeholder with "…"
+       rather than cutting a word in half. */
+    text-overflow: ellipsis;
     flex: 1 1 14ch;
     min-width: 8ch;
     /* The one concession to touch: the line the student types on is a 44px
@@ -1485,6 +1488,27 @@
   .stdin-input::placeholder {
     color: var(--text-3);
     font-style: italic;
+  }
+  /* Arabic has no italic: the browser slants the glyphs itself, which reads as
+     broken text, not as a hint. Under the Arabic interface every italic hint
+     stands upright and its muted colour carries the difference. The echo keeps
+     its --info hue, and a typed answer's own direction still sets it apart. */
+  html[lang='ar'] :is(
+      .console-empty,
+      .console-row[data-kind='meta'] .console-row__text,
+      [data-seg='meta'],
+      [data-seg='echo']
+    ),
+  html[lang='ar'] .stdin-input::placeholder {
+    font-style: normal;
+  }
+  /* And Warsha's own Arabic sentences in the transcript (the empty-state hint, the
+     Finished/Stopped lines) take the interface face: the monospace stack has no
+     Arabic, and its fallback spaced the letters apart. A program's output keeps
+     the code face — it is the program's text, not Warsha's. */
+  html[lang='ar'] :is(.console-empty, .console-row[data-kind='meta'] .console-row__text),
+  html[lang='ar'] .stdin-input::placeholder {
+    font-family: var(--font-ui);
   }
   /* The ring stays (§4.1 rule 3 — never outline-none), but it is re-tuned, and
      both changes are deliberate.
