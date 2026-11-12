@@ -110,7 +110,7 @@ const PROGRAMS = {
     hello: '#include <stdio.h>\nint main(void) {\n  printf("Hello from Warsha\\n");\n  return 0;\n}\n',
     prints:
       // clock() needs WASI's emulated process clocks, so a plain counted spin between lines.
-      '#include <stdio.h>\nint main(void) {\n  for (int i = 0; i < 80; i++) {\n    printf("tick %d\\n", i);\n    fflush(stdout);\n    for (volatile long k = 0; k < 30000000; k++) {}\n  }\n  return 0;\n}\n',
+      '#include <stdio.h>\nint main(void) {\n  for (int i = 0; i < 80; i++) {\n    printf("tick %d\\n", i);\n    fflush(stdout);\n    for (volatile long k = 0; k < 150000000; k++) {}\n  }\n  return 0;\n}\n',
     quietThenInput:
       '#include <stdio.h>\n#include <time.h>\nint main(void) {\n  time_t t0 = time(NULL);\n  long x = 0;\n  while (time(NULL) - t0 < 80) { x++; }\n  char name[64];\n  printf("Your name: ");\n  fflush(stdout);\n  if (scanf("%63s", name) == 1) printf("Hi %s %d\\n", name, x > 0);\n  return 0;\n}\n',
     input: '#include <stdio.h>\nint main(void) {\n  char s[32];\n  printf("Type something: ");\n  fflush(stdout);\n  scanf("%31s", s);\n  return 0;\n}\n',
