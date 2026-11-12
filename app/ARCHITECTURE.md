@@ -194,7 +194,8 @@ a real Vite build and a real dev server.
   `vite.config.ts`, plus `index.html`, the manifest and the icons. Its `fetch` handler is cache-first
   only for URLs whose bytes cannot change — Vite's content-hashed `/assets/` and the version-pinned
   runtime URLs (`cdn.jsdelivr.net/pyodide/v…/`, `cjrtnc.leaningtech.com/<v>/`, exact-version
-  `unpkg.com` packages, content-addressed `cdn.wasmer.io/webcimages/<sha256>.webc`) — and
+  `unpkg.com` packages, content-addressed `cdn.wasmer.io/webcimages/<sha256>.webc`; CheerpJ's
+  `4.3/` path can be patched in place, so its own declared `max-age` is honoured instead) — and
   **revalidates** every other same-origin file (the unhashed `public/` runtimes: the engine workers,
   `warsha-dotnet/**`, `warsha-esbuild.wasm`, the framework JSON, icons) with a conditional request,
   serving its copy on a `304` or with no network. Navigations are network-first (bypassing the HTTP
@@ -208,8 +209,13 @@ a real Vite build and a real dev server.
   one. Downloads outlive deploys: everything the worker fetches (assets, runtimes, the `public/`
   runtime files) lives in one URL-keyed `warsha-keep` cache, not a per-build one — a deploy only
   replaces the small per-build shell cache, prunes `/assets/` files the new build no longer emits,
-  and holds the rest under a 500 MB least-recently-used cap. So a language a student already ran is
-  neither re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
+  and holds the rest least-recently-used under min(500 MB, half the quota minus what the origin
+  already stores), so cached runtimes never crowd out project saves. Install refreshes every kept
+  same-origin runtime file (a `304` when unchanged), so a student who updates online and then goes
+  offline gets this build's workers, not the last one's. Pages are cached only by navigations, only
+  in their own build's shell, and only when the page is that build's (its entry chunk is in the
+  worker's asset list); every lookup names its cache. So a language a student already ran is neither
+  re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
   a real deploy against all of it, counting every runtime byte fetched again.
 
   `deploy/nginx.conf` also sets a Content-Security-Policy on documents. Only `object-src 'none'`,

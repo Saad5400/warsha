@@ -258,6 +258,19 @@ if (typeof window === 'undefined') {
         return { opened, done };
     };
 
+    // Whether a page is THIS build's: its entry chunk is one this build emitted.
+    // Only such a page goes into this build's shell. When the server has moved
+    // on, the navigation that brings the new page is still answered by this
+    // (old) worker — and had it shelved that page, a student who closed the tab
+    // before the new worker installed would boot the NEW page offline against
+    // this build's runtime files. Not shelving it keeps the offline copy one
+    // consistent build: this one, until the new worker installs its own shell.
+    const ownPage = async (response) => {
+        if (!ASSET_PATHS.size) return true; // dev: no asset list to check against
+        const entry = /<script[^>]+type="module"[^>]+src="([^"]*\/assets\/index-[^"]+\.js)"/.exec(await response.text())?.[1];
+        return !!entry && ASSET_PATHS.has(new URL(entry, self.location.href).pathname);
+    };
+
     // Lookups name their cache — never the global caches.match(), which returns
     // the first hit in cache-CREATION order and so lets whichever cache happens
     // to be oldest answer for every later build.
@@ -295,7 +308,8 @@ if (typeof window === 'undefined') {
     //      a student re-download a runtime; and an OLD shell cache the previous
     //      worker re-created while it served the update navigation.
     //   2. A /assets/ entry this build did not emit is a chunk of an older build
-    //      (content-hashed names are never reused). A tab still open on that old
+    //      (content-hashed names are never reused); and any entry that fails
+    //      `storable` (an older worker's SPA-fallback HTML). A tab still open on that old
     //      build may ask for it next: the server no longer has it either, so its
     //      import fails and ui/staleBuild.ts reloads that tab onto this build.
     //   3. The rest held under `keepBudget`, least recently used first — the
@@ -337,7 +351,10 @@ if (typeof window === 'undefined') {
             const u = new URL(req.url);
             const retired = ASSET_PATHS.size && u.origin === self.location.origin
                 && u.pathname.startsWith('/assets/') && !ASSET_PATHS.has(u.pathname);
-            if (retired || !strategyFor(req.url)) {
+            // Also anything that should never have been stored (see `storable`):
+            // a cache hit is checked the same way, but an entry nobody asks for
+            // would otherwise sit there, poisoned, until someone does.
+            if (retired || !strategyFor(req.url) || !storable(req, await cache.match(req))) {
                 await cache.delete(req);
                 continue;
             }
@@ -383,7 +400,13 @@ if (typeof window === 'undefined') {
         }
         let net;
         try {
-            net = await fetch(request);
+            // Same-origin: straight to the server, past the HTTP cache. The
+            // pre-fix nginx sent no Cache-Control, so a browser may still hold a
+            // heuristically "fresh" SPA-fallback page for this very URL, and
+            // would hand it back instead of asking. This is a miss — it happens
+            // once per file, and what comes back is kept. A CDN's own HTTP
+            // caching is right, so cross-origin requests keep it.
+            net = await fetch(request, new URL(r.url).origin === self.location.origin ? { cache: 'no-store' } : undefined);
         } catch (err) {
             // A lapsed 'declared' copy still beats no copy at all offline.
             if (cached) return isolate(cached);
@@ -613,8 +636,10 @@ if (typeof window === 'undefined') {
                     // still reaches the browser as an opaqueredirect it follows.)
                     const net = await fetch(request, { cache: 'no-cache' });
                     if (net && net.status === 200) {
-                        const cache = await caches.open(SHELL_CACHE);
-                        cache.put(path, net.clone()).catch(() => {});
+                        const copy = net.clone();
+                        ownPage(copy.clone()).then(async (own) => {
+                            if (own) await (await caches.open(SHELL_CACHE)).put(path, copy);
+                        }).catch(() => {});
                     }
                     return isolate(net);
                 } catch (err) {
