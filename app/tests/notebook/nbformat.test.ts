@@ -24,6 +24,7 @@ import {
   parseNotebook,
   serializeNotebook,
   setOutputsCollapsed,
+  formTitle,
   outputsExpanded,
   setOutputsExpanded,
   splitLines,
@@ -197,4 +198,14 @@ test('import: a .ipynb inside a .zip (and on its own) arrives byte-for-byte and 
   assert.equal(serializeNotebook(parseNotebook(nb!.content)), COLAB)
   const loose = await importFiles([{ path: 'jupyter-4.5.ipynb', file: new File([JUPYTER], 'jupyter-4.5.ipynb') }])
   assert.equal(loose.snapshot.files[0].content, JUPYTER)
+})
+
+test('Colab form cells: the #@title line, and whether the code is hidden', () => {
+  const cell = (source: string, metadata: Record<string, unknown> = {}) => ({ ...newCell('code', '', new Set()), source, raw: { cell_type: 'code', metadata, source } }) as never
+  assert.deepEqual(formTitle(cell('#@title Load the data\nimport pandas', { cellView: 'form' })), { title: 'Load the data', hideCode: true })
+  assert.deepEqual(formTitle(cell('#@title Load { display-mode: "form" }\nx = 1')), { title: 'Load', hideCode: true })
+  assert.deepEqual(formTitle(cell('# @title Both { display-mode: "both" }\nx = 1', { cellView: 'form' })), { title: 'Both', hideCode: false })
+  assert.deepEqual(formTitle(cell('#@title Plain\nx = 1')), { title: 'Plain', hideCode: false })
+  assert.equal(formTitle(cell('# a comment\n#@title late')), null)
+  assert.equal(formTitle({ ...newCell('markdown', '', new Set()), source: '#@title x' } as never), null)
 })

@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createCellEditor, type CellEditor, type RunMode } from '../../notebook/cellEditor'
-import { cellPath, outputsCollapsed, outputsExpanded, type NbCell } from '../../notebook/nbformat'
+import { cellPath, formTitle, outputsCollapsed, outputsExpanded, type NbCell } from '../../notebook/nbformat'
 import { renderMarkdown } from '../../notebook/markdown'
 import type { CellStatus } from '../../notebook/session'
 import type { LoadProgress } from '../../runtime/types'
 import { COPY } from '../../copy'
 import { OutputView, SafeHtml } from './OutputView'
-import { MD_PROSE, useMarkdownOptions } from './markdownProse'
+import { MD_PROSE, highlightPython, useMarkdownOptions, usePythonHighlight } from './markdownProse'
+import { mountWhenNear } from '../../notebook/lazyMount'
 import { IconWand, IconPlus, IconChevronDown, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
 import { IconDebugAlt } from '../ui/DebugIcons'
 import { Menu, type MenuAnchor, type MenuItem } from '../ui/Menu'
@@ -38,6 +39,8 @@ export interface CellViewProps {
   /** A text cell showing its source instead of its rendering. */
   editingText: boolean
   status: CellStatus | undefined
+  /** A run of several cells stopped before this one: its outputs are from an earlier run. */
+  stale?: boolean
   waiting: boolean
   progress: LoadProgress | null
   fontSize: number
@@ -58,18 +61,33 @@ export interface CellViewProps {
   onLeave(id: string, dir: -1 | 1): void
   onStdin(line: string): void
   onSave(): void
-  registerEditor(id: string, editor: CellEditor | null): void
+  registerEditor(id: string, editor: LazyCellEditor | null): void
 }
 
 const fmtMs = (ms: number) => (ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
 
-/** The cell's CodeMirror, created once per cell and kept in step with the model. */
+/** A cell's editor as the notebook sees it: built on demand (notebook/lazyMount.ts). */
+export interface LazyCellEditor {
+  /** The editor if it is built. */
+  readonly current: CellEditor | null
+  /** Build it now if it is not (synchronously), and return it. */
+  mount(): CellEditor
+}
+
+/**
+ * The cell's CodeMirror, created once per cell and kept in step with the model. Until
+ * the cell nears the screen (or is clicked or focused) it shows its code as highlighted
+ * text with the editor's metrics, so a long notebook opens without building every editor.
+ */
 function CellEditorHost(props: {
   cell: NbCell
   notebookPath: string
   fontSize: number
   readOnly: boolean
   lineNumbers: boolean
+  desk: boolean
+  /** Build the editor at once (the cell is being edited). */
+  eager: boolean
   context(): string
   projectWords(): readonly string[]
   placeholder: string
@@ -82,24 +100,29 @@ function CellEditorHost(props: {
   onFormat(): void
   /** Where the code's text starts, px from the editor's left edge — outputs line up with it. */
   onTextEdge(px: number): void
-  register(editor: CellEditor | null): void
+  register(editor: LazyCellEditor | null): void
 }) {
   const host = useRef<HTMLDivElement>(null)
+  const staticView = useRef<HTMLPreElement>(null)
   const editor = useRef<CellEditor | null>(null)
+  const [built, setBuilt] = useState(false)
   // Callbacks through a ref: the editor is built once and must always reach the latest props.
   const live = useRef(props)
   live.current = props
-  useEffect(() => {
-    const el = host.current
-    if (!el) return
-    const ed = createCellEditor(el, {
-      doc: props.cell.source,
-      type: props.cell.type,
-      path: cellPath(props.notebookPath, props.cell.id),
-      fontSize: props.fontSize,
-      readOnly: props.readOnly,
-      lineNumbers: props.lineNumbers,
-      placeholder: props.placeholder,
+  const mount = useRef<() => CellEditor>(null!)
+  mount.current = () => {
+    if (editor.current) return editor.current
+    const p = live.current
+    // The static view leaves now, not on the next render: a click is mapped onto the editor below.
+    if (staticView.current) staticView.current.style.display = 'none'
+    const ed = createCellEditor(host.current!, {
+      doc: p.cell.source,
+      type: p.cell.type,
+      path: cellPath(p.notebookPath, p.cell.id),
+      fontSize: p.fontSize,
+      readOnly: p.readOnly,
+      lineNumbers: p.lineNumbers,
+      placeholder: p.placeholder,
       context: () => live.current.context(),
       projectWords: () => live.current.projectWords(),
       onChange: (t) => live.current.onChange(t),
@@ -112,14 +135,32 @@ function CellEditorHost(props: {
       onTextEdge: (px) => live.current.onTextEdge(px),
     })
     editor.current = ed
-    live.current.register(ed)
+    setBuilt(true)
+    return ed
+  }
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    live.current.register({
+      get current() {
+        return editor.current
+      },
+      mount: () => mount.current(),
+    })
+    const cancel = live.current.eager ? (mount.current(), () => {}) : mountWhenNear(el.parentElement ?? el, el.closest('.notebook-scroller'), () => mount.current())
     return () => {
+      cancel()
       live.current.register(null)
-      ed.destroy()
+      editor.current?.destroy()
       editor.current = null
+      setBuilt(false)
+      if (staticView.current) staticView.current.style.display = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one editor per cell id and type
   }, [props.cell.id, props.cell.type, props.notebookPath])
+  useEffect(() => {
+    if (props.eager) mount.current()
+  }, [props.eager])
   useEffect(() => {
     editor.current?.setDoc(props.cell.source)
   }, [props.cell.source])
@@ -132,7 +173,93 @@ function CellEditorHost(props: {
   useEffect(() => {
     editor.current?.setLineNumbers(props.lineNumbers)
   }, [props.lineNumbers])
-  return <div ref={host} className="min-w-0" />
+  return (
+    <div className="min-w-0">
+      {built ? null : (
+        <StaticCode
+          ref={staticView}
+          source={props.cell.source}
+          code={props.cell.type === 'code'}
+          placeholder={props.placeholder}
+          fontSize={props.fontSize}
+          desk={props.desk}
+          lineNumbers={props.lineNumbers}
+          onPointerDown={(e) => {
+            // Build the editor under the pointer and put the caret where the student clicked.
+            if (e.button !== 0) return
+            e.preventDefault()
+            const { clientX: x, clientY: y } = e
+            const ed = mount.current()
+            const pos = ed.view.posAtCoords({ x, y }) ?? ed.view.state.doc.length
+            ed.view.dispatch({ selection: { anchor: pos } })
+            ed.view.focus()
+          }}
+        />
+      )}
+      <div ref={host} className="min-w-0" />
+    </div>
+  )
+}
+
+/**
+ * A cell's code before its editor is built: the same text, colours and metrics as the
+ * CodeMirror that replaces it (cellEditor.ts cellTheme, setup.ts codeFontTheme), so the
+ * swap does not move anything.
+ */
+function StaticCode({
+  ref,
+  source,
+  code,
+  placeholder,
+  fontSize,
+  desk,
+  lineNumbers,
+  onPointerDown,
+}: {
+  ref: React.Ref<HTMLPreElement>
+  source: string
+  code: boolean
+  placeholder: string
+  fontSize: number
+  desk: boolean
+  lineNumbers: boolean
+  onPointerDown(e: React.PointerEvent): void
+}) {
+  const colours = usePythonHighlight()
+  const html = useMemo(() => (code && colours ? highlightPython(source) : null), [code, colours, source])
+  const lines = source.split('\n').length
+  // Line numbers: the gutter is the digits plus 18px of padding (cellTheme), beside the desk's 18px margin.
+  const gutter = lineNumbers && code ? `calc(${Math.max(2, String(lines).length)}ch + 18px)` : '0px'
+  const edge = desk && code ? 28 : 10
+  const wrap = !desk || !code
+  return (
+    <pre
+      ref={ref}
+      data-static-code=""
+      aria-hidden="true"
+      onPointerDown={onPointerDown}
+      className={
+        'm-0 cursor-text font-code text-text-1 [direction:ltr] text-left ' +
+        (wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'overflow-x-hidden whitespace-pre')
+      }
+      style={{
+        fontSize,
+        lineHeight: `${Math.round(fontSize * (desk ? 1.35 : 1.6))}px`,
+        padding: `6px 2px 6px calc(${edge}px + ${gutter})`,
+      }}
+    >
+      {source ? (
+        html !== null ? (
+          // Escaped text in syntaxColors spans (markdownProse.highlightPython).
+          <code dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <code>{source}</code>
+        )
+      ) : (
+        <span className="text-text-3">{placeholder}</span>
+      )}
+    </pre>
+  )
 }
 
 /** docs/design/NOTEBOOK.md §3. Desk 28px, touch 32px; one column with the count. */
@@ -209,7 +336,7 @@ function ToolButton({ label, onClick, disabled, children }: { label: string; onC
  * Colab's default), faded where it is cut. While the cell runs it follows the newest
  * line, unless the student has scrolled up to read.
  */
-function OutputScroll({ capped, running, onOverflow, children }: { capped: boolean; running: boolean; onOverflow(over: boolean): void; children: ReactNode }) {
+function OutputScroll({ capped, running, stale, onOverflow, children }: { capped: boolean; running: boolean; stale: boolean; onOverflow(over: boolean): void; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null)
   const inner = useRef<HTMLDivElement>(null)
   const stuck = useRef(true)
@@ -252,7 +379,7 @@ function OutputScroll({ capped, running, onOverflow, children }: { capped: boole
         sync.current()
       }}
     >
-      <div ref={inner} className="flex min-w-0 flex-col gap-1 pe-2">
+      <div ref={inner} className={'flex min-w-0 flex-col gap-1 pe-2' + (stale ? ' opacity-55' : '')}>
         {children}
       </div>
     </div>
@@ -305,7 +432,11 @@ function CellViewImpl(p: CellViewProps) {
   // Whether the capped output is cut (so Expand means something).
   const [overflows, setOverflows] = useState(false)
   const state = p.status?.state
-  const showEditor = code || p.editingText || cell.type === 'raw'
+  // Colab form cells (#@title): the title, with the code folded away when Colab would hide it.
+  const form = useMemo(() => formTitle(cell), [cell])
+  const [codeShown, setCodeShown] = useState(false)
+  const codeHidden = !!form?.hideCode && !codeShown
+  const showEditor = (code && !codeHidden) || p.editingText || cell.type === 'raw'
   const rendered = useMemo(() => (showEditor ? '' : renderMarkdown(cell.source, mdOpts)), [showEditor, cell.source, mdOpts])
   // Outputs start where the code's text starts — measured from the editor (line numbers move it).
   const [measuredEdge, setTextEdge] = useState<number | null>(null)
@@ -403,7 +534,26 @@ function CellViewImpl(p: CellViewProps) {
       <div className="min-w-0">
         {menu ? <Menu anchor={menu} items={menuItems} label={COPY.nbCellActions} onClose={() => setMenu(null)} /> : null}
 
-        {showEditor ? (
+        {form ? (
+          // A form cell's title, in the code's first-line metrics so the run button stays level with it.
+          <div
+            data-form-title=""
+            className="flex min-w-0 items-center gap-2 pe-1"
+            style={{ paddingTop: 6, paddingBottom: 6, paddingInlineStart: textEdge, minHeight: Math.round(p.fontSize * (p.desk ? 1.35 : 1.6)) + 12 }}
+            onDoubleClick={() => setCodeShown(true)}
+          >
+            <span dir="auto" className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-1">
+              {form.title}
+            </span>
+            {form.hideCode ? (
+              <button type="button" onClick={() => setCodeShown((v) => !v)} className="flex-none rounded-sm px-1.5 text-meta text-text-3 hover:text-text-1 cursor-pointer">
+                {codeShown ? COPY.nbHideCode : COPY.nbShowCode}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!showEditor && code ? null : showEditor ? (
           // The code box: a tint, no border (the cell's border is the only frame), no clipping
           // (the completion popup and docs card hang outside it).
           <div data-code-box="" className="min-w-0 rounded-md bg-surface-3">
@@ -413,9 +563,11 @@ function CellViewImpl(p: CellViewProps) {
               fontSize={p.fontSize}
               readOnly={p.readOnly}
               lineNumbers={p.lineNumbers}
+              desk={p.desk}
+              eager={!code}
               context={p.context}
               projectWords={p.projectWords}
-              placeholder={code ? (p.desk ? COPY.nbCodePlaceholder : COPY.nbCodePlaceholderTouch) : ''}
+              placeholder={code ? (p.desk ? COPY.nbCodePlaceholder : COPY.nbCodePlaceholderTouch) : p.desk ? COPY.nbTextPlaceholder : COPY.nbTextPlaceholderTouch}
               onChange={(t) => p.onChange(cell.id, t)}
               onRun={(m) => p.onRun(cell.id, m)}
               onEscape={() => p.onEscape(cell.id)}
@@ -477,12 +629,18 @@ function CellViewImpl(p: CellViewProps) {
               </button>
             ) : null}
             {outMenu ? <Menu anchor={outMenu} items={outputItems} label={COPY.nbOutputActions} onClose={() => setOutMenu(null)} /> : null}
+            {p.stale ? (
+              // A run stopped above this cell: say whose output this is, and mute it.
+              <p data-stale="" className="m-0 mb-1 text-micro text-text-3 [direction:inherit]">
+                {COPY.nbNotRun}
+              </p>
+            ) : null}
             {collapsed ? (
               <button type="button" onClick={act('toggleOutput')} className="block rounded-sm py-1 text-start text-meta text-text-3 hover:text-text-1 cursor-pointer">
                 {COPY.nbOutputsHidden(cell.outputs.length)}
               </button>
             ) : (
-              <OutputScroll capped={!expanded} running={state === 'running'} onOverflow={setOverflows}>
+              <OutputScroll capped={!expanded} running={state === 'running'} stale={!!p.stale} onOverflow={setOverflows}>
                 {cell.outputs.map((o, i) => (
                   <OutputView key={i} output={o} />
                 ))}
@@ -502,7 +660,8 @@ function CellViewImpl(p: CellViewProps) {
           className={
             'z-(--z-raised) mt-1 items-center gap-0.5 ' +
             'desk:absolute desk:bottom-[calc(100%+1px)] desk:end-2 desk:mt-0 desk:gap-0 desk:rounded-md desk:border desk:border-border-subtle desk:bg-surface-3 desk:shadow-raised desk:[&>button]:size-[24px] ' +
-            (p.readOnly ? 'hidden' : p.selected ? 'flex' : 'hidden desk:group-hover/cell:flex')
+            // The selected cell's only — never a second one under the mouse (QA).
+            (p.readOnly || !p.selected ? 'hidden' : 'flex')
           }
         >
           {p.desk ? null : (

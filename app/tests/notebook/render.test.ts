@@ -54,7 +54,7 @@ test('math: inline and display become MathML', () => {
 })
 
 test('tex: big operators, greek, matrices, unknown commands are visible errors', () => {
-  assert.match(texToMathML('\\sum_{i=1}^{n} \\alpha_i', true), /<munderover><mo largeop="true" movablelimits="false">∑<\/mo>/)
+  assert.match(texToMathML('\\sum_{i=1}^{n} \\alpha_i', true), /<munderover><mo largeop="true" movablelimits="false" mathsize="1.6em">∑<\/mo>/)
   assert.match(texToMathML('\\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix}', true), /<mtable><mtr><mtd><mn>1<\/mn><\/mtd><mtd><mn>2<\/mn><\/mtd><\/mtr><mtr>/)
   assert.match(texToMathML('\\nosuch{x}', false), /<merror>/)
   assert.doesNotMatch(texToMathML('<script>', false), /<script/)

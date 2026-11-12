@@ -206,7 +206,9 @@ class Parser {
 
   command(name: string): string {
     if (GREEK[name]) return /^[A-Z]/.test(name) ? `<mi mathvariant="normal">${GREEK[name]}</mi>` : `<mi>${GREEK[name]}</mi>`
-    if (BIG[name]) return `<mo largeop="true" movablelimits="${this.display ? 'false' : 'true'}">${BIG[name]}</mo>`
+    // Display style: an explicit size too. `largeop` enlarges only with an OpenType MATH font,
+    // and most students have none, so ∑ came out text-sized with cramped limits (QA).
+    if (BIG[name]) return `<mo largeop="true" movablelimits="${this.display ? 'false' : 'true'}"${this.display ? ' mathsize="1.6em"' : ''}>${BIG[name]}</mo>`
     if (FUNCS.has(name)) return `<mi mathvariant="normal">${name}</mi><mo>⁡</mo>`
     if (LIMFUNCS.has(name)) return `<mo movablelimits="${this.display ? 'false' : 'true'}">${name}</mo>`
     if (name in OPS) return OPS[name] === '' ? '' : `<mo>${esc(OPS[name])}</mo>`

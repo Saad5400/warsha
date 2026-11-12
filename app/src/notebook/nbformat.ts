@@ -350,6 +350,20 @@ export function setOutputsExpanded(cell: NbCell, expanded: boolean): NbCell {
   return { ...cell, raw: { ...cell.raw, metadata: meta } }
 }
 
+/**
+ * Colab's form cells: a first line `#@title Load the data { display-mode: "form" }`.
+ * Colab shows the title and hides the code when the cell's view is a form
+ * (`metadata.cellView: "form"`, or display-mode "form"); "both" shows both.
+ */
+export function formTitle(cell: NbCell): { title: string; hideCode: boolean } | null {
+  if (cell.type !== 'code') return null
+  const m = /^#\s*@title\s+(.*?)\s*(\{[^}]*\})?\s*$/m.exec(cell.source.split('\n', 1)[0])
+  if (!m || !m[1]) return null
+  const mode = /display-mode\s*:\s*"(\w+)"/.exec(m[2] ?? '')?.[1]
+  const hideCode = mode ? mode === 'form' : cellMeta(cell).cellView === 'form'
+  return { title: m[1], hideCode }
+}
+
 /* -------------------------------------------------------- new notebook */
 
 /** The kernelspec every new notebook carries: the stock `python3` name, so Colab and

@@ -95,9 +95,18 @@ export function SafeHtml({ html, className }: { html: string; className?: string
   return <div className={className} dangerouslySetInnerHTML={props} />
 }
 
+function edgeMask({ left, right }: { left: boolean; right: boolean }): React.CSSProperties {
+  if (!left && !right) return {}
+  const m = `linear-gradient(to right, ${left ? 'transparent' : '#000'}, #000 48px, #000 calc(100% - 48px), ${right ? 'transparent' : '#000'})`
+  return { maskImage: m, WebkitMaskImage: m }
+}
+
 function HtmlFrame({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(32)
+  // A table wider than the output (a 12-column DataFrame): the cut edges fade, so the columns
+  // past the edge are visibly there — its scrollbar can be a screen further down (QA).
+  const [cut, setCut] = useState({ left: false, right: false })
   const doc = useMemo(
     () => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>${frameStyles()}</style></head><body>${html}</body></html>`,
     [html],
@@ -110,6 +119,11 @@ function HtmlFrame({ html }: { html: string }) {
       const d = frame.contentDocument
       if (!d?.documentElement) return
       setHeight(Math.max(16, Math.ceil(d.documentElement.scrollHeight)))
+      const b = d.body
+      if (!b) return
+      const left = b.scrollLeft > 1
+      const right = b.scrollLeft + b.clientWidth < b.scrollWidth - 1
+      setCut((c) => (c.left === left && c.right === right ? c : { left, right }))
     }
     const onLoad = () => {
       // Scripts never run in here, but a link is followed by the browser: every one goes through
@@ -129,6 +143,8 @@ function HtmlFrame({ html }: { html: string }) {
       if (d?.body) {
         ro = new ResizeObserver(measure)
         ro.observe(d.body)
+        ro.observe(frame)
+        d.body.addEventListener('scroll', measure, { passive: true })
       }
     }
     frame.addEventListener('load', onLoad)
@@ -146,7 +162,8 @@ function HtmlFrame({ html }: { html: string }) {
       // or a map's attribution link must work — so popups may leave the sandbox.
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={doc}
-      style={{ height }}
+      style={{ height, ...edgeMask(cut) }}
+      data-cut={cut.left || cut.right ? 'x' : undefined}
       className="block w-full border-0 bg-transparent"
     />
   )

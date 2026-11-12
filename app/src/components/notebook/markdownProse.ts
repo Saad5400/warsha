@@ -21,16 +21,20 @@ export const MD_PROSE =
   '[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-[15px] [&_h4]:font-semibold ' +
   '[&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_ul]:ps-6 [&_ol]:ps-6 [&_ul]:list-disc [&_ol]:list-decimal [&_li]:my-0.5 ' +
   '[&_li.task]:list-none [&_li.task]:-ms-5 ' +
-  '[&_a]:text-link [&_a]:underline [&_a]:underline-offset-2 ' +
+  // Links read as links in prose (QA): the info hue, as Colab's blue; the app's white --link is for chrome.
+  '[&_a]:text-info [&_a]:underline [&_a]:decoration-info/50 [&_a]:underline-offset-2 [&_a:hover]:decoration-info ' +
   '[&_code]:font-code [&_code]:text-[0.88em] [&_code]:bg-surface-3 [&_code]:rounded-sm [&_code]:px-1 [&_code]:py-px ' +
-  '[&_pre]:my-2 [&_pre]:p-3 [&_pre]:bg-surface-2 [&_pre]:border [&_pre]:border-border-subtle [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:text-[13px] [&_pre]:leading-[1.5] ' +
+  // Code blocks look like a code cell's box (NOTEBOOK.md §1): the same tint, no frame, the code size.
+  '[&_pre]:my-2 [&_pre]:px-2.5 [&_pre]:py-2 [&_pre]:bg-surface-3 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:text-[14px] [&_pre]:leading-[1.5] ' +
   '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre]:[direction:ltr] [&_pre]:text-left ' +
   '[&_blockquote]:my-2 [&_blockquote]:ps-3 [&_blockquote]:border-s-2 [&_blockquote]:border-border-control [&_blockquote]:text-text-2 ' +
   '[&_hr]:my-4 [&_hr]:border-0 [&_hr]:h-px [&_hr]:bg-border-subtle ' +
   '[&_img]:max-w-full [&_img]:h-auto ' +
-  '[&_.md-table]:my-2 [&_.md-table]:overflow-x-auto [&_table]:border-collapse [&_table]:text-[14px] ' +
-  '[&_th]:px-3 [&_th]:py-1.5 [&_th]:border [&_th]:border-border-subtle [&_th]:bg-surface-2 [&_th]:font-semibold ' +
-  '[&_td]:px-3 [&_td]:py-1.5 [&_td]:border [&_td]:border-border-subtle ' +
+  // Tables match a DataFrame output (OutputView frameStyles): rules under rows, zebra body, no grid.
+  '[&_.md-table]:my-2 [&_.md-table]:overflow-x-auto [&_table]:border-collapse [&_table]:text-[14px] [&_table]:tabular-nums ' +
+  '[&_th]:px-2.5 [&_th]:py-1 [&_th]:border-b [&_th]:border-border-control [&_th]:font-semibold [&_th]:text-start ' +
+  '[&_td]:px-2.5 [&_td]:py-1 [&_td]:border-b [&_td]:border-border-subtle ' +
+  '[&_tbody_tr:nth-child(odd)]:bg-surface-3/45 ' +
   '[&_.md-math]:my-3 [&_.md-math]:overflow-x-auto [&_math]:text-[1.05em]'
 
 let python: LanguageSupport | null = null
@@ -43,7 +47,9 @@ function ensureSyntaxStyles() {
   new EditorView({ extensions: [syntaxHighlighting(syntaxColors)] }).destroy()
 }
 
-function highlightPython(code: string): string | null {
+/** Python source as highlighted HTML (escaped text in syntaxColors spans), or null until the grammar
+ *  has loaded. Shared by markdown code blocks and the static view of a cell whose editor is not built yet. */
+export function highlightPython(code: string): string | null {
   if (!python) return null
   ensureSyntaxStyles()
   let html = ''
@@ -61,16 +67,26 @@ function highlightPython(code: string): string | null {
   return html
 }
 
-/** Markdown options for a cell: Python code blocks highlighted (once the grammar is loaded), attachments resolved. */
-export function useMarkdownOptions(attachments?: Record<string, Record<string, string>>): MarkdownOptions {
+/** Loads the Python grammar once; true when highlightPython can colour. */
+export function usePythonHighlight(): boolean {
   const [ready, setReady] = useState(!!python)
   useEffect(() => {
     if (python) return
+    let live = true
     void loadLanguage('python').then((s) => {
       python = s
-      setReady(true)
+      if (live) setReady(true)
     })
+    return () => {
+      live = false
+    }
   }, [])
+  return ready
+}
+
+/** Markdown options for a cell: Python code blocks highlighted (once the grammar is loaded), attachments resolved. */
+export function useMarkdownOptions(attachments?: Record<string, Record<string, string>>): MarkdownOptions {
+  const ready = usePythonHighlight()
   return useMemo<MarkdownOptions>(() => ({
     highlight: (code, lang) => (/^(py|python3?|ipython3?|)$/.test(lang) ? highlightPython(code) : null),
     attachment: (name) => {

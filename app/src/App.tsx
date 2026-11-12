@@ -1673,7 +1673,8 @@ function Ide({ report }: { report: CapabilityReport }) {
    *  above. Mirrors applyTemplate: fill the open empty project, or create the first one on a fresh
    *  device, or make a new one beside a project already in progress. */
   const importAsNewProject = async (snapshot: FsSnapshot, entry: string | null, name: string) => {
-    const projectName = uniqueProjectName(name.replace(/\.zip$/i, '').trim() || COPY.importDefaultName)
+    // A lone file's extension is not part of a project's name ("Lab3_Grades.ipynb" → "Lab3_Grades").
+    const projectName = uniqueProjectName(name.replace(/\.(zip|ipynb|py|java|cs|c|js|ts|html?)$/i, '').trim() || COPY.importDefaultName)
     const done = COPY.imported(name, snapshot.files.length)
     if (project.isEmpty() && currentProject) {
       await replaceProject(snapshot, entry, done)
@@ -2389,6 +2390,12 @@ function Ide({ report }: { report: CapabilityReport }) {
   // A .ipynb opens in the notebook view unless the student asked for its text.
   const [notebookAsText, setNotebookAsText] = useState<ReadonlySet<string>>(() => new Set())
   const activeNotebook = activePath && isNotebookPath(activePath) && !notebookAsText.has(activePath) ? activePath : null
+  // Cells print inline: opening a notebook folds an idle console away (QA: ~220px of "Output will
+  // appear here"). A program still running or waiting for input keeps it; Ctrl+J brings it back.
+  useEffect(() => {
+    if (activeNotebook && runner.status === 'idle') setConsoleOpen(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on opening a notebook, not on every run
+  }, [activeNotebook])
   // Open notebooks follow the tabs: closing a notebook's tab closes it (and frees its namespace).
   // A notebook shown as text is closed too: its session must not keep writing JSON under the
   // student's text edits.
@@ -2423,7 +2430,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       owner: () => project.owner,
       onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
       onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
-      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy }),
+      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy, stoppedAtError: COPY.nbStoppedAtError }),
     }),
     [project, notify],
   )
@@ -3552,7 +3559,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // (left the title bar and console header).
                 runControl={runControl}
                 debugControl={{ can: canDebugEntry && !runControl.busy, entry: runControl.entry, onDebug: startDebugging }}
-                moreItems={deskMoreItems}
+                // A notebook has its own ⋯ (which takes the share items): one menu, not two stacked (QA).
+                moreItems={activeNotebook ? undefined : deskMoreItems}
               />
 
               {/* Breadcrumbs sit on the editor surface so the active tab reads into the code. */}
@@ -3584,6 +3592,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                     projectWords={notebookWords}
                     onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
                     onDownload={() => void downloadFile(activeNotebook)}
+                    moreExtras={fileShareItems}
                     formatCell={formatCell}
                     onFormatResult={(r) =>
                       r === 'formatted'

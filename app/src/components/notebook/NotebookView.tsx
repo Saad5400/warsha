@@ -17,11 +17,13 @@ import {
 } from '../../notebook/nbformat'
 import { transformCell } from '../../notebook/magics'
 import { headingId } from '../../notebook/markdown'
-import type { CellEditor, RunMode } from '../../notebook/cellEditor'
+import type { RunMode } from '../../notebook/cellEditor'
 import { useMedia } from '../../hooks/useMedia'
 import { COPY } from '../../copy'
-import { CellView, INSERT_CHIP, type CellAction } from './CellView'
+import { CellView, INSERT_CHIP, type CellAction, type LazyCellEditor } from './CellView'
 import { Button } from '../ui/Button'
+import { useDialogs } from '../ui/DialogProvider'
+import { EditorView } from '@codemirror/view'
 import { Menu, type MenuAnchor, type MenuItem } from '../ui/Menu'
 import { IconClear, IconDownload, IconMore, IconPlus, IconRestart, IconRunAll, IconStop, IconCode, IconText, IconFileLines } from '../ui/Icons'
 
@@ -37,6 +39,8 @@ export interface NotebookViewProps {
   projectWords(): readonly string[]
   onOpenAsText(): void
   onDownload(): void
+  /** The file's share items (the shell's), folded into the notebook's ⋯ so there is one menu. */
+  moreExtras?: MenuItem[]
   /** A cell is about to run under the debugger (the shell opens Run and Debug). */
   onDebugStart(): void
   /** Reformat a cell's source (actions/format.ts); rejects when it cannot. */
@@ -83,7 +87,7 @@ function KernelPill({ state }: { state: SessionState }) {
               : 'bg-transparent border-text-3')
         }
       />
-      <span className="truncate max-[419px]:hidden">{kernelLabel(state)}</span>
+      <span className="truncate">{kernelLabel(state)}</span>
     </span>
   )
 }
@@ -152,7 +156,7 @@ export function NotebookView(props: NotebookViewProps) {
       }
       return !on
     })
-  const editors = useRef(new Map<string, CellEditor>())
+  const editors = useRef(new Map<string, LazyCellEditor>())
   const scroller = useRef<HTMLDivElement>(null)
   const undoStack = useRef<{ cell: NbCell; index: number }[]>([])
   const chord = useRef<{ key: string; at: number } | null>(null)
@@ -201,7 +205,7 @@ export function NotebookView(props: NotebookViewProps) {
       const el = scroller.current?.querySelector(`[data-cell-id="${id}"]`) as HTMLElement | null
       const ed = editors.current.get(id)
       if (mode === 'edit' && !ed && tries++ < 10) return void requestAnimationFrame(go)
-      if (mode === 'edit' && ed) ed.focus(where)
+      if (mode === 'edit' && ed) ed.mount().focus(where)
       else el?.focus({ preventScroll: true })
       el?.scrollIntoView({ block: 'nearest' })
     }
@@ -360,18 +364,60 @@ export function NotebookView(props: NotebookViewProps) {
   useEffect(() => {
     doc.selected = selected
   }, [doc, selected])
-  const restart = () => void doc.session.restart()
+  // Restart clears every variable: ask first, as Colab does (QA). Nothing to lose when it never started.
+  const dialogs = useDialogs()
+  const confirmRestart = () =>
+    doc.session.get().kernel === 'off' && !doc.session.busy
+      ? Promise.resolve(true)
+      : dialogs.confirm({ title: COPY.nbRestartConfirmTitle, message: COPY.nbRestartConfirmBody, okLabel: COPY.nbRestart, danger: true })
+  const restart = async () => {
+    if (await confirmRestart()) await doc.session.restart()
+  }
   const restartRunAll = async () => {
+    if (!(await confirmRestart())) return
     await doc.session.restart()
     doc.session.run(doc.codeIds())
   }
   const clearAll = () => doc.replace((m) => clearAllOutputs(m))
 
+  /* ---- phone keyboard: the line being typed stays mid-screen, clear of the keyboard (QA M8) ---- */
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    let raf = 0
+    const centre = () => {
+      cancelAnimationFrame(raf)
+      // After the shell has re-laid out for the new height (viewport.ts, then React).
+      raf = requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (document.documentElement.dataset.kb !== 'open') return
+          for (const ed of editors.current.values()) {
+            const view = ed.current?.view
+            if (view?.hasFocus) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' }) })
+          }
+        }),
+      )
+    }
+    vv.addEventListener('resize', centre)
+    return () => {
+      vv.removeEventListener('resize', centre)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  /* ---- a run of several cells stopped at an error: go to it (QA: Run all stopped silently) ---- */
+  useEffect(() => {
+    const id = session.stoppedAt
+    if (!id) return
+    setSelected(id)
+    requestAnimationFrame(() => scroller.current?.querySelector(`[data-cell-id="${id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+  }, [session.stoppedAt])
+
   /* ---- debug stops and reveals arrive for a cell path ---- */
   useEffect(
     () =>
       doc.onReveal((cellId, line) => {
-        const ed = editors.current.get(cellId)
+        const ed = editors.current.get(cellId)?.mount()
         setSelected(cellId)
         requestAnimationFrame(() => {
           const el = scroller.current?.querySelector(`[data-cell-id="${cellId}"]`)
@@ -493,7 +539,7 @@ export function NotebookView(props: NotebookViewProps) {
   const onInterrupt = useCallback(() => doc.session.interrupt(), [doc])
   const onStdin = useCallback((line: string) => doc.session.writeStdin(line), [doc])
   const onSave = useCallback(() => doc.flush(), [doc])
-  const registerEditor = useCallback((id: string, ed: CellEditor | null) => {
+  const registerEditor = useCallback((id: string, ed: LazyCellEditor | null) => {
     if (ed) editors.current.set(id, ed)
     else editors.current.delete(id)
   }, [])
@@ -521,18 +567,21 @@ export function NotebookView(props: NotebookViewProps) {
     { label: lineNumbers ? COPY.nbHideLineNumbers : COPY.nbShowLineNumbers, onSelect: toggleLineNumbers, startsGroup: true },
     { label: COPY.nbDownload, icon: <IconDownload size={18} />, onSelect: props.onDownload, startsGroup: true },
     { label: COPY.nbOpenAsText, icon: <IconFileLines size={18} />, onSelect: props.onOpenAsText },
+    ...(props.moreExtras ?? []).map((item, i) => (i === 0 ? { ...item, startsGroup: true } : item)),
   ]
 
   return (
     <section aria-label={path} data-notebook={path} className="notebook-view relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface-1">
-      <div role="toolbar" aria-label={COPY.nbToolbar} className={BAR + (props.readOnly ? ' hidden' : '')}>
+      <div className={BAR + (props.readOnly ? ' hidden' : '')}>
+      {/* The toolbar's buttons share the cells' 1100px column (QA: the pill sat 260px off it at 1920). */}
+      <div role="toolbar" aria-label={COPY.nbToolbar} className="mx-auto flex w-full max-w-[1100px] min-w-0 items-center gap-1 desk:px-4">
         <BarButton label={COPY.nbAddCode} icon={<IconCode size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'code')} aria-label={COPY.nbAddCodeCell} />
         <BarButton label={COPY.nbAddText} icon={<IconText size={18} />} onClick={() => insertAt(selected ? indexOf(selected) + 1 : nb.cells.length, 'markdown')} aria-label={COPY.nbAddTextCell} />
         <span aria-hidden="true" className="mx-1 h-5 w-px flex-none bg-border-subtle" />
         <BarButton label={COPY.nbRunAll} icon={<IconRunAll size={18} />} onClick={runAll} />
         <BarButton label={COPY.nbInterrupt} icon={<IconStop size={16} />} onClick={() => doc.session.interrupt()} disabled={!anyBusy} />
         <BarButton label={COPY.nbRestart} icon={<IconRestart size={18} />} onClick={restart} disabled={session.kernel === 'off' && !anyBusy} />
-        <BarButton label={COPY.nbClearOutputs} icon={<IconClear size={18} />} onClick={clearAll} showLabel={false} />
+        <BarButton label={COPY.nbClearOutputs} icon={<IconClear size={18} />} onClick={clearAll} />
         <span className="flex-1" />
         <KernelPill state={session} />
         <BarButton
@@ -546,6 +595,7 @@ export function NotebookView(props: NotebookViewProps) {
           }}
         />
         {menu ? <Menu anchor={menu} items={moreItems} label={COPY.nbMore} onClose={() => setMenu(null)} /> : null}
+      </div>
       </div>
       {session.notice ? (
         <p role="status" className="m-0 border-b border-border-subtle bg-info-soft px-3 py-1.5 text-meta text-text-1">
@@ -571,6 +621,7 @@ export function NotebookView(props: NotebookViewProps) {
                 selected={selected === cell.id}
                 editingText={editingText.has(cell.id)}
                 status={session.cells[cell.id]}
+                stale={!!session.skipped?.includes(cell.id) && cell.outputs.length > 0}
                 waiting={session.waiting === cell.id}
                 progress={session.running === cell.id ? session.progress : null}
                 fontSize={props.fontSize}

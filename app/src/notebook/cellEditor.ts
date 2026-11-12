@@ -18,7 +18,7 @@
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { indentUnit } from '@codemirror/language'
-import { completionStatus } from '@codemirror/autocomplete'
+import { closeCompletion, completionStatus } from '@codemirror/autocomplete'
 import { DESK_MEDIA, codeFontTheme, editingStack, languageStack, loadLanguage, tooltipsWithin } from '../editor/setup'
 import { foreignLines } from '../editor/lint'
 import { textContext } from '../editor/textContext'
@@ -84,6 +84,12 @@ const cellTheme = EditorView.theme({
   // When shown, numbers are muted and stand clear of the code.
   '&.cm-editor .cm-lineNumbers .cm-gutterElement': { minWidth: '2ch', paddingInline: '6px 12px', color: 'var(--text-3)' },
   '&.cm-editor .cm-placeholder': { color: 'var(--text-3)', fontStyle: 'normal' },
+  // Bracket matching is for the cell being edited; other cells stay plain text (QA).
+  '&.cm-editor:not(.cm-focused) .cm-matchingBracket, &.cm-editor:not(.cm-focused) .cm-nonmatchingBracket': {
+    backgroundColor: 'transparent',
+    outline: 'none',
+    textDecoration: 'none',
+  },
 })
 
 export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): CellEditor {
@@ -162,6 +168,8 @@ export function createCellEditor(parent: HTMLElement, opts: CellEditorOptions): 
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !applying) opts.onChange(u.state.doc.toString())
         if (u.focusChanged && u.view.hasFocus) opts.onFocus()
+        // Leaving a cell (Shift+Enter, a click elsewhere) takes its completion popup with it (QA).
+        if (u.focusChanged && !u.view.hasFocus && completionStatus(u.state)) closeCompletion(u.view)
         if (u.geometryChanged) reportEdge()
       }),
     ],
