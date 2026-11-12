@@ -1336,6 +1336,7 @@ function Ide({ report }: { report: CapabilityReport }) {
           { value: 'skip', label: COPY.addSkip(clashes.length) },
         ],
         cancelLabel: COPY.dlgCancel,
+        prose: true,
       })
       if (choice === null) return
     }

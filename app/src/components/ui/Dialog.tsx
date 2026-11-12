@@ -165,6 +165,8 @@ export interface ChoiceRequest {
   options: ChoiceOption[]
   /** The way out that picks nothing — "Keep “Main”", not "Cancel". */
   cancelLabel?: string
+  /** The answers are words ("Keep both"), not file endings: the UI font, not the code font. */
+  prose?: boolean
   resolve: (value: string | null) => void
 }
 
@@ -403,7 +405,7 @@ function ChoiceDialog({ request, open }: { request: ChoiceRequest; open: boolean
           >
             {option.icon}
             {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
-            <span className="font-code">{option.label}</span>
+            <span className={request.prose ? undefined : 'font-code'}>{option.label}</span>
           </Button>
         ))}
       </div>
