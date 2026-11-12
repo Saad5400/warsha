@@ -1,8 +1,8 @@
 import {
+  CompletionContext,
   ifNotIn,
   snippetCompletion,
   type Completion,
-  type CompletionContext,
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete'
@@ -15,6 +15,7 @@ import { C_API, C_DOCS, C_SNIPPETS } from './cApi'
 import { PYTHON_MEMBERS, memberContext, memberSource, type PyTables } from './members'
 import { nameSource, namingSpot } from './names'
 import { recordable, withUsageBoost } from './usage'
+import { contextual } from './textContext'
 
 /** Narrower than `LangId` — web files get highlighting but no curated
  *  dictionary, so `completionSources` takes this type and `null` for the rest.
@@ -1786,7 +1787,31 @@ export function pythonTables(): PyTables {
   return (pyTablesMemo ??= { ...pythonModuleMembers(), ...PYTHON_MEMBERS })
 }
 
+/**
+ * Run `source` against the editor's text context (editor/textContext.ts) —
+ * for a notebook cell, the code cells above it plus this one — and map the
+ * result back into the editor's own document. Identity for an ordinary file.
+ */
+function inTextContext(source: CompletionSource): CompletionSource {
+  return (ctx: CompletionContext) => {
+    const c = contextual(ctx.state, ctx.pos)
+    if (c.offset === 0) return source(ctx)
+    const shift = (r: CompletionResult | null): CompletionResult | null =>
+      r && {
+        ...r,
+        from: Math.max(0, r.from - c.offset),
+        ...(r.to !== undefined ? { to: Math.max(0, r.to - c.offset) } : {}),
+      }
+    const out = source(new CompletionContext(c.state, c.pos, ctx.explicit, ctx.view))
+    return out instanceof Promise ? out.then(shift) : shift(out)
+  }
+}
+
 export function completionSources(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
+  return completionSourcesIn(lang, projectWords).map(inTextContext)
+}
+
+function completionSourcesIn(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
   const collect = makeIdentifierCollector(lang, projectWords)
   // In a `.` context the member source owns the popup; the plain identifier source
   // stands down (the member source itself calls `collect` as its own fallback).
