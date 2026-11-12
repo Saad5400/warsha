@@ -20,14 +20,18 @@
  *    DataFrame from an earlier cell, the saved .ipynb (valid nbformat 4.5,
  *    outputs kept), no horizontal page scroll on a phone, and RTL.
  * Screenshots (phone + desktop, LTR + RTL) land in tools/qa/screenshots/.
- * ONLY=K or ONLY=U runs one part. */
+ * P  projects never share a notebook (QA B1): every notebook template saves as
+ *    notebook.ipynb, so project A's notebook → Home → a new notebook project B
+ *    must show B's own cells and run them, and after an edit + save + reload A
+ *    and B must each still hold their own notebook in OPFS.
+ * ONLY=K, ONLY=U or ONLY=P runs one part. */
 import { chromium } from 'playwright-core'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const URL_ = process.env.WARSHA_URL ?? 'http://127.0.0.1:8120/'
-const ONLY = process.env.ONLY ?? 'KU'
+const ONLY = process.env.ONLY ?? 'KUP'
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname
 mkdirSync(SHOTS, { recursive: true })
 
@@ -618,6 +622,107 @@ if (ONLY.includes('U')) {
     if (lang === 'ar') check(`U[${tag}]: the page is RTL`, geo.dir === 'rtl')
     await b.ctx.close()
   }
+}
+
+/* ===================================================================== P */
+/** Every project's notebook.ipynb as it is on disk (OPFS), by project name. */
+const notebooksOnDisk = (page) =>
+  page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    const projects = await (await root.getDirectoryHandle('warsha')).getDirectoryHandle('projects')
+    const out = {}
+    for await (const [id, dir] of projects.entries()) {
+      if (dir.kind !== 'directory') continue
+      let name = id
+      try {
+        name = JSON.parse(await (await (await dir.getFileHandle('manifest.json')).getFile()).text()).name
+      } catch { /* no manifest */ }
+      try {
+        const files = await dir.getDirectoryHandle('files')
+        out[name] = await (await (await files.getFileHandle('notebook.ipynb')).getFile()).text()
+      } catch { /* no notebook */ }
+    }
+    return out
+  })
+/** The notebook's first heading on screen — names which template's cells are showing. */
+const shownHeading = (page) => page.locator('.notebook-view .nb-md h1').first().innerText({ timeout: 15000 }).catch(() => null)
+const goHome = async (page) => {
+  await page.locator('nav button[aria-label="Home"]').first().click()
+  await page.locator('[role="region"][aria-label]').filter({ has: page.locator('button', { hasText: /^New project$/ }) }).first().waitFor({ timeout: 15000 })
+}
+const openFromHome = async (page, name) => {
+  await page.locator(`button[aria-label="Open — ${name}"]`).first().click()
+  await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 30000 })
+  await page.waitForTimeout(600)
+}
+
+if (ONLY.includes('P')) {
+  const { ctx, page } = await browser({ width: 1366, height: 768 })
+  const refused = []
+  page.on('console', (m) => { if (/cross-project notebook write|unsaved edits after the project switched/.test(m.text())) refused.push(m.text()) })
+  await isolated(page, '?lang=en')
+  // 1. Project A from "Data with pandas", run.
+  await newNotebookProject(page, 'Data with pandas')
+  await page.locator('button[aria-label="Run notebook.ipynb"]').first().click()
+  await kernelIdle(page)
+  await page.waitForTimeout(500)
+  check('P: project A (pandas) shows its own notebook and ran', (await shownHeading(page)) === 'Data with pandas' && (await page.locator('[data-count]').count()) === 6)
+
+  // 2. Home → New project → Python basics notebook, in the same page (no reload).
+  await goHome(page)
+  await page.locator('button', { hasText: /^New project$/ }).first().click()
+  await page.locator('dialog[open]').getByRole('button', { name: /^Python/ }).first().click()
+  await page.locator('.template-card').filter({ hasText: 'Python basics notebook' }).first().click()
+  // A project is already open, so the starter asks for the new project's name first.
+  await page.locator('dialog[open]').getByRole('button', { name: /^Create$/ }).click()
+  await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 15000 }).catch(() => {})
+  await page.waitForSelector('[role="treeitem"][data-path="scores.csv"]', { state: 'detached', timeout: 15000 }).catch(() => {})
+  await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 30000 })
+  await page.waitForTimeout(800)
+  const hB = await shownHeading(page)
+  const ranCounts = () => page.$$eval('.notebook-view [data-count]', (els) => els.filter((e) => /\[\d+\]/.test(e.textContent)).length)
+  check('P: Home → new notebook project B shows B\'s cells, not A\'s (no A outputs)', /Python basics/.test(hB ?? '') && (await ranCounts()) === 0, J(hB))
+  check('P: …and B\'s explorer has no A files', (await page.locator('[role="treeitem"][data-path="scores.csv"]').count()) === 0)
+  await page.screenshot({ path: join(SHOTS, 'notebook-projects-b-open.png') })
+  await page.locator('button[aria-label="Run notebook.ipynb"]').first().click()
+  // The basics notebook asks for a name partway down: answer it, then let the rest finish.
+  await page.waitForSelector('input[aria-label="Cell input"]', { timeout: 120000 }).then(async () => {
+    await page.keyboard.type('Saad')
+    await page.keyboard.press('Enter')
+  }).catch(() => {})
+  await kernelIdle(page)
+  await page.waitForTimeout(500)
+  check('P: Run all runs B\'s cells', /Python basics/.test((await shownHeading(page)) ?? '') && (await ranCounts()) > 0, J(await ranCounts()))
+
+  // 3. Edit B, save.
+  const firstCode = page.locator('.notebook-view [data-cell-id]').filter({ has: page.locator('.cm-content') }).first()
+  await firstCode.locator('.cm-content').click()
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('\n# edited-in-B')
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(1200)
+
+  // 4. Back to A from Home: A's own cells.
+  await goHome(page)
+  await openFromHome(page, 'Data with pandas')
+  check('P: Home → open A shows A\'s cells, not B\'s', (await shownHeading(page)) === 'Data with pandas')
+  await goHome(page)
+  await openFromHome(page, 'Python basics notebook')
+  check('P: Home → open B again shows B with its edit', /Python basics/.test((await shownHeading(page)) ?? '') && (await page.locator('.notebook-view').innerText()).includes('# edited-in-B'))
+
+  // 5. Reload: what is on disk.
+  await page.reload()
+  await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 60000 }).catch(() => {})
+  await page.waitForTimeout(800)
+  const disk = await notebooksOnDisk(page)
+  const a = disk['Data with pandas'] ?? ''
+  const b = disk['Python basics notebook'] ?? ''
+  check('P: after reload A\'s notebook.ipynb is still the pandas notebook, untouched by B', a.includes('# Data with pandas') && !a.includes('Python basics') && !a.includes('edited-in-B'), J(a.slice(0, 120)))
+  check('P: after reload B\'s notebook.ipynb is the basics notebook with B\'s edit', b.includes('Python basics') && b.includes('edited-in-B') && !b.includes('# Data with pandas'), J(b.slice(0, 120)))
+  await page.screenshot({ path: join(SHOTS, 'notebook-projects-after-reload.png') })
+  // The documents were scoped right in the first place: the write guard never had to step in.
+  check('P: no cross-project write was ever attempted (the guard stayed silent)', refused.length === 0, J(refused))
+  await ctx.close()
 }
 
 const failed = results.filter((r) => r[0] === 'FAIL')

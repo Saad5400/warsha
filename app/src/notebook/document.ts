@@ -1,6 +1,6 @@
 /**
  * An open notebook: its parsed model, its write-back to the project, and its
- * kernel session — one object per notebook path, kept outside React.
+ * kernel session — one object per (project, notebook path), kept outside React.
  *
  * Outside React because a running cell outlives the view: switching to another
  * tab unmounts the notebook view, and the cell's outputs must still land in the
@@ -11,6 +11,12 @@
  * times a second, and each change would re-serialise every output (images
  * included). The text goes to the project at most every WRITE_MS, and at once
  * whenever something needs the file current (before a cell runs, on save).
+ *
+ * Every document belongs to the project it was loaded from (its `owner`), and only ever writes
+ * there. Two projects routinely hold a file of the same name — every notebook starter saves as
+ * `notebook.ipynb` — and the shell's one Project object reads and writes whichever project is
+ * attached, so a document keyed by path alone would carry one project's cells into the next
+ * and save them over its file.
  */
 import type { FilesChange, NotebookKernel, SourceFile } from '../runtime/types'
 import { NotebookSession, type SessionMessages } from './session'
@@ -29,14 +35,21 @@ export interface DocumentIO {
    *  file no longer exists — a notebook deleted while open is not brought back. */
   write(path: string, text: string): void
   files(): SourceFile[]
-  /** The current project's id (see SessionHost.workspace). */
-  workspace(): string
+  /** Which project this I/O reads and writes right now — the attached project's id — or null
+   *  while a switch is between projects (nothing may open or write then). A document is
+   *  scoped to the owner it was loaded under; it is also the kernel's workspace. */
+  owner(): string | null
   onFilesChanged(change: FilesChange): void
   onFailure(message: string, detail: string): void
   messages(): SessionMessages
 }
 
+/** Registry key: a notebook is one project's file, never just a path. */
+const keyOf = (owner: string, path: string) => `${owner}\u0000${path}`
+
 export class NotebookDocument {
+  /** The project this document was loaded from — the only one it may ever write to. */
+  readonly owner: string
   private model: Notebook | null = null
   private error: string | null = null
   /** The text this document and its file last agreed on — the base of a merge. */
@@ -54,6 +67,9 @@ export class NotebookDocument {
     kernel: NotebookKernel,
     private io: DocumentIO,
   ) {
+    const owner = io.owner()
+    if (owner === null) throw new Error('A notebook cannot open while the project is switching')
+    this.owner = owner
     this.load(io.read(path) ?? '')
     this.session = new NotebookSession(
       path,
@@ -63,11 +79,13 @@ export class NotebookDocument {
           this.flush()
           return this.io.files()
         },
-        workspace: () => this.io.workspace(),
+        workspace: () => this.owner,
         cell: (id) => this.model?.cells.find((c) => c.id === id),
         update: (id, fn) => this.updateCell(id, fn),
         cellIds: () => this.model?.cells.map((c) => c.id) ?? [],
-        onFilesChanged: (change) => this.io.onFilesChanged(change),
+        onFilesChanged: (change) => {
+          if (this.attached('program file changes')) this.io.onFilesChanged(change)
+        },
         onFailure: (m, d) => this.io.onFailure(m, d),
       },
       () => this.io.messages(),
@@ -77,6 +95,18 @@ export class NotebookDocument {
   /** The I/O can change under an open notebook (collab attached, a new project instance). */
   setIO(io: DocumentIO) {
     this.io = io
+  }
+
+  /**
+   * The last line of defence against cross-project writes: the I/O must still be attached to
+   * the project this document was loaded from. A document from project A must never reach
+   * project B's `notebook.ipynb`, whatever path led here — refused and logged, never written.
+   */
+  private attached(what: string): boolean {
+    const now = this.io.owner()
+    if (now === this.owner) return true
+    console.error(`[warsha] refused a cross-project notebook write (${what}): ${this.path} belongs to project ${this.owner}, the attached project is ${now ?? '(switching)'}`)
+    return false
   }
 
   get = () => this.snapshot
@@ -166,6 +196,7 @@ export class NotebookDocument {
     if (!this.model || this.disposed) return
     const text = serializeNotebook(this.model)
     if (text === this.lastText) return
+    if (!this.attached('save')) return
     this.lastText = text
     this.io.write(this.path, text)
   }
@@ -234,42 +265,73 @@ export class NotebookDocument {
   get closed(): boolean {
     return this.disposed
   }
+
+  /** Edits not yet written to the file. */
+  get pending(): boolean {
+    return !!this.timer
+  }
 }
 
 /* --------------------------------------------------------------- registry */
 
+/** Open documents by (owner, path). Only the attached project's are ever looked up; any other
+ *  project's left here (a switch that bypassed closeNotebooksForSwitch) is closed on sight. */
 const open = new Map<string, NotebookDocument>()
 
 const pendingReveals = new Map<string, { cellId: string; line: number }>()
 
-/** The open document for `path`, created on first use (and re-pointed at fresh I/O after). */
-export function notebookDocument(path: string, kernel: NotebookKernel, io: DocumentIO): NotebookDocument {
-  let doc = open.get(path)
+/** Close every document that is not the attached project's. They cannot write (attached()
+ *  refuses), so whatever they still held would be lost silently — say so. */
+function closeOtherProjects(owner: string) {
+  for (const [key, doc] of open) {
+    if (doc.owner === owner) continue
+    if (doc.pending) console.error(`[warsha] closed ${doc.path} of project ${doc.owner} with unsaved edits after the project switched to ${owner}`)
+    doc.dispose(false)
+    open.delete(key)
+  }
+}
+
+/**
+ * The attached project's document for `path`, created on first use (and re-pointed at fresh
+ * I/O after). Null while the project is switching: the files in memory then are the project
+ * being left, and a document loaded from them would show (and later save) that project's
+ * notebook under the next one's name.
+ */
+export function notebookDocument(path: string, kernel: NotebookKernel, io: DocumentIO): NotebookDocument | null {
+  const owner = io.owner()
+  if (owner === null) return null
+  closeOtherProjects(owner)
+  const key = keyOf(owner, path)
+  let doc = open.get(key)
   if (!doc) {
     doc = new NotebookDocument(path, kernel, io)
-    open.set(path, doc)
-    const p = pendingReveals.get(path)
-    pendingReveals.delete(path)
+    open.set(key, doc)
+    const p = pendingReveals.get(key)
+    pendingReveals.delete(key)
     if (p) doc.reveal(p.cellId, p.line)
   } else doc.setIO(io)
   return doc
 }
 
 /** Show a cell's line — now if the notebook is open, else as soon as its view opens it. */
-export function revealCell(path: string, cellId: string, line: number) {
-  const doc = open.get(path)
+export function revealCell(owner: string | null, path: string, cellId: string, line: number) {
+  if (owner === null) return
+  const key = keyOf(owner, path)
+  const doc = open.get(key)
   if (doc) doc.reveal(cellId, line)
-  else pendingReveals.set(path, { cellId, line })
+  else pendingReveals.set(key, { cellId, line })
 }
 
-export const openNotebook = (path: string): NotebookDocument | undefined => open.get(path)
+export const openNotebook = (owner: string | null, path: string): NotebookDocument | undefined =>
+  owner === null ? undefined : open.get(keyOf(owner, path))
 
-/** Close every open notebook not in `keep` (their tabs closed, or shown as text). */
-export function closeNotebooksExcept(keep: ReadonlySet<string>) {
-  for (const [path, doc] of open) {
-    if (keep.has(path)) continue
-    doc.dispose()
-    open.delete(path)
+/** Close every open notebook not in `keep` (their tabs closed, or shown as text) — and every
+ *  notebook of a project other than `owner`. */
+export function closeNotebooksExcept(owner: string | null, keep: ReadonlySet<string>) {
+  for (const [key, doc] of open) {
+    if (doc.owner === owner && keep.has(doc.path)) continue
+    doc.dispose(doc.owner === owner)
+    open.delete(key)
   }
 }
 
@@ -283,25 +345,29 @@ export function closeNotebooksForSwitch() {
   for (const doc of open.values()) doc.flush()
   for (const doc of open.values()) doc.dispose(false)
   open.clear()
+  pendingReveals.clear()
 }
 
-export function renameNotebook(from: string, to: string) {
-  for (const [path, doc] of [...open]) {
+export function renameNotebook(owner: string | null, from: string, to: string) {
+  for (const [key, doc] of [...open]) {
+    if (doc.owner !== owner) continue
+    const path = doc.path
     const next = path === from ? to : path.startsWith(from + '/') ? to + path.slice(from.length) : null
     if (next === null) continue
-    open.delete(path)
+    open.delete(key)
     doc.rename(next)
-    open.set(next, doc)
+    open.set(keyOf(doc.owner, next), doc)
   }
 }
 
-/** A project file's text changed (from anywhere). If it is an open notebook, its document
- *  takes the change in — its own writes are recognised by their text and ignored. */
-export function notebookFileChanged(path: string, text: string | undefined) {
-  if (text !== undefined) open.get(path)?.syncFrom(text)
+/** A project file's text changed (from anywhere). If it is an open notebook of that project,
+ *  its document takes the change in — its own writes are recognised by their text and ignored. */
+export function notebookFileChanged(owner: string | null, path: string, text: string | undefined) {
+  if (text !== undefined && owner !== null) open.get(keyOf(owner, path))?.syncFrom(text)
 }
 
-/** Write every pending notebook edit (Save All, before a project-wide Run or export). */
+/** Write every pending notebook edit (Save All, before a project-wide Run or export). Each
+ *  document writes only to its own project (NotebookDocument.attached). */
 export function flushNotebooks() {
   for (const doc of open.values()) doc.flush()
 }
@@ -312,8 +378,8 @@ let parsed: { text: string; nb: Notebook | null } | null = null
  * frame names): the open document's own model, else one parse of the file, cached by text —
  * a row per breakpoint must not re-parse the whole .ipynb.
  */
-export function notebookModel(path: string, text: string | undefined): Notebook | null {
-  const doc = open.get(path)
+export function notebookModel(owner: string | null, path: string, text: string | undefined): Notebook | null {
+  const doc = openNotebook(owner, path)
   if (doc) return doc.get().model
   if (text === undefined) return null
   if (parsed?.text !== text) {
