@@ -847,19 +847,7 @@ try {
       }
 
       if (path === '/apple-touch-icon.png') {
-        let ok = await waitShell(page, V2_SHELL)
-        if (!ok && /"waiting":true/.test(await installState())) {
-          // Installed, not yet active: with skipWaiting the browser still holds
-          // activation until the old worker's in-flight events finish. Seen
-          // intermittently after a long multi-engine session; the student's
-          // next visit (every Warsha tab closed, a new one opened) must let it.
-          info(`v2 installed but waiting: ${await installState()} — closing every tab, opening a new one`)
-          const next = await ctx.newPage()
-          for (const other of ctx.pages()) if (other !== next) await other.close()
-          page = next
-          await page.goto(BASE, { waitUntil: 'load' })
-          ok = await waitShell(page, V2_SHELL, 30000)
-        }
+        const ok = await waitShell(page, V2_SHELL)
         check(`E ${label}: the upgrade still installs`, ok, ok ? '' : await installState())
       } else if (how === 'missing') {
         await page.waitForTimeout(4000)
