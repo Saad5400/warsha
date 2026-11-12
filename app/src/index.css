@@ -254,7 +254,10 @@
      44px homes elsewhere (text size in the View menu, Ln/Col via Go to Line),
      so no function lives only in a small target. The DENSITY block compacts
      it to VSCode's 22px on a fine pointer. See StatusBar.tsx. */
-  --activity-w: 48px;
+  --activity-w: 40px;  /* touch: 40 (was 48 — founder 2026-11-12, "give the phone's
+                          width to the code"); the slots keep 44px EFFECTIVE via the
+                          after: inset pseudo in ActivityBar.tsx. Desk restores
+                          VSCode's 48 in the DENSITY block. */
   --bar-status: 24px;
 
   /* The TITLE bar is the one bar that is not --bar-top, and it has to be its own
@@ -338,6 +341,7 @@
     --lh-console: 1.36;  /* VSCode's output line-height (touch keeps 1.5; the
                             --console-line floor calc derives and follows)      */
     --bar-status: 22px;  /* VSCode's status bar                                */
+    --activity-w: 48px;  /* VSCode's activity bar (touch is 40)                */
     --row-tree: 22px;    /* VSCode's explorer row (touch keeps 36px)           */
     --tree-indent: 8px;  /* VSCode's per-level indent (touch keeps 16px)       */
     --explorer-w: 300px; /* VSCode's default sidebar width (240px below 900)   */
