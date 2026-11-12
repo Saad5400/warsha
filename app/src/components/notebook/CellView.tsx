@@ -7,7 +7,7 @@ import type { LoadProgress } from '../../runtime/types'
 import { COPY } from '../../copy'
 import { OutputView, SafeHtml } from './OutputView'
 import { MD_PROSE, useMarkdownOptions } from './markdownProse'
-import { IconWand, IconPlus, IconChevronDown, IconChevronRight, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
+import { IconWand, IconPlus, IconChevronDown, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
 import { IconDebugAlt } from '../ui/DebugIcons'
 import { Menu, type MenuAnchor, type MenuItem } from '../ui/Menu'
 
@@ -41,6 +41,8 @@ export interface CellViewProps {
   progress: LoadProgress | null
   fontSize: number
   readOnly: boolean
+  /** Line numbers in code cells (off by default, as in Colab). */
+  lineNumbers: boolean
   desk: boolean
   first: boolean
   last: boolean
@@ -66,6 +68,7 @@ function CellEditorHost(props: {
   notebookPath: string
   fontSize: number
   readOnly: boolean
+  lineNumbers: boolean
   context(): string
   projectWords(): readonly string[]
   placeholder: string
@@ -76,6 +79,8 @@ function CellEditorHost(props: {
   onFocus(): void
   onSave(): void
   onFormat(): void
+  /** Where the code's text starts, px from the editor's left edge — outputs line up with it. */
+  onTextEdge(px: number): void
   register(editor: CellEditor | null): void
 }) {
   const host = useRef<HTMLDivElement>(null)
@@ -92,6 +97,8 @@ function CellEditorHost(props: {
       path: cellPath(props.notebookPath, props.cell.id),
       fontSize: props.fontSize,
       readOnly: props.readOnly,
+      lineNumbers: props.lineNumbers,
+      placeholder: props.placeholder,
       context: () => live.current.context(),
       projectWords: () => live.current.projectWords(),
       onChange: (t) => live.current.onChange(t),
@@ -101,6 +108,7 @@ function CellEditorHost(props: {
       onFocus: () => live.current.onFocus(),
       onSave: () => live.current.onSave(),
       onFormat: () => live.current.onFormat(),
+      onTextEdge: (px) => live.current.onTextEdge(px),
     })
     editor.current = ed
     live.current.register(ed)
@@ -120,45 +128,48 @@ function CellEditorHost(props: {
   useEffect(() => {
     editor.current?.setReadOnly(props.readOnly)
   }, [props.readOnly])
-  return (
-    <div className="relative min-w-0">
-      <div ref={host} className="min-w-0" />
-      {props.cell.source === '' ? (
-        <span aria-hidden="true" className="pointer-events-none absolute top-[7px] start-[calc(2ch+20px)] truncate font-code text-[13px] text-text-3 [direction:ltr]">
-          {props.placeholder}
-        </span>
-      ) : null}
-    </div>
-  )
+  useEffect(() => {
+    editor.current?.setLineNumbers(props.lineNumbers)
+  }, [props.lineNumbers])
+  return <div ref={host} className="min-w-0" />
 }
 
-const GUTTER_BTN =
+/** docs/design/NOTEBOOK.md §3. Desk 28px, touch 32px; one column with the count. */
+const RUN_BTN =
   'relative grid place-items-center size-[32px] rounded-full border cursor-pointer touch-manipulation ' +
   'after:absolute after:-inset-1.5 after:content-[""] ' +
-  'transition-[background-color,color,border-color] duration-(--dur-fast) ease-standard ' +
+  'transition-[background-color,color,border-color,opacity] duration-(--dur-fast) ease-standard ' +
   'border-border-control text-text-1 bg-surface-3 hover:bg-surface-4 active:bg-surface-4 ' +
   'data-[state=error]:border-danger data-[state=error]:text-danger ' +
-  'desk:size-[26px] desk:[&>svg]:size-3.5'
+  'desk:size-[28px] desk:[&>svg]:size-3.5'
+
+/** Desk: idle buttons give their place to the count until the cell is hovered or selected (Colab). */
+const RUN_BTN_RESTING = 'desk:opacity-0 desk:group-hover/cell:opacity-100 desk:group-data-[selected]/cell:opacity-100 desk:group-has-[.cm-focused]/cell:opacity-100 desk:focus-visible:opacity-100'
 
 function RunButton({ status, onRun, onInterrupt }: { status: CellStatus | undefined; onRun(): void; onInterrupt(): void }) {
   const state = status?.state
   if (state === 'running') {
     return (
-      <button type="button" aria-label={COPY.nbStopCell} title={COPY.nbStopCell} data-state="running" className={GUTTER_BTN + ' !border-transparent'} onClick={onInterrupt}>
+      <button type="button" aria-label={COPY.nbStopCell} title={COPY.nbStopCell} data-run="" data-state="running" className={RUN_BTN + ' !border-transparent'} onClick={onInterrupt}>
         <span aria-hidden="true" className="absolute inset-0 rounded-full border-2 border-text-1 border-t-transparent animate-spinner motion-reduce:animate-none" />
-        <IconStop size={14} />
+        <IconStop size={12} />
       </button>
     )
   }
   if (state === 'queued') {
     return (
-      <button type="button" aria-label={COPY.nbCellQueued} title={COPY.nbCellQueued} data-state="queued" className={GUTTER_BTN + ' border-dashed text-text-3'} onClick={onInterrupt}>
-        <span aria-hidden="true" className="font-code text-[11px]">…</span>
+      <button type="button" aria-label={COPY.nbCellQueued} title={COPY.nbCellQueued} data-run="" data-state="queued" className={RUN_BTN + ' border-dashed bg-transparent text-text-3'} onClick={onInterrupt}>
+        <span aria-hidden="true" className="flex gap-[3px]">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="size-[3px] rounded-full bg-current" />
+          ))}
+        </span>
       </button>
     )
   }
+  const ran = status?.ms !== undefined ? ` · ${COPY.nbCellRanIn(fmtMs(status.ms))}` : ''
   return (
-    <button type="button" aria-label={COPY.nbRunCell} title={`${COPY.nbRunCell} (Shift+Enter)`} data-state={state ?? 'idle'} className={GUTTER_BTN} onClick={onRun}>
+    <button type="button" aria-label={COPY.nbRunCell} title={`${COPY.nbRunCell} (Shift+Enter)${ran}`} data-run="" data-state={state ?? 'idle'} className={RUN_BTN + ' ' + RUN_BTN_RESTING} onClick={onRun}>
       {/* Not mirrored in RTL: a play arrow is a media control, not a direction. */}
       <IconPlay size={16} className="ms-0.5" />
     </button>
@@ -170,6 +181,14 @@ export const INSERT_CHIP =
   'inline-flex items-center gap-1 rounded-pill border border-border-control bg-surface-2 px-2.5 min-h-[32px] desk:min-h-[22px] ' +
   'text-meta font-medium text-text-2 cursor-pointer touch-manipulation hover:bg-surface-3 hover:text-text-1 active:bg-surface-4 ' +
   'transition-[background-color,color] duration-(--dur-fast) ease-standard'
+
+/** Run column widths (NOTEBOOK.md §1) and where the code's text starts with line numbers off. */
+const RUN_COL = { desk: 44, touch: 40 }
+// Desk: the 18px breakpoint margin + 4px content padding (cellEditor.ts) + 6px line padding;
+// touch: no margin, 4px + 6px. notebook-check.mjs asserts these against the real editor.
+export const TEXT_EDGE = { desk: 28, touch: 10 }
+/** The code's first-line metrics (setup.ts codeFontTheme): the run button centres on that line. */
+const firstLineCentre = (fontSize: number, desk: boolean) => 6 + Math.round(fontSize * (desk ? 1.35 : 1.6)) / 2
 
 const TOOL_BTN =
   'relative grid place-items-center size-icon-btn rounded-md text-text-2 cursor-pointer touch-manipulation ' +
@@ -222,14 +241,26 @@ function CellViewImpl(p: CellViewProps) {
   const { cell } = p
   const code = cell.type === 'code'
   const [menu, setMenu] = useState<MenuAnchor | null>(null)
+  const [outMenu, setOutMenu] = useState<MenuAnchor | null>(null)
   const attachments = (cell.raw.attachments ?? undefined) as Record<string, Record<string, string>> | undefined
   const mdOpts = useMarkdownOptions(attachments)
   const collapsed = outputsCollapsed(cell)
   const state = p.status?.state
   const showEditor = code || p.editingText || cell.type === 'raw'
   const rendered = useMemo(() => (showEditor ? '' : renderMarkdown(cell.source, mdOpts)), [showEditor, cell.source, mdOpts])
+  // Outputs start where the code's text starts — measured from the editor (line numbers move it).
+  const [measuredEdge, setTextEdge] = useState<number | null>(null)
+  const textEdge = measuredEdge ?? (p.desk ? TEXT_EDGE.desk : TEXT_EDGE.touch)
+  const btn = p.desk ? 28 : 32
+  // The run button's centre sits level with the centre of the code's first line.
+  const runTop = Math.max(0, Math.round(firstLineCentre(p.fontSize, p.desk) - btn / 2))
 
   const act = (a: CellAction) => () => p.onAction(cell.id, a)
+  const anchorOf = (e: React.MouseEvent<HTMLButtonElement>): MenuAnchor => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const rtl = document.documentElement.dir === 'rtl'
+    return { x: rtl ? r.left : r.right, y: r.bottom, fromRight: !rtl }
+  }
   const menuItems: MenuItem[] = [
     ...(code
       ? [
@@ -245,9 +276,11 @@ function CellViewImpl(p: CellViewProps) {
     { label: COPY.nbDuplicate, icon: <IconDuplicate size={18} />, onSelect: act('duplicate') },
     { label: COPY.nbDelete, icon: <IconTrash size={18} />, onSelect: act('delete'), danger: true },
   ]
-
-  const statusText =
-    state === 'queued' ? COPY.nbCellQueued : state === 'running' ? COPY.nbCellRunning : state === 'error' ? COPY.nbCellError : state === 'interrupted' ? COPY.nbCellInterrupted : p.status?.ms !== undefined ? COPY.nbCellRanIn(fmtMs(p.status.ms)) : ''
+  const outputItems: MenuItem[] = [
+    { label: COPY.nbClearOutput, icon: <IconClose size={18} />, onSelect: act('clearOutput') },
+    { label: collapsed ? COPY.nbShowOutput : COPY.nbHideOutput, icon: <IconChevronDown size={18} />, onSelect: act('toggleOutput') },
+  ]
+  const hasOutput = code && (cell.outputs.length > 0 || p.waiting)
 
   return (
     <div
@@ -265,34 +298,40 @@ function CellViewImpl(p: CellViewProps) {
       onDoubleClick={() => {
         if (!code && !p.editingText && !p.readOnly) p.onAction(cell.id, 'edit')
       }}
+      // NOTEBOOK.md §1–2: one bordered box; the rail is inside it; state is border + rail, never fill alone.
       className={
-        // A text cell has no run button: on a phone its gutter gives the width back to the prose.
-        'nb-cell group/cell relative grid desk:grid-cols-[48px_minmax(0,1fr)] gap-x-1 ' +
-        (code ? 'grid-cols-[40px_minmax(0,1fr)] ' : 'grid-cols-[4px_minmax(0,1fr)] ') +
-        'rounded-lg border border-transparent py-1 pe-2 ' +
+        'nb-cell group/cell relative grid grid-cols-[40px_minmax(0,1fr)] desk:grid-cols-[44px_minmax(0,1fr)] ' +
+        'rounded-lg border border-transparent p-1 ' +
         'transition-[border-color,background-color] duration-(--dur-fast) ease-standard ' +
-        'focus-visible:outline-offset-[-1px] ' +
-        'data-[selected]:border-border-subtle data-[selected]:bg-surface-2/40 ' +
-        'before:absolute before:inset-y-2 before:start-0 before:w-[2px] before:rounded-full before:content-[""] before:bg-transparent ' +
-        'data-[selected]:before:bg-accent data-[state=error]:before:bg-danger ' +
-        'focus-within:has-[.cm-focused]:border-border-control'
+        // The keyboard focus ring stays (never removed), drawn on the border in the selection grey: the rail and border already say "selected".
+        'focus-visible:outline-offset-[-1px] focus-visible:outline-(--border-control) ' +
+        'desk:hover:border-border-subtle ' +
+        'data-[selected]:border-border-subtle data-[selected]:bg-surface-2 ' +
+        'has-[.cm-focused]:border-border-control has-[.cm-focused]:bg-surface-2 ' +
+        'before:pointer-events-none before:absolute before:inset-y-1.5 before:start-0.5 before:w-0.5 before:rounded-full before:content-[""] before:bg-transparent ' +
+        'data-[selected]:before:bg-text-3 has-[.cm-focused]:before:bg-info'
       }
     >
-      {/* Gutter: run button and execution count (code); nothing for text. */}
-      <div className="flex flex-col items-center gap-0.5 pt-1">
-        {code && !p.readOnly ? (
-          <>
-            <RunButton status={p.status} onRun={() => p.onRun(cell.id, 'run')} onInterrupt={p.onInterrupt} />
-            <span
-              data-count=""
-              className={
-                'font-code text-[11px] leading-[1.4] tabular-nums [direction:ltr] ' +
-                (state === 'error' ? 'text-danger' : 'text-text-3')
-              }
-            >
-              [{state === 'running' || state === 'queued' ? '*' : (cell.executionCount ?? ' ')}]
-            </span>
-          </>
+      {/* Run column: the run button and, in one column with it, the execution count. */}
+      <div data-run-col="" className="relative flex flex-col items-center gap-1" style={{ paddingTop: runTop }}>
+        {code && !p.readOnly ? <RunButton status={p.status} onRun={() => p.onRun(cell.id, 'run')} onInterrupt={p.onInterrupt} /> : null}
+        {code ? (
+          <span
+            data-count=""
+            style={p.desk ? { top: runTop, height: btn } : undefined}
+            className={
+              'font-code text-[11px] leading-none tabular-nums [direction:ltr] ' +
+              (state === 'error' ? 'text-danger ' : 'text-text-3 ') +
+              // Desk: in the button's place while it rests (§3); touch: under it.
+              'desk:pointer-events-none desk:absolute desk:inset-x-0 desk:flex desk:items-center desk:justify-center ' +
+              'transition-opacity duration-(--dur-fast) ' +
+              (state === 'running' || state === 'queued' || p.readOnly
+                ? 'desk:hidden'
+                : 'desk:group-hover/cell:opacity-0 desk:group-data-[selected]/cell:opacity-0 desk:group-has-[.cm-focused]/cell:opacity-0')
+            }
+          >
+            [{state === 'running' || state === 'queued' ? '*' : (cell.executionCount ?? ' ')}]
+          </span>
         ) : null}
       </div>
 
@@ -300,17 +339,15 @@ function CellViewImpl(p: CellViewProps) {
         {menu ? <Menu anchor={menu} items={menuItems} label={COPY.nbCellActions} onClose={() => setMenu(null)} /> : null}
 
         {showEditor ? (
-          <div
-            className={
-              'min-w-0 overflow-hidden rounded-md border border-border-subtle ' +
-              (code ? 'bg-(--code-bg)' : 'bg-surface-1')
-            }
-          >
+          // The code box: a tint, no border (the cell's border is the only frame), no clipping
+          // (the completion popup and docs card hang outside it).
+          <div data-code-box="" className="min-w-0 rounded-md bg-surface-3">
             <CellEditorHost
               cell={cell}
               notebookPath={p.notebookPath}
               fontSize={p.fontSize}
               readOnly={p.readOnly}
+              lineNumbers={p.lineNumbers}
               context={p.context}
               projectWords={p.projectWords}
               placeholder={code ? (p.desk ? COPY.nbCodePlaceholder : COPY.nbCodePlaceholderTouch) : ''}
@@ -321,17 +358,20 @@ function CellViewImpl(p: CellViewProps) {
               onFocus={() => p.onSelect(cell.id)}
               onSave={p.onSave}
               onFormat={act('format')}
+              onTextEdge={setTextEdge}
               register={(e) => p.registerEditor(cell.id, e)}
             />
           </div>
         ) : cell.source.trim() ? (
-          // Markup built from escaped text only (notebook/markdown.ts).
-          <SafeHtml className={MD_PROSE + ' px-2 py-1.5'} html={rendered} />
+          // Markup built from escaped text only (notebook/markdown.ts). Prose starts at the code's text edge.
+          // Physical, symmetric padding: each block takes its own direction (dir=auto), so an English
+          // paragraph in the Arabic UI must still start at the code's (left) text edge.
+          <SafeHtml className={MD_PROSE + ' py-1.5 px-[10px] desk:px-[28px]'} html={rendered} />
         ) : (
-          <p className="m-0 px-2 py-2 text-meta italic rtl:not-italic text-text-3">{p.desk ? COPY.nbEmptyText : COPY.nbEmptyTextTouch}</p>
+          <p className="m-0 py-2 px-[10px] text-meta italic rtl:not-italic text-text-3 desk:px-[28px]">{p.desk ? COPY.nbEmptyText : COPY.nbEmptyTextTouch}</p>
         )}
 
-        {/* Running: a sweep on the cell, and what is downloading if anything is. */}
+        {/* Running: a sweep under the code, and what is downloading if anything is. */}
         {state === 'running' ? (
           <div aria-hidden="true" className="relative mt-1 h-0.5 overflow-hidden rounded-full bg-surface-3">
             <div
@@ -344,44 +384,40 @@ function CellViewImpl(p: CellViewProps) {
           </div>
         ) : null}
         {state === 'running' && p.progress ? (
-          <p className="m-0 mt-1 text-micro text-text-3" aria-live="polite">
+          <p className="m-0 mt-1 text-micro text-text-3 [direction:ltr] text-left" style={{ paddingLeft: textEdge }} aria-live="polite">
             {p.progress.message}
           </p>
         ) : null}
 
-        {/* Outputs. */}
-        {code && (cell.outputs.length > 0 || p.waiting) ? (
-          <div aria-label={COPY.nbOutputLabel} className="nb-outputs relative mt-1.5 min-h-[40px] min-w-0 desk:min-h-0">
-            {/* Starts below the gutter's run button + count, which a one-line cell is shorter than. */}
-            <div className="absolute -start-[44px] desk:-start-[52px] top-3 flex flex-col items-center gap-0.5 w-[40px] desk:w-[48px]">
+        {/* Outputs: LTR, starting at the code's text edge. */}
+        {hasOutput ? (
+          <div aria-label={COPY.nbOutputLabel} className="nb-outputs relative mt-1 min-w-0 [direction:ltr] text-left" style={{ paddingLeft: textEdge }}>
+            {/* The output toolbar (§4): one button in the run column, level with the output's first line; desk only. */}
+            {!p.readOnly ? (
               <button
                 type="button"
-                aria-label={collapsed ? COPY.nbShowOutput : COPY.nbHideOutput}
-                title={collapsed ? COPY.nbShowOutput : COPY.nbHideOutput}
-                className={TOOL_BTN + ' size-[28px] desk:size-[22px]'}
-                onClick={act('toggleOutput')}
+                data-output-menu=""
+                aria-label={COPY.nbOutputActions}
+                title={COPY.nbOutputActions}
+                className={
+                  TOOL_BTN +
+                  ' !absolute top-0 hidden desk:grid size-[24px] desk:size-[24px] ' +
+                  'opacity-0 group-hover/cell:opacity-100 group-data-[selected]/cell:opacity-100 focus-visible:opacity-100'
+                }
+                // In the run column: that column is to the inline-start of the body, and outputs are LTR.
+                style={document.documentElement.dir === 'rtl' ? { right: -(RUN_COL.desk + 24) / 2, left: 'auto' } : { left: -(RUN_COL.desk + 24) / 2 }}
+                onClick={(e) => setOutMenu(anchorOf(e))}
               >
-                {collapsed ? <IconChevronRight size={16} className="rtl:-scale-x-100" /> : <IconChevronDown size={16} />}
+                <IconMore size={16} />
               </button>
-              {!collapsed ? (
-                <button
-                  type="button"
-                  aria-label={COPY.nbClearOutput}
-                  title={COPY.nbClearOutput}
-                  // Mouse only: on a phone two stacked buttons outgrew a one-line output; Clear output is in the cell's ⋯ menu there.
-                  className={TOOL_BTN + ' hidden desk:grid size-[28px] desk:size-[22px] desk:opacity-0 desk:group-hover/cell:opacity-100 desk:focus-visible:opacity-100'}
-                  onClick={act('clearOutput')}
-                >
-                  <IconClose size={14} />
-                </button>
-              ) : null}
-            </div>
+            ) : null}
+            {outMenu ? <Menu anchor={outMenu} items={outputItems} label={COPY.nbOutputActions} onClose={() => setOutMenu(null)} /> : null}
             {collapsed ? (
-              <button type="button" onClick={act('toggleOutput')} className="block w-full rounded-sm px-2 py-1 text-start text-meta text-text-3 hover:bg-surface-3 cursor-pointer">
+              <button type="button" onClick={act('toggleOutput')} className="block rounded-sm py-1 text-start text-meta text-text-3 hover:text-text-1 cursor-pointer">
                 {COPY.nbOutputsHidden(cell.outputs.length)}
               </button>
             ) : (
-              <div className="flex min-w-0 flex-col gap-1 px-2 [direction:ltr] text-left">
+              <div className="flex min-w-0 flex-col gap-1 pe-2">
                 {cell.outputs.map((o, i) => (
                   <OutputView key={i} output={o} />
                 ))}
@@ -391,21 +427,8 @@ function CellViewImpl(p: CellViewProps) {
           </div>
         ) : null}
 
-        {statusText && code ? (
-          <p
-            className={
-              'm-0 mt-0.5 px-2 text-micro leading-[1.4] ' +
-              (state === 'error' ? 'text-danger' : 'text-text-3') +
-              (state === 'ok' || state === undefined ? ' desk:opacity-0 desk:group-hover/cell:opacity-100' : '')
-            }
-          >
-            {statusText}
-          </p>
-        ) : null}
-        {/* The cell's toolbar. With a mouse it floats over the cell's top edge on hover/selection,
-            as in Colab; on touch it is a row under the selected cell — floating, it covered the
-            first line of the cell, the very line a phone has least room to show — and it carries
-            the "+ Code / + Text" insert chips too, so a phone spends one row on all of it. */}
+        {/* The cell's toolbar. Desk: floating over the cell's top border, on hover/selection (Colab).
+            Touch: a row under the selected cell, insert chips leading, actions trailing. */}
         <div
           role="toolbar"
           aria-label={COPY.nbCellActions}
@@ -446,13 +469,7 @@ function CellViewImpl(p: CellViewProps) {
           <ToolButton label={COPY.nbDelete} onClick={act('delete')}>
             <IconTrash size={18} />
           </ToolButton>
-          <ToolButton
-            label={COPY.nbCellActions}
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect()
-              setMenu({ x: document.documentElement.dir === 'rtl' ? r.left : r.right, y: r.bottom, fromRight: document.documentElement.dir !== 'rtl' })
-            }}
-          >
+          <ToolButton label={COPY.nbCellActions} onClick={(e) => setMenu(anchorOf(e))}>
             <IconMore size={18} />
           </ToolButton>
         </div>
