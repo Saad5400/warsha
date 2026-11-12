@@ -15,6 +15,7 @@ import {
 } from '@codemirror/view'
 import { syntaxTree } from '@codemirror/language'
 import { builtinDoc, renderDocCard, type BuiltinDoc, type CompletionLang } from './completions'
+import { projectFiles, projectRevision } from './projectSource'
 
 /**
  * Docs on hover — the "what does this do?" layer (VS Code's hover widget).
@@ -48,43 +49,24 @@ import { builtinDoc, renderDocCard, type BuiltinDoc, type CompletionLang } from 
 
 /* -------------------------------------------------- project doc comments */
 
-export interface ProjectFileText {
-  path: string
-  content: string
-}
-
 interface UserDoc {
   signature: string
   doc: string
-}
-
-let fileSource: (() => readonly ProjectFileText[]) | null = null
-let sourceRevision = -1
-
-/**
- * App.tsx registers the project-files accessor here — a module-level seam
- * beats threading a prop through the editor's singleton mount. `revision` is
- * the project's change counter, so the cached scan below re-runs at most once
- * per edit burst.
- */
-export function setProjectDocsSource(get: () => readonly ProjectFileText[], revision: number): void {
-  fileSource = get
-  sourceRevision = revision
 }
 
 let cachedRevision = -2
 let cachedDocs: Map<string, UserDoc> = new Map()
 
 function projectDocs(): Map<string, UserDoc> {
-  if (!fileSource) return cachedDocs
-  if (cachedRevision === sourceRevision) return cachedDocs
+  const revision = projectRevision()
+  if (revision === -1 || cachedRevision === revision) return cachedDocs
   const map = new Map<string, UserDoc>()
-  for (const file of fileSource()) {
+  for (const file of projectFiles()) {
     if (file.path.endsWith('.java')) scanJava(file.content, map)
     else if (file.path.endsWith('.py')) scanPython(file.content, map)
   }
   cachedDocs = map
-  cachedRevision = sourceRevision
+  cachedRevision = revision
   return map
 }
 

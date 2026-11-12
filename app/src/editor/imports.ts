@@ -4,6 +4,7 @@ import type { Completion, CompletionContext, CompletionResult, CompletionSource 
 import type { LangId } from '../runtime'
 import { recordable, withUsageBoost } from './usage'
 import { JAVA_FQCN } from './javaApi.generated'
+import { PYTHON_MEMBERS } from './members'
 
 /**
  * Two of the three gaps from the founder report live here:
@@ -38,7 +39,9 @@ const IMPORTABLE: readonly string[] = [
   'Queue', 'Deque', 'ArrayDeque', 'Stack', 'Comparator', 'Optional', 'Iterator', 'NoSuchElementException',
   'InputMismatchException', 'Stream', 'IntStream', 'Collectors', 'BufferedReader', 'BufferedWriter',
   'InputStreamReader', 'IOException', 'File', 'FileReader', 'FileWriter', 'PrintWriter',
-  'FileNotFoundException', 'Files', 'Path', 'Paths',
+  'FileNotFoundException', 'Files', 'Path', 'Paths', 'Vector', 'Date', 'Locale', 'ConcurrentModificationException',
+  'Instant', 'Duration', 'Year', 'LocalDate', 'LocalDateTime', 'FileOutputStream', 'IllegalFormatConversionException',
+  'MissingFormatArgumentException', 'UnknownFormatConversionException',
 ]
 
 /** class name → its fully-qualified name, from the curated selection above. */
@@ -85,6 +88,9 @@ export const PYTHON_STDLIB_MODULES: readonly (readonly [string, string])[] = [
   ['csv', 'read and write CSV data files'],
   ['typing', 'type hints for annotations'],
   ['pathlib', 'file paths as objects'],
+  ['io', 'in-memory files (StringIO)'],
+  ['numpy', 'fast arrays and maths — import numpy as np'],
+  ['pandas', 'tables of data — import pandas as pd'],
 ]
 
 /* --------------------------------------------------------- inserting an import */
@@ -220,6 +226,18 @@ function javaImportSource(ctx: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w$]*$/ }
 }
 
+/** `from math import sq|` — the module's own names (and further ones after a comma). */
+function pythonFromImportSource(ctx: CompletionContext, modules: Record<string, readonly Completion[]>): CompletionResult | null {
+  const line = ctx.state.doc.lineAt(ctx.pos)
+  const before = line.text.slice(0, ctx.pos - line.from)
+  const m = /^\s*from\s+([\w.]+)\s+import\s+\(?(?:[\w\s]+,\s*)*(\w*)$/.exec(before)
+  if (!m) return null
+  const members = modules[m[1]]
+  if (!members) return null
+  const options = members.map((c): Completion => ({ label: c.label, type: c.type, detail: c.detail, boost: 20 }))
+  return { from: ctx.pos - m[2].length, options, validFor: /^\w*$/ }
+}
+
 function pythonImportSource(ctx: CompletionContext): CompletionResult | null {
   const line = ctx.state.doc.lineAt(ctx.pos)
   const before = line.text.slice(0, ctx.pos - line.from)
@@ -231,8 +249,12 @@ function pythonImportSource(ctx: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w.]*$/ }
 }
 
-export function importStatementSource(lang: LangId): CompletionSource {
-  const base = lang === 'java' ? javaImportSource : pythonImportSource
+export function importStatementSource(lang: LangId, pyModules?: Record<string, readonly Completion[]>): CompletionSource {
+  const modules = { ...(pyModules ?? {}), ...PYTHON_MEMBERS }
+  const base =
+    lang === 'java'
+      ? javaImportSource
+      : (ctx: CompletionContext) => pythonFromImportSource(ctx, modules) ?? pythonImportSource(ctx)
   // Record and re-rank by usage, same as the other sources — a student who
   // always imports Scanner sees it lead the list.
   return (ctx: CompletionContext) => {

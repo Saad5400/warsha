@@ -9,6 +9,7 @@ import {
 import type { EditorState } from '@codemirror/state'
 import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
 import { memberContext, memberSource } from './members'
+import { nameSource, namingSpot } from './names'
 import { recordable, withUsageBoost } from './usage'
 
 /** Narrower than `LangId` — web files get highlighting but no curated
@@ -167,9 +168,9 @@ const KEYWORDS: Record<CompletionLang, readonly string[]> = {
   java: `abstract assert boolean break byte case catch char class continue default do double else enum extends
 final finally float for if implements import instanceof int interface long new package private protected public
 return short static super switch this throw throws try void while true false null
-var record sealed permits yield`.split(/\s+/),
+var record sealed permits yield synchronized transient volatile native strictfp`.split(/\s+/),
   python: `and as assert async await break class continue def del elif else except False finally for from global
-if import in is lambda None nonlocal not or pass raise return True try while with yield`.split(/\s+/),
+if import in is lambda None nonlocal not or pass raise return True try while with yield case`.split(/\s+/),
 }
 
 /* ------------------------------------------------- beginner API dictionaries */
@@ -382,6 +383,56 @@ const JAVA_API: readonly (readonly [string, string])[] = [
   ['Stream.of', 'a stream of these items'],
   ['Stream.iterate', 'build a stream step by step'],
   ['Stream.generate', 'an endless stream from a supplier'],
+  // Type names themselves — for declarations and generics (`ArrayList<Integer>`, `Object o`).
+  ['Integer', 'a whole number as an object — for ArrayList<Integer>'],
+  ['Double', 'a decimal number as an object — for ArrayList<Double>'],
+  ['Long', 'a big whole number as an object'],
+  ['Float', 'a float as an object'],
+  ['Short', 'a small whole number as an object'],
+  ['Byte', 'a tiny whole number as an object'],
+  ['Boolean', 'true or false as an object'],
+  ['Character', 'a char as an object — for ArrayList<Character>'],
+  ['Object', 'the parent of every class'],
+  ['List', 'any list — ArrayList, LinkedList…'],
+  ['Set', 'any set — HashSet, TreeSet…'],
+  ['Map', 'any map — HashMap, TreeMap…'],
+  ['Collection', 'any group of items — a list, a set…'],
+  ['Iterable', 'anything a for-each loop can walk'],
+  ['Vector', 'an older, thread-safe list that can grow'],
+  ['Date', 'a moment in time (the classic java.util one)'],
+  ['Locale', 'a language/country setting — Locale.US makes decimals use a dot'],
+  ['Runnable', 'a piece of work with a run() method'],
+  ['Thread', 'runs code alongside the rest of the program'],
+  ['Throwable', 'the parent of every exception and error'],
+  ['Error', 'a serious problem the program should not try to catch'],
+  // More exceptions a course names in try/catch and in "what does this throw?" questions.
+  ['InputMismatchException', 'Scanner read something that was not the type you asked for'],
+  ['ClassCastException', 'a cast to a type the object is not'],
+  ['IndexOutOfBoundsException', 'a list position that does not exist'],
+  ['StringIndexOutOfBoundsException', 'a position past the end of a String'],
+  ['NoSuchElementException', 'asked for an item that is not there'],
+  ['ConcurrentModificationException', 'a collection changed while it was being looped over'],
+  ['IllegalStateException', 'called at the wrong time'],
+  ['UnsupportedOperationException', 'this object does not allow that'],
+  ['CloneNotSupportedException', 'clone() on a class that is not Cloneable'],
+  ['InterruptedException', 'a waiting thread was interrupted'],
+  ['ClassNotFoundException', 'a class could not be found by name'],
+  ['NegativeArraySizeException', 'an array made with a negative size'],
+  ['StackOverflowError', 'recursion that never stops'],
+  ['OutOfMemoryError', 'the program ran out of memory'],
+  ['IllegalAccessException', 'not allowed to reach that member'],
+  ['NoClassDefFoundError', 'a class that compiled but is missing when run'],
+  ['IllegalFormatConversionException', 'a printf format that does not fit the value, like %d for a double'],
+  ['MissingFormatArgumentException', 'a printf format with no value to fill it'],
+  ['UnknownFormatConversionException', 'a printf format letter that does not exist'],
+  ['FileOutputStream', 'writes raw bytes to a file'],
+  ['LocalDate', 'a calendar date, like 2026-11-12'],
+  ['LocalDateTime', 'a date and a time of day'],
+  ['Instant', 'an exact moment on the timeline'],
+  ['Duration', 'a length of time, like 90 minutes'],
+  ['Year', 'a year, like 2026'],
+  ['Locale.US', 'US English — a dot for decimals'],
+  ['Locale.setDefault', 'make a locale the default for the whole program'],
 ]
 
 const PYTHON_API: readonly (readonly [string, string])[] = [
@@ -480,6 +531,46 @@ const PYTHON_API: readonly (readonly [string, string])[] = [
   ['__getitem__', 'what obj[key] does'],
   ['__setitem__', 'what obj[key] = value does'],
   ['__contains__', 'what "in" asks'],
+  ['eval', 'run text as a Python expression'],
+  ['exec', 'run text as Python code'],
+  ['object', 'the parent of every class'],
+  ['exit', 'stop the program'],
+  ['quit', 'stop the program'],
+  ['globals', 'the global variables, as a dict'],
+  ['locals', 'the local variables, as a dict'],
+  ['help', 'show the documentation for something'],
+  ['__name__', 'the module name — "__main__" when run directly'],
+  // Built-in exceptions — for except / raise.
+  ['Exception', 'the parent of ordinary errors'],
+  ['BaseException', 'the parent of every exception'],
+  ['ValueError', 'the right type but a bad value, like int("abc")'],
+  ['TypeError', 'the wrong type, like "a" + 1'],
+  ['KeyError', 'a dict key that is not there'],
+  ['IndexError', 'a list position that does not exist'],
+  ['NameError', 'a name that was never defined'],
+  ['ZeroDivisionError', 'dividing by zero'],
+  ['AttributeError', 'an attribute or method the object does not have'],
+  ['FileNotFoundError', 'the file was not there'],
+  ['FileExistsError', 'the file is already there'],
+  ['PermissionError', 'not allowed to read or write it'],
+  ['IsADirectoryError', 'a folder where a file was expected'],
+  ['OSError', 'an operating-system error, like a file problem'],
+  ['IOError', 'an input/output error (same as OSError)'],
+  ['RecursionError', 'recursion went too deep'],
+  ['RuntimeError', 'an error that fits no other kind'],
+  ['NotImplementedError', 'a method a subclass still has to write'],
+  ['AssertionError', 'an assert that was false'],
+  ['StopIteration', 'an iterator has nothing left'],
+  ['ImportError', 'an import that failed'],
+  ['ModuleNotFoundError', 'a module that is not installed'],
+  ['OverflowError', 'a number too big to handle'],
+  ['ArithmeticError', 'the parent of maths errors'],
+  ['LookupError', 'the parent of KeyError and IndexError'],
+  ['UnicodeDecodeError', 'bytes that are not valid text'],
+  ['KeyboardInterrupt', 'the program was stopped from the keyboard'],
+  ['EOFError', 'input() reached the end with nothing to read'],
+  ['SyntaxError', 'code that is not valid Python'],
+  ['IndentationError', 'wrong indentation'],
 ]
 
 /** Offered as `math.sqrt` so the fuzzy matcher still finds plain `sqrt`;
@@ -642,6 +733,18 @@ const PYTHON_MODULE_API: readonly (readonly [string, string, string])[] = [
   ['Callable', 'typing', 'a function type'],
   // pathlib (class).
   ['Path', 'pathlib', 'a filesystem path object'],
+  // csv.
+  ['reader', 'csv', 'read rows as lists of text'],
+  ['writer', 'csv', 'write rows of values'],
+  ['DictReader', 'csv', 'read rows as dicts keyed by the header'],
+  ['DictWriter', 'csv', 'write dicts as rows'],
+  // io.
+  ['StringIO', 'io', 'a file that lives in memory, as text'],
+  // os — file descriptors.
+  ['fsync', 'os', 'force a file\'s writes onto the disk'],
+  ['getpid', 'os', 'this program\'s process id'],
+  // json.
+  ['JSONDecodeError', 'json', 'the error json raises on bad input'],
 ]
 
 /* ------------------------------------------------------------ built-in docs */
@@ -1529,6 +1632,8 @@ function staticSource(lang: CompletionLang): CompletionSource {
   const [validFor, match] = listMatchers(all)
   return (ctx: CompletionContext) => {
     if (memberContext(ctx.state, ctx.pos)) return null
+    // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the names).
+    if (namingSpot(lang, ctx.state, ctx.pos)) return null
     const token = ctx.matchBefore(match)
     if (!ctx.explicit && !token) return null
     const wordFrom = token ? token.from : ctx.pos
@@ -1546,9 +1651,12 @@ function staticSource(lang: CompletionLang): CompletionSource {
 function makeIdentifierCollector(
   lang: CompletionLang | null,
   projectWords: () => readonly string[],
-): (ctx: CompletionContext) => CompletionResult | null {
-  const reserved = lang ? RESERVED[lang] : null
-  return (ctx: CompletionContext): CompletionResult | null => {
+): (ctx: CompletionContext, afterDot?: boolean) => CompletionResult | null {
+  const reservedAll = lang ? RESERVED[lang] : null
+  return (ctx: CompletionContext, afterDot = false): CompletionResult | null => {
+    // After a dot the dictionary's own entries are not on offer, so a member that
+    // shares a dictionary name (`toString`, `add`, `pop`) must not be filtered out.
+    const reserved = afterDot ? null : reservedAll
     const before = ctx.matchBefore(WORD_BEFORE)
     if (!before || (before.to === before.from && !ctx.explicit)) return null
     if (!ctx.explicit && before.to - before.from < MIN_IDENT_CHARS) return null
@@ -1630,8 +1738,9 @@ export function completionSources(lang: CompletionLang | null, projectWords: () 
   if (!lang) return [ident]
   const moduleMembers = lang === 'python' ? pythonModuleMembers() : undefined
   return [
-    ifNotIn(NOT_IN, memberSource(lang, collect, moduleMembers)),
-    ifNotIn(NOT_IN, importStatementSource(lang)),
+    ifNotIn(NOT_IN, nameSource(lang)),
+    ifNotIn(NOT_IN, memberSource(lang, (ctx) => collect(ctx, true), moduleMembers)),
+    ifNotIn(NOT_IN, importStatementSource(lang, moduleMembers)),
     ifNotIn(NOT_IN, staticSource(lang)),
     ident,
   ]

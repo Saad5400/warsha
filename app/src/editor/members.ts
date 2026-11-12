@@ -2,20 +2,19 @@ import type { EditorState } from '@codemirror/state'
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import type { LangId } from '../runtime'
 import { recordable, withUsageBoost } from './usage'
+import { JAVA_FQCN } from './javaApi.generated'
+import { projectRevision } from './projectSource'
+import { JAVA_PRIMS, parseChain, resolveReceiver, typeArgs, typeBase as baseOf, type MemberTypes, type Resolved } from './receiver'
+import { splitTopLevel, typeIndexFor, type ClassInfo, type MemberInfo, type TypeIndex } from './typeIndex'
 
 /**
- * The third gap: `variable.` should offer that variable's methods. There is
- * no language server here, so "the variable's type" is a guess from scanning
- * the document as text — `Scanner sc = new Scanner(...)` makes `sc` a
- * Scanner, `xs = [...]` makes `xs` a Python list. Wrong or absent for
- * anything cleverer (reassignment, a method's return type, a parameter) — a
- * beginner course's own code rarely is.
- *
- * The scan only ever looks at the text *before* the dot the student just
- * typed, and only when a `name.` context is actually detected (bounded
- * look-back below), so it never runs on every keystroke of an unrelated
- * line. The single-slot memo further skips re-scanning while the student
- * types the member name itself, since the text before the dot has not moved.
+ * `variable.` offers what that value can do. There is no language server here;
+ * the receiver's type comes from receiver.ts (which reads declarations,
+ * parameters, `catch`, `this`/`super`/`self`, chains and casts from the text)
+ * and the student's own classes from typeIndex.ts. These tables say what the
+ * library types offer, and each `detail` leads with the member's return type
+ * (`String, (int) — …`) — the resolver follows that through a chain, so keep
+ * it accurate: `sc.next().` is a String only because `next` says so.
  */
 
 const method = (label: string, detail: string): Completion => ({ label, type: 'method', detail, boost: 30 })
@@ -29,6 +28,14 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('hasNextLine', 'boolean — is there another line?'),
     method('hasNextInt', 'boolean — is the next thing a number?'),
     method('hasNext', 'boolean — is there anything left to read?'),
+    method('nextBoolean', 'boolean — read true or false'),
+    method('nextFloat', 'float — read a decimal number, as a float'),
+    method('nextLong', 'long — read a big whole number'),
+    method('nextShort', 'short — read a small whole number'),
+    method('nextByte', 'byte — read a tiny whole number (-128 to 127)'),
+    method('hasNextDouble', 'boolean — is the next thing a decimal number?'),
+    method('hasNextBoolean', 'boolean — is the next thing true or false?'),
+    method('useDelimiter', 'Scanner, (String) — split the input on this instead of spaces'),
     method('close', 'void — stop reading'),
   ],
   String: [
@@ -64,6 +71,10 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('chars', 'IntStream — the characters as a stream of code points'),
     method('intern', 'String — the one shared copy of this exact text'),
     method('toString', 'String — this text'),
+    // Static — reached as `String.format(…)`; listed here so `String.` offers them too.
+    method('format', 'String, (format, args…) — fill in the blanks, like printf, and get the text'),
+    method('valueOf', 'String, (x) — a number (or anything) as text'),
+    method('join', 'String, (sep, parts…) — glue pieces with a separator between'),
   ],
   ArrayList: [
     method('add', 'boolean, (E) — put something in'),
@@ -238,6 +249,9 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('nCopies', 'List<T>, (int, T) — a list of the same item repeated'),
     method('binarySearch', 'int, (List, key) — find a key in a sorted list'),
     method('swap', 'void, (List, int, int) — swap two items by position'),
+    method('disjoint', 'boolean, (Collection, Collection) — do they share nothing?'),
+    method('rotate', 'void, (List, int) — shift every item along by n'),
+    method('replaceAll', 'boolean, (List, old, new) — swap every old item for new'),
     method('fill', 'void, (List, T) — set every slot to the same value'),
     method('addAll', 'boolean, (List, T...) — add several items at once'),
   ],
@@ -248,14 +262,25 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('toBinaryString', 'String, (int) — a number in base 2, as text'),
     method('toHexString', 'String, (int) — a number in base 16, as text'),
     method('compare', 'int, (int, int) — order two numbers: negative, 0 or positive'),
+    method('toOctalString', 'String, (int) — a number in base 8, as text'),
+    method('sum', 'int, (int, int) — add two numbers'),
+    method('max', 'int, (int, int) — the larger of two'),
+    method('min', 'int, (int, int) — the smaller of two'),
+    method('intValue', 'int — this Integer as a plain int'),
+    method('doubleValue', 'double — this Integer as a double'),
+    method('compareTo', 'int, (Integer) — order against another Integer'),
+    method('equals', 'boolean, (Object) — the same number? (use this, not ==, on Integer)'),
     { label: 'MAX_VALUE', type: 'constant', detail: 'the largest int', boost: 30 },
     { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest int', boost: 30 },
+    { label: 'SIZE', type: 'constant', detail: 'int — bits in an int (32)', boost: 30 },
   ],
   Long: [
     method('parseLong', 'long, (String) — text as a whole number'),
     method('valueOf', 'Long, (String) — text as a Long'),
     method('toString', 'String, (long) — a number as text'),
     method('compare', 'int, (long, long) — order two numbers'),
+    method('longValue', 'long — this Long as a plain long'),
+    { label: 'SIZE', type: 'constant', detail: 'int — bits in a long (64)', boost: 30 },
     { label: 'MAX_VALUE', type: 'constant', detail: 'the largest long', boost: 30 },
     { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest long', boost: 30 },
   ],
@@ -266,6 +291,8 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('compare', 'int, (double, double) — order two numbers'),
     method('isNaN', 'boolean, (double) — is this "not a number"?'),
     method('isInfinite', 'boolean, (double) — is this infinity?'),
+    method('doubleValue', 'double — this Double as a plain double'),
+    method('intValue', 'int — this Double cut down to a whole number'),
     { label: 'MAX_VALUE', type: 'constant', detail: 'the largest double', boost: 30 },
     { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest positive double', boost: 30 },
   ],
@@ -293,6 +320,7 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     { label: 'out', type: 'variable', detail: 'PrintStream — the normal output stream', boost: 30 },
     { label: 'err', type: 'variable', detail: 'PrintStream — the error output stream', boost: 30 },
     method('exit', 'void, (int) — stop the whole program now'),
+    method('gc', 'void — ask Java to clean up unused objects'),
     method('currentTimeMillis', 'long — milliseconds since 1970'),
     method('nanoTime', 'long — a high-resolution timer, in nanoseconds'),
     method('arraycopy', 'void, (src, from, dst, to, n) — copy part of one array into another'),
@@ -581,6 +609,128 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('getNameCount', 'int — how many parts the path has'),
     method('toString', 'String — the path as text'),
   ],
+  // Every object has these (java.lang.Object) — added under any instance's own members.
+  Object: [
+    method('toString', 'String — this object as text'),
+    method('equals', 'boolean, (Object) — is this the same as that?'),
+    method('hashCode', 'int — a number that stands for this object'),
+    method('getClass', 'Class — what class this object really is'),
+  ],
+  // Every exception and error (java.lang.Throwable) — what `e.` offers in a catch.
+  Throwable: [
+    method('getMessage', 'String — what went wrong, as text'),
+    method('printStackTrace', 'void — print the error and where it happened'),
+    method('getCause', 'Throwable — the exception that caused this one'),
+    method('getLocalizedMessage', 'String — the message, in the local language'),
+    method('getStackTrace', 'StackTraceElement[] — where it happened, call by call'),
+    method('toString', 'String — the exception type and its message'),
+  ],
+  // What any array offers: `arr.length` is a field, not a method.
+  '[]': [
+    { label: 'length', type: 'property', detail: 'int — how many slots the array has', boost: 40 },
+    method('clone', 'T[] — a copy of the array'),
+  ],
+  // Any enum value; `Day.` itself offers the constants plus values()/valueOf().
+  Enum: [
+    method('name', 'String — the constant\'s name, exactly as written'),
+    method('ordinal', 'int — its position in the enum, from 0'),
+    method('compareTo', 'int, (E) — order by position in the enum'),
+  ],
+  Vector: [
+    method('add', 'boolean, (E) — put something in'),
+    method('get', 'E, (int) — the item at a position'),
+    method('set', 'E, (int, E) — replace the item at a position'),
+    method('remove', 'E, (int) — take something out'),
+    method('size', 'int — how many items'),
+    method('isEmpty', 'boolean — is it empty?'),
+    method('contains', 'boolean, (Object) — is this in it?'),
+    method('indexOf', 'int, (Object) — where an item is'),
+    method('addElement', 'void, (E) — add to the end (old name for add)'),
+    method('elementAt', 'E, (int) — the item at a position (old name for get)'),
+    method('firstElement', 'E — the first item'),
+    method('lastElement', 'E — the last item'),
+    method('removeElement', 'boolean, (Object) — take the first match out'),
+    method('insertElementAt', 'void, (E, int) — add at a position'),
+    method('capacity', 'int — how much room it has before growing'),
+    method('clear', 'void — remove everything'),
+    method('iterator', 'Iterator<E> — step through the items'),
+  ],
+  Date: [
+    method('getTime', 'long — milliseconds since 1970'),
+    method('before', 'boolean, (Date) — is this earlier?'),
+    method('after', 'boolean, (Date) — is this later?'),
+    method('compareTo', 'int, (Date) — order two dates'),
+    method('toString', 'String — the date and time as text'),
+  ],
+  Locale: [
+    { label: 'US', type: 'constant', detail: 'Locale — US English: a dot for decimals', boost: 30 },
+    { label: 'ENGLISH', type: 'constant', detail: 'Locale — English', boost: 30 },
+    { label: 'ROOT', type: 'constant', detail: 'Locale — neutral, no country', boost: 30 },
+    method('setDefault', 'void, (Locale) — make this the locale for the whole program'),
+    method('getDefault', 'Locale — the current locale'),
+  ],
+  LocalDate: [
+    method('now', 'LocalDate — today'),
+    method('of', 'LocalDate, (year, month, day) — a date you name'),
+    method('parse', 'LocalDate, (String) — read a date like "2026-11-12"'),
+    method('getYear', 'int — the year'),
+    method('getMonthValue', 'int — the month, 1 to 12'),
+    method('getDayOfMonth', 'int — the day of the month'),
+    method('getDayOfWeek', 'DayOfWeek — MONDAY…SUNDAY'),
+    method('plusDays', 'LocalDate, (long) — a date this many days later'),
+    method('minusDays', 'LocalDate, (long) — a date this many days earlier'),
+    method('isBefore', 'boolean, (LocalDate) — is this earlier?'),
+    method('isAfter', 'boolean, (LocalDate) — is this later?'),
+    method('isLeapYear', 'boolean — is its year a leap year?'),
+  ],
+  LocalDateTime: [
+    method('now', 'LocalDateTime — the date and time right now'),
+    method('of', 'LocalDateTime, (y, m, d, h, min) — a moment you name'),
+    method('getHour', 'int — the hour, 0 to 23'),
+    method('getMinute', 'int — the minute'),
+    method('toLocalDate', 'LocalDate — just the date part'),
+    method('plusHours', 'LocalDateTime, (long) — this many hours later'),
+  ],
+  Instant: [
+    method('now', 'Instant — this exact moment'),
+    method('parse', 'Instant, (String) — read a moment like "2026-11-12T10:00:00Z"'),
+    method('plus', 'Instant, (Duration) — a moment this much later'),
+    method('minus', 'Instant, (Duration) — a moment this much earlier'),
+    method('isBefore', 'boolean, (Instant) — is this earlier?'),
+    method('isAfter', 'boolean, (Instant) — is this later?'),
+    method('toEpochMilli', 'long — milliseconds since 1970'),
+  ],
+  Duration: [
+    method('ofMinutes', 'Duration, (long) — this many minutes'),
+    method('ofHours', 'Duration, (long) — this many hours'),
+    method('ofSeconds', 'Duration, (long) — this many seconds'),
+    method('ofDays', 'Duration, (long) — this many days'),
+    method('between', 'Duration, (start, end) — the time between two moments'),
+    method('toMinutes', 'long — the length in whole minutes'),
+    method('getSeconds', 'long — the length in seconds'),
+  ],
+  Year: [
+    method('now', 'Year — this year'),
+    method('of', 'Year, (int) — the year you name'),
+    method('isLeap', 'boolean — is it a leap year?'),
+    method('getValue', 'int — the year as a number'),
+  ],
+  Float: [
+    method('parseFloat', 'float, (String) — text as a decimal number'),
+    method('valueOf', 'Float, (String) — text as a Float'),
+    { label: 'MAX_VALUE', type: 'constant', detail: 'the largest float', boost: 30 },
+    { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest positive float', boost: 30 },
+  ],
+  Short: [
+    method('parseShort', 'short, (String) — text as a small whole number'),
+    { label: 'MAX_VALUE', type: 'constant', detail: 'the largest short', boost: 30 },
+    { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest short', boost: 30 },
+  ],
+  Byte: [
+    method('parseByte', 'byte, (String) — text as a tiny whole number'),
+    { label: 'MAX_VALUE', type: 'constant', detail: 'the largest byte (127)', boost: 30 },
+    { label: 'MIN_VALUE', type: 'constant', detail: 'the smallest byte (-128)', boost: 30 },
+  ],
 }
 
 export const PYTHON_MEMBERS: Record<string, readonly Completion[]> = {
@@ -721,6 +871,7 @@ export const PYTHON_MEMBERS: Record<string, readonly Completion[]> = {
     method('seek', '(pos) — jump to a position'),
     method('tell', '() — the current position'),
     method('flush', '() — push writes out now'),
+    method('fileno', '() — the file descriptor number (for os.fsync)'),
     method('close', '() — finish with the file'),
   ],
   bytes: [
@@ -783,92 +934,492 @@ export const PYTHON_MEMBERS: Record<string, readonly Completion[]> = {
     { label: 'suffix', type: 'constant', detail: 'the file extension', boost: 30 },
     { label: 'parent', type: 'constant', detail: 'the containing folder', boost: 30 },
   ],
+  // Every exception — what `e.` offers after `except ValueError as e`.
+  BaseException: [
+    { label: 'args', type: 'property', detail: 'the values the exception was raised with', boost: 30 },
+    method('with_traceback', '(tb) — attach a traceback and return the exception'),
+    method('add_note', '(note) — add a line to the error report (3.11+)'),
+  ],
+  // What `@name.` offers inside a class, right after `@property def name`.
+  property: [
+    method('setter', '— decorate the method that assigns this property'),
+    method('getter', '— decorate the method that reads this property'),
+    method('deleter', '— decorate the method that deletes this property'),
+  ],
+  int: [
+    method('bit_length', '() — how many bits the number needs'),
+    method('to_bytes', '(length, byteorder) — the number as bytes'),
+    method('conjugate', '() — the number itself (for complex maths)'),
+  ],
+  float: [
+    method('is_integer', '() — is it a whole number, like 3.0?'),
+    method('as_integer_ratio', '() — the exact fraction, as a pair'),
+    method('hex', '() — the exact value in base 16'),
+  ],
+  StringIO: [
+    method('write', '(text) — add text to the buffer'),
+    method('read', '() — read from the current position'),
+    method('readline', '() — read one line'),
+    method('getvalue', '() — everything written so far, as one str'),
+    method('seek', '(pos) — jump to a position (seek(0) to reread)'),
+    method('tell', '() — the current position'),
+    method('close', '() — finish with the buffer'),
+  ],
+  io: [
+    { label: 'StringIO', type: 'class', detail: '(text="") — a file that lives in memory, as text', boost: 30 },
+    { label: 'BytesIO', type: 'class', detail: '(data=b"") — a file that lives in memory, as bytes', boost: 30 },
+    method('open', '(path, mode) — the same as the built-in open()'),
+  ],
+  csv: [
+    method('reader', '(file, delimiter=",") — read rows as lists of text'),
+    method('writer', '(file, delimiter=",") — write rows of values'),
+    { label: 'DictReader', type: 'class', detail: '(file) — read rows as dicts keyed by the header', boost: 30 },
+    { label: 'DictWriter', type: 'class', detail: '(file, fieldnames) — write dicts as rows', boost: 30 },
+    { label: 'QUOTE_MINIMAL', type: 'constant', detail: 'quote only fields that need it', boost: 30 },
+    { label: 'QUOTE_ALL', type: 'constant', detail: 'quote every field', boost: 30 },
+  ],
+  'csv.writer': [
+    method('writerow', '(row) — write one row (a list of values)'),
+    method('writerows', '(rows) — write many rows at once'),
+  ],
+  'csv.DictWriter': [
+    method('writeheader', '() — write the header row from fieldnames'),
+    method('writerow', '(row) — write one dict as a row'),
+    method('writerows', '(rows) — write many dicts at once'),
+  ],
+  'csv.DictReader': [
+    { label: 'fieldnames', type: 'property', detail: 'the header row, as a list', boost: 30 },
+    { label: 'line_num', type: 'property', detail: 'how many lines have been read', boost: 30 },
+  ],
+  'csv.reader': [
+    { label: 'line_num', type: 'property', detail: 'how many lines have been read', boost: 30 },
+  ],
+  numpy: [
+    method('array', '(values) — an array from a list'),
+    method('arange', '(start, stop, step) — evenly spaced numbers, like range'),
+    method('linspace', '(start, stop, num) — num numbers evenly spaced, both ends included'),
+    method('zeros', '(shape) — an array full of 0'),
+    method('ones', '(shape) — an array full of 1'),
+    method('full', '(shape, value) — an array full of one value'),
+    method('empty', '(shape) — an array with whatever was in memory'),
+    method('eye', '(n) — an identity matrix'),
+    method('zeros_like', '(a) — zeros, the same shape as a'),
+    method('ones_like', '(a) — ones, the same shape as a'),
+    method('reshape', '(a, shape) — the same data in a new shape'),
+    method('concatenate', '((a, b), axis=0) — join arrays end to end'),
+    method('vstack', '((a, b)) — stack arrays as rows'),
+    method('hstack', '((a, b)) — stack arrays side by side'),
+    method('sum', '(a, axis=None) — add everything up'),
+    method('mean', '(a, axis=None) — the average'),
+    method('median', '(a) — the middle value'),
+    method('std', '(a) — standard deviation'),
+    method('var', '(a) — variance'),
+    method('min', '(a) — the smallest value'),
+    method('max', '(a) — the largest value'),
+    method('argmin', '(a) — where the smallest value is'),
+    method('argmax', '(a) — where the largest value is'),
+    method('sort', '(a) — a sorted copy'),
+    method('unique', '(a) — the distinct values, sorted'),
+    method('where', '(cond, x, y) — pick from x where cond is true, else y'),
+    method('sqrt', '(a) — square root of every item'),
+    method('abs', '(a) — absolute value of every item'),
+    method('round', '(a, decimals=0) — round every item'),
+    method('exp', '(a) — e to the power of every item'),
+    method('log', '(a) — natural log of every item'),
+    method('sin', '(a) — sine of every item'),
+    method('cos', '(a) — cosine of every item'),
+    method('dot', '(a, b) — dot / matrix product'),
+    method('transpose', '(a) — swap rows and columns'),
+    method('isnan', '(a) — which items are nan'),
+    method('logical_and', '(a, b) — True where both are true'),
+    method('logical_or', '(a, b) — True where either is true'),
+    method('ravel', '(a) — flatten to one dimension'),
+    method('copy', '(a) — an independent copy'),
+    method('delete', '(a, index) — a copy without these items'),
+    method('append', '(a, values) — a copy with values added at the end'),
+    method('insert', '(a, index, values) — a copy with values inserted'),
+    { label: 'nan', type: 'constant', detail: 'not a number — a missing value', boost: 30 },
+    { label: 'pi', type: 'constant', detail: '3.14159…', boost: 30 },
+    { label: 'inf', type: 'constant', detail: 'infinity', boost: 30 },
+    { label: 'int32', type: 'class', detail: 'a 32-bit whole-number dtype', boost: 30 },
+    { label: 'int64', type: 'class', detail: 'a 64-bit whole-number dtype', boost: 30 },
+    { label: 'float64', type: 'class', detail: 'a 64-bit decimal dtype', boost: 30 },
+    { label: 'uint8', type: 'class', detail: 'an 8-bit 0–255 dtype', boost: 30 },
+    { label: 'ndarray', type: 'class', detail: 'the numpy array type', boost: 30 },
+    { label: 'random', type: 'namespace', detail: 'random numbers: np.random.rand, randint…', boost: 30 },
+  ],
+  ndarray: [
+    { label: 'shape', type: 'property', detail: 'the size of each dimension, as a tuple', boost: 30 },
+    { label: 'ndim', type: 'property', detail: 'how many dimensions', boost: 30 },
+    { label: 'size', type: 'property', detail: 'how many items in total', boost: 30 },
+    { label: 'dtype', type: 'property', detail: 'the type of the items', boost: 30 },
+    { label: 'T', type: 'property', detail: 'the transpose — rows and columns swapped', boost: 30 },
+    method('reshape', '(shape) — the same data in a new shape'),
+    method('sum', '(axis=None) — add everything up'),
+    method('mean', '(axis=None) — the average'),
+    method('std', '() — standard deviation'),
+    method('min', '() — the smallest value'),
+    method('max', '() — the largest value'),
+    method('argmin', '() — where the smallest value is'),
+    method('argmax', '() — where the largest value is'),
+    method('sort', '() — sort in place'),
+    method('flatten', '() — a flat 1-D copy'),
+    method('ravel', '() — a flat 1-D view'),
+    method('astype', '(dtype) — a copy with another item type'),
+    method('copy', '() — an independent copy'),
+    method('view', '() — a new array over the same data'),
+    method('tolist', '() — back to a plain list'),
+    method('round', '(decimals=0) — round every item'),
+    method('cumsum', '() — running totals'),
+    method('fill', '(value) — set every item to this'),
+    method('dot', '(b) — dot / matrix product'),
+  ],
+  pandas: [
+    { label: 'DataFrame', type: 'class', detail: '(data) — a table of rows and named columns', boost: 30 },
+    { label: 'Series', type: 'class', detail: '(data) — one labelled column of values', boost: 30 },
+    method('read_csv', '(path) — load a CSV file into a DataFrame'),
+    method('read_excel', '(path) — load an Excel sheet into a DataFrame'),
+    method('read_json', '(path) — load JSON into a DataFrame'),
+    method('concat', '([a, b]) — join tables end to end'),
+    method('merge', '(left, right, on=) — join two tables on a column'),
+    method('isnull', '(obj) — which values are missing'),
+    method('notnull', '(obj) — which values are present'),
+    method('to_datetime', '(values) — text to dates'),
+    { label: 'NA', type: 'constant', detail: 'a missing value', boost: 30 },
+  ],
+  DataFrame: [
+    method('head', '(n=5) — the first n rows'),
+    method('tail', '(n=5) — the last n rows'),
+    method('info', '() — columns, types and missing counts'),
+    method('describe', '() — count, mean, min, max… per column'),
+    method('dropna', '() — drop rows with missing values'),
+    method('fillna', '(value) — fill in missing values'),
+    method('isnull', '() — True where a value is missing'),
+    method('isna', '() — True where a value is missing'),
+    method('notnull', '() — True where a value is present'),
+    method('drop', '(labels, axis=0) — drop rows or columns'),
+    method('drop_duplicates', '() — drop repeated rows'),
+    method('sort_values', '(by) — sort by a column'),
+    method('groupby', '(by) — group rows by a column'),
+    method('value_counts', '() — how often each row appears'),
+    method('mean', '() — the average of each column'),
+    method('sum', '() — the total of each column'),
+    method('min', '() — the smallest in each column'),
+    method('max', '() — the largest in each column'),
+    method('count', '() — non-missing values per column'),
+    method('apply', '(fn) — run a function over rows or columns'),
+    method('rename', '(columns={}) — rename columns'),
+    method('reset_index', '() — number the rows 0, 1, 2… again'),
+    method('set_index', '(col) — use a column as the row labels'),
+    method('to_csv', '(path, index=False) — save as a CSV file'),
+    method('copy', '() — an independent copy'),
+    method('astype', '(dtype) — convert column types'),
+    { label: 'columns', type: 'property', detail: 'the column names', boost: 30 },
+    { label: 'index', type: 'property', detail: 'the row labels', boost: 30 },
+    { label: 'shape', type: 'property', detail: '(rows, columns)', boost: 30 },
+    { label: 'dtypes', type: 'property', detail: 'the type of each column', boost: 30 },
+    { label: 'values', type: 'property', detail: 'the data as a numpy array', boost: 30 },
+    { label: 'loc', type: 'property', detail: 'pick rows/columns by label: df.loc[row, col]', boost: 30 },
+    { label: 'iloc', type: 'property', detail: 'pick rows/columns by position: df.iloc[0, 1]', boost: 30 },
+  ],
+  Series: [
+    method('head', '(n=5) — the first n values'),
+    method('tail', '(n=5) — the last n values'),
+    method('mean', '() — the average'),
+    method('median', '() — the middle value'),
+    method('sum', '() — the total'),
+    method('min', '() — the smallest value'),
+    method('max', '() — the largest value'),
+    method('std', '() — standard deviation'),
+    method('count', '() — how many values are present'),
+    method('value_counts', '() — how often each value appears'),
+    method('unique', '() — the distinct values'),
+    method('nunique', '() — how many distinct values'),
+    method('isnull', '() — True where a value is missing'),
+    method('dropna', '() — drop missing values'),
+    method('fillna', '(value) — fill in missing values'),
+    method('apply', '(fn) — run a function on every value'),
+    method('map', '(fn_or_dict) — transform every value'),
+    method('sort_values', '() — sorted by value'),
+    method('astype', '(dtype) — convert the value type'),
+    method('tolist', '() — back to a plain list'),
+    method('to_csv', '(path) — save as a CSV file'),
+    { label: 'values', type: 'property', detail: 'the data as a numpy array', boost: 30 },
+    { label: 'index', type: 'property', detail: 'the labels', boost: 30 },
+    { label: 'shape', type: 'property', detail: '(length,)', boost: 30 },
+    { label: 'dtype', type: 'property', detail: 'the type of the values', boost: 30 },
+    { label: 'loc', type: 'property', detail: 'pick values by label', boost: 30 },
+    { label: 'iloc', type: 'property', detail: 'pick values by position', boost: 30 },
+  ],
 }
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/* ----------------------------------------------------- what a type offers */
 
-/** Types you call statically (`List.of`, `Optional.of`, `Math.abs`, `System.out`)
- *  — the class name itself is the receiver, no `new` and no variable to infer. */
-const JAVA_STATIC_HOLDERS = new Set([
-  'Math', 'Arrays', 'Collections', 'List', 'Map', 'Set', 'Optional', 'Collectors', 'Stream', 'IntStream',
-  'Integer', 'Long', 'Double', 'Boolean', 'Character', 'System', 'Objects', 'Comparator', 'Files', 'Paths', 'Path',
-])
-
-function inferJavaType(doc: string, name: string): string | null {
-  if (JAVA_STATIC_HOLDERS.has(name)) return name
-  // `System.out.` / `System.err.` — the receiver name is `out`/`err`, and the
-  // text right before the dot proves which. `doc` is everything up to the dot.
-  if ((name === 'out' || name === 'err') && new RegExp(`\\bSystem\\.${name}$`).test(doc)) return 'PrintStream'
-  const esc = escapeRe(name)
-  // `name = new Type(` — covers `Type name = new Type(…)`, `var name = new Type(…)`
-  // and any later reassignment (the last one wins). Resolves whenever a member
-  // list exists for Type; anything else (a bare `int[]`, an unknown class) falls
-  // through. Generalised from a fixed list so a new member receiver just works.
-  const ctor = new RegExp(`\\b${esc}\\s*=\\s*new\\s+([A-Z][A-Za-z0-9_$]*)\\b`, 'g')
-  let type: string | null = null
-  let m: RegExpExecArray | null
-  while ((m = ctor.exec(doc))) type = m[1]
-  if (type && JAVA_MEMBERS[type]) return type
-  if (new RegExp(`\\bString\\s+${esc}\\s*=`).test(doc)) return 'String'
-  // `Path p = Paths.get(...)` — a Path comes from a factory, not `new`, so infer it
-  // from the declared type.
-  if (new RegExp(`\\bPath\\s+${esc}\\s*=`).test(doc)) return 'Path'
-  return null
+/** Declared interfaces → the table that describes what their values can do. */
+const JAVA_INSTANCE_ALIAS: Record<string, string> = {
+  List: 'ArrayList', Collection: 'ArrayList', Iterable: 'ArrayList', AbstractList: 'ArrayList',
+  Set: 'HashSet', SortedSet: 'TreeSet', NavigableSet: 'TreeSet',
+  Map: 'HashMap', SortedMap: 'TreeMap', NavigableMap: 'TreeMap',
+  Queue: 'LinkedList', Deque: 'ArrayDeque', CharSequence: 'String',
+  Writer: 'FileWriter', Reader: 'FileReader', PrintStream: 'PrintStream',
 }
 
-function inferPythonType(doc: string, name: string): string | null {
-  const esc = escapeRe(name)
-  // An imported module — `import os`, `from datetime import datetime`. The name is
-  // returned whether or not we carry members for it; memberSource falls back when
-  // there is nothing to offer, so an unknown module is harmless.
-  if (new RegExp(`^\\s*(?:import|from)\\s+${esc}\\b`, 'm').test(doc)) return name
-  const re = new RegExp(`\\b${esc}\\s*=\\s*([^\\n]+)`, 'g')
-  let rhs: string | null = null
-  let m: RegExpExecArray | null
-  while ((m = re.exec(doc))) rhs = m[1].trim()
-  if (!rhs) return null
-  if (/^(?:rb|br|b)["']/.test(rhs)) return PYTHON_MEMBERS['bytes'] ? 'bytes' : null
-  if (/^(?:[fr]{1,2})?["']/.test(rhs)) return 'str'
-  if (rhs.startsWith('[')) return 'list'
-  // `(a, b)` is a tuple; `(a + b)` is just a grouped expression — a comma tells them apart.
-  if (rhs.startsWith('(')) return /,/.test(rhs) && PYTHON_MEMBERS['tuple'] ? 'tuple' : null
-  if (rhs.startsWith('{')) {
-    if (rhs === '{}') return 'dict'
-    const close = rhs.lastIndexOf('}')
-    const body = close === -1 ? rhs.slice(1) : rhs.slice(1, close)
-    return /:/.test(body) ? 'dict' : 'set'
+/** Type parameter names per generic class, so `ArrayList<String>.get` returns a String. */
+const JAVA_TYPE_PARAMS: Record<string, readonly string[]> = {
+  ArrayList: ['E'], LinkedList: ['E'], Vector: ['E'], Stack: ['E'], HashSet: ['E'], TreeSet: ['E'],
+  LinkedHashSet: ['E'], ArrayDeque: ['E'], PriorityQueue: ['E'], Iterator: ['E'], List: ['E'],
+  Set: ['E'], Queue: ['E'], Deque: ['E'], Collection: ['E'], Iterable: ['E'],
+  HashMap: ['K', 'V'], TreeMap: ['K', 'V'], LinkedHashMap: ['K', 'V'], Map: ['K', 'V'],
+  Optional: ['T'], Stream: ['T'], Comparator: ['T'],
+}
+
+const isThrowable = (base: string) => /(?:Exception|Error|Throwable)$/.test(base)
+
+/** The return type a JDK member's `detail` advertises — `E, (int) — …` → `E`. */
+function detailType(detail: string | undefined): string | null {
+  if (!detail) return null
+  const head = detail.split(' — ')[0]
+  const first = head.trim().startsWith('(') ? '' : splitTopLevel(head)[0] ?? ''
+  const t = first.replace(/^throws\b.*$/, '').trim()
+  return /^[A-Za-z_$][\w$.]*(?:<.*>)?(?:\[\])*$/.test(t) ? t : null
+}
+
+/** `E` → `String` for `ArrayList<String>`; a raw type's parameters become Object. */
+function substitute(t: string, owner: string): string {
+  const params = JAVA_TYPE_PARAMS[baseOf(owner)]
+  if (!params) return t
+  const args = typeArgs(owner)
+  let out = t
+  params.forEach((p, i) => {
+    out = out.replace(new RegExp(`\\b${p}\\b`, 'g'), args[i] ?? 'Object')
+  })
+  return out
+}
+
+const memberCompletion = (m: MemberInfo): Completion => ({
+  label: m.name,
+  type: m.kind === 'method' ? 'method' : m.kind === 'constant' ? 'constant' : 'property',
+  detail:
+    m.kind === 'method'
+      ? `${m.type ?? ''}${m.params ? `${m.type ? ', ' : ''}(${m.params})` : m.type ? '' : '()'}`
+      : (m.type ?? ''),
+  boost: 34,
+})
+
+/** Members of a user class, inherited ones included (nearest definition wins). */
+function userMembers(
+  lang: LangId,
+  cls: ClassInfo,
+  isStatic: boolean,
+  index: TypeIndex,
+  seen = new Set<string>(),
+): { own: Completion[]; jdkSupers: string[] } {
+  if (seen.has(cls.name)) return { own: [], jdkSupers: [] }
+  seen.add(cls.name)
+  const own: Completion[] = []
+  const pick = isStatic && lang === 'java' ? cls.members.filter((m) => m.isStatic) : cls.members
+  // Static access to a Java class with nothing static: offer everything rather than nothing.
+  for (const m of pick.length ? pick : cls.members) own.push(memberCompletion(m))
+  const jdkSupers: string[] = []
+  for (const s of cls.supers) {
+    const parent = index.get(s)
+    if (parent) {
+      const sub = userMembers(lang, parent, isStatic, index, seen)
+      own.push(...sub.own.map((c) => ({ ...c, boost: 32 })))
+      jdkSupers.push(...sub.jdkSupers)
+    } else jdkSupers.push(s)
   }
-  if (/^input\s*\(/.test(rhs)) return 'str' // `name = input(...)` — the classic first line
-  if (/^open\s*\(/.test(rhs)) return PYTHON_MEMBERS['file'] ? 'file' : null
-  if (/^re\.(?:match|search|fullmatch)\s*\(/.test(rhs)) return PYTHON_MEMBERS['Match'] ? 'Match' : null
-  if (/^datetime(?:\.\w+)?\s*\(/.test(rhs)) return PYTHON_MEMBERS['datetime'] ? 'datetime' : null
-  if (/^date(?:\.\w+)?\s*\(/.test(rhs)) return PYTHON_MEMBERS['date'] ? 'date' : null
-  // `x = Thing(...)` — a constructor / factory we carry members for (Counter,
-  // deque, Path, str, list, set, …).
-  const call = /^([A-Za-z_][\w]*)\s*\(/.exec(rhs)
-  if (call && PYTHON_MEMBERS[call[1]]) return call[1]
-  return null
+  return { own, jdkSupers }
 }
 
-/** One-slot memo: the text before a given dot does not change while the member name after it is being typed. */
-let memoKey = ''
-let memoResult: string | null = null
-
-function resolveReceiverType(lang: LangId, state: EditorState, name: string, dotPos: number): string | null {
-  const key = `${lang}:${dotPos}:${name}`
-  if (key === memoKey) return memoResult
-  const doc = state.sliceDoc(0, dotPos)
-  memoResult = lang === 'java' ? inferJavaType(doc, name) : inferPythonType(doc, name)
-  memoKey = key
-  return memoResult
+function dedupe(list: readonly Completion[]): Completion[] {
+  const seen = new Set<string>()
+  return list.filter((c) => !seen.has(c.label) && (seen.add(c.label), true))
 }
 
-const RECEIVER = /([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)?$/
-/** Identifiers longer than this cannot be receivers worth resolving; bounds the look-back slice. */
-const LOOKBACK = 80
+/** The JDK table for a value (or class) of this type, before Object's members are added. */
+function jdkTable(base: string, isStatic: boolean): readonly Completion[] | undefined {
+  if (isStatic) return JAVA_MEMBERS[base]
+  return JAVA_MEMBERS[JAVA_INSTANCE_ALIAS[base] ?? base] ?? (isThrowable(base) ? JAVA_MEMBERS.Throwable : undefined)
+}
+
+/** Everything `x.` should offer for this resolved type, or null when there is no knowing. */
+export function membersFor(lang: LangId, r: Resolved, index: TypeIndex, extra?: Record<string, readonly Completion[]>): Completion[] | null {
+  if (lang === 'java') {
+    const t = r.type.replace(/\s+/g, '')
+    if (/\[\]$/.test(t)) return [...JAVA_MEMBERS['[]'], ...JAVA_MEMBERS.Object]
+    if (JAVA_PRIMS.has(t)) return null
+    const base = baseOf(t)
+    const user = index.get(base)
+    if (user) {
+      const { own, jdkSupers } = userMembers(lang, user, r.isStatic, index)
+      const inherited: Completion[] = []
+      for (const s of jdkSupers) inherited.push(...(jdkTable(s, false) ?? []))
+      if (user.kind === 'enum') {
+        if (r.isStatic) {
+          own.push(
+            { label: 'values', type: 'method', detail: `${base}[] — every constant, in order`, boost: 33 },
+            { label: 'valueOf', type: 'method', detail: `${base}, (String) — the constant with this name`, boost: 33 },
+          )
+        } else inherited.push(...JAVA_MEMBERS.Enum)
+      }
+      if (!r.isStatic) inherited.push(...JAVA_MEMBERS.Object)
+      return dedupe([...own, ...inherited])
+    }
+    const table = jdkTable(base, r.isStatic)
+    if (!table) return r.isStatic ? null : null
+    return r.isStatic ? [...table] : dedupe([...table, ...JAVA_MEMBERS.Object])
+  }
+  // Python
+  const t = r.type
+  const base = t.replace(/\[.*$/, '').replace(/\(\)$/, '')
+  const user = index.get(base)
+  if (user) {
+    const { own } = userMembers(lang, user, r.isStatic, index)
+    return dedupe(own)
+  }
+  const table = { ...(extra ?? {}), ...PYTHON_MEMBERS }
+  if (table[t]) return [...table[t]]
+  if (table[base]) return [...table[base]]
+  return /(?:Error|Exception|Warning|Interrupt|Exit|StopIteration)$/.test(base) ? [...PYTHON_MEMBERS.BaseException] : null
+}
+
+/* --------------------------------------------------- return types, for chains */
+
+/** Python method/function results the resolver follows through a chain. */
+const PY_RETURNS: Record<string, string> = {
+  ...Object.fromEntries(
+    'upper lower strip lstrip rstrip title capitalize casefold swapcase replace format center ljust rjust zfill removeprefix removesuffix expandtabs join'
+      .split(' ')
+      .map((m) => [`str.${m}`, 'str']),
+  ),
+  'str.split': 'list[str]', 'str.rsplit': 'list[str]', 'str.splitlines': 'list[str]', 'str.partition': 'tuple',
+  'str.find': 'int', 'str.index': 'int', 'str.count': 'int', 'str.encode': 'bytes',
+  'file.read': 'str', 'file.readline': 'str', 'file.readlines': 'list[str]',
+  'StringIO.read': 'str', 'StringIO.getvalue': 'str', 'StringIO.readline': 'str',
+  'list.copy': 'list', 'list.count': 'int', 'list.index': 'int',
+  'dict.keys': 'list', 'dict.values': 'list', 'dict.items': 'list', 'dict.copy': 'dict',
+  'set.union': 'set', 'set.intersection': 'set', 'set.difference': 'set', 'set.symmetric_difference': 'set', 'set.copy': 'set',
+  'bytes.decode': 'str',
+  're.match': 'Match', 're.search': 'Match', 're.fullmatch': 'Match',
+  'datetime.now': 'datetime', 'datetime.today': 'datetime', 'datetime.strptime': 'datetime', 'date.today': 'date',
+  'Match.group': 'str',
+  'csv.writer': 'csv.writer', 'csv.reader': 'csv.reader', 'csv.DictReader': 'csv.DictReader', 'csv.DictWriter': 'csv.DictWriter',
+  'io.StringIO': 'StringIO',
+  'numpy.array': 'ndarray', 'numpy.arange': 'ndarray', 'numpy.linspace': 'ndarray', 'numpy.zeros': 'ndarray',
+  'numpy.ones': 'ndarray', 'numpy.full': 'ndarray', 'numpy.empty': 'ndarray', 'numpy.eye': 'ndarray',
+  'numpy.zeros_like': 'ndarray', 'numpy.ones_like': 'ndarray', 'numpy.reshape': 'ndarray', 'numpy.concatenate': 'ndarray',
+  'numpy.vstack': 'ndarray', 'numpy.hstack': 'ndarray', 'numpy.sort': 'ndarray', 'numpy.unique': 'ndarray',
+  'numpy.where': 'ndarray', 'numpy.sqrt': 'ndarray', 'numpy.abs': 'ndarray', 'numpy.transpose': 'ndarray', 'numpy.copy': 'ndarray',
+  'ndarray.reshape': 'ndarray', 'ndarray.flatten': 'ndarray', 'ndarray.ravel': 'ndarray', 'ndarray.astype': 'ndarray',
+  'ndarray.copy': 'ndarray', 'ndarray.view': 'ndarray', 'ndarray.T': 'ndarray', 'ndarray.round': 'ndarray', 'ndarray.cumsum': 'ndarray',
+  'ndarray.tolist': 'list',
+  'pandas.DataFrame': 'DataFrame', 'pandas.read_csv': 'DataFrame', 'pandas.read_excel': 'DataFrame', 'pandas.read_json': 'DataFrame',
+  'pandas.concat': 'DataFrame', 'pandas.merge': 'DataFrame', 'pandas.Series': 'Series',
+  ...Object.fromEntries(
+    'head tail dropna fillna isnull isna notnull drop drop_duplicates sort_values rename reset_index set_index copy astype'
+      .split(' ')
+      .map((m) => [`DataFrame.${m}`, 'DataFrame']),
+  ),
+  'DataFrame.describe': 'DataFrame', 'DataFrame.mean': 'Series', 'DataFrame.sum': 'Series', 'DataFrame.count': 'Series',
+  'DataFrame.value_counts': 'Series',
+  ...Object.fromEntries(
+    'head tail dropna fillna isnull sort_values astype apply map value_counts unique'.split(' ').map((m) => [`Series.${m}`, 'Series']),
+  ),
+  'Series.tolist': 'list',
+}
+
+/** Builtins and imported classes whose call result has a known type. */
+const PY_CALLS: Record<string, string> = {
+  input: 'str', str: 'str', repr: 'str', chr: 'str', format: 'str', ascii: 'str', hex: 'str', bin: 'str', oct: 'str',
+  int: 'int', len: 'int', ord: 'int', hash: 'int', id: 'int', float: 'float',
+  list: 'list', sorted: 'list', dict: 'dict', set: 'set', frozenset: 'set', tuple: 'tuple', range: 'range',
+  open: 'file', bytes: 'bytes', bytearray: 'bytes',
+  Counter: 'Counter', deque: 'deque', defaultdict: 'dict', OrderedDict: 'dict', Path: 'Path', StringIO: 'StringIO',
+  datetime: 'datetime', date: 'date',
+  'io.StringIO': 'StringIO', 'collections.Counter': 'Counter', 'collections.deque': 'deque', 'pathlib.Path': 'Path',
+  'numpy.array': 'ndarray', 'pandas.DataFrame': 'DataFrame', 'pandas.Series': 'Series',
+}
+
+const PY_CLASS_ATTRS = new Set(['csv.DictReader', 'csv.DictWriter', 'pandas.DataFrame', 'pandas.Series', 'io.StringIO'])
+
+function makeMemberTypes(extra?: Record<string, readonly Completion[]>): MemberTypes {
+  const pyTables = { ...(extra ?? {}), ...PYTHON_MEMBERS }
+  return {
+    isKnownType(lang, name, index) {
+      if (index.has(name)) return true
+      if (lang === 'java') return !!JAVA_MEMBERS[name] || !!JAVA_FQCN[name] || isThrowable(name)
+      return !!pyTables[name] || name in PY_CALLS
+    },
+    callResult(lang, name) {
+      return lang === 'python' ? (PY_CALLS[name] ?? null) : null
+    },
+    memberType(lang, cur, member, call, index) {
+      if (lang === 'java') {
+        const t = cur.type.replace(/\s+/g, '')
+        if (/\[\]$/.test(t)) return member === 'length' ? 'int' : member === 'clone' ? t : null
+        const base = baseOf(t)
+        const user = index.get(base)
+        if (user) {
+          const found = findUserMember(user, member, call, index, new Set())
+          if (found !== undefined) return found
+          if (user.kind === 'enum' && call && member === 'values') return `${base}[]`
+          if (user.kind === 'enum' && call && member === 'valueOf') return base
+        }
+        const tables = user ? [...user.supers.map((s) => jdkTable(s, false)), JAVA_MEMBERS.Object] : [jdkTable(base, cur.isStatic), JAVA_MEMBERS.Object]
+        for (const table of tables) {
+          const hit = table?.find((c) => c.label === member)
+          if (hit) {
+            const rt = detailType(hit.detail)
+            return rt ? substitute(rt, t) : null
+          }
+        }
+        return null
+      }
+      // Python
+      const base = cur.type.replace(/\[.*$/, '').replace(/\(\)$/, '')
+      const user = index.get(base)
+      if (user) {
+        const found = findUserMember(user, member, call, index, new Set())
+        return found === undefined ? null : found ? pyNormalize(found) : null
+      }
+      const qual = `${cur.type}.${member}`
+      if (!call && PY_CLASS_ATTRS.has(qual)) return `static:${qual}`
+      if (cur.isStatic && call && PY_CALLS[qual]) return PY_CALLS[qual]
+      return PY_RETURNS[qual] ?? PY_RETURNS[`${base}.${member}`] ?? null
+    },
+  }
+}
+
+/** `Foo()` (a call recorded by the scanner) → `Foo`; annotations stay as written. */
+const pyNormalize = (t: string) => t.replace(/\(\)$/, '')
+
+/** A member's declared type, searching parents; undefined when the class has no such member. */
+function findUserMember(cls: ClassInfo, name: string, call: boolean, index: TypeIndex, seen: Set<string>): string | null | undefined {
+  if (seen.has(cls.name)) return undefined
+  seen.add(cls.name)
+  const own = cls.members.find((m) => m.name === name && (call ? m.kind === 'method' : m.kind !== 'method'))
+  if (own) return own.type
+  for (const s of cls.supers) {
+    const parent = index.get(s)
+    if (parent) {
+      const r = findUserMember(parent, name, call, index, seen)
+      if (r !== undefined) return r
+    } else {
+      const hit = jdkTable(s, false)?.find((c) => c.label === name)
+      if (hit) return detailType(hit.detail)
+    }
+  }
+  return undefined
+}
+
+/* ------------------------------------------------------------- the context */
+
+/** How far back a receiver expression may reach; a longer one is not worth resolving. */
+const LOOKBACK = 2000
 
 export interface Receiver {
-  /** The identifier before the dot — the thing whose members we want. */
+  /** The receiver expression's text — `sc.next()`, `arr`, `this`. */
   name: string
   /** What has been typed after the dot so far. */
   partial: string
@@ -879,23 +1430,29 @@ export interface Receiver {
 }
 
 /**
- * Is the caret sitting right after `receiver.`? Returns the pieces if so, else
- * `null`. Import / package lines are excluded — `import java.util.` is a path,
- * not a member access, and belongs to the import-statement source. Shared so
- * the other completion sources can step aside and leave a `.` context to the
- * member source alone (no `sout` or `class` after a dot).
+ * Is the caret sitting right after `receiver.`? The receiver may be any
+ * expression — a name, a call, an index, a literal, a parenthesised cast — so
+ * `sc.next().` and `arr[0].` count, and `3.` (a decimal point) does not.
+ * Import / package lines are excluded: `import java.util.` is a path, not a
+ * member access. Shared so the other sources step aside in a `.` context (no
+ * `sout` or `class` after a dot).
  */
 export function memberContext(state: EditorState, pos: number): Receiver | null {
   const line = state.doc.lineAt(pos)
-  if (/^\s*(?:import|from|package)\b/.test(state.sliceDoc(line.from, pos))) return null
-  const text = state.sliceDoc(Math.max(0, pos - LOOKBACK), pos)
-  const m = RECEIVER.exec(text)
-  if (!m) return null
-  const partial = m[2] ?? ''
-  return { name: m[1], partial, from: pos - partial.length, dotPos: pos - partial.length - 1 }
+  const lineBefore = state.sliceDoc(line.from, pos)
+  if (/^\s*(?:import|from|package)\b/.test(lineBefore)) return null
+  const start = Math.max(0, pos - LOOKBACK)
+  const text = state.sliceDoc(start, pos)
+  const pm = /([A-Za-z_$][\w$]*)?$/.exec(text)!
+  const partial = pm[1] ?? ''
+  const dot = text.length - partial.length - 1
+  if (dot < 0 || text[dot] !== '.') return null
+  const chain = parseChain(text, dot)
+  if (!chain) return null
+  return { name: text.slice(chain.from, dot), partial, from: pos - partial.length, dotPos: start + dot }
 }
 
-/* --------------------------------------------- rank a member list by what fits */
+/* ----------------------------------------------------------------- ranking */
 
 /** A rough "what type is wanted right where this call sits" — enough to float the
  *  obvious member to the top, never a real type checker. Java only. */
@@ -904,7 +1461,7 @@ type Expected = 'int' | 'double' | 'String' | 'boolean' | 'char' | null
 /** The return type a member advertises: the leading token of its `detail`, before
  *  the first comma or em dash. `null` when it does not lead with one (Python
  *  members, constants, generics like `Set<Map.Entry<…>>`). */
-function returnType(detail: string | undefined): string | null {
+export function returnType(detail: string | undefined): string | null {
   if (!detail) return null
   const tok = detail.split('—')[0].split(',')[0].trim().replace(/<.*>$/, '')
   return /^[A-Za-z_$][\w$]*$/.test(tok) ? tok : null
@@ -950,8 +1507,13 @@ function rankByExpected(members: readonly Completion[], expected: Expected): Com
 }
 
 /** When the receiver's type is a mystery, this stands in — plain identifiers from
- *  the file, so a `.` after an unknown variable still offers *something* useful. */
+ *  the file, so a `.` after an unknown value still offers *something* useful. */
 export type MemberFallback = (ctx: CompletionContext) => CompletionResult | null
+
+/** One-slot memo: the text before a given dot does not change while the member name after it is typed. */
+let memoKey: unknown = null
+let memoDot = -1
+let memoResult: { members: Completion[] | null; exprFrom: number } | null = null
 
 export function memberSource(
   lang: LangId,
@@ -961,19 +1523,24 @@ export function memberSource(
    *  the hand-written table wins over a derived one of the same name. */
   extra?: Record<string, readonly Completion[]>,
 ): CompletionSource {
-  // Wrap each member once so accepting it records the use (usage.ts); the
-  // per-query usage boost is added below, after expected-type ranking.
-  const table = lang === 'java' ? JAVA_MEMBERS : { ...(extra ?? {}), ...PYTHON_MEMBERS }
-  const wrapped: Record<string, readonly Completion[]> = {}
-  for (const key in table) wrapped[key] = table[key].map((m) => recordable(lang, m))
+  const clang = lang === 'java' ? 'java' : 'python'
+  const types = makeMemberTypes(extra)
   return (ctx: CompletionContext): CompletionResult | null => {
     const rc = memberContext(ctx.state, ctx.pos)
     if (!rc) return null
-    const typeKey = resolveReceiverType(lang, ctx.state, rc.name, rc.dotPos)
-    const members = typeKey ? wrapped[typeKey] : undefined
+    const key = `${projectRevision()}|${ctx.state.doc.sliceString(0, rc.from)}|${ctx.state.doc.sliceString(ctx.pos)}`
+    if (memoKey !== key || memoDot !== rc.dotPos) {
+      const doc = ctx.state.doc.sliceString(0)
+      const res = resolveReceiver(clang, doc, rc.dotPos, types)
+      const index = typeIndexFor(clang, doc)
+      const members = res?.resolved ? membersFor(lang, res.resolved, index, extra) : null
+      memoKey = key
+      memoDot = rc.dotPos
+      memoResult = { members: members?.length ? members.map((m) => recordable(lang, m)) : null, exprFrom: res?.from ?? rc.dotPos }
+    }
+    const { members, exprFrom } = memoResult!
     if (!members) return fallback ? fallback(ctx) : null
-    const options =
-      lang === 'java' ? rankByExpected(members, expectedTypeBefore(ctx.state, rc.dotPos - rc.name.length)) : [...members]
+    const options = lang === 'java' ? rankByExpected(members, expectedTypeBefore(ctx.state, exprFrom)) : [...members]
     return { from: rc.from, options: withUsageBoost(lang, options), validFor: /^[\w$]*$/ }
   }
 }

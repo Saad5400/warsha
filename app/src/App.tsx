@@ -24,7 +24,8 @@ import { installViewport } from './ui/viewport'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
-import { documentedWordAt, explainAt, setProjectDocsSource } from './editor/hoverDocs'
+import { documentedWordAt, explainAt } from './editor/hoverDocs'
+import { setProjectSource } from './editor/projectSource'
 import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
 import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
@@ -323,7 +324,7 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   // Module-level source, not a prop — the editor is a singleton mount; `revision` keys its lazy re-scan cache.
   useEffect(() => {
-    setProjectDocsSource(() => project.sourceFiles(), revision)
+    setProjectSource(() => project.sourceFiles(), revision)
   }, [project, revision])
 
   const runner = useRunner(project, buffer, entryPath)
