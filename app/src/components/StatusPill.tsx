@@ -30,7 +30,7 @@ const BAR =
   'data-[state=preparing]:bg-statusbar-remote data-[state=preparing]:text-white ' +
   'data-[state=running]:bg-statusbar-remote data-[state=running]:text-white ' +
   // Waiting is the student's turn, not the program's — the input's own --info, so it can't
-  // be mistaken for the green "still working" block at a glance (10.2:1 on the soft fill).
+  // be mistaken for the green "still working" block at a glance (7.7:1 on the soft fill).
   'data-[state=waiting]:bg-info-soft data-[state=waiting]:text-info ' +
   'data-[state=failed]:bg-danger-fill data-[state=failed]:text-white'
 

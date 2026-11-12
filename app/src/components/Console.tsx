@@ -16,7 +16,6 @@ import { useAfter } from '../ui/useAfter'
 import { ProgressBlock } from './ProgressBlock'
 import { Button } from './ui/Button'
 import { IconChevronDown, IconStop } from './ui/Icons'
-import { useDebugState } from '../debug/store'
 import { Menu, type MenuAnchor } from './ui/Menu'
 import { COPY } from '../copy'
 
@@ -26,6 +25,9 @@ export interface ConsoleProps {
   progress: LoadProgress | null
   /** The running language's name ("Python"), for the progress headline; null where there is none to give. */
   language?: string | null
+  /** Watch for a program gone quiet (App decides: a console program running — not a live
+   *  web page, whose run never ends, nor one parked on a breakpoint). */
+  watchSilence?: boolean
   /** A run that could not start (blocked download, missing isolation, dead worker) —
    *  rendered as a block with its own button, not a red line a scrolling transcript would bury. */
   failure?: RunFailure | null
@@ -100,6 +102,7 @@ export function Console({
   status,
   progress,
   language = null,
+  watchSilence = false,
   failure = null,
   onRetry,
   onDismissFailure,
@@ -350,8 +353,6 @@ export function Console({
   // not sent one yet. Never the engine's own wording (see ProgressBlock).
   const shownProgress = progress ?? (awaitingReport ? STARTING : null)
   const empty = lines.length === 0 && !shownProgress && !live
-  // On a breakpoint the program is parked on purpose; silence there means nothing.
-  const paused = useDebugState().phase === 'paused'
 
   // The input joins the last line if it's still open (an unterminated print/input prompt);
   // otherwise it starts a fresh `› ` line, matching what `buffer.echo()` will do next.
@@ -434,7 +435,7 @@ export function Console({
             />
           ) : null}
 
-          {status === 'running' && !progress && !paused && onStop ? (
+          {watchSilence && !progress && onStop ? (
             <QuietNote
               activity={snapshot}
               onStop={onStop}

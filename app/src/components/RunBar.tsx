@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RunStatus } from '../hooks/useRunner'
 import type { LoadProgress } from '../runtime/types'
-import { useDebugState } from '../debug/store'
 import { SWEEP } from './ProgressBlock'
 import { activeBuffer } from '../console/buffer'
 import { Button, IconButton } from './ui/Button'
@@ -51,6 +50,9 @@ export interface RunBarProps {
   exitCode: number | null
   progress?: LoadProgress | null
   durationMs?: number | null
+  /** Something is working right now (App decides: loading, a program or a notebook cell
+   *  running — not waiting for input, parked on a breakpoint, or a live web page). */
+  working?: boolean
   /** Entry-point candidates; the picker only appears when there are 2+. */
   candidates: string[]
   entryPath: string | null
@@ -81,10 +83,6 @@ export function RunBar(props: RunBarProps) {
   const entry = resolveEntry(entryPath, candidates)
   // Copy/Clear belong to the Console face only — a web Preview has no transcript on screen.
   const showTranscriptActions = consoleOpen && (!previewActive || view === 'console')
-  // Something is working right now: the language loading, or the program running. Not
-  // while it waits for input (that is the student's turn) or sits on a breakpoint.
-  const paused = useDebugState().phase === 'paused'
-  const working = (status === 'preparing' || status === 'running') && !paused
 
   // A single candidate renders as a label, not a picker — a select with one option is a lie.
   // min-w-[3.5rem] floor: without it the fixed-width icon buttons squeezed the label down to "m…".
@@ -149,7 +147,7 @@ export function RunBar(props: RunBarProps) {
           something is working. It is on the header, not in the transcript, so it shows with
           the console collapsed too, and never reads as program output. A sweep, not a
           number: what a running program will do next is not something Warsha can count. */}
-      {working ? (
+      {props.working ? (
         <span aria-hidden="true" className="run-activity pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden">
           {/* Green, the status bar's "working" colour — the white accent here read as one more tab underline. */}
           <span className={'block h-full bg-success ' + SWEEP} />

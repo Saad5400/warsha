@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '../fs/project'
-import { entryCandidates, runtimeFor } from '../runtime'
+import { entryCandidates, langForPath, languageName, runtimeFor } from '../runtime'
 import { normalizeProgress, type LoadProgress, type RunSession, type Runtime } from '../runtime/types'
 import type { ConsoleBuffer } from '../console/buffer'
 import { afterViewportSettles } from '../ui/viewport'
 import { COPY } from '../copy'
 import { langOfEntry, track } from '../analytics'
 import { debugStore } from '../debug/store'
-import { createStallWatchdog, type StallWatchdog } from './stallWatchdog'
+import { createStallWatchdog, type StallWatchdog } from '../runtime/stallWatchdog'
 
 /**
  * Run status. Drives the single Run/Stop control and the status pill, and is
@@ -37,6 +37,8 @@ export interface RunnerState {
   failure: RunFailure | null
   /** How long the last program ran, from its start (after loading) to its exit; null while running or if it never started. */
   durationMs: number | null
+  /** The file the current (or last) run started — not the picker's selection, which can change mid-run. */
+  entry: string | null
   /** The `kind: 'preview'` run's document, for the shell's iframe; null for console runs and between runs. `console.log` still goes through stdout, unaffected. */
   previewDoc: string | null
 }
@@ -77,6 +79,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     busy: false,
     failure: null,
     durationMs: null,
+    entry: null,
     previewDoc: null,
   })
 
@@ -133,7 +136,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       if (note) buffer.line(note, failure ? 'err' : 'meta')
       // Must read true immediately — no paced reveal owing lines under an error already on screen.
       buffer.catchUp()
-      setState({ status, exitCode: null, progress: null, busy: false, failure, durationMs: null, previewDoc: null })
+      setState((s) => ({ status, exitCode: null, progress: null, busy: false, failure, durationMs: null, entry: s.entry, previewDoc: null }))
     },
     [buffer],
   )
@@ -168,9 +171,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     [state.busy, deliverStdin],
   )
 
-  const stop = useCallback(() => {
+  /** `force` skips the swap guard, which is for a thumb's double tap on the control that
+   *  just turned into Stop — never for the app's own stops (a project switch right after
+   *  Run used to leave the old project's program running). */
+  const halt = useCallback((force: boolean) => {
     if (!state.busy) return
-    if (Date.now() - swapAt.current < SWAP_GUARD_MS) return
+    if (!force && Date.now() - swapAt.current < SWAP_GUARD_MS) return
     clearTimers()
     awaiting.current = false
     typedAhead.current = []
@@ -199,6 +205,10 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     // Killed during engine load: invalidate so nothing lands later.
     abandonRun(null, COPY.runStopped, 'stopped')
   }, [state.busy, abandonRun, buffer])
+  /** The Stop control (tap-guarded). */
+  const stop = useCallback(() => halt(false), [halt])
+  /** The app's own stop: a project switch, a shared link landing, a debug restart. */
+  const forceStop = useCallback(() => halt(true), [halt])
 
   /** `debug: true` runs under the debugger when the entry's engine supports it (else a plain run). */
   const run = useCallback(async (opts?: { debug?: boolean }) => {
@@ -220,13 +230,13 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     const entry = entryPath && candidates.includes(entryPath) ? entryPath : candidates[0]
     if (!entry) {
       buffer.line(COPY.noEntry, 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, previewDoc: null })
+      setState((s) => ({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, entry: s.entry, previewDoc: null }))
       return
     }
     const runtime = runtimeFor(entry)
     if (!runtime) {
       buffer.line(COPY.cannotRun(entry), 'err')
-      setState({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, previewDoc: null })
+      setState((s) => ({ status: 'failed', exitCode: null, progress: null, busy: false, failure: null, durationMs: null, entry: s.entry, previewDoc: null }))
       return
     }
 
@@ -259,7 +269,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     buffer.clear()
     debugStore.begin(debugging)
     if (!savedCleanly) buffer.line(COPY.runUnsaved, 'err')
-    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, durationMs: null, previewDoc: null })
+    setState({ status: 'preparing', exitCode: null, progress: null, busy: true, failure: null, durationMs: null, entry, previewDoc: null })
 
     // Loading speaks only through ProgressBlock (single progress voice) — nothing
     // else lands in the transcript while booting; the stall watchdog is the only
@@ -410,7 +420,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
           // The exit code itself is not sent — a non-zero code is a student's
           // own bug, and how it failed is their business. Only that it did.
           track('run_finished', { lang, result: code === null ? 'stopped' : code === 0 ? 'ok' : 'error' })
-          setState({
+          setState((s) => ({
+            entry: s.entry,
             status: code === null ? 'stopped' : code === 0 ? 'ok' : 'failed',
             exitCode: code,
             progress: null,
@@ -418,7 +429,7 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
             failure: null,
             durationMs: Date.now() - programStart.current,
             previewDoc: null,
-          })
+          }))
         },
       }, debugging ? { debug: { breakpoints: debugStore.enabledBreakpoints() } } : undefined)
 
@@ -443,22 +454,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
   /** Dismiss the failure block without starting a run. */
   const clearFailure = useCallback(() => setState((s) => (s.failure ? { ...s, failure: null } : s)), [])
 
-  return { ...state, run, stop, submitStdin, bindStdinFocus, clearFailure }
-}
-
-/** The language's own name ("Python", "C#"), or null when the entry is not one (a web page). */
-export function languageName(entryPath: string): string | null {
-  if (entryPath.endsWith('.java')) return 'Java'
-  if (entryPath.endsWith('.py')) return 'Python'
-  if (entryPath.endsWith('.cs')) return 'C#'
-  if (entryPath.endsWith('.c')) return 'C'
-  if (/\.(tsx?|mts|cts)$/i.test(entryPath)) return 'TypeScript'
-  if (/\.(m?js|cjs|jsx)$/i.test(entryPath)) return 'JavaScript'
-  return null
+  return { ...state, run, stop, forceStop, submitStdin, bindStdinFocus, clearFailure }
 }
 
 /** The language name, for a sentence a student reads in a failure message. */
 function langName(entryPath: string): string {
-  if (/\.(html?|css)$/i.test(entryPath)) return 'the web preview'
+  if (langForPath(entryPath) === 'web') return 'the web preview'
   return languageName(entryPath) ?? 'the language'
 }

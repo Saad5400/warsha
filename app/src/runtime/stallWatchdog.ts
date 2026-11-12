@@ -1,4 +1,4 @@
-import type { LoadProgress } from '../runtime/types'
+import type { LoadProgress } from './types'
 
 /**
  * Notices a language download or boot that has stopped moving. A blackholed
@@ -24,20 +24,26 @@ import type { LoadProgress } from '../runtime/types'
  *      throttled or frozen, then run late in a burst when it comes back, ahead of
  *      the progress messages queued meanwhile. Coming back restarts the window
  *      instead of reporting a stall the student never saw.
+ *   7. Machine asleep (a laptop lid closed mid-download): some systems keep
+ *      counting timers through sleep, so the window would end the moment it
+ *      wakes. A heartbeat that could not run while asleep tells; the window restarts.
  */
 
-/** Generous: Pyodide is ~11 MB on slow wifi. The window restarts on every report, so only a dead connection trips it. */
-export const DOWNLOAD_STALL_MS = 45_000
-
-/** Byteless phases report once and then work. A slow phone takes about twice as long as a laptop, so this is several times the worst case. */
-export const BUSY_STALL_MS = 180_000
+/**
+ * The two budgets, mutable for tests (as notebook/session.ts's INTERRUPT_LIMITS).
+ * downloadMs: generous (Pyodide is ~11 MB on slow wifi), and restarted by every
+ *   report, so only a dead connection trips it.
+ * busyMs: byteless phases report once and then work; a slow phone takes about twice
+ *   as long as a laptop, so this is several times the worst case.
+ */
+export const STALL_LIMITS = { downloadMs: 45_000, busyMs: 180_000 }
 
 export type StallKind = 'download' | 'busy'
 
 /** What a silence this long means, given the last report (null = none yet). */
 export function stallBudget(last: LoadProgress | null): { kind: StallKind; ms: number } {
-  if (!last || last.phase === 'download') return { kind: 'download', ms: DOWNLOAD_STALL_MS }
-  return { kind: 'busy', ms: BUSY_STALL_MS }
+  if (!last || last.phase === 'download') return { kind: 'download', ms: STALL_LIMITS.downloadMs }
+  return { kind: 'busy', ms: STALL_LIMITS.busyMs }
 }
 
 export interface StallWatchdog {
@@ -47,36 +53,76 @@ export interface StallWatchdog {
   stop(): void
 }
 
+/** How often the watchdog checks that the page itself was awake. */
+export const HEARTBEAT_MS = 5_000
+/** A heartbeat this late means the machine slept or froze the page (case 7). */
+export const SLEPT_MS = 15_000
+
+/** The clock and timers the watchdog runs on — the browser's, or a test's. */
+export interface StallClock {
+  set(fn: () => void, ms: number): number
+  clear(id: number): void
+  now(): number
+}
+
+const browserClock: StallClock = {
+  set: (fn, ms) => window.setTimeout(fn, ms),
+  clear: (id) => window.clearTimeout(id),
+  now: () => Date.now(),
+}
+
 export function createStallWatchdog(
   onStall: (kind: StallKind) => void,
-  timers: { set: (fn: () => void, ms: number) => number; clear: (id: number) => void } = {
-    set: (fn, ms) => window.setTimeout(fn, ms),
-    clear: (id) => window.clearTimeout(id),
-  },
+  clock: StallClock = browserClock,
   doc: Pick<Document, 'addEventListener' | 'removeEventListener' | 'visibilityState'> | null =
     typeof document === 'undefined' ? null : document,
 ): StallWatchdog {
   let timer = 0
+  let beat = 0
+  let lastBeat = 0
   let last: LoadProgress | null = null
   let armed = false
 
   const arm = () => {
-    timers.clear(timer)
+    clock.clear(timer)
     const { kind, ms } = stallBudget(last)
-    timer = timers.set(() => {
+    timer = clock.set(() => {
       if (!armed) return
       // Case 6: a timer that survived a hidden spell can still fire late.
       if (doc?.visibilityState === 'hidden') return
-      armed = false
-      detach()
+      // Case 7: a laptop that slept keeps counting this timer (Windows does), so it
+      // fires the moment the lid opens, before the network is even back. The
+      // heartbeat could not run while asleep, so a stale one gives it away.
+      if (clock.now() - lastBeat > SLEPT_MS) {
+        lastBeat = clock.now()
+        arm()
+        return
+      }
+      halt()
       onStall(kind)
     }, ms)
+  }
+
+  // Whichever of the two overdue timers runs first after a wake notices: this one,
+  // or the window's own check above.
+  const heartbeat = () => {
+    const now = clock.now()
+    const slept = lastBeat !== 0 && now - lastBeat > SLEPT_MS
+    lastBeat = now
+    if (slept && armed) arm()
+    beat = clock.set(heartbeat, HEARTBEAT_MS)
   }
 
   const onVisibility = () => {
     if (armed && doc?.visibilityState === 'visible') arm()
   }
-  const detach = () => doc?.removeEventListener('visibilitychange', onVisibility)
+
+  const halt = () => {
+    armed = false
+    clock.clear(timer)
+    clock.clear(beat)
+    doc?.removeEventListener('visibilitychange', onVisibility)
+  }
 
   return {
     report(progress) {
@@ -84,14 +130,14 @@ export function createStallWatchdog(
       if (!armed) {
         armed = true
         doc?.addEventListener('visibilitychange', onVisibility)
+        clock.clear(beat)
+        lastBeat = 0
+        heartbeat()
       }
       arm()
     },
     stop() {
-      if (!armed) return
-      armed = false
-      timers.clear(timer)
-      detach()
+      if (armed) halt()
     },
   }
 }

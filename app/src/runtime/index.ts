@@ -6,6 +6,7 @@ import { ClangRuntime } from '../../../runtimes/clang/src'
 import { WebRuntime } from './web'
 import { JsRuntime } from './js'
 import { assetUrl } from './assetUrl'
+import { languages } from '../languages'
 
 /** Runtime key, distinct from the editor language (see editorLangForPath). `web` draws the preview; `js` is a headless script — an HTML-referenced `.js` is inlined by `web`, not chosen here. */
 export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
@@ -76,6 +77,17 @@ export function langForPath(path: string): LangId | null {
   if (/\.(html?|css)$/i.test(path)) return 'web'
   if (SCRIPT_RE.test(path)) return 'js'
   return null
+}
+
+/**
+ * The language's own name for a sentence ("Downloading Python"), from the one
+ * extension map above and the picker's labels. Null for a web page and for a
+ * headless script, whose "language" is a tile ("Web") and not a name to say.
+ */
+export function languageName(entryPath: string): string | null {
+  const id = langForPath(entryPath)
+  if (!id || id === 'web' || id === 'js') return null
+  return languages.find((l) => l.id === id)?.label ?? null
 }
 
 /** Extensions the `js` engine runs headless. TypeScript or cross-file imports get bundled first (bundle.ts); plain one-file JS doesn't. */

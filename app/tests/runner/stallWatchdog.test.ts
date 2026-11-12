@@ -1,15 +1,17 @@
 /**
- * The load-stall watchdog (hooks/stallWatchdog.ts), one test per case in its header.
+ * The load-stall watchdog (runtime/stallWatchdog.ts), one test per case in its header.
  * Run with: `npm run test:runner`
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BUSY_STALL_MS,
-  DOWNLOAD_STALL_MS,
+  STALL_LIMITS,
   createStallWatchdog,
   type StallKind,
-} from '../../src/hooks/stallWatchdog.ts'
+} from '../../src/runtime/stallWatchdog.ts'
+
+const DOWNLOAD_STALL_MS = STALL_LIMITS.downloadMs
+const BUSY_STALL_MS = STALL_LIMITS.busyMs
 import type { LoadProgress } from '../../src/runtime/types.ts'
 
 /** A hand-cranked clock and a document whose visibility the test flips. */
@@ -33,6 +35,7 @@ function rig() {
         return id
       },
       clear: (id) => void pending.delete(id),
+      now: () => now,
     },
     doc as never,
   )
@@ -47,11 +50,21 @@ function rig() {
     }
     now = end
   }
+  /** The machine sleeps `ms`: nothing runs, then every overdue timer runs at once, oldest first — as on wake. */
+  const sleep = (ms: number) => {
+    now += ms
+    for (;;) {
+      const due = [...pending.entries()].filter(([, t]) => t.at <= now).sort((a, b) => a[1].at - b[1].at)[0]
+      if (!due) break
+      pending.delete(due[0])
+      due[1].fn() // the clock reads the wake time, not when each was due
+    }
+  }
   const setVisible = (v: boolean) => {
     doc.visibilityState = v ? 'visible' : 'hidden'
     for (const fn of [...listeners]) fn()
   }
-  return { dog, fired, advance, setVisible, listeners }
+  return { dog, fired, advance, sleep, setVisible, listeners }
 }
 
 const dl = (loaded: number): LoadProgress => ({ phase: 'download', message: '', loaded, total: 40e6 })
@@ -145,4 +158,24 @@ test('it fires once, then lets go', () => {
   r.advance(DOWNLOAD_STALL_MS * 3)
   assert.deepEqual(r.fired, ['download'])
   assert.equal(r.listeners.size, 0)
+})
+
+test('7. a machine that slept through the window restarts it instead of failing on wake', () => {
+  const r = rig()
+  r.dog.report(dl(1e6))
+  r.advance(20_000)
+  // Lid closed for ten minutes; the timers kept counting, so all fire on wake.
+  r.sleep(10 * 60_000)
+  assert.deepEqual(r.fired, [], 'no stall reported for the time asleep')
+  r.advance(DOWNLOAD_STALL_MS - 1)
+  assert.deepEqual(r.fired, [], 'a fresh window from the wake')
+  r.advance(1)
+  assert.deepEqual(r.fired, ['download'], 'and a dead network after waking still fails')
+})
+
+test('7b. an awake page that simply hears nothing still fails on time (the heartbeat is no excuse)', () => {
+  const r = rig()
+  r.dog.report(null)
+  r.advance(DOWNLOAD_STALL_MS)
+  assert.deepEqual(r.fired, ['download'])
 })

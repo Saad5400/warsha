@@ -44,8 +44,8 @@ export const EN = {
   // One sentence per slow phase, shown once it has run a few seconds, saying the
   // wait is expected. A wait that is explained is a wait students sit through.
   phaseBootNote: 'Getting it ready to run — up to a minute the first time. Then it stays ready while this tab is open.',
-  phaseCompilerNote: 'A one-time warm-up each time you open Warsha. It can take half a minute on a phone.',
-  phaseCompileNote: 'The first compile after opening Warsha takes up to 20 seconds. After that it is quick.',
+  phaseCompilerNote: 'A warm-up each time you open Warsha. It can take half a minute on a phone.',
+  phaseCompileNote: 'The first compile after opening Warsha is the slow one. After that it is quick.',
   phasePackagesNote: 'Only the first time — after that they load from this device.',
   /** The numbers line: "12.3 MB of 40.0 MB". */
   progressOf: (loaded: string, total: string) => `${loaded} of ${total}`,
@@ -54,9 +54,9 @@ export const EN = {
   etaSeconds: (s: number) => `about ${s}s left`,
   etaMinute: 'about a minute left',
   etaMinutes: (m: number) => `about ${m} min left`,
-  /** A short duration: "0.4s", "12s", "2m 05s". */
   /** A live counter in whole seconds: "42s", "1m 05s". */
   elapsedSeconds: (s: number) => clock(s),
+  /** A finished program's time: "0.4s", "12s", "2m 05s". */
   durationShort: (ms: number) => (ms < 10_000 ? `${(Math.max(ms, 100) / 1000).toFixed(1)}s` : clock(Math.round(ms / 1000))),
 
   // ---- engine failures the student can act on (see useRunner's RunFailure) ----

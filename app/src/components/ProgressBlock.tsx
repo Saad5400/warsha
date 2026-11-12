@@ -42,7 +42,7 @@ const TRACK = 'progress-track relative flex-1 h-1 overflow-hidden rounded-pill b
 const FILL = 'h-full rounded-pill bg-accent transition-[width] duration-200 ease-linear'
 /** The indeterminate sweep, shared with the console header's activity line (RunBar). */
 export const SWEEP =
-  'w-[30%] animate-sweep rtl:animate-sweep-rtl motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
+  'w-[30%] animate-sweep motion-safe:rtl:animate-sweep-rtl motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-50'
 
 /**
  * First-run engine download (spec §7.6), rendered in the console rather than a modal.
@@ -85,8 +85,10 @@ export function ProgressBlock({
   ].filter(Boolean)
 
   return (
-    <div data-phase={phase} className={BLOCK}>
-      <p className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel(phase, inRun, language)}</p>
+    // aria-live off: the block sits in the transcript's polite log, and its counters
+    // would be read out every second. Only the headline speaks, when the phase changes.
+    <div data-phase={phase} className={BLOCK} aria-live="off">
+      <p aria-live="polite" className="font-ui text-btn leading-[1.35] font-semibold text-text-1">{phaseLabel(phase, inRun, language)}</p>
 
       <div className="mt-2 flex items-center gap-2">
         <div className={TRACK}>

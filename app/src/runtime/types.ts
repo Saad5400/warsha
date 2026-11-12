@@ -145,6 +145,8 @@ export interface NotebookKernel {
   isReady?(): boolean
   /** OPTIONAL — true while a run (or cell) occupies the engine; `format` would refuse then. */
   isBusy?(): boolean
+  /** OPTIONAL — throw the engine away (a boot that stalled will never settle); the next load() starts fresh. */
+  dispose?(): void
 }
 
 export interface CellRequest {
