@@ -271,9 +271,21 @@ self.onmessage = (ev) => {
       const contents = paths.map((p) => msg.files[p])
       const t0 = performance.now()
       lastBpGen = -1
-      const code = exports.Runner.Run(paths, contents, msg.entry, dctrl ? msg.debug | 0 : 0)
+      let code
+      let exited = false
+      try {
+        code = exports.Runner.Run(paths, contents, msg.entry, dctrl ? msg.debug | 0 : 0)
+      } catch (e) {
+        // Environment.Exit(n) does not return: the runtime unwinds out of Run
+        // with emscripten's ExitStatus. It is the program's own exit code, not
+        // an engine failure -- reporting it as one printed
+        // "[csharp runtime error] [object Object]" and exit code 1.
+        if (!(e && e.name === 'ExitStatus' && typeof e.status === 'number')) throw e
+        code = e.status
+        exited = true
+      }
       postFileChanges()
-      self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
+      self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0), exited })
     } catch (e) {
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
     }
