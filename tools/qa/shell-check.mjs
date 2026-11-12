@@ -405,6 +405,102 @@ for (const lang of ['en', 'ar']) {
   await ctx.close()
 }
 
+// ------------------------------- tree direction, chevrons, non-text files
+// The tree stays LTR in both languages ("files stay LTR", index.css): icon and
+// twistie at the left, ⋯ at the right, the active rail on the left. Its twisties
+// follow the TREE's direction, not the page's: right when closed, DOWN when open,
+// in Arabic too (a mirrored-then-rotated glyph pointed UP). A file that is not
+// text gets a read-only face, never CodeMirror.
+for (const [lang, phone] of [['en', false], ['ar', false], ['ar', true]]) {
+  const tag = `${lang}${phone ? ' phone' : ''}`
+  const rtl = lang === 'ar'
+  const { ctx, page, url } = await open({ lang, phone, width: 1366, height: 768 })
+  await page.goto(url)
+  await fromStarter(page)
+  const showTree = async () => {
+    if ((await page.locator('aside[data-state="open"]').count()) === 0 && phone) {
+      await page.locator('[aria-label="Explorer"], [aria-label="المستكشف"]').first().click()
+      await page.waitForTimeout(600)
+    }
+  }
+  await showTree()
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New folder|مجلّد جديد)$/ }).click()
+  await page.keyboard.insertText('data')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(400)
+  // Where a right-pointing chevron ends up after the row's scale + rotate.
+  const chevronPoints = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('[role="treeitem"][data-path="data"] .tree-row__chevron')
+      const cs = getComputedStyle(el)
+      const sx = cs.scale && cs.scale !== 'none' ? parseFloat(cs.scale.split(' ')[0]) : 1
+      const deg = cs.rotate && cs.rotate !== 'none' ? parseFloat(cs.rotate) : 0
+      const m = cs.transform && cs.transform !== 'none' ? new DOMMatrix(cs.transform) : new DOMMatrix()
+      const a = (deg * Math.PI) / 180
+      let x = sx * Math.cos(a), y = sx * Math.sin(a)
+      const p = m.transformPoint({ x, y }), o = m.transformPoint({ x: 0, y: 0 })
+      x = p.x - o.x; y = p.y - o.y
+      return Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : y > 0 ? 'down' : 'up'
+    })
+  await page.waitForTimeout(300)
+  await check(`${tag}: an open folder's twistie points down`, async () => (await chevronPoints()) === 'down')
+  await page.locator('[role="treeitem"][data-path="data"]').click()
+  await page.waitForTimeout(300)
+  await check(`${tag}: a closed folder's twistie points right (the tree's direction)`, async () => (await chevronPoints()) === 'right')
+  await check(`${tag}: rows run left to right (icon left, ⋯ right, rail left) in both languages`, async () =>
+    page.evaluate(() => {
+      const rtl = false
+      const row = document.querySelector('[role="treeitem"][data-path="main.py"]')
+      const label = row.querySelector('.tree-row__label').getBoundingClientRect()
+      const icon = [...row.querySelectorAll('svg')].find((s) => s.getBoundingClientRect().width >= 14).getBoundingClientRect()
+      const more = row.querySelector('button')?.getBoundingClientRect()
+      const c = (r) => r.left + r.width / 2
+      const order = rtl ? c(icon) > c(label) && (!more || !more.width || c(more) < c(label)) : c(icon) < c(label) && (!more || !more.width || c(more) > c(label))
+      const rail = getComputedStyle(row).borderLeftWidth !== '0px'
+      return order && rail && getComputedStyle(row.closest('[role="tree"]')).direction === 'ltr'
+    }))
+  if (rtl) {
+    // An Arabic name inside the LTR column still shapes and orders as Arabic.
+    await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New file|ملف جديد)/ }).first().click()
+    await page.keyboard.insertText('تمرين.py')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(600)
+    await showTree()
+    await check(`${tag}: an Arabic file name sits in the tree as typed`, async () =>
+      (await page.locator('[role="treeitem"][data-path="تمرين.py"] .tree-row__label').innerText()) === 'تمرين.py')
+  }
+  // A non-text file: photo.png (made as a file) and a real SVG.
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New file|ملف جديد)/ }).first().click()
+  await page.keyboard.insertText('photo.png')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(800)
+  await check(`${tag}: a .png opens a read-only note, not an editor with line 1`, async () =>
+    (await page.locator('.file-not-text[data-view="image"]').isVisible()) && !(await page.locator('.cm-content').first().isVisible()))
+  await check(`${tag}: the status bar says ${rtl ? 'صورة' : 'Image'}, not PNG`, async () => {
+    const t = await page.locator('.status-bar').innerText()
+    return (rtl ? /صورة/ : /\bImage\b/).test(t) && !/\bPNG\b/.test(t)
+  })
+  await page.screenshot({ path: join(SHOTS, `shell-nontext-png-${lang}-${phone ? 'phone' : '1366'}.png`) })
+  await showTree()
+  const chooser = page.waitForEvent('filechooser')
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(Add files|إضافة ملفات)/ }).click()
+  await (await chooser).setFiles([{ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="28" fill="#519aba"/></svg>') }])
+  await page.waitForTimeout(800)
+  await check(`${tag}: an SVG shows as a picture`, async () =>
+    page.evaluate(() => { const i = document.querySelector('.file-not-text img'); return !!i && i.complete && i.naturalWidth > 0 }))
+  await check(`${tag}: breadcrumb separators point along the path (right)`, async () =>
+    page.evaluate(() => {
+      const sep = document.querySelector('.breadcrumbs svg')
+      if (!sep) return false
+      const cs = getComputedStyle(sep)
+      return !(cs.scale && cs.scale !== 'none' && parseFloat(cs.scale) < 0)
+    }))
+  await page.screenshot({ path: join(SHOTS, `shell-nontext-svg-${lang}-${phone ? 'phone' : '1366'}.png`) })
+  await showTree()
+  await page.screenshot({ path: join(SHOTS, `shell-tree-${lang}-${phone ? 'phone' : '1366'}.png`) })
+  await ctx.close()
+}
+
 console.log(errs.length ? `page errors:\n${errs.join('\n')}` : 'no page errors')
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

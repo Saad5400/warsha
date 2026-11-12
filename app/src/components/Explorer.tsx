@@ -369,6 +369,9 @@ export function Explorer(props: ExplorerProps) {
           (rows.length === 0 ? ' flex flex-col justify-center' : '')
         }
         role="tree"
+        // The CSS pins the column LTR ("files stay LTR"); the attribute makes :dir()
+        // agree, so the twisties inside follow the tree and not the Arabic page.
+        dir="ltr"
         aria-label={COPY.a11yProjectFiles}
         // Hooks for the drag: `data-tree-root` marks the root drop zone, and
         // `data-drop-root` lights the whole panel when a drop would land here.
@@ -777,8 +780,14 @@ function Row({
           className={
             // desk:transition-none: VS Code's twistie snaps; the rotate class
             // itself stays at both densities (tools/qa asserts the rotation).
-            'tree-row__chevron shrink-0 rtl:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
-            (open ? ' rotate-90' : '')
+            // Follows the TREE's direction, not the page's: the tree is pinned LTR
+            // (index.css, "files stay LTR", with dir="ltr" on the tree so :dir()
+            // sees it), so this points right closed and down open in Arabic too.
+            // The old `rtl:` variant matched any [dir=rtl] ancestor — the page —
+            // and mirrored-then-rotated the glyph, so an open folder pointed UP.
+            // Where an ancestor really is RTL, mirror and turn the other way.
+            'tree-row__chevron shrink-0 [&:dir(rtl)]:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
+            (open ? ' rotate-90 [&:dir(rtl)]:-rotate-90' : '')
           }
         >
           <IconChevronRight size={16} />
@@ -866,6 +875,7 @@ function NameInput({
   return (
     <input
       ref={ref}
+      dir="auto"
       className="dlg-input min-w-0 flex-1 select-text"
       aria-label={label}
       defaultValue={initial}
