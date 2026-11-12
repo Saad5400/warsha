@@ -8,7 +8,8 @@ import {
 } from '@codemirror/autocomplete'
 import type { EditorState } from '@codemirror/state'
 import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
-import { memberContext, memberSource } from './members'
+import { declaredNames, KEYWORDS, type IdentRole } from './codeText'
+import { PYTHON_MEMBERS, memberContext, memberSource, type PyTables } from './members'
 import { nameSource, namingSpot } from './names'
 import { recordable, withUsageBoost } from './usage'
 
@@ -19,31 +20,34 @@ export type CompletionLang = 'java' | 'python'
 /**
  * Completions and snippets — the "where is the IntelliSense?" layer.
  *
- * Four sources per language, each contributing to one ranked popup:
+ * Five sources per language, each contributing to one ranked popup:
  *
  *   1. **Snippets** (`boost: 60`) — `sout`, `psvm`, `fori`. Deliberately the same
  *      abbreviations IntelliJ and VS Code use, because a student who has seen a
  *      teacher type `sout` in class will try `sout` here, and the muscle memory
  *      is worth more than any name we could invent.
- *   2. **Keywords + a small beginner API dictionary** (`boost: 20` / `10`) — the
- *      names from the first four weeks of a course, each with a plain-English
- *      `detail`. Still a hand-written list, not a language server.
- *   3. **Members after a dot** (members.ts) — `sc.` offers Scanner's methods, and
- *      ranks them by the type the line seems to want (`int n = sc.` floats
- *      `nextInt`). A `.` context is *exclusive*: the other three sources step
- *      aside so no `class` or `sout` shows up after a dot.
- *   4. **Identifiers already in the file / project** — every word you have
+ *   2. **Keywords + the course API dictionary** (`boost: 20` / `10`) — the Java and
+ *      Python names a university course uses, each with a plain-English `detail`.
+ *   3. **Members after a dot** (members.ts, typed by receiver.ts) — `sc.` offers
+ *      Scanner's methods, `arr.` an array's `length`, `account.` the student's own
+ *      class; ranked by the type the line seems to want (`int n = sc.` floats
+ *      `nextInt`). A `.` context is *exclusive*: the other sources step aside so no
+ *      `class` or `sout` shows up after a dot.
+ *   4. **Variable names** (names.ts) — where a new name goes (`Scanner |`), names
+ *      made from the type, JetBrains-style. That spot is exclusive too: the
+ *      dictionary stands down, even on Ctrl+Space, so `scanner` the name never
+ *      competes with `scanner` the snippet.
+ *   5. **Identifiers already in the file / project** — every word you have
  *      written, ranked by how likely you want it *here*: near the caret beats far
  *      away, a name declared in this file beats a bare word, this file beats the
  *      rest of the project. Keywords and dictionary names are dropped so the
- *      documented completion always represents them.
+ *      documented completion always represents them (except after a dot, where
+ *      the dictionary is not on offer and a member called `add` must survive).
  *
  * On top of that, ranking reads the situation: statement snippets and
  * declaration-only keywords show only at the start of a statement. Mid-expression
  * (after `=`, `(`, a comma or an operator) they are withheld, the way VS Code
- * won't offer `class` inside `int x = …` — and so are they while you name a
- * variable after its type (`Scanner sc…`), where `scanner` would otherwise
- * outrank the name and paste `Scanner …` a second time.
+ * won't offer `class` inside `int x = …`.
  *
  * On top of *that*, the popup learns: accepting a completion bumps a per-label
  * counter (usage.ts), and a small bounded boost from that counter is added on
@@ -52,8 +56,8 @@ export type CompletionLang = 'java' | 'python'
  * capped well below a single fuzzy-match step, so it only reorders options that
  * already match about equally well; it never floats a worse match up the list.
  *
- * None of this is semantic analysis — types are guessed from the text (see
- * members.ts) and "how likely you want it" is proximity, not scope resolution.
+ * None of this is semantic analysis — types are read from the text (see
+ * receiver.ts) and "how likely you want it" is proximity, not scope resolution.
  * Wrong in the ways every heuristic here is wrong; right for a first-year course.
  *
  * Snippet templates use `${name}` for a tab stop and a leading tab per level;
@@ -161,17 +165,6 @@ export const PYTHON_SNIPPETS: readonly Completion[] = [
   snip('deco', 'def ${my_decorator}(func):\n\tdef wrapper(*args, **kwargs):\n\t\t${}\n\t\treturn func(*args, **kwargs)\n\treturn wrapper', 'wrap a function to add behaviour'),
   snip('async', 'async def ${name}(${}):\n\t${}', 'a function you can await'),
 ]
-
-/* ------------------------------------------------------------------ keywords */
-
-const KEYWORDS: Record<CompletionLang, readonly string[]> = {
-  java: `abstract assert boolean break byte case catch char class continue default do double else enum extends
-final finally float for if implements import instanceof int interface long new package private protected public
-return short static super switch this throw throws try void while true false null
-var record sealed permits yield synchronized transient volatile native strictfp`.split(/\s+/),
-  python: `and as assert async await break class continue def del elif else except False finally for from global
-if import in is lambda None nonlocal not or pass raise return True try while with yield case`.split(/\s+/),
-}
 
 /* ------------------------------------------------- beginner API dictionaries */
 
@@ -1519,38 +1512,6 @@ const STATEMENT_ONLY: Record<CompletionLang, ReadonlySet<string>> = {
   python: new Set('def class import from pass global nonlocal del elif except finally as with assert raise async await'.split(' ')),
 }
 
-type IdentRole = 'variable' | 'function' | 'class'
-
-/** Best-effort "this name was declared here", for the icon and a small ranking
- *  nudge. Reads text before the caret; a false positive only ever nudges ranking. */
-function declaredNames(lang: CompletionLang, doc: string): Map<string, IdentRole> {
-  const out = new Map<string, IdentRole>()
-  const add = (name: string, role: IdentRole) => {
-    if (name && !out.has(name)) out.set(name, role)
-  }
-  if (lang === 'java') {
-    const T = '(?:int|long|short|byte|double|float|boolean|char|String|var|[A-Z][A-Za-z0-9_$]*)'
-    for (const m of doc.matchAll(/\b(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'class')
-    // `Type name` in a declaration / parameter / for-each (the name is followed by = ; , ) or :).
-    for (const m of doc.matchAll(new RegExp(`\\b${T}(?:<[^<>;{}()]*>)?(?:\\[\\])?\\s+([a-z_$][\\w$]*)\\s*(?=[=;,):])`, 'g')))
-      add(m[1], 'variable')
-    // `returnType name(` — a method declaration (a preceding type rules out a bare call).
-    for (const m of doc.matchAll(new RegExp(`\\b${T}(?:<[^<>;{}()]*>)?(?:\\[\\])?\\s+([A-Za-z_$][\\w$]*)\\s*\\(`, 'g')))
-      if (!out.has(m[1])) add(m[1], 'function')
-  } else {
-    for (const m of doc.matchAll(/\bdef\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'function')
-    for (const m of doc.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) add(m[1], 'class')
-    for (const m of doc.matchAll(/^[ \t]*([A-Za-z_$][\w$]*)\s*(?:[-+*/%|&^@]|\/\/|\*\*|>>|<<)?=(?!=)/gm)) add(m[1], 'variable')
-    for (const m of doc.matchAll(/\bfor\s+([A-Za-z_$][\w$]*)\s+in\b/g)) add(m[1], 'variable')
-    for (const m of doc.matchAll(/\bdef\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)/g))
-      for (const p of m[1].split(',')) {
-        const n = p.trim().split(/[:=]/)[0].trim()
-        if (n && n !== 'self' && /^[A-Za-z_$][\w$]*$/.test(n)) add(n, 'variable')
-      }
-  }
-  return out
-}
-
 /** Nearer the caret is likelier what you want. Distance is in characters, so it
  *  needs no line math; a name only seen after the caret gets nothing. */
 function proximityBonus(dist: number): number {
@@ -1631,9 +1592,11 @@ function staticSource(lang: CompletionLang): CompletionSource {
   const rest = all.filter((o) => !statementOnly(lang, o))
   const [validFor, match] = listMatchers(all)
   return (ctx: CompletionContext) => {
-    if (memberContext(ctx.state, ctx.pos)) return null
-    // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the names).
-    if (namingSpot(lang, ctx.state, ctx.pos)) return null
+    if (memberContext(ctx.state, ctx.pos, lang)) return null
+    // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the
+    // names). A class-body member is the exception — `public String toS…` may be a method name.
+    const spot = namingSpot(lang, ctx.state, ctx.pos)
+    if (spot && !spot.inClassBody) return null
     const token = ctx.matchBefore(match)
     if (!ctx.explicit && !token) return null
     const wordFrom = token ? token.from : ctx.pos
@@ -1733,14 +1696,15 @@ export function completionSources(lang: CompletionLang | null, projectWords: () 
   // In a `.` context the member source owns the popup; the plain identifier source
   // stands down (the member source itself calls `collect` as its own fallback).
   const ident = ifNotIn(NOT_IN, (ctx: CompletionContext) =>
-    lang && memberContext(ctx.state, ctx.pos) ? null : collect(ctx),
+    lang && memberContext(ctx.state, ctx.pos, lang) ? null : collect(ctx),
   )
   if (!lang) return [ident]
-  const moduleMembers = lang === 'python' ? pythonModuleMembers() : undefined
+  // Built once: the hand-written receivers win over the dictionary-derived module ones.
+  const pyTables: PyTables = lang === 'python' ? { ...pythonModuleMembers(), ...PYTHON_MEMBERS } : {}
   return [
     ifNotIn(NOT_IN, nameSource(lang)),
-    ifNotIn(NOT_IN, memberSource(lang, (ctx) => collect(ctx, true), moduleMembers)),
-    ifNotIn(NOT_IN, importStatementSource(lang, moduleMembers)),
+    ifNotIn(NOT_IN, memberSource(lang, (ctx) => collect(ctx, true), pyTables)),
+    ifNotIn(NOT_IN, importStatementSource(lang, pyTables)),
     ifNotIn(NOT_IN, staticSource(lang)),
     ident,
   ]

@@ -1,4 +1,13 @@
-import type { CompletionLang } from './completions'
+import {
+  JAVA_MODIFIERS,
+  JAVA_TYPE,
+  baseOf,
+  isJavaTypeWord,
+  maskCode,
+  matchBracket,
+  splitTopLevel,
+  type TextLang,
+} from './codeText'
 import { projectFiles, projectRevision } from './projectSource'
 
 /**
@@ -44,103 +53,9 @@ export interface ClassInfo {
 
 export type TypeIndex = Map<string, ClassInfo>
 
-/* ------------------------------------------------------------------ shared */
-
-/** Blanks out comments and the inside of string/char literals, keeping every
- *  offset, so brace-matching and regexes never trip over `"{"` or `// }`. */
-export function maskJava(src: string): string {
-  const out = src.split('')
-  let i = 0
-  const n = src.length
-  while (i < n) {
-    const c = src[i]
-    const next = src[i + 1]
-    if (c === '/' && next === '/') {
-      while (i < n && src[i] !== '\n') out[i++] = ' '
-    } else if (c === '/' && next === '*') {
-      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
-        if (src[i] !== '\n') out[i] = ' '
-        i++
-      }
-      if (i < n) out[i] = out[i + 1] = ' '
-      i += 2
-    } else if (c === '"' && src.startsWith('"""', i)) {
-      i += 3
-      while (i < n && !src.startsWith('"""', i)) {
-        if (src[i] !== '\n') out[i] = ' '
-        i++
-      }
-      i += 3
-    } else if (c === '"' || c === "'") {
-      i++
-      while (i < n && src[i] !== c && src[i] !== '\n') {
-        if (src[i] === '\\') out[i++] = ' '
-        out[i++] = ' '
-      }
-      i++
-    } else i++
-  }
-  return out.join('')
-}
-
-/** Python: comments and string contents blanked, offsets kept. */
-export function maskPython(src: string): string {
-  const out = src.split('')
-  let i = 0
-  const n = src.length
-  while (i < n) {
-    const c = src[i]
-    if (c === '#') {
-      while (i < n && src[i] !== '\n') out[i++] = ' '
-    } else if (c === '"' || c === "'") {
-      const triple = src.startsWith(c.repeat(3), i)
-      const q = triple ? c.repeat(3) : c
-      i += q.length
-      while (i < n && !src.startsWith(q, i) && (triple || src[i] !== '\n')) {
-        if (src[i] === '\\') out[i++] = ' '
-        if (src[i] !== '\n') out[i] = ' '
-        i++
-      }
-      i += q.length
-    } else i++
-  }
-  return out.join('')
-}
-
-/** Index of the bracket closing the one at `open`, or the text's end. */
-export function matchBracket(text: string, open: number): number {
-  const o = text[open]
-  const c = o === '{' ? '}' : o === '(' ? ')' : o === '[' ? ']' : '>'
-  let depth = 0
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === o) depth++
-    else if (text[i] === c && --depth === 0) return i
-  }
-  return text.length
-}
-
-/** Splits on commas that are not inside <>, (), [] — `Map<K, V> m, int x`. */
-export function splitTopLevel(s: string, sep = ','): string[] {
-  const parts: string[] = []
-  let depth = 0
-  let start = 0
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]
-    if (c === '<' || c === '(' || c === '[') depth++
-    else if (c === '>' || c === ')' || c === ']') depth--
-    else if (c === sep && depth === 0) {
-      parts.push(s.slice(start, i))
-      start = i + 1
-    }
-  }
-  parts.push(s.slice(start))
-  return parts.map((p) => p.trim()).filter(Boolean)
-}
-
 /* -------------------------------------------------------------------- java */
 
-const JAVA_MODIFIERS = /\b(?:public|private|protected|static|final|abstract|default|synchronized|native|transient|volatile|strictfp|sealed|non-sealed)\b/g
-const JAVA_TYPE = String.raw`[A-Za-z_$][\w$.]*(?:\s*<[^;{}()]*?>)?(?:\s*\[\s*\])*`
+const MODIFIER_WORDS = new RegExp(`(?<![\\w-])(?:${JAVA_MODIFIERS.join('|')})(?![\\w-])`, 'g')
 
 /** The text of a block body at its own depth: nested `{…}` collapsed to `{}`. */
 function topLevel(text: string, from: number, to: number): string {
@@ -156,7 +71,7 @@ function topLevel(text: string, from: number, to: number): string {
 }
 
 function scanJavaInto(src: string, index: TypeIndex): void {
-  const text = maskJava(src)
+  const text = maskCode('java', src)
   const head = /\b(class|interface|enum|record)\s+([A-Za-z_$][\w$]*)\s*(<[^{]*?>)?\s*(\([^)]*\))?([^{;]*)\{/g
   let m: RegExpExecArray | null
   while ((m = head.exec(text))) {
@@ -167,8 +82,10 @@ function scanJavaInto(src: string, index: TypeIndex): void {
     const ext = /\bextends\s+([^{]*?)(?=\bimplements\b|\bpermits\b|$)/.exec(tail)
     const impl = /\bimplements\s+([^{]*?)(?=\bpermits\b|$)/.exec(tail)
     for (const part of [ext?.[1], impl?.[1]]) {
-      if (part) for (const s of splitTopLevel(part)) supers.push(s.replace(/<.*$/s, '').trim())
+      if (part) for (const s of splitTopLevel(part)) supers.push(baseOf(s))
     }
+    // An enum is-a java.lang.Enum (name(), ordinal()…); `values`/`valueOf` are its synthetic statics.
+    if (kind === 'enum') supers.unshift('Enum')
     const members: MemberInfo[] = []
     const body = topLevel(text, open + 1, close)
     let rest = body
@@ -181,6 +98,10 @@ function scanJavaInto(src: string, index: TypeIndex): void {
         if (id) members.push({ name: id[1], kind: 'constant', type: name, isStatic: true })
       }
       rest = semi === -1 ? '' : body.slice(semi + 1)
+      members.push(
+        { name: 'values', kind: 'method', type: `${name}[]`, params: '', isStatic: true },
+        { name: 'valueOf', kind: 'method', type: name, params: 'String name', isStatic: true },
+      )
     }
     if (kind === 'record' && recordParams) {
       for (const p of splitTopLevel(recordParams.slice(1, -1))) {
@@ -193,17 +114,18 @@ function scanJavaInto(src: string, index: TypeIndex): void {
     // Each top-level statement ends at `;` or a collapsed `{}` body.
     for (const raw of rest.split(/;|\{\}/)) {
       const stmt = raw.replace(/@[\w.]+(?:\([^)]*\))?/g, ' ').replace(/\s+/g, ' ').trim()
-      if (!stmt) continue
+      // A nested class/interface/enum is its own entry (the head regex finds it), not a field.
+      if (!stmt || /\b(?:class|interface|enum|record)\s+[A-Za-z_$]/.test(stmt)) continue
       const isStatic = /\bstatic\b/.test(stmt) || kind === 'interface' && !/\(/.test(stmt)
-      const plain = stmt.replace(JAVA_MODIFIERS, ' ').replace(/^\s*<[^>]*>\s*/, '').trim()
+      const plain = stmt.replace(MODIFIER_WORDS, ' ').replace(/^\s*<[^>]*>\s*/, '').trim()
       const meth = new RegExp(`^(${JAVA_TYPE})\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^)]*)\\)`).exec(plain)
-      if (meth) {
+      if (meth && (meth[1] === 'void' || isJavaTypeWord(meth[1]))) {
         members.push({ name: meth[2], kind: 'method', type: meth[1].replace(/\s+/g, ''), params: meth[3].trim(), isStatic })
         continue
       }
       if (/^[A-Za-z_$][\w$]*\s*\(/.test(plain)) continue // a constructor
       const field = new RegExp(`^(${JAVA_TYPE})\\s+(.+)$`).exec(plain)
-      if (field && !/^(?:return|new|throw|else|import|package)\b/.test(field[1])) {
+      if (field && isJavaTypeWord(field[1])) {
         const type = field[1].replace(/\s+/g, '')
         for (const decl of splitTopLevel(field[2])) {
           const id = /^([A-Za-z_$][\w$]*)\s*(\[\s*\])*\s*(?:=|$)/.exec(decl)
@@ -238,7 +160,7 @@ export function pythonLiteralType(rhs: string): string | null {
 }
 
 function scanPythonInto(src: string, index: TypeIndex): void {
-  const text = maskPython(src)
+  const text = maskCode('python', src)
   const lines = text.split('\n')
   const offsets: number[] = []
   let off = 0
@@ -314,16 +236,14 @@ function scanPythonInto(src: string, index: TypeIndex): void {
 
 /* ------------------------------------------------------------------- cache */
 
-export function scanSource(lang: CompletionLang, src: string, index: TypeIndex = new Map()): TypeIndex {
-  if (lang === 'java') scanJavaInto(src, index)
-  else scanPythonInto(src, index)
-  return index
-}
+const scanInto = (lang: TextLang, src: string, index: TypeIndex) =>
+  lang === 'java' ? scanJavaInto(src, index) : scanPythonInto(src, index)
 
 let projectCache: { rev: number; java: TypeIndex; python: TypeIndex } | null = null
-let docCache: { doc: string; lang: CompletionLang; index: TypeIndex } | null = null
+let docCache: { doc: string; lang: TextLang; index: TypeIndex } | null = null
+let mergedCache: { doc: string; lang: TextLang; rev: number; index: TypeIndex } | null = null
 
-function projectIndex(lang: CompletionLang): TypeIndex {
+function projectIndex(lang: TextLang): TypeIndex {
   const rev = projectRevision()
   if (!projectCache || projectCache.rev !== rev) {
     const java: TypeIndex = new Map()
@@ -337,21 +257,31 @@ function projectIndex(lang: CompletionLang): TypeIndex {
   return projectCache[lang]
 }
 
-/** Every user type visible from this document: project files, overridden by the open one. */
-export function typeIndexFor(lang: CompletionLang, doc: string): TypeIndex {
+/** The classes of the open document alone (re-scanned only when it changes). */
+function docIndex(lang: TextLang, doc: string): TypeIndex {
   if (!docCache || docCache.doc !== doc || docCache.lang !== lang) {
-    docCache = { doc, lang, index: scanSource(lang, doc) }
+    const index: TypeIndex = new Map()
+    scanInto(lang, doc, index)
+    docCache = { doc, lang, index }
   }
-  const merged = new Map(projectIndex(lang))
-  for (const [k, v] of docCache.index) merged.set(k, v)
-  return merged
+  return docCache.index
+}
+
+/** Every user type visible from this document: project files, overridden by the open one. */
+export function typeIndexFor(lang: TextLang, doc: string): TypeIndex {
+  const rev = projectRevision()
+  if (!mergedCache || mergedCache.doc !== doc || mergedCache.lang !== lang || mergedCache.rev !== rev) {
+    const merged = new Map(projectIndex(lang))
+    for (const [k, v] of docIndex(lang, doc)) merged.set(k, v)
+    mergedCache = { doc, lang, rev, index: merged }
+  }
+  return mergedCache.index
 }
 
 /** The innermost class whose body contains `pos` in the open document. */
-export function enclosingClass(lang: CompletionLang, doc: string, pos: number): ClassInfo | null {
-  typeIndexFor(lang, doc)
+export function enclosingClass(lang: TextLang, doc: string, pos: number): ClassInfo | null {
   let best: ClassInfo | null = null
-  for (const c of docCache!.index.values()) {
+  for (const c of docIndex(lang, doc).values()) {
     if (c.bodyFrom < pos && pos <= c.bodyTo && (!best || c.bodyFrom > best.bodyFrom)) best = c
   }
   return best

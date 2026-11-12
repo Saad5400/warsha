@@ -55,3 +55,19 @@ test('python: for / with / except', () => {
   assert.deepEqual(first('python', 'with open("a.txt") as ‸', 2), ['f', 'file'])
   assert.deepEqual(first('python', 'try:\n    pass\nexcept ValueError as ‸', 2), ['e', 'error'])
 })
+
+test('java: comparisons are not generics, conditions are not declarations', () => {
+  const range = offered('java', javaMain('    int n = 3;\n    if (n < 1 || n > Ma‸')).labels
+  assert.ok(range.includes('Math.max'), range.slice(0, 10).join(', '))
+  const loop = offered('java', javaMain('    int[] arr = {1};\n    int n = 1;\n    for (int i = 0; i < n && arr[i] > ‸')).labels
+  assert.ok(!loop.includes('i2'), loop.slice(0, 10).join(', '))
+  const cond = offered('java', javaMain('    if (Integer ‸')).labels
+  assert.ok(!cond.includes('integer'), cond.slice(0, 10).join(', '))
+})
+
+test('java: a member header in a class body keeps the dictionary (it may be a method name)', () => {
+  const doc = 'class Student {\n  private String name;\n  public String toS‸\n}\n'
+  assert.ok(offered('java', doc).labels.includes('toString'))
+  // A field still gets names.
+  assert.equal(offered('java', 'class Box {\n  private Scanner ‸\n}\n').labels[0], 'scanner')
+})

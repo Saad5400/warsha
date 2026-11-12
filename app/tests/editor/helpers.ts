@@ -12,8 +12,14 @@ import { completionSources, type CompletionLang } from '../../src/editor/complet
 import { setProjectSource, type ProjectFileText } from '../../src/editor/projectSource.ts'
 
 let revision = 0
-export function useProjectFiles(files: ProjectFileText[]): void {
+/** Runs `body` with these as the other project files, then clears them — even if it throws. */
+export function withProjectFiles(files: ProjectFileText[], body: () => void): void {
   setProjectSource(() => files, ++revision)
+  try {
+    body()
+  } finally {
+    setProjectSource(() => [], ++revision)
+  }
 }
 
 const sources = { java: completionSources('java', () => []), python: completionSources('python', () => []) }

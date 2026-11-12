@@ -1,20 +1,22 @@
 import type { EditorState } from '@codemirror/state'
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
-import type { LangId } from '../runtime'
-import { recordable, withUsageBoost } from './usage'
-import { JAVA_FQCN } from './javaApi.generated'
+import { JAVA_PRIMS, baseOf, isThrowableName, maskCode, splitTopLevel, typeArgs, type TextLang } from './codeText'
+import { javaFqcn } from './imports'
 import { projectRevision } from './projectSource'
-import { JAVA_PRIMS, parseChain, resolveReceiver, typeArgs, typeBase as baseOf, type MemberTypes, type Resolved } from './receiver'
-import { splitTopLevel, typeIndexFor, type ClassInfo, type MemberInfo, type TypeIndex } from './typeIndex'
+import { parseChain, resolveReceiver, type MemberTypes, type Resolved } from './receiver'
+import { typeIndexFor, type ClassInfo, type MemberInfo, type TypeIndex } from './typeIndex'
+import { recordable, withUsageBoost } from './usage'
 
 /**
  * `variable.` offers what that value can do. There is no language server here;
- * the receiver's type comes from receiver.ts (which reads declarations,
- * parameters, `catch`, `this`/`super`/`self`, chains and casts from the text)
- * and the student's own classes from typeIndex.ts. These tables say what the
- * library types offer, and each `detail` leads with the member's return type
- * (`String, (int) — …`) — the resolver follows that through a chain, so keep
- * it accurate: `sc.next().` is a String only because `next` says so.
+ * the receiver's type comes from receiver.ts (declarations, parameters, `catch`,
+ * `this`/`super`/`self`, chains, casts — read from the text) and the student's
+ * own classes from typeIndex.ts. These tables say what the library types offer.
+ *
+ * Chains are followed by return type. In Java each `detail` leads with it
+ * (`String, (int) — …`), so keep that accurate: `sc.next().` is a String only
+ * because `next` says so. Python's details carry no return type; Python chains
+ * read PY_RESULTS below instead, and a method missing there just ends the chain.
  */
 
 const method = (label: string, detail: string): Completion => ({ label, type: 'method', detail, boost: 30 })
@@ -636,6 +638,12 @@ export const JAVA_MEMBERS: Record<string, readonly Completion[]> = {
     method('ordinal', 'int — its position in the enum, from 0'),
     method('compareTo', 'int, (E) — order by position in the enum'),
   ],
+  // `for (Map.Entry<K, V> e : map.entrySet())` — the HashMap idiom.
+  'Map.Entry': [
+    method('getKey', "K — this pair's key"),
+    method('getValue', "V — this pair's value"),
+    method('setValue', "V, (V) — change this pair's value"),
+  ],
   Vector: [
     method('add', 'boolean, (E) — put something in'),
     method('get', 'E, (int) — the item at a position'),
@@ -1161,7 +1169,7 @@ const JAVA_INSTANCE_ALIAS: Record<string, string> = {
   Set: 'HashSet', SortedSet: 'TreeSet', NavigableSet: 'TreeSet',
   Map: 'HashMap', SortedMap: 'TreeMap', NavigableMap: 'TreeMap',
   Queue: 'LinkedList', Deque: 'ArrayDeque', CharSequence: 'String',
-  Writer: 'FileWriter', Reader: 'FileReader', PrintStream: 'PrintStream',
+  Writer: 'FileWriter', Reader: 'FileReader', Entry: 'Map.Entry',
 }
 
 /** Type parameter names per generic class, so `ArrayList<String>.get` returns a String. */
@@ -1169,18 +1177,33 @@ const JAVA_TYPE_PARAMS: Record<string, readonly string[]> = {
   ArrayList: ['E'], LinkedList: ['E'], Vector: ['E'], Stack: ['E'], HashSet: ['E'], TreeSet: ['E'],
   LinkedHashSet: ['E'], ArrayDeque: ['E'], PriorityQueue: ['E'], Iterator: ['E'], List: ['E'],
   Set: ['E'], Queue: ['E'], Deque: ['E'], Collection: ['E'], Iterable: ['E'],
-  HashMap: ['K', 'V'], TreeMap: ['K', 'V'], LinkedHashMap: ['K', 'V'], Map: ['K', 'V'],
+  HashMap: ['K', 'V'], TreeMap: ['K', 'V'], LinkedHashMap: ['K', 'V'], Map: ['K', 'V'], 'Map.Entry': ['K', 'V'], Entry: ['K', 'V'],
   Optional: ['T'], Stream: ['T'], Comparator: ['T'],
 }
 
-const isThrowable = (base: string) => /(?:Exception|Error|Throwable)$/.test(base)
+/**
+ * The members of a mixed table that belong to the *class*, not its values: what
+ * `String.` / `Integer.` offer, and what `s.` / `n.` leave out. Tables without an
+ * entry here are all-instance (ArrayList) or all-static by use (Math, Collections).
+ */
+const JAVA_STATICS: Record<string, ReadonlySet<string>> = {
+  String: new Set(['format', 'valueOf', 'join']),
+  Integer: new Set(['parseInt', 'valueOf', 'toString', 'toBinaryString', 'toHexString', 'toOctalString', 'compare', 'sum', 'max', 'min', 'MAX_VALUE', 'MIN_VALUE', 'SIZE']),
+  Long: new Set(['parseLong', 'valueOf', 'toString', 'compare', 'MAX_VALUE', 'MIN_VALUE', 'SIZE']),
+  Double: new Set(['parseDouble', 'valueOf', 'toString', 'compare', 'isNaN', 'isInfinite', 'MAX_VALUE', 'MIN_VALUE']),
+  Boolean: new Set(['parseBoolean', 'valueOf', 'toString', 'compare', 'TRUE', 'FALSE']),
+  Character: new Set(JAVA_MEMBERS.Character.map((c) => c.label)),
+  Float: new Set(['parseFloat', 'valueOf', 'MAX_VALUE', 'MIN_VALUE']),
+  Short: new Set(['parseShort', 'MAX_VALUE', 'MIN_VALUE']),
+  Byte: new Set(['parseByte', 'MAX_VALUE', 'MIN_VALUE']),
+}
 
-/** The return type a JDK member's `detail` advertises — `E, (int) — …` → `E`. */
+/** The return type a member's `detail` advertises — `E, (int) — …` → `E`; `(x) — …` → null. */
 function detailType(detail: string | undefined): string | null {
   if (!detail) return null
-  const head = detail.split(' — ')[0]
-  const first = head.trim().startsWith('(') ? '' : splitTopLevel(head)[0] ?? ''
-  const t = first.replace(/^throws\b.*$/, '').trim()
+  const head = detail.split(' — ')[0].trim()
+  if (head.startsWith('(')) return null
+  const t = (splitTopLevel(head)[0] ?? '').trim()
   return /^[A-Za-z_$][\w$.]*(?:<.*>)?(?:\[\])*$/.test(t) ? t : null
 }
 
@@ -1201,35 +1224,51 @@ const memberCompletion = (m: MemberInfo): Completion => ({
   type: m.kind === 'method' ? 'method' : m.kind === 'constant' ? 'constant' : 'property',
   detail:
     m.kind === 'method'
-      ? `${m.type ?? ''}${m.params ? `${m.type ? ', ' : ''}(${m.params})` : m.type ? '' : '()'}`
-      : (m.type ?? ''),
+      ? `${m.type ?? ''}${m.type && m.params ? ', ' : ''}${m.params || !m.type ? `(${m.params ?? ''})` : ''}`
+      : (m.type ?? 'attribute'),
   boost: 34,
 })
 
-/** Members of a user class, inherited ones included (nearest definition wins). */
-function userMembers(
-  lang: LangId,
-  cls: ClassInfo,
-  isStatic: boolean,
-  index: TypeIndex,
-  seen = new Set<string>(),
-): { own: Completion[]; jdkSupers: string[] } {
-  if (seen.has(cls.name)) return { own: [], jdkSupers: [] }
-  seen.add(cls.name)
-  const own: Completion[] = []
-  const pick = isStatic && lang === 'java' ? cls.members.filter((m) => m.isStatic) : cls.members
-  // Static access to a Java class with nothing static: offer everything rather than nothing.
-  for (const m of pick.length ? pick : cls.members) own.push(memberCompletion(m))
-  const jdkSupers: string[] = []
-  for (const s of cls.supers) {
-    const parent = index.get(s)
-    if (parent) {
-      const sub = userMembers(lang, parent, isStatic, index, seen)
-      own.push(...sub.own.map((c) => ({ ...c, boost: 32 })))
-      jdkSupers.push(...sub.jdkSupers)
-    } else jdkSupers.push(s)
+/** The library table for a value (or class) of this type, filtered to what that access can reach. */
+function jdkMembers(base: string, isStatic: boolean): readonly Completion[] | undefined {
+  const statics = JAVA_STATICS[base]
+  if (isStatic) {
+    const table = JAVA_MEMBERS[base]
+    return statics && table ? table.filter((c) => statics.has(c.label)) : table
   }
-  return { own, jdkSupers }
+  const table = JAVA_MEMBERS[JAVA_INSTANCE_ALIAS[base] ?? base] ?? (isThrowableName(base) ? JAVA_MEMBERS.Throwable : undefined)
+  return statics && table ? table.filter((c) => !statics.has(c.label)) : table
+}
+
+/** A library (non-project) parent's members: a JDK table in Java, a builtin/module table in Python. */
+function libraryMembers(lang: TextLang, name: string, isStatic: boolean, pyTables: PyTables): readonly Completion[] {
+  if (lang === 'java') return jdkMembers(name, isStatic) ?? []
+  return pyTables[name] ?? (isThrowableName(name) || name === 'BaseException' ? PYTHON_MEMBERS.BaseException : [])
+}
+
+/**
+ * Members of a user class with everything it inherits — its own first, then each
+ * parent's (project classes recursively, library parents from the tables), then
+ * Object's for a Java value. The nearest definition of a name wins.
+ */
+function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: TypeIndex, pyTables: PyTables): Completion[] {
+  const out: Completion[] = []
+  const seen = new Set<string>()
+  const walk = (c: ClassInfo, boost: number) => {
+    if (seen.has(c.name)) return
+    seen.add(c.name)
+    // Static access offers what is static; a Java class with nothing static offers everything rather than nothing.
+    const own = isStatic && lang === 'java' ? c.members.filter((m) => m.isStatic) : c.members
+    for (const m of own.length ? own : c.members) out.push({ ...memberCompletion(m), boost })
+    for (const s of c.supers) {
+      const parent = index.get(s)
+      if (parent) walk(parent, boost - 2)
+      else if (!isStatic) out.push(...libraryMembers(lang, s, false, pyTables))
+    }
+  }
+  walk(cls, 34)
+  if (lang === 'java' && !isStatic) out.push(...JAVA_MEMBERS.Object)
+  return dedupe(out)
 }
 
 function dedupe(list: readonly Completion[]): Completion[] {
@@ -1237,57 +1276,45 @@ function dedupe(list: readonly Completion[]): Completion[] {
   return list.filter((c) => !seen.has(c.label) && (seen.add(c.label), true))
 }
 
-/** The JDK table for a value (or class) of this type, before Object's members are added. */
-function jdkTable(base: string, isStatic: boolean): readonly Completion[] | undefined {
-  if (isStatic) return JAVA_MEMBERS[base]
-  return JAVA_MEMBERS[JAVA_INSTANCE_ALIAS[base] ?? base] ?? (isThrowable(base) ? JAVA_MEMBERS.Throwable : undefined)
-}
+/** Python receiver tables by type name — builtins, the hand-written modules, and the dictionary-derived ones. */
+export type PyTables = Record<string, readonly Completion[]>
 
 /** Everything `x.` should offer for this resolved type, or null when there is no knowing. */
-export function membersFor(lang: LangId, r: Resolved, index: TypeIndex, extra?: Record<string, readonly Completion[]>): Completion[] | null {
+export function membersFor(lang: TextLang, r: Resolved, index: TypeIndex, pyTables: PyTables): Completion[] | null {
+  const t = r.type.replace(/\s+/g, '')
   if (lang === 'java') {
-    const t = r.type.replace(/\s+/g, '')
     if (/\[\]$/.test(t)) return [...JAVA_MEMBERS['[]'], ...JAVA_MEMBERS.Object]
     if (JAVA_PRIMS.has(t)) return null
-    const base = baseOf(t)
-    const user = index.get(base)
-    if (user) {
-      const { own, jdkSupers } = userMembers(lang, user, r.isStatic, index)
-      const inherited: Completion[] = []
-      for (const s of jdkSupers) inherited.push(...(jdkTable(s, false) ?? []))
-      if (user.kind === 'enum') {
-        if (r.isStatic) {
-          own.push(
-            { label: 'values', type: 'method', detail: `${base}[] — every constant, in order`, boost: 33 },
-            { label: 'valueOf', type: 'method', detail: `${base}, (String) — the constant with this name`, boost: 33 },
-          )
-        } else inherited.push(...JAVA_MEMBERS.Enum)
-      }
-      if (!r.isStatic) inherited.push(...JAVA_MEMBERS.Object)
-      return dedupe([...own, ...inherited])
-    }
-    const table = jdkTable(base, r.isStatic)
-    if (!table) return r.isStatic ? null : null
+  }
+  const base = lang === 'java' ? baseOf(t) : t.replace(/\[.*$/, '')
+  const user = index.get(base)
+  if (user) return userMembers(lang, user, r.isStatic, index, pyTables)
+  if (lang === 'java') {
+    const table = jdkMembers(base, r.isStatic)
+    if (!table) return null
     return r.isStatic ? [...table] : dedupe([...table, ...JAVA_MEMBERS.Object])
   }
-  // Python
-  const t = r.type
-  const base = t.replace(/\[.*$/, '').replace(/\(\)$/, '')
-  const user = index.get(base)
-  if (user) {
-    const { own } = userMembers(lang, user, r.isStatic, index)
-    return dedupe(own)
-  }
-  const table = { ...(extra ?? {}), ...PYTHON_MEMBERS }
-  if (table[t]) return [...table[t]]
-  if (table[base]) return [...table[base]]
-  return /(?:Error|Exception|Warning|Interrupt|Exit|StopIteration)$/.test(base) ? [...PYTHON_MEMBERS.BaseException] : null
+  const table = pyTables[t] ?? pyTables[base] ?? libraryMembers(lang, base, r.isStatic, pyTables)
+  return table.length ? [...table] : null
 }
 
 /* --------------------------------------------------- return types, for chains */
 
-/** Python method/function results the resolver follows through a chain. */
-const PY_RETURNS: Record<string, string> = {
+/**
+ * What calling a Python name returns — builtins (`input`), imported classes and
+ * functions (`numpy.array`, `csv.writer`) and methods (`str.split`), keyed by the
+ * qualified name. Python's member tables carry no return type in their `detail`
+ * (unlike Java's), so this is where a Python chain is followed; a method missing
+ * here is still offered, it just ends the chain.
+ */
+const PY_RESULTS: Record<string, string> = {
+  input: 'str', str: 'str', repr: 'str', chr: 'str', format: 'str', ascii: 'str', hex: 'str', bin: 'str', oct: 'str',
+  int: 'int', len: 'int', ord: 'int', hash: 'int', id: 'int', float: 'float',
+  list: 'list', sorted: 'list', dict: 'dict', set: 'set', frozenset: 'set', tuple: 'tuple', range: 'range',
+  open: 'file', bytes: 'bytes', bytearray: 'bytes',
+  Counter: 'Counter', deque: 'deque', defaultdict: 'dict', OrderedDict: 'dict', Path: 'Path', StringIO: 'StringIO',
+  datetime: 'datetime', date: 'date',
+  'collections.Counter': 'Counter', 'collections.deque': 'deque', 'pathlib.Path': 'Path',
   ...Object.fromEntries(
     'upper lower strip lstrip rstrip title capitalize casefold swapcase replace format center ljust rjust zfill removeprefix removesuffix expandtabs join'
       .split(' ')
@@ -1305,7 +1332,7 @@ const PY_RETURNS: Record<string, string> = {
   'datetime.now': 'datetime', 'datetime.today': 'datetime', 'datetime.strptime': 'datetime', 'date.today': 'date',
   'Match.group': 'str',
   'csv.writer': 'csv.writer', 'csv.reader': 'csv.reader', 'csv.DictReader': 'csv.DictReader', 'csv.DictWriter': 'csv.DictWriter',
-  'io.StringIO': 'StringIO',
+  'io.StringIO': 'StringIO', 'datetime.datetime': 'datetime', 'datetime.date': 'date',
   'numpy.array': 'ndarray', 'numpy.arange': 'ndarray', 'numpy.linspace': 'ndarray', 'numpy.zeros': 'ndarray',
   'numpy.ones': 'ndarray', 'numpy.full': 'ndarray', 'numpy.empty': 'ndarray', 'numpy.eye': 'ndarray',
   'numpy.zeros_like': 'ndarray', 'numpy.ones_like': 'ndarray', 'numpy.reshape': 'ndarray', 'numpy.concatenate': 'ndarray',
@@ -1329,44 +1356,47 @@ const PY_RETURNS: Record<string, string> = {
   'Series.tolist': 'list',
 }
 
-/** Builtins and imported classes whose call result has a known type. */
-const PY_CALLS: Record<string, string> = {
-  input: 'str', str: 'str', repr: 'str', chr: 'str', format: 'str', ascii: 'str', hex: 'str', bin: 'str', oct: 'str',
-  int: 'int', len: 'int', ord: 'int', hash: 'int', id: 'int', float: 'float',
-  list: 'list', sorted: 'list', dict: 'dict', set: 'set', frozenset: 'set', tuple: 'tuple', range: 'range',
-  open: 'file', bytes: 'bytes', bytearray: 'bytes',
-  Counter: 'Counter', deque: 'deque', defaultdict: 'dict', OrderedDict: 'dict', Path: 'Path', StringIO: 'StringIO',
-  datetime: 'datetime', date: 'date',
-  'io.StringIO': 'StringIO', 'collections.Counter': 'Counter', 'collections.deque': 'deque', 'pathlib.Path': 'Path',
-  'numpy.array': 'ndarray', 'pandas.DataFrame': 'DataFrame', 'pandas.Series': 'Series',
+
+/** A member's declared type, searching parents; undefined when the class has no such member. */
+function findUserMember(cls: ClassInfo, name: string, call: boolean, index: TypeIndex, lang: TextLang, seen = new Set<string>()): string | null | undefined {
+  if (seen.has(cls.name)) return undefined
+  seen.add(cls.name)
+  const own = cls.members.find((m) => m.name === name && (call ? m.kind === 'method' : m.kind !== 'method'))
+  if (own) return own.type && lang === 'python' ? own.type.replace(/\(\)$/, '') : own.type
+  for (const s of cls.supers) {
+    const parent = index.get(s)
+    if (parent) {
+      const r = findUserMember(parent, name, call, index, lang, seen)
+      if (r !== undefined) return r
+    } else if (lang === 'java') {
+      const hit = jdkMembers(s, false)?.find((c) => c.label === name)
+      if (hit) return detailType(hit.detail)
+    }
+  }
+  return undefined
 }
 
-const PY_CLASS_ATTRS = new Set(['csv.DictReader', 'csv.DictWriter', 'pandas.DataFrame', 'pandas.Series', 'io.StringIO'])
-
-function makeMemberTypes(extra?: Record<string, readonly Completion[]>): MemberTypes {
-  const pyTables = { ...(extra ?? {}), ...PYTHON_MEMBERS }
+function makeMemberTypes(pyTables: PyTables): MemberTypes {
   return {
     isKnownType(lang, name, index) {
       if (index.has(name)) return true
-      if (lang === 'java') return !!JAVA_MEMBERS[name] || !!JAVA_FQCN[name] || isThrowable(name)
-      return !!pyTables[name] || name in PY_CALLS
+      if (lang === 'java') return !!JAVA_MEMBERS[name] || !!javaFqcn(name) || isThrowableName(name)
+      return !!pyTables[name] || name in PY_RESULTS
     },
     callResult(lang, name) {
-      return lang === 'python' ? (PY_CALLS[name] ?? null) : null
+      return lang === 'python' ? (PY_RESULTS[name] ?? null) : null
     },
-    memberType(lang, cur, member, call, index) {
+    memberType(lang, on, member, call, index) {
+      const t = on.type.replace(/\s+/g, '')
       if (lang === 'java') {
-        const t = cur.type.replace(/\s+/g, '')
         if (/\[\]$/.test(t)) return member === 'length' ? 'int' : member === 'clone' ? t : null
         const base = baseOf(t)
         const user = index.get(base)
         if (user) {
-          const found = findUserMember(user, member, call, index, new Set())
+          const found = findUserMember(user, member, call, index, lang)
           if (found !== undefined) return found
-          if (user.kind === 'enum' && call && member === 'values') return `${base}[]`
-          if (user.kind === 'enum' && call && member === 'valueOf') return base
         }
-        const tables = user ? [...user.supers.map((s) => jdkTable(s, false)), JAVA_MEMBERS.Object] : [jdkTable(base, cur.isStatic), JAVA_MEMBERS.Object]
+        const tables = user ? [JAVA_MEMBERS.Object] : [jdkMembers(base, on.isStatic), JAVA_MEMBERS.Object]
         for (const table of tables) {
           const hit = table?.find((c) => c.label === member)
           if (hit) {
@@ -1376,41 +1406,15 @@ function makeMemberTypes(extra?: Record<string, readonly Completion[]>): MemberT
         }
         return null
       }
-      // Python
-      const base = cur.type.replace(/\[.*$/, '').replace(/\(\)$/, '')
+      const base = t.replace(/\[.*$/, '')
       const user = index.get(base)
-      if (user) {
-        const found = findUserMember(user, member, call, index, new Set())
-        return found === undefined ? null : found ? pyNormalize(found) : null
-      }
-      const qual = `${cur.type}.${member}`
-      if (!call && PY_CLASS_ATTRS.has(qual)) return `static:${qual}`
-      if (cur.isStatic && call && PY_CALLS[qual]) return PY_CALLS[qual]
-      return PY_RETURNS[qual] ?? PY_RETURNS[`${base}.${member}`] ?? null
+      if (user) return findUserMember(user, member, call, index, lang) ?? null
+      const qual = `${t}.${member}`
+      // A module attribute that is a class (`csv.DictReader`, `pd.DataFrame`) stays a class until called.
+      if (!call && pyTables[t]?.some((c) => c.label === member && c.type === 'class')) return `static:${qual}`
+      return PY_RESULTS[qual] ?? PY_RESULTS[`${base}.${member}`] ?? null
     },
   }
-}
-
-/** `Foo()` (a call recorded by the scanner) → `Foo`; annotations stay as written. */
-const pyNormalize = (t: string) => t.replace(/\(\)$/, '')
-
-/** A member's declared type, searching parents; undefined when the class has no such member. */
-function findUserMember(cls: ClassInfo, name: string, call: boolean, index: TypeIndex, seen: Set<string>): string | null | undefined {
-  if (seen.has(cls.name)) return undefined
-  seen.add(cls.name)
-  const own = cls.members.find((m) => m.name === name && (call ? m.kind === 'method' : m.kind !== 'method'))
-  if (own) return own.type
-  for (const s of cls.supers) {
-    const parent = index.get(s)
-    if (parent) {
-      const r = findUserMember(parent, name, call, index, seen)
-      if (r !== undefined) return r
-    } else {
-      const hit = jdkTable(s, false)?.find((c) => c.label === name)
-      if (hit) return detailType(hit.detail)
-    }
-  }
-  return undefined
 }
 
 /* ------------------------------------------------------------- the context */
@@ -1432,22 +1436,21 @@ export interface Receiver {
 /**
  * Is the caret sitting right after `receiver.`? The receiver may be any
  * expression — a name, a call, an index, a literal, a parenthesised cast — so
- * `sc.next().` and `arr[0].` count, and `3.` (a decimal point) does not.
+ * `sc.next().` and `arr[0].` count, and `3.` (a decimal point) does not. The
+ * look-back is masked first, so a bracket inside a string never misleads it.
  * Import / package lines are excluded: `import java.util.` is a path, not a
- * member access. Shared so the other sources step aside in a `.` context (no
- * `sout` or `class` after a dot).
+ * member access. Shared so the other sources step aside in a `.` context.
  */
-export function memberContext(state: EditorState, pos: number): Receiver | null {
+export function memberContext(state: EditorState, pos: number, lang: TextLang): Receiver | null {
   const line = state.doc.lineAt(pos)
-  const lineBefore = state.sliceDoc(line.from, pos)
-  if (/^\s*(?:import|from|package)\b/.test(lineBefore)) return null
+  if (/^\s*(?:import|from|package)\b/.test(state.sliceDoc(line.from, pos))) return null
   const start = Math.max(0, pos - LOOKBACK)
   const text = state.sliceDoc(start, pos)
-  const pm = /([A-Za-z_$][\w$]*)?$/.exec(text)!
-  const partial = pm[1] ?? ''
+  const pm = /[A-Za-z_$][\w$]*$/.exec(text)
+  const partial = pm ? pm[0] : ''
   const dot = text.length - partial.length - 1
   if (dot < 0 || text[dot] !== '.') return null
-  const chain = parseChain(text, dot)
+  const chain = parseChain(maskCode(lang, text), dot)
   if (!chain) return null
   return { name: text.slice(chain.from, dot), partial, from: pos - partial.length, dotPos: start + dot }
 }
@@ -1461,10 +1464,9 @@ type Expected = 'int' | 'double' | 'String' | 'boolean' | 'char' | null
 /** The return type a member advertises: the leading token of its `detail`, before
  *  the first comma or em dash. `null` when it does not lead with one (Python
  *  members, constants, generics like `Set<Map.Entry<…>>`). */
-export function returnType(detail: string | undefined): string | null {
-  if (!detail) return null
-  const tok = detail.split('—')[0].split(',')[0].trim().replace(/<.*>$/, '')
-  return /^[A-Za-z_$][\w$]*$/.test(tok) ? tok : null
+function returnType(detail: string | undefined): string | null {
+  const t = detailType(detail)
+  return t && /^[A-Za-z_$][\w$]*$/.test(baseOf(t)) && !/\[\]$/.test(t) ? baseOf(t) : null
 }
 
 /** What type does the code seem to want, just left of the receiver? */
@@ -1510,37 +1512,27 @@ function rankByExpected(members: readonly Completion[], expected: Expected): Com
  *  the file, so a `.` after an unknown value still offers *something* useful. */
 export type MemberFallback = (ctx: CompletionContext) => CompletionResult | null
 
-/** One-slot memo: the text before a given dot does not change while the member name after it is typed. */
-let memoKey: unknown = null
-let memoDot = -1
-let memoResult: { members: Completion[] | null; exprFrom: number } | null = null
-
 export function memberSource(
-  lang: LangId,
-  fallback?: MemberFallback,
-  /** Extra Python receivers derived from the module dictionary (`os.`, `json.`,
-   *  `re.`…), so a `module.` dot offers that module's functions. A receiver in
-   *  the hand-written table wins over a derived one of the same name. */
-  extra?: Record<string, readonly Completion[]>,
+  lang: TextLang,
+  fallback: MemberFallback | undefined,
+  /** Every Python receiver table (see PyTables); ignored for Java. */
+  pyTables: PyTables = PYTHON_MEMBERS,
 ): CompletionSource {
-  const clang = lang === 'java' ? 'java' : 'python'
-  const types = makeMemberTypes(extra)
+  const types = makeMemberTypes(pyTables)
+  // One slot: while the member name after a dot is typed, nothing before it moves.
+  let memo: { key: string; members: Completion[] | null; exprFrom: number } | null = null
   return (ctx: CompletionContext): CompletionResult | null => {
-    const rc = memberContext(ctx.state, ctx.pos)
+    const rc = memberContext(ctx.state, ctx.pos, lang)
     if (!rc) return null
-    const key = `${projectRevision()}|${ctx.state.doc.sliceString(0, rc.from)}|${ctx.state.doc.sliceString(ctx.pos)}`
-    if (memoKey !== key || memoDot !== rc.dotPos) {
-      const doc = ctx.state.doc.sliceString(0)
-      const res = resolveReceiver(clang, doc, rc.dotPos, types)
-      const index = typeIndexFor(clang, doc)
-      const members = res?.resolved ? membersFor(lang, res.resolved, index, extra) : null
-      memoKey = key
-      memoDot = rc.dotPos
-      memoResult = { members: members?.length ? members.map((m) => recordable(lang, m)) : null, exprFrom: res?.from ?? rc.dotPos }
+    const key = `${projectRevision()}|${rc.dotPos}|${ctx.state.doc.sliceString(0, rc.from)}`
+    if (memo?.key !== key) {
+      const doc = ctx.state.doc.toString()
+      const res = resolveReceiver(lang, doc, rc.dotPos, types)
+      const members = res?.resolved ? membersFor(lang, res.resolved, typeIndexFor(lang, doc), pyTables) : null
+      memo = { key, members: members?.length ? members.map((m) => recordable(lang, m)) : null, exprFrom: res?.from ?? rc.dotPos }
     }
-    const { members, exprFrom } = memoResult!
-    if (!members) return fallback ? fallback(ctx) : null
-    const options = lang === 'java' ? rankByExpected(members, expectedTypeBefore(ctx.state, exprFrom)) : [...members]
+    if (!memo.members) return fallback ? fallback(ctx) : null
+    const options = lang === 'java' ? rankByExpected(memo.members, expectedTypeBefore(ctx.state, memo.exprFrom)) : [...memo.members]
     return { from: rc.from, options: withUsageBoost(lang, options), validFor: /^[\w$]*$/ }
   }
 }

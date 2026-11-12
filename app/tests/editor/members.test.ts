@@ -2,94 +2,150 @@
  * Member completion after a dot — the patterns university Java 1/2 and Python
  * 1/2 course material actually uses (arrays, parameters, catch variables, the
  * student's own classes, inheritance, chains, numpy/pandas/csv…).
+ *
+ * `member()` insists the option came from the member source itself, not from
+ * the plain-words fallback — a word already written in the test document would
+ * otherwise pass for a resolved member. Fallback words carry no `detail`; every
+ * member row does.
  * Run with: `npm run test:editor`
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { javaMain, offered, useProjectFiles } from './helpers.ts'
+import { javaMain, offered, withProjectFiles } from './helpers.ts'
+import { unresolvedImportables } from '../../src/editor/imports.ts'
 
-const has = (lang: 'java' | 'python', doc: string, ...want: string[]) => {
+type Lang = 'java' | 'python'
+const member = (lang: Lang, doc: string, ...want: string[]) => {
+  const { labels, byLabel } = offered(lang, doc)
+  for (const w of want) {
+    assert.ok(labels.includes(w), `expected "${w}" in [${labels.slice(0, 25).join(', ')}]`)
+    assert.ok(byLabel.get(w)?.detail !== undefined, `"${w}" came from the word fallback, not a resolved member`)
+  }
+}
+const has = (lang: Lang, doc: string, ...want: string[]) => {
   const { labels } = offered(lang, doc)
   for (const w of want) assert.ok(labels.includes(w), `expected "${w}" in [${labels.slice(0, 25).join(', ')}]`)
 }
-const lacks = (lang: 'java' | 'python', doc: string, ...unwanted: string[]) => {
+const lacks = (lang: Lang, doc: string, ...unwanted: string[]) => {
   const { labels } = offered(lang, doc)
   for (const w of unwanted) assert.ok(!labels.includes(w), `did not expect "${w}" in [${labels.slice(0, 25).join(', ')}]`)
 }
 
 /* ------------------------------------------------------------------ Java */
 
-test('java: array length — local, new, args, 2-D row', () => {
-  has('java', javaMain('    int[] arr = {1, 2, 3};\n    for (int i = 0; i < arr.le‸'), 'length')
-  has('java', javaMain('    int[] nums = new int[5];\n    nums.le‸'), 'length')
-  has('java', javaMain('    args.le‸'), 'length')
-  has('java', javaMain('    int[][] m = new int[3][3];\n    m[0].le‸'), 'length')
+test('java: array length — local, new, args, 2-D row, varargs', () => {
+  member('java', javaMain('    int[] arr = {1, 2, 3};\n    for (int i = 0; i < arr.le‸'), 'length')
+  member('java', javaMain('    int[] nums = new int[5];\n    nums.le‸'), 'length')
+  member('java', javaMain('    args.le‸'), 'length')
+  member('java', javaMain('    int[][] m = new int[3][3];\n    m[0].le‸'), 'length')
+  member('java', javaMain('  }\n  static int sum(int... nums) {\n    return nums.le‸'), 'length')
   lacks('java', javaMain('    int[] arr = {1};\n    arr.‸'), 'charAt', 'sout', 'class')
 })
 
 test('java: parameters and declare-then-assign', () => {
-  has('java', javaMain('  }\n  static int count(String s) {\n    return s.ch‸'), 'charAt')
-  has('java', javaMain('  }\n  static void show(ArrayList<String> list) {\n    list.si‸'), 'size')
-  has('java', javaMain('    String name;\n    name = "x";\n    name.le‸'), 'length')
+  member('java', javaMain('  }\n  static int count(String s) {\n    return s.ch‸'), 'charAt')
+  member('java', javaMain('  }\n  static void show(ArrayList<String> list) {\n    list.si‸'), 'size')
+  member('java', javaMain('    String name;\n    name = "x";\n    name.le‸'), 'length')
+})
+
+test('java: a name is typed by the declaration in scope, not one in another method', () => {
+  const doc =
+    'import java.util.*;\npublic class Main {\n  static Scanner input = new Scanner(System.in);\n' +
+    '  static void a() {\n    String input = "x";\n  }\n  public static void main(String[] args) {\n    input.next‸\n  }\n}\n'
+  member('java', doc, 'nextInt')
+  const lambda =
+    'import java.util.*;\npublic class Main {\n  static void a() { int[] x = {1}; }\n' +
+    '  static void b(ArrayList<String> l) {\n    l.forEach(x -> x.‸);\n  }\n}\n'
+  lacks('java', lambda, 'clone')
 })
 
 test('java: catch variable offers Throwable members', () => {
-  has('java', javaMain('    try {\n      int x = 1 / 0;\n    } catch (ArithmeticException e) {\n      e.getM‸'), 'getMessage')
-  has('java', javaMain('    try {\n    } catch (InputMismatchException | NumberFormatException ex) {\n      ex.pr‸'), 'printStackTrace')
+  member('java', javaMain('    try {\n      int x = 1 / 0;\n    } catch (ArithmeticException e) {\n      e.getM‸'), 'getMessage')
+  member('java', javaMain('    try {\n    } catch (InputMismatchException | NumberFormatException ex) {\n      ex.pr‸'), 'printStackTrace')
 })
 
 test('java: chains follow return types and generics', () => {
-  has('java', javaMain('    Scanner sc = new Scanner(System.in);\n    char c = sc.next().ch‸'), 'charAt')
-  has('java', javaMain('    ArrayList<String> names = new ArrayList<>();\n    names.get(0).toU‸'), 'toUpperCase')
-  has('java', javaMain('    HashMap<String, Integer> m = new HashMap<>();\n    m.get("a").int‸'), 'intValue')
-  has('java', javaMain('    "hello".le‸'), 'length')
-  has('java', javaMain('    new Scanner(System.in).nextL‸'), 'nextLine')
-  has('java', javaMain('    ArrayList<String> l = new ArrayList<>();\n    Iterator<String> it = l.iterator();\n    it.hasN‸'), 'hasNext')
-  has('java', javaMain('    var sc = new Scanner(System.in);\n    sc.nextI‸'), 'nextInt')
+  member('java', javaMain('    Scanner sc = new Scanner(System.in);\n    char c = sc.next().ch‸'), 'charAt')
+  member('java', javaMain('    ArrayList<String> names = new ArrayList<>();\n    names.get(0).toU‸'), 'toUpperCase')
+  member('java', javaMain('    HashMap<String, Integer> m = new HashMap<>();\n    m.get("a").int‸'), 'intValue')
+  member('java', javaMain('    "hello".le‸'), 'length')
+  member('java', javaMain('    new Scanner(System.in).nextL‸'), 'nextLine')
+  member('java', javaMain('    ArrayList<String> l = new ArrayList<>();\n    Iterator<String> it = l.iterator();\n    it.hasN‸'), 'hasNext')
+  member('java', javaMain('    var sc = new Scanner(System.in);\n    sc.nextI‸'), 'nextInt')
+  member('java', javaMain('    HashMap<String, Integer> m = new HashMap<>();\n    for (Map.Entry<String, Integer> e : m.entrySet()) {\n      e.getK‸'), 'getKey')
   // After a call there is no `sout`/`class` — a dot context belongs to members.
   lacks('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.next().‸'), 'sout', 'class', 'psvm')
 })
 
+test('java: a bracket inside a string never breaks the chain', () => {
+  member('java', javaMain('    String s = "a(b";\n    s.replace("(", "").toU‸'), 'toUpperCase')
+  member('java', javaMain('    String s = "a(b";\n    s.split("\\\\(")[0].tri‸'), 'trim')
+  lacks('java', javaMain('    String s = "x";\n    s.replace(")", "").‸'), 'sout', 'psvm', 'class')
+})
+
 test('java: the student’s own classes, inheritance, this/super, enums, statics', () => {
-  const classes =
+  const animals =
     'class Animal {\n  protected String name;\n  void makeSound() {}\n  public String toString() { return name; }\n}\n' +
-    'class Dog extends Animal {\n  void bark() {}\n  void makeSound() {\n    super.make‸\n  }\n}\n'
-  has('java', javaMain('', classes), 'makeSound')
-  const shapes = 'interface Shape { double area(); }\nclass Circle implements Shape {\n  private double radius;\n  Circle(double radius) { this.rad‸ }\n  public double area() { return 1; }\n}\n'
-  has('java', javaMain('', shapes), 'radius')
+    'class Dog extends Animal {\n  void bark() {}\n  void makeSound() {\n    super.‸\n  }\n}\n'
+  member('java', javaMain('', animals), 'makeSound', 'toString', 'name')
+  lacks('java', javaMain('', animals), 'bark')
+  const shapes =
+    'interface Shape { double area(); }\nclass Circle implements Shape {\n  private double radius;\n  private int other;\n' +
+    '  Circle(double radius) { this.rad‸ }\n  public double area() { return 1; }\n}\n'
+  member('java', javaMain('', shapes), 'radius')
   const account =
-    'class Account {\n  double balance;\n  void deposit(double d) {}\n  double getBalance() { return balance; }\n  public String toString() { return ""; }\n  void add(int x) {}\n  int size() { return 0; }\n}\n'
+    'class Account {\n  double balance;\n  void deposit(double d) {}\n  double getBalance() { return balance; }\n' +
+    '  public String toString() { return ""; }\n  void add(int x) {}\n  int size() { return 0; }\n}\n'
   // Members that share a dictionary name (toString, add, size) are not dropped.
-  has('java', javaMain('    Account a = new Account();\n    a.‸', account), 'deposit', 'getBalance', 'toString', 'add', 'size', 'balance', 'equals', 'hashCode')
-  lacks('java', javaMain('    Account a = new Account();\n    a.‸', account), 'nextInt', 'sout')
-  has('java', javaMain('    Animal a = new Dog();\n    a.make‸', 'class Animal { void makeSound() {} }\nclass Dog extends Animal { void bark() {} }\n'), 'makeSound')
-  has('java', javaMain('    Dog d = new Dog();\n    d.‸', 'class Animal { void makeSound() {} }\nclass Dog extends Animal { void bark() {} }\n'), 'makeSound', 'bark')
-  has('java', javaMain('    Day.‸', 'enum Day { MONDAY, TUESDAY; }\n'), 'MONDAY', 'TUESDAY', 'values', 'valueOf')
-  has('java', javaMain('    Day d = Day.MONDAY;\n    d.ord‸', 'enum Day { MONDAY, TUESDAY }\n'), 'ordinal')
-  has('java', javaMain('    Calculator.ad‸', 'class Calculator { static int add(int a, int b) { return a + b; } }\n'), 'add')
-  has('java', javaMain('    Object o = new Object();\n    o.toS‸'), 'toString')
-  has('java', javaMain('    Object o = "x";\n    ((String) o).len‸'), 'length')
+  member('java', javaMain('    Account a = new Account();\n    a.‸', account), 'deposit', 'getBalance', 'toString', 'add', 'size', 'balance', 'equals', 'hashCode')
+  lacks('java', javaMain('    Account a = new Account();\n    String unrelated = "";\n    a.‸', account), 'nextInt', 'sout', 'unrelated')
+  const zoo = 'class Animal { void makeSound() {} }\nclass Dog extends Animal { void bark() {} }\n'
+  member('java', javaMain('    Animal a = new Dog();\n    a.make‸', zoo), 'makeSound')
+  member('java', javaMain('    Dog d = new Dog();\n    d.‸', zoo), 'makeSound', 'bark')
+  member('java', javaMain('    Day.‸', 'enum Day { MONDAY, TUESDAY; }\n'), 'MONDAY', 'TUESDAY', 'values', 'valueOf')
+  member('java', javaMain('    Day d = Day.MONDAY;\n    d.‸', 'enum Day { MONDAY, TUESDAY }\n'), 'ordinal', 'name')
+  member('java', javaMain('    Day d = Day.MONDAY;\n    d.name().toL‸', 'enum Day { MONDAY, TUESDAY }\n'), 'toLowerCase')
+  member('java', javaMain('    Calculator.‸', 'class Calculator {\n  static int add(int a, int b) { return a + b; }\n  int memory;\n}\n'), 'add')
+  member('java', javaMain('    Object o = new Object();\n    o.toS‸'), 'toString')
+  member('java', javaMain('    Object o = "x";\n    ((String) o).len‸'), 'length')
+})
+
+test('java: a nested class is not a field of its outer class', () => {
+  const list =
+    'class MyList {\n  private static class Node { int value; Node next; }\n  private Node head;\n  void f() {\n    this.‸\n  }\n}\n'
+  member('java', javaMain('', list), 'head', 'f')
+  lacks('java', javaMain('', list), 'Node')
 })
 
 test('java: a class defined in another project file', () => {
-  useProjectFiles([{ path: 'Rectangle.java', content: 'public class Rectangle {\n  private int w, h;\n  public int getArea() { return w * h; }\n}\n' }])
-  has('java', javaMain('    Rectangle r = new Rectangle();\n    r.getAr‸'), 'getArea')
-  useProjectFiles([])
+  withProjectFiles([{ path: 'Rectangle.java', content: 'public class Rectangle {\n  private int w, h;\n  public int getArea() { return w * h; }\n}\n' }], () => {
+    member('java', javaMain('    Rectangle r = new Rectangle();\n    r.getAr‸'), 'getArea')
+  })
+})
+
+test('java: static access offers statics, a value offers its own members', () => {
+  member('java', javaMain('    String s = String.‸'), 'format', 'valueOf', 'join')
+  lacks('java', javaMain('    String s = String.‸'), 'charAt', 'length')
+  lacks('java', javaMain('    String s = "x";\n    s.‸'), 'format', 'valueOf')
+  member('java', javaMain('    Integer n = 5;\n    n.‸'), 'intValue', 'compareTo')
+  lacks('java', javaMain('    Integer n = 5;\n    n.‸'), 'parseInt')
 })
 
 test('java: library names the courses use', () => {
-  has('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.next‸'), 'nextBoolean', 'nextFloat', 'nextLong', 'nextShort', 'nextByte')
-  has('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.useD‸'), 'useDelimiter')
-  has('java', javaMain('    String s = String.‸'), 'format', 'valueOf', 'join')
-  has('java', javaMain('    Vector<Integer> v = new Vector<>();\n    v.‸'), 'add', 'get', 'set', 'remove', 'elementAt')
-  has('java', javaMain('    Collections.‸'), 'disjoint', 'rotate', 'replaceAll', 'swap', 'frequency')
-  has('java', javaMain('    Locale.‸'), 'US', 'setDefault')
-  has('java', javaMain('    Integer n = 5;\n    n.int‸'), 'intValue')
+  member('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.next‸'), 'nextBoolean', 'nextFloat', 'nextLong', 'nextShort', 'nextByte')
+  member('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.useD‸'), 'useDelimiter')
+  member('java', javaMain('    Vector<Integer> v = new Vector<>();\n    v.‸'), 'add', 'get', 'set', 'remove', 'elementAt')
+  member('java', javaMain('    Collections.‸'), 'disjoint', 'rotate', 'replaceAll', 'swap', 'frequency')
+  member('java', javaMain('    Locale.‸'), 'US', 'setDefault')
+  member('java', javaMain('    System.out.pri‸'), 'println', 'print', 'printf')
   has('java', javaMain('    ArrayList<Integ‸'), 'Integer')
   has('java', javaMain('    Obje‸'), 'Object')
   has('java', javaMain('    try {} catch (InputMis‸'), 'InputMismatchException')
   has('java', javaMain('    try {} catch (ClassCa‸'), 'ClassCastException')
-  has('java', javaMain('    System.out.pri‸'), 'println', 'print', 'printf')
+})
+
+test('java: every auto-importable class resolves to a fully-qualified name', () => {
+  assert.deepEqual(unresolvedImportables(), [])
 })
 
 test('java: a decimal point is not a member access', () => {
@@ -100,35 +156,50 @@ test('java: a decimal point is not a member access', () => {
 
 test('python: the student’s own classes, self, inheritance, super(), properties', () => {
   const car = 'class Car:\n    def __init__(self, speed):\n        self.speed = speed\n    def drive(self):\n        pass\n    def count(self):\n        pass\n'
-  has('python', car + '    def go(self):\n        self.‸', 'speed', 'drive', 'count')
-  has('python', car + '\nc = Car(3)\nc.‸', 'speed', 'drive', 'count')
+  member('python', car + '    def go(self):\n        self.‸', 'speed', 'drive', 'count')
+  member('python', car + '\nc = Car(3)\nc.‸', 'speed', 'drive', 'count')
   lacks('python', car + '\nc = Car(3)\nc.‸', 'append', 'upper')
-  has('python', 'class A:\n    def hello(self):\n        pass\nclass B(A):\n    pass\n\nb = B()\nb.hel‸', 'hello')
-  has('python', 'class A:\n    def __init__(self):\n        pass\nclass B(A):\n    def __init__(self):\n        super().__in‸', '__init__')
-  has('python', 'class Bat:\n    @property\n    def voltage(self):\n        return self._v\n    @voltage.set‸', 'setter')
+  member('python', 'class A:\n    def hello(self):\n        pass\nclass B(A):\n    pass\n\nb = B()\nb.‸', 'hello')
+  member('python', 'class A:\n    def __init__(self):\n        pass\n    def ping(self):\n        pass\nclass B(A):\n    def __init__(self):\n        super().‸', '__init__', 'ping')
+  member('python', 'class Bat:\n    @property\n    def voltage(self):\n        return self._v\n    @voltage.set‸', 'setter')
+  member('python', 'class Broke(Exception):\n    pass\n\ntry:\n    pass\nexcept Broke as e:\n    e.‸', 'args')
+})
+
+test('python: rebinding a name to an expression of itself', () => {
+  member('python', 'with open("data.txt") as f:\n    for line in f:\n        line = line.strip()\n        line.up‸', 'upper')
+  member('python', 'name = input()\nname = name.lower()\nname.up‸', 'upper')
+  // No binding before it at all: unknown, but never a throw.
+  assert.doesNotThrow(() => offered('python', 'x = x.upper()\nx.‸'))
+  assert.doesNotThrow(() => offered('java', javaMain('    var a = b.trim();\n    var b = a.trim();\n    a.‸')))
+})
+
+test('python: a name is typed by its own function’s binding', () => {
+  const doc = 'def load():\n    data = open("x.txt").read()\n    return data\n\ndef total(data):\n    return data.‸'
+  lacks('python', doc, 'upper', 'splitlines')
 })
 
 test('python: with/for/chains/annotations', () => {
-  has('python', 'with open("data.txt") as f:\n    f.read‸', 'read', 'readline', 'readlines')
-  has('python', 'line = "a b"\nparts = line.split()\nparts.app‸', 'append')
-  has('python', 'words = ["a", "b"]\nfor w in words:\n    w.upp‸', 'upper')
-  has('python', 'names = ["a"]\nnames[0].upp‸', 'upper')
-  has('python', 'def f(s: str):\n    return s.upp‸', 'upper')
-  has('python', 's = "hi"\ns.upper().low‸', 'lower')
-  has('python', 'try:\n    pass\nexcept ValueError as e:\n    e.arg‸', 'args')
+  member('python', 'with open("data.txt") as f:\n    f.read‸', 'read', 'readline', 'readlines')
+  member('python', 'line = "a b"\nparts = line.split()\nparts.app‸', 'append')
+  member('python', 'words = ["a", "b"]\nfor w in words:\n    w.upp‸', 'upper')
+  member('python', 'names = ["a"]\nnames[0].upp‸', 'upper')
+  member('python', 'def f(s: str):\n    return s.upp‸', 'upper')
+  member('python', 's = "hi"\ns.upper().low‸', 'lower')
+  member('python', 's = "a(b"\ns.replace("(", "").up‸', 'upper')
+  member('python', 'try:\n    pass\nexcept ValueError as e:\n    e.arg‸', 'args')
   lacks('python', 's = "hi"\ns.upper().‸', 'def', 'class', 'main')
 })
 
 test('python: numpy, pandas, csv, io, os', () => {
-  has('python', 'import numpy as np\narr = np.ar‸', 'array', 'arange')
-  has('python', 'import numpy as np\na = np.array([1, 2])\na.resh‸', 'reshape')
-  has('python', 'import numpy as np\na = np.arange(6).reshape(2, 3)\na.‸', 'shape', 'sum', 'T')
-  has('python', 'import pandas as pd\ndf = pd.DataF‸', 'DataFrame')
-  has('python', 'import pandas as pd\ndf = pd.read_csv("a.csv")\ndf.dropna().‸', 'head', 'fillna', 'to_csv')
-  has('python', 'import csv\nf = open("a.csv", "w")\nw = csv.writer(f)\nw.writer‸', 'writerow', 'writerows')
-  has('python', 'import csv\nr = csv.DictReader(open("a.csv"))\nr.‸', 'fieldnames')
-  has('python', 'from io import StringIO\ns = StringIO()\ns.getv‸', 'getvalue')
-  has('python', 'import os\nos.fsy‸', 'fsync')
+  member('python', 'import numpy as np\narr = np.ar‸', 'array', 'arange')
+  member('python', 'import numpy as np\na = np.array([1, 2])\na.resh‸', 'reshape')
+  member('python', 'import numpy as np\na = np.arange(6).reshape(2, 3)\na.‸', 'shape', 'sum', 'T')
+  member('python', 'import pandas as pd\ndf = pd.DataF‸', 'DataFrame')
+  member('python', 'import pandas as pd\ndf = pd.read_csv("a.csv")\ndf.dropna().‸', 'head', 'fillna', 'to_csv')
+  member('python', 'import csv\nf = open("a.csv", "w")\nw = csv.writer(f)\nw.writer‸', 'writerow', 'writerows')
+  member('python', 'import csv\nr = csv.DictReader(open("a.csv"))\nr.‸', 'fieldnames')
+  member('python', 'from io import StringIO\ns = StringIO()\ns.getv‸', 'getvalue')
+  member('python', 'import os\nos.fsy‸', 'fsync')
   has('python', 'from math import sq‸', 'sqrt')
   has('python', 'from collections import Coun‸', 'Counter')
 })

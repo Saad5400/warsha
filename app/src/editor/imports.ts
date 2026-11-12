@@ -4,7 +4,6 @@ import type { Completion, CompletionContext, CompletionResult, CompletionSource 
 import type { LangId } from '../runtime'
 import { recordable, withUsageBoost } from './usage'
 import { JAVA_FQCN } from './javaApi.generated'
-import { PYTHON_MEMBERS } from './members'
 
 /**
  * Two of the three gaps from the founder report live here:
@@ -29,9 +28,9 @@ import { PYTHON_MEMBERS } from './members'
  * PrintStream that a student reaches through `System.out`, never `new`.
  *
  * Only the *selection* is editorial; each fully-qualified name is looked up from
- * `JAVA_FQCN` (generated from JDK reflection — see javaApi.generated.ts), so a
- * mistyped or drifted package can no longer creep in. The audit in
- * `gen-java-api.mjs` fails if any name here is missing from the JDK.
+ * `JAVA_FQCN` (vendored from JDK reflection — see javaApi.generated.ts) or, for
+ * the classes added after that vendoring, `JAVA_FQCN_EXTRA` below. The editor
+ * test suite fails if any name here resolves to neither.
  */
 const IMPORTABLE: readonly string[] = [
   'Scanner', 'ArrayList', 'LinkedList', 'HashMap', 'TreeMap', 'LinkedHashMap', 'HashSet', 'TreeSet',
@@ -44,9 +43,37 @@ const IMPORTABLE: readonly string[] = [
   'MissingFormatArgumentException', 'UnknownFormatConversionException',
 ]
 
+/**
+ * Fully-qualified names for classes the course material needs that the vendored
+ * javaApi.generated.ts predates (its generator is not in this repo, so it is not
+ * hand-edited). Checked against JDK 17 reflection when added (2026-11-12). Fold
+ * these into the generated file whenever it is next regenerated.
+ */
+const JAVA_FQCN_EXTRA: Readonly<Record<string, string>> = {
+  Vector: 'java.util.Vector',
+  Date: 'java.util.Date',
+  Locale: 'java.util.Locale',
+  ConcurrentModificationException: 'java.util.ConcurrentModificationException',
+  IllegalFormatConversionException: 'java.util.IllegalFormatConversionException',
+  MissingFormatArgumentException: 'java.util.MissingFormatArgumentException',
+  UnknownFormatConversionException: 'java.util.UnknownFormatConversionException',
+  FileOutputStream: 'java.io.FileOutputStream',
+  Instant: 'java.time.Instant',
+  Duration: 'java.time.Duration',
+  Year: 'java.time.Year',
+  LocalDate: 'java.time.LocalDate',
+  LocalDateTime: 'java.time.LocalDateTime',
+}
+
+/** A JDK class's fully-qualified name, if the editor knows it. */
+export const javaFqcn = (name: string): string | undefined => JAVA_FQCN[name] ?? JAVA_FQCN_EXTRA[name]
+
+/** Every IMPORTABLE name that resolves to no fully-qualified name — empty, or a test fails. */
+export const unresolvedImportables = (): string[] => IMPORTABLE.filter((n) => !javaFqcn(n))
+
 /** class name → its fully-qualified name, from the curated selection above. */
 export const JAVA_IMPORTS: Record<string, string> = Object.fromEntries(
-  IMPORTABLE.map((name) => [name, JAVA_FQCN[name]]),
+  IMPORTABLE.filter((name) => javaFqcn(name)).map((name) => [name, javaFqcn(name)!]),
 )
 
 /** java.lang needs no import; still worth completing after `import java.lang.` for a curious student. */
@@ -249,12 +276,12 @@ function pythonImportSource(ctx: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w.]*$/ }
 }
 
-export function importStatementSource(lang: LangId, pyModules?: Record<string, readonly Completion[]>): CompletionSource {
-  const modules = { ...(pyModules ?? {}), ...PYTHON_MEMBERS }
+/** `pyTables`: every Python receiver table (modules included), for `from x import …`. */
+export function importStatementSource(lang: LangId, pyTables: Record<string, readonly Completion[]> = {}): CompletionSource {
   const base =
     lang === 'java'
       ? javaImportSource
-      : (ctx: CompletionContext) => pythonFromImportSource(ctx, modules) ?? pythonImportSource(ctx)
+      : (ctx: CompletionContext) => pythonFromImportSource(ctx, pyTables) ?? pythonImportSource(ctx)
   // Record and re-rank by usage, same as the other sources — a student who
   // always imports Scanner sees it lead the list.
   return (ctx: CompletionContext) => {
