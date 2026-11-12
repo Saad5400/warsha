@@ -81,6 +81,13 @@ const toast = (page) => page.locator('[role="status"], [role="alert"]').allInner
  *  editor code and picker cards painted there in Arabic). Two readings: what is hit at
  *  points down the column, and every rendered element whose box enters it. The modal
  *  scrim, portalled dialogs/menus/toasts and the layout's own ancestors are allowed. */
+/** Every file row's icon is a drawn glyph, never a bare letter or "·" (QA: a .csv
+ *  showed an empty dark square on touch). Reads the VISIBLE badge, chip or icon. */
+const fileIconsDrawn = (page) =>
+  page.evaluate(() => {
+    const rows = [...document.querySelectorAll('[role="treeitem"]:not([aria-expanded])')]
+    return rows.length > 0 && rows.every((row) => [...row.querySelectorAll('svg')].some((svg) => svg.getBoundingClientRect().width >= 14))
+  })
 const railClean = (page) =>
   page.evaluate(() => {
     const nav = document.querySelector('nav')
@@ -253,6 +260,7 @@ for (const lang of ['en', 'ar']) {
   await page.screenshot({ path: join(SHOTS, 'shell-add-drop-hover-1366.png') })
   await page.evaluate(() => document.querySelector('[role="treeitem"][data-path="data"]').dispatchEvent(new DragEvent('drop', window.__drop)))
   await page.waitForTimeout(600)
+  await check('desk: every file row has a drawn icon (csv included)', () => fileIconsDrawn(page))
   await check('a desktop drag lights the folder and says where the drop lands', async () => dropped.lit && dropped.hint)
   await check('dropping files on a folder adds them there', async () => exists('data/dropped.csv'))
   await page.screenshot({ path: join(SHOTS, 'shell-add-files-tree-1366.png') })
@@ -350,6 +358,7 @@ for (const lang of ['en', 'ar']) {
   await check('phone: Add files opens the device picker', async () => !!(await chooser))
   await (await chooser).setFiles([{ name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from('a\n1\n') }])
   await page.waitForTimeout(600)
+  await check('phone: every file row has a drawn icon (csv included), not a dot', () => fileIconsDrawn(page))
   await check('phone: the picked file lands in the project', async () =>
     (await page.locator('[role="treeitem"][data-path="data.csv"]').count()) === 1)
 
@@ -393,6 +402,102 @@ for (const lang of ['en', 'ar']) {
   // #20: Latin names keep their own direction in the Arabic title.
   await check('ar: the window title carries dir="auto"', async () =>
     (await page.locator('.top-bar__title[dir="auto"]').count()) === 1)
+  await ctx.close()
+}
+
+// ------------------------------- tree direction, chevrons, non-text files
+// The tree stays LTR in both languages ("files stay LTR", index.css): icon and
+// twistie at the left, ⋯ at the right, the active rail on the left. Its twisties
+// follow the TREE's direction, not the page's: right when closed, DOWN when open,
+// in Arabic too (a mirrored-then-rotated glyph pointed UP). A file that is not
+// text gets a read-only face, never CodeMirror.
+for (const [lang, phone] of [['en', false], ['ar', false], ['ar', true]]) {
+  const tag = `${lang}${phone ? ' phone' : ''}`
+  const rtl = lang === 'ar'
+  const { ctx, page, url } = await open({ lang, phone, width: 1366, height: 768 })
+  await page.goto(url)
+  await fromStarter(page)
+  const showTree = async () => {
+    if ((await page.locator('aside[data-state="open"]').count()) === 0 && phone) {
+      await page.locator('[aria-label="Explorer"], [aria-label="المستكشف"]').first().click()
+      await page.waitForTimeout(600)
+    }
+  }
+  await showTree()
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New folder|مجلّد جديد)$/ }).click()
+  await page.keyboard.insertText('data')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(400)
+  // Where a right-pointing chevron ends up after the row's scale + rotate.
+  const chevronPoints = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('[role="treeitem"][data-path="data"] .tree-row__chevron')
+      const cs = getComputedStyle(el)
+      const sx = cs.scale && cs.scale !== 'none' ? parseFloat(cs.scale.split(' ')[0]) : 1
+      const deg = cs.rotate && cs.rotate !== 'none' ? parseFloat(cs.rotate) : 0
+      const m = cs.transform && cs.transform !== 'none' ? new DOMMatrix(cs.transform) : new DOMMatrix()
+      const a = (deg * Math.PI) / 180
+      let x = sx * Math.cos(a), y = sx * Math.sin(a)
+      const p = m.transformPoint({ x, y }), o = m.transformPoint({ x: 0, y: 0 })
+      x = p.x - o.x; y = p.y - o.y
+      return Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : y > 0 ? 'down' : 'up'
+    })
+  await page.waitForTimeout(300)
+  await check(`${tag}: an open folder's twistie points down`, async () => (await chevronPoints()) === 'down')
+  await page.locator('[role="treeitem"][data-path="data"]').click()
+  await page.waitForTimeout(300)
+  await check(`${tag}: a closed folder's twistie points right (the tree's direction)`, async () => (await chevronPoints()) === 'right')
+  await check(`${tag}: rows run left to right (icon left, ⋯ right, rail left) in both languages`, async () =>
+    page.evaluate(() => {
+      const rtl = false
+      const row = document.querySelector('[role="treeitem"][data-path="main.py"]')
+      const label = row.querySelector('.tree-row__label').getBoundingClientRect()
+      const icon = [...row.querySelectorAll('svg')].find((s) => s.getBoundingClientRect().width >= 14).getBoundingClientRect()
+      const more = row.querySelector('button')?.getBoundingClientRect()
+      const c = (r) => r.left + r.width / 2
+      const order = rtl ? c(icon) > c(label) && (!more || !more.width || c(more) < c(label)) : c(icon) < c(label) && (!more || !more.width || c(more) > c(label))
+      const rail = getComputedStyle(row).borderLeftWidth !== '0px'
+      return order && rail && getComputedStyle(row.closest('[role="tree"]')).direction === 'ltr'
+    }))
+  if (rtl) {
+    // An Arabic name inside the LTR column still shapes and orders as Arabic.
+    await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New file|ملف جديد)/ }).first().click()
+    await page.keyboard.insertText('تمرين.py')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(600)
+    await showTree()
+    await check(`${tag}: an Arabic file name sits in the tree as typed`, async () =>
+      (await page.locator('[role="treeitem"][data-path="تمرين.py"] .tree-row__label').innerText()) === 'تمرين.py')
+  }
+  // A non-text file: photo.png (made as a file) and a real SVG.
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(New file|ملف جديد)/ }).first().click()
+  await page.keyboard.insertText('photo.png')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(800)
+  await check(`${tag}: a .png opens a read-only note, not an editor with line 1`, async () =>
+    (await page.locator('.file-not-text[data-view="image"]').isVisible()) && !(await page.locator('.cm-content').first().isVisible()))
+  await check(`${tag}: the status bar says ${rtl ? 'صورة' : 'Image'}, not PNG`, async () => {
+    const t = await page.locator('.status-bar').innerText()
+    return (rtl ? /صورة/ : /\bImage\b/).test(t) && !/\bPNG\b/.test(t)
+  })
+  await page.screenshot({ path: join(SHOTS, `shell-nontext-png-${lang}-${phone ? 'phone' : '1366'}.png`) })
+  await showTree()
+  const chooser = page.waitForEvent('filechooser')
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^(Add files|إضافة ملفات)/ }).click()
+  await (await chooser).setFiles([{ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="28" fill="#519aba"/></svg>') }])
+  await page.waitForTimeout(800)
+  await check(`${tag}: an SVG shows as a picture`, async () =>
+    page.evaluate(() => { const i = document.querySelector('.file-not-text img'); return !!i && i.complete && i.naturalWidth > 0 }))
+  await check(`${tag}: breadcrumb separators point along the path (right)`, async () =>
+    page.evaluate(() => {
+      const sep = document.querySelector('.breadcrumbs svg')
+      if (!sep) return false
+      const cs = getComputedStyle(sep)
+      return !(cs.scale && cs.scale !== 'none' && parseFloat(cs.scale) < 0)
+    }))
+  await page.screenshot({ path: join(SHOTS, `shell-nontext-svg-${lang}-${phone ? 'phone' : '1366'}.png`) })
+  await showTree()
+  await page.screenshot({ path: join(SHOTS, `shell-tree-${lang}-${phone ? 'phone' : '1366'}.png`) })
   await ctx.close()
 }
 

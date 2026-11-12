@@ -78,6 +78,8 @@ import { TutorialsPage } from './components/TutorialsPage'
 import { Logo } from './components/Logo'
 import { FileIcon, type IconLang } from './components/ui/LangIcons'
 import { ImportDialog } from './components/ImportDialog'
+import { FileNotText } from './components/FileNotText'
+import { fileViewOf } from './fileView'
 import { AccountDialog } from './components/AccountDialog'
 import { ShareDialog } from './components/ShareDialog'
 import { QuickInput, type QuickCommand, type QuickInputMode } from './components/QuickInput'
@@ -2396,6 +2398,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     if (activeNotebook && runner.status === 'idle') setConsoleOpen(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on opening a notebook, not on every run
   }, [activeNotebook])
+  // A file that is not text (an image, an archive, bytes) gets a read-only face in its
+  // tab, never CodeMirror (fileView.ts).
+  const activeView = activePath && !activeNotebook ? fileViewOf(activePath, activeContent) : 'text'
+  const notText = activeView !== 'text' ? activePath : null
   // Open notebooks follow the tabs: closing a notebook's tab closes it (and frees its namespace).
   // A notebook shown as text is closed too: its session must not keep writing JSON under the
   // student's text edits.
@@ -3577,7 +3583,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 onPointerDownCapture={(e) => {
                   lastPointerType.current = e.pointerType
                 }}
-                onContextMenu={activeNotebook ? undefined : onEditorContextMenu}
+                onContextMenu={activeNotebook || notText ? undefined : onEditorContextMenu}
               >
                 {activeNotebook ? (
                   <Suspense fallback={<div className="flex-1 bg-surface-1" />}>
@@ -3613,10 +3619,13 @@ function Ide({ report }: { report: CapabilityReport }) {
                   ) : null}
                   </Suspense>
                 ) : null}
+                {notText && activeView !== 'text' ? (
+                  <FileNotText path={notText} content={activeContent} view={activeView} onDownload={() => void downloadFile(notText)} />
+                ) : null}
                 {/* The file editor stays mounted under a notebook (it is a singleton the shell drives); hidden, it holds no file. */}
-                <div className={activeNotebook ? 'hidden' : 'contents'}>
+                <div className={activeNotebook || notText ? 'hidden' : 'contents'}>
                 <Editor
-                  path={activeNotebook ? null : activePath}
+                  path={activeNotebook || notText ? null : activePath}
                   content={activeContent}
                   fontSize={fontSize}
                   onChange={(p, c) => project.setContent(p, c)}
@@ -3666,7 +3675,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
                     menu. Quiet at rest, semi-transparent, above the home indicator. */}
-                {activePath && !activeNotebook ? (
+                {activePath && !activeNotebook && !notText ? (
                   <button
                     ref={fabRef}
                     type="button"
@@ -3796,16 +3805,16 @@ function Ide({ report }: { report: CapabilityReport }) {
           entryPath={runControl.entry}
           kernelLabel={nbKernelLabel}
           // A notebook has no single caret, problems list or indentation — its cells are many editors.
-          cursor={empty || !activePath || activeNotebook ? null : cursor}
+          cursor={empty || !activePath || activeNotebook || notText ? null : cursor}
           // Same gate as the caret: a problems count belongs to an open file.
-          problems={empty || !activePath || activeNotebook ? null : problems}
+          problems={empty || !activePath || activeNotebook || notText ? null : problems}
           onProblems={() => editorRef.current?.toggleProblems()}
           fontSize={fontSize}
           onFontSize={setFontSize}
           // Ln/Col opens Go to Line — the quick input's ':' face, VS Code's
           // own behaviour for that status item.
           onGotoLine={() => setQuickPick('goto')}
-          indent={activeNotebook ? null : indentInfo}
+          indent={activeNotebook || notText ? null : indentInfo}
           onIndentMenu={setIndentMenu}
         />
       )}

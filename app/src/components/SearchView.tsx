@@ -241,8 +241,8 @@ export function SearchView({ project, revision, onOpenMatch }: SearchViewProps) 
                     <span
                       aria-hidden="true"
                       className={
-                        'grid size-4 flex-none place-items-center text-text-1 rtl:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
-                        (open ? ' rotate-90' : '')
+                        'grid size-4 flex-none place-items-center text-text-1 [&:dir(rtl)]:-scale-x-100 transition-transform duration-(--dur-fast) ease-standard desk:transition-none' +
+                        (open ? ' rotate-90 [&:dir(rtl)]:-rotate-90' : '')
                       }
                     >
                       <IconChevronRight size={16} />

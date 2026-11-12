@@ -3,6 +3,7 @@ import type { RunStatus } from '../hooks/useRunner'
 import type { LoadProgress } from '../runtime/types'
 import { langForPath } from '../runtime'
 import { extOf } from './FileBadge'
+import { fileViewByName } from '../fileView'
 import { StatusPill } from './StatusPill'
 import { IconError, IconTextBigger, IconTextSmaller, IconWarning } from './ui/Icons'
 import { COPY } from '../copy'
@@ -42,6 +43,9 @@ const LANGUAGE_MODE: Record<string, string> = { js: 'JavaScript', mjs: 'JavaScri
  *  the picker names them; the language mode for everything else. */
 function languageLabel(path: string | null): string {
   if (!path) return COPY.langNone
+  const view = fileViewByName(path)
+  if (view === 'image') return COPY.langImage
+  if (view === 'binary') return COPY.langBinary
   const lang = langForPath(path)
   if (lang === 'java') return COPY.langJava
   if (lang === 'python' || isNotebookPath(path)) return COPY.langPython

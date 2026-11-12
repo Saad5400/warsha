@@ -156,6 +156,14 @@ export const EN = {
   langPlain: 'Plain text',
   /** Nothing is open, so there is no language to name. */
   langNone: 'No file',
+  /** Status bar language for a file the editor does not open (fileView.ts). */
+  langImage: 'Image',
+  langBinary: 'Binary',
+  /** The read-only face of a non-text file (components/FileNotText.tsx). */
+  fileNotShownTitle: "This file can't be shown in the editor",
+  fileNotShownBody: 'Warsha edits text files. Download it to open it in another app.',
+  fileKindImage: (ext: string) => `${ext} image`,
+  fileKindBinary: 'Binary file',
   statusBarNoEntry: 'No entry point',
   /** The indentation item: how wide one level is DRAWN (VS Code's "Spaces: 4"). */
   statusBarIndent: (tabs: boolean, size: number) => (tabs ? `Tab Size: ${size}` : `Spaces: ${size}`),

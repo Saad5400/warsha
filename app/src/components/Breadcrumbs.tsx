@@ -30,6 +30,9 @@ export function Breadcrumbs({ path }: { path: string | null }) {
   return (
     <nav
       aria-label={COPY.a11yBreadcrumbs}
+      // Pinned LTR in CSS (a path is not prose — index.css "files stay LTR"); the
+      // attribute makes :dir() agree, so the separators point along the path.
+      dir="ltr"
       className={
         'breadcrumbs flex items-center h-bar-crumbs flex-none overflow-hidden ' +
         'px-2 gap-0.5 select-none bg-surface-1 text-[13px] text-text-2'
@@ -42,7 +45,7 @@ export function Breadcrumbs({ path }: { path: string | null }) {
           <span className="min-w-[2ch] shrink-[3] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">
             {seg}
           </span>
-          <IconChevronRight size={16} className="flex-none rtl:-scale-x-100" aria-hidden="true" />
+          <IconChevronRight size={16} className="flex-none [&:dir(rtl)]:-scale-x-100" aria-hidden="true" />
         </Fragment>
       ))}
       <span className="flex min-w-0 items-center gap-1 whitespace-nowrap transition-colors duration-(--dur-fast) ease-standard hover:text-text-1">

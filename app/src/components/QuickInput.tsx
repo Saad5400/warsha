@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fuzzyMatch, toRanges } from '../ui/fuzzy'
 import { COPY } from '../copy'
+import { FileBadge } from './FileBadge'
 
 /**
  * The quick input (VS Code's Ctrl+P family): one floating widget, four jobs,
@@ -430,6 +431,8 @@ export function QuickInput({
               >
                 {row.kind === 'file' ? (
                   <>
+                    {/* The file's icon, as in the tree and the tabs (VS Code's quick open shows it too). */}
+                    <FileBadge name={row.name} />
                     <span className="truncate">
                       <Highlighted text={row.name} ranges={row.nameRanges} />
                     </span>
