@@ -46,6 +46,8 @@ export interface RunIO extends DebugIO {
   onFilesChanged?(change: FilesChange): void
   /** 0 = clean exit, non-zero = program error, null = killed. Fires exactly once. */
   onExit(code: number | null): void
+  /** OPTIONAL — progress from inside a run, not the boot before it: Python reports the packages a program imports (numpy, pandas) downloading before it starts. */
+  onProgress?(report: ProgressReport): void
 }
 
 export interface RunSession {

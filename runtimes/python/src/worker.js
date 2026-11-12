@@ -13,7 +13,9 @@
  *   { type: "run", files: { [path]: content }, entry: string, debug?: { stopOnEntry } | null }
  *   { type: "format", id, code }            reformat one file's source with black
  * (worker -> main thread):
- *   { type: "progress", phase, message, loaded?, total? }   boot progress
+ *   { type: "progress", phase, message, loaded?, total? }   boot progress, and
+ *                                           after "ready" the download of the
+ *                                           packages a run imports (before it starts)
  *   { type: "ready", version, bootMs }      init finished, run is accepted now
  *   { type: "stdout" | "stderr", text }     one message per Python write
  *   { type: "stdin-request" }               parked in input()
@@ -187,19 +189,24 @@ const DOWNLOAD_MESSAGE = 'Downloading Python (11 MB, one-time)...'
 let bytesLoaded = 0
 let bytesAnnounced = 0
 let lastProgressAt = 0
+// What the current download is: the interpreter at boot, or the packages a
+// program imports (see loadImportedPackages). Packages have no known floor.
+let downloadMessage = DOWNLOAD_MESSAGE
+let downloadFloor = EXPECTED_TOTAL_BYTES
 
 function postDownloadProgress(force) {
   const now = performance.now()
   if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
   lastProgressAt = now
+  // bytesAnnounced only grows as each Content-Length is seen, so clamp with
+  // the floor to keep the bar from jumping backwards.
+  const expected = Math.max(downloadFloor, bytesAnnounced)
   self.postMessage({
     type: 'progress',
     phase: 'download',
-    message: DOWNLOAD_MESSAGE,
+    message: downloadMessage,
     loaded: bytesLoaded,
-    // bytesAnnounced only grows as each Content-Length is seen, so clamp with
-    // the measured floor to keep the bar from jumping backwards.
-    total: Math.max(EXPECTED_TOTAL_BYTES, bytesAnnounced, bytesLoaded),
+    ...(expected > 0 ? { total: Math.max(expected, bytesLoaded) } : {}),
   })
 }
 
@@ -992,6 +999,50 @@ async function formatPython(id, code) {
   }
 }
 
+// --- packages a program imports ---------------------------------------------
+
+/* `import numpy` / `import pandas` need their wheels from the Pyodide
+ * distribution, which nothing loads by default. Every .py file in the project is
+ * scanned (a helper module may be the one importing numpy), and only names that
+ * map to a distribution package trigger a fetch -- `import math` never does, so a
+ * program that imports nothing extra pays one AST walk per file. Must finish
+ * before runEntry(): loading is async, and the run itself blocks this thread.
+ *
+ * Pyodide's loadPackage never rejects on a failed download: it reports through
+ * the callbacks and resolves, and the program would then die on a bare
+ * ModuleNotFoundError. So the failure is collected here and reported instead.
+ * Returns null on success, or the student-facing error text. */
+async function loadImportedPackages(files) {
+  const failed = []
+  const options = {
+    messageCallback: (msg) => {
+      // "Loading numpy, pandas" is logged once, before any byte is fetched.
+      if (!String(msg).startsWith('Loading ')) return
+      bytesLoaded = 0
+      bytesAnnounced = 0
+      downloadMessage = `${msg} (one-time)...`
+      downloadFloor = 0
+      postDownloadProgress(true)
+    },
+    errorCallback: (msg) => failed.push(String(msg)),
+  }
+  const restoreFetch = installFetchProgress()
+  try {
+    for (const [path, src] of Object.entries(files)) {
+      if (path.endsWith('.py')) await pyodide.loadPackagesFromImports(src, options)
+    }
+  } catch (e) {
+    failed.push(String((e && e.message) || e))
+  } finally {
+    restoreFetch()
+  }
+  if (!failed.length) return null
+  return (
+    `[Warsha: could not download a package this program imports -- check your internet connection, then press Run again]\n` +
+    failed.map((line) => `  ${line}\n`).join('')
+  )
+}
+
 // --- messages ---------------------------------------------------------------
 
 /* --- file write-back ---------------------------------------------------------
@@ -1097,36 +1148,49 @@ self.onmessage = (ev) => {
   }
 
   if (msg.type === 'run') {
-    sentBytes = 0
-    capped = false
-    try {
-      resetFs()
-      writeProjectFiles(msg.files)
-      const t0 = performance.now()
-      // JSON, not an object: a JsProxy has no .get(), and undefined -> None.
-      const status = runEntry(msg.entry, msg.debug ? JSON.stringify(msg.debug) : undefined)
-      // Even a crashed program keeps whatever it wrote before the crash, exactly
-      // like a real disk. Best effort: a failure here must not eat the exit code.
-      try {
-        const change = collectFileChanges(msg.files)
-        if (change.written.length || change.deleted.length || change.skipped.length) {
-          self.postMessage({ type: 'files', ...change })
-        }
-      } catch (e) {
-        self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your program wrote: ${e}]\n` })
-      }
-      self.postMessage({
-        type: 'done',
-        code: Number(status) | 0,
-        ms: Math.round(performance.now() - t0),
-      })
-    } catch (e) {
-      self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
-    }
+    void runProgram(msg)
     return
   }
 
   if (msg.type === 'format') {
     void formatPython(msg.id, msg.code)
+  }
+}
+
+/* Async only for the package download in front of the run; from runEntry() on
+ * the thread blocks exactly as before (stdin parks in Atomics.wait, Stop is
+ * worker.terminate(), which also cuts a download short). */
+async function runProgram(msg) {
+  sentBytes = 0
+  capped = false
+  try {
+    const loadError = await loadImportedPackages(msg.files)
+    if (loadError) {
+      self.postMessage({ type: 'stderr', text: loadError })
+      self.postMessage({ type: 'done', code: 1, ms: 0 })
+      return
+    }
+    resetFs()
+    writeProjectFiles(msg.files)
+    const t0 = performance.now()
+    // JSON, not an object: a JsProxy has no .get(), and undefined -> None.
+    const status = runEntry(msg.entry, msg.debug ? JSON.stringify(msg.debug) : undefined)
+    // Even a crashed program keeps whatever it wrote before the crash, exactly
+    // like a real disk. Best effort: a failure here must not eat the exit code.
+    try {
+      const change = collectFileChanges(msg.files)
+      if (change.written.length || change.deleted.length || change.skipped.length) {
+        self.postMessage({ type: 'files', ...change })
+      }
+    } catch (e) {
+      self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your program wrote: ${e}]\n` })
+    }
+    self.postMessage({
+      type: 'done',
+      code: Number(status) | 0,
+      ms: Math.round(performance.now() - t0),
+    })
+  } catch (e) {
+    self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
   }
 }

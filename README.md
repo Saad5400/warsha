@@ -111,7 +111,7 @@ static files.
 |---|---|
 | **Editor** | [CodeMirror 6](https://codemirror.net/) — syntax highlighting, autocomplete, search |
 | **Java** | [CheerpJ](https://cheerpj.com/) — a full JVM compiled to WebAssembly, loaded from Leaning Technologies' CDN — plus [ECJ](https://mvnrepository.com/artifact/org.eclipse.jdt/ecj), the Eclipse batch compiler, which runs *inside* that JVM to compile the student's code |
-| **Python** | [Pyodide](https://pyodide.org/) — CPython and the standard library compiled to WebAssembly |
+| **Python** | [Pyodide](https://pyodide.org/) — CPython and the standard library compiled to WebAssembly; packages from the Pyodide distribution (numpy, pandas, …) are fetched on first import |
 | **C#** | The [.NET 9 WebAssembly runtime](https://github.com/dotnet/runtime) (Mono, single-threaded) hosting [Roslyn](https://github.com/dotnet/roslyn), which compiles the student's `.cs` files into an assembly and runs it, all in a module worker |
 | **C** | [clang 16](https://wasmer.io/wasmer/clang) (via [`@wasmer/sdk`](https://github.com/wasmerio/wasmer-js)) compiles student C to WebAssembly; Warsha then runs that module itself under [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/browser_wasi_shim) so `scanf`/`getchar` can block on a `SharedArrayBuffer` for real interactive input |
 | **Web preview & bundler** | A student's HTML/CSS/JS/TS is assembled into one document and rendered in a sandboxed iframe; [esbuild-wasm](https://esbuild.github.io/) bundles TypeScript and cross-file imports, and — fetched only when a project uses them — first-party, on-device builds of React, Vue, and Svelte, plus Tailwind CSS |

@@ -282,7 +282,12 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       // run(), so clearing early blanked the console for ~20s.
       setState((s) => ({ ...s, status: 'running' }))
 
+      // The program has spoken, so whatever onProgress reported is over: drop the
+      // block and the stall watchdog with it. A run-phase report (Java's compile,
+      // Python's numpy download) re-arms the watchdog, and left armed it abandoned
+      // a program parked in input() 45 s later as "could not download".
       const clearProgress = () => {
+        clearTimeout(stall)
         if (token.current === mine) setState((s) => (s.progress ? { ...s, progress: null } : s))
       }
 
