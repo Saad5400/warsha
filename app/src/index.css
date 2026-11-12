@@ -820,6 +820,12 @@
   html[data-kb='open'] .kb-hide {
     display: none;
   }
+  /* Typing in a notebook cell on a phone (QA M8): the cell gets the screen. The console
+     strip (cells print inline) and the breadcrumbs go while the keyboard is up; a console
+     that has the focus itself (a program's input()) is never hidden. */
+  html[data-kb='open'] .app-shell:has(.notebook-view :focus) :is(.console-panel, .breadcrumbs) {
+    display: none;
+  }
   /* Touch affordances: kill double-tap zoom on controls, never on the editor. */
   .tap {
     touch-action: manipulation;
