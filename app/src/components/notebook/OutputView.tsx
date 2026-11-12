@@ -85,6 +85,17 @@ pre,code{font-family:${v('--font-code')}}
 `
 }
 
+/**
+ * Markup this app generated from escaped text (markdown, MathML), set as innerHTML. The props
+ * object is memoised: React 19 re-applies innerHTML whenever that OBJECT changes, so an inline
+ * `{{ __html }}` replaced the DOM on every re-render — selecting a text cell destroyed the link a
+ * click had just started on, and any text selection in it.
+ */
+export function SafeHtml({ html, className }: { html: string; className?: string }) {
+  const props = useMemo(() => ({ __html: html }), [html])
+  return <div className={className} dangerouslySetInnerHTML={props} />
+}
+
 function HtmlFrame({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(32)
@@ -132,8 +143,9 @@ function HtmlFrame({ html }: { html: string }) {
       ref={ref}
       title={COPY.nbOutputLabel}
       // No allow-scripts: nothing in here ever runs. allow-same-origin only lets us measure it and
-      // vet its links. Popups stay sandboxed too (no escape), so nothing a link opens can script.
-      sandbox="allow-same-origin allow-popups"
+      // vet its links (onLoad, above). A vetted link opens as a normal page — a pandas Styler's
+      // or a map's attribution link must work — so popups may leave the sandbox.
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={doc}
       style={{ height }}
       className="block w-full border-0 bg-transparent"
@@ -177,14 +189,14 @@ function RichOut({ output }: { output: NbOutput }) {
     case 'image/gif':
       return <ImageOut mime={mime} data={text} meta={meta[mime]} />
     case 'text/markdown':
-      return <div className={MD_PROSE} dangerouslySetInnerHTML={{ __html: renderMarkdown(text, mdOpts) }} />
+      return <SafeHtml className={MD_PROSE} html={renderMarkdown(text, mdOpts)} />
     case 'text/latex': {
       const m = /^\s*\$\$([\s\S]*)\$\$\s*$/.exec(text) ?? /^\s*\$([\s\S]*)\$\s*$/.exec(text)
       // renderMarkdown/texToMathML build markup from escaped text only.
       return m ? (
-        <div className="overflow-x-auto py-1 text-text-1" dangerouslySetInnerHTML={{ __html: texToMathML(m[1], true) }} />
+        <SafeHtml className="overflow-x-auto py-1 text-text-1" html={texToMathML(m[1], true)} />
       ) : (
-        <div className={MD_PROSE} dangerouslySetInnerHTML={{ __html: renderMarkdown(text, mdOpts) }} />
+        <SafeHtml className={MD_PROSE} html={renderMarkdown(text, mdOpts)} />
       )
     }
     case 'application/json':

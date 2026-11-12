@@ -5,7 +5,7 @@ import { renderMarkdown } from '../../notebook/markdown'
 import type { CellStatus } from '../../notebook/session'
 import type { LoadProgress } from '../../runtime/types'
 import { COPY } from '../../copy'
-import { OutputView } from './OutputView'
+import { OutputView, SafeHtml } from './OutputView'
 import { MD_PROSE, useMarkdownOptions } from './markdownProse'
 import { IconWand, IconPlus, IconChevronDown, IconChevronRight, IconChevronUp, IconClose, IconCode, IconDuplicate, IconMore, IconPencil, IconPlay, IconStop, IconText, IconTrash, IconCheck } from '../ui/Icons'
 import { IconDebugAlt } from '../ui/DebugIcons'
@@ -227,7 +227,7 @@ function CellViewImpl(p: CellViewProps) {
   const collapsed = outputsCollapsed(cell)
   const state = p.status?.state
   const showEditor = code || p.editingText || cell.type === 'raw'
-  const rendered = useMemo(() => (showEditor ? '' : renderMarkdown(cell.source, mdOpts)), [showEditor, cell.source, mdOpts.highlight])
+  const rendered = useMemo(() => (showEditor ? '' : renderMarkdown(cell.source, mdOpts)), [showEditor, cell.source, mdOpts])
 
   const act = (a: CellAction) => () => p.onAction(cell.id, a)
   const menuItems: MenuItem[] = [
@@ -326,7 +326,7 @@ function CellViewImpl(p: CellViewProps) {
           </div>
         ) : cell.source.trim() ? (
           // Markup built from escaped text only (notebook/markdown.ts).
-          <div className={MD_PROSE + ' px-2 py-1.5'} dangerouslySetInnerHTML={{ __html: rendered }} />
+          <SafeHtml className={MD_PROSE + ' px-2 py-1.5'} html={rendered} />
         ) : (
           <p className="m-0 px-2 py-2 text-meta italic text-text-3">{p.desk ? COPY.nbEmptyText : COPY.nbEmptyTextTouch}</p>
         )}

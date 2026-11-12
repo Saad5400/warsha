@@ -52,6 +52,10 @@ export function safeUrl(raw: string, opts: MarkdownOptions, image: boolean): str
   if (/^data:image\/(png|jpe?g|gif|webp);/i.test(url)) return image ? url : null
   if (/^(https?:|mailto:)/i.test(url)) return url
   if (url.startsWith('//')) return 'https:' + url
+  // An in-page link may only name a heading. The app's own address fragment carries commands
+  // (#room=<id> joins a live session, #share=<payload> imports a project), so anything else —
+  // an `=`, a slash, a query — is refused rather than left to change location.hash.
+  if (url.startsWith('#')) return HEADING_FRAGMENT.test(url) ? url : null
   // Anything else with a scheme (javascript:, data:, vbscript:, file:, a made-up one) is refused.
   if (/^[^/?#]*:/.test(url)) return null
   return url
@@ -145,13 +149,22 @@ function inline(src: string, opts: MarkdownOptions, held: string[]): string {
 
 /* ------------------------------------------------------------- blocks */
 
-const slug = (text: string) =>
+/** `#` plus a heading slug: letters, digits, `_` and `-` only. */
+export const HEADING_FRAGMENT = /^#[\p{L}\p{N}_-]*$/u
+
+/** The anchor name of a heading: what `#…` links to it say (`## Load the data` → `load-the-data`). */
+export const slug = (text: string) =>
   text
     .toLowerCase()
     .replace(/<[^>]*>/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .trim()
     .replace(/\s+/g, '-')
+
+/** A heading's element id. Namespaced, because notebook HTML shares the page's id space with the
+ *  app itself — a "## Root" heading must not become a second #root. Links keep the plain slug;
+ *  the notebook resolves `#load-the-data` to `nb-load-the-data` and scrolls to it. */
+export const headingId = (slugText: string) => 'nb-' + slugText
 
 interface ListItem {
   lines: string[]
@@ -216,7 +229,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
     if (h) {
       flush()
       const html = renderInline(h[2], opts)
-      out.push(`<h${h[1].length} id="${escapeHtml(slug(html))}" dir="auto">${html}</h${h[1].length}>`)
+      out.push(`<h${h[1].length} id="${escapeHtml(headingId(slug(html)))}" dir="auto">${html}</h${h[1].length}>`)
       i++
       continue
     }
@@ -226,7 +239,7 @@ function renderBlocks(lines: string[], opts: MarkdownOptions): string {
       const level = trimmed[0] === '=' ? 1 : 2
       const html = renderInline(para.join(' ').trim(), opts)
       para = []
-      out.push(`<h${level} id="${escapeHtml(slug(html))}" dir="auto">${html}</h${level}>`)
+      out.push(`<h${level} id="${escapeHtml(headingId(slug(html)))}" dir="auto">${html}</h${level}>`)
       i++
       continue
     }
