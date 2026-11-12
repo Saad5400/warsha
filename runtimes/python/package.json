@@ -6,7 +6,7 @@
   "description": "Pyodide-backed Python runtime for Warsha, implementing the app's Runtime contract",
   "main": "src/index.ts",
   "scripts": {
-    "check": "node --check src/worker.js",
+    "check": "node --check src/worker.js && node --check src/kernel.js",
     "typecheck": "tsc -p tsconfig.json",
     "build:harness": "node build.mjs",
     "harness": "node build.mjs && node serve.mjs 8084"

@@ -1,12 +1,12 @@
 /**
- * Runs a unit-test suite: tests/<suite>/*.test.ts (collab, editor).
+ * Runs a unit-test suite: tests/<suite>/*.test.ts (collab, editor, notebook).
  *
  * This Node build ships without the built-in TypeScript stripper, and its test
  * runner ignores node_modules, so we bundle each test to a temp dir with the
  * (already-installed) esbuild CLI and point `node --test` at the output. Pure
  * Node — no browser, no DOM.
  *
- * Usage: `npm run test:collab`, `npm run test:editor`
+ * Usage: `npm run test:collab`, `npm run test:editor`, `npm run test:notebook`
  */
 import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'

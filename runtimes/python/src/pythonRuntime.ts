@@ -1,10 +1,14 @@
 import type {
+  CellIO,
+  CellOutputKind,
+  CellRequest,
   DebugBreakpoint,
   DebugSession,
   DebugStepCommand,
   DebugStopped,
   DebugValue,
   LoadPhase,
+  NotebookKernel,
   ProgressReport,
   RunIO,
   RunOptions,
@@ -57,6 +61,10 @@ type FromWorker =
   | { type: 'debug-stop'; stopped: DebugStopped }
   | { type: 'debug-resume' }
   | { type: 'debug-reply'; id: number; ok: boolean; result?: unknown; error?: string }
+  | { type: 'execute-input'; count: number }
+  | { type: 'output'; kind: CellOutputKind; output: Record<string, unknown> }
+  | { type: 'clear-output'; wait: boolean }
+  | { type: 'kernel-restarted'; id: number }
 
 export interface PythonRuntimeOptions {
   /**
@@ -71,6 +79,14 @@ export interface PythonRuntimeOptions {
    * *stderr*). Off by default and there is no good reason to turn it on.
    */
   isatty?: boolean
+  /**
+   * Make this instance a notebook kernel (implements NotebookKernel): its worker
+   * also loads the cell runner (kernel.js) and an interrupt buffer. A separate
+   * instance from the one that runs programs, deliberately — a program's Stop
+   * terminates its worker, and that must never take a notebook's variables
+   * with it; nor may a notebook's long cell block Run.
+   */
+  kernel?: boolean
 }
 
 /** A `Python is running` session. Extends the contract with writeEof(). */
@@ -80,7 +96,7 @@ export interface PythonRunSession extends RunSession {
 }
 
 interface Active {
-  io: RunIO
+  io: CellIO
   ended: boolean
   awaitingStdin: boolean
   debug: DebugState | null
@@ -111,11 +127,20 @@ const NOT_ISOLATED =
  * across runs; `kill()` terminates it and transparently respawns a replacement,
  * so a subsequent `run()` works (paying ~1.5-2 s of re-warm, see INTEGRATION.md).
  */
-export class PythonRuntime implements Runtime {
+export class PythonRuntime implements Runtime, NotebookKernel {
   readonly id = 'python' as const
 
   private readonly indexURL?: string
   private readonly isatty: boolean
+  private readonly kernelMode: boolean
+  /** Kernel only: Pyodide's interrupt buffer (word 0: 2 = SIGINT requested). */
+  private intSab: SharedArrayBuffer | null = null
+  private intBuf: Int32Array | null = null
+  private readonly restarts = new Map<number, () => void>()
+  private nextRestartId = 1
+
+  /** Bumped by every new worker: a new interpreter has none of the old namespaces. */
+  epoch = 0
 
   private worker: Worker | null = null
   private sab: SharedArrayBuffer | null = null
@@ -145,6 +170,7 @@ export class PythonRuntime implements Runtime {
   constructor(options: PythonRuntimeOptions = {}) {
     this.indexURL = options.indexURL
     this.isatty = options.isatty === true
+    this.kernelMode = options.kernel === true
   }
 
   /** Version of Python that will be used, once loaded. */
@@ -177,15 +203,78 @@ export class PythonRuntime implements Runtime {
   }
 
   async run(files: SourceFile[], entryPath: string, io: RunIO, opts?: RunOptions): Promise<RunSession> {
-    if (this.active && !this.active.ended) {
-      throw new Error('A Python program is already running; kill() it before running another.')
-    }
-
     const entry = normalizePath(entryPath)
-    const payload: Record<string, string> = {}
-    for (const file of files) payload[normalizePath(file.path)] = file.content
+    const payload = filePayload(files)
     if (!(entry in payload)) {
       throw new Error(`Entry file ${entryPath} is not in the file set.`)
+    }
+    return this.start((debug) => ({ type: 'run', files: payload, entry, debug }), io, opts)
+  }
+
+  /** NotebookKernel: run one cell in its notebook's namespace. Same session semantics as run(). */
+  async execute(files: SourceFile[], cell: CellRequest, io: CellIO, opts?: RunOptions): Promise<RunSession> {
+    if (!this.kernelMode) throw new Error('This Python runtime is not a notebook kernel.')
+    const payload = filePayload(files)
+    return this.start(
+      (debug) => ({
+        type: 'cell',
+        files: payload,
+        notebook: cell.notebook,
+        workspace: cell.workspace ?? '',
+        cellPath: cell.cellPath,
+        code: cell.code,
+        source: cell.source,
+        magic: cell.cellMagic ?? null,
+        pip: cell.pip ?? [],
+        debug,
+      }),
+      io,
+      opts,
+    )
+  }
+
+  /**
+   * NotebookKernel: KeyboardInterrupt in the running cell. Wakes a cell parked
+   * in input() too (the worker checks the buffer in its stdin loop), and one
+   * parked in the debugger is released first — with no breakpoints left to
+   * stop it again — so the interrupt can land.
+   */
+  interrupt(): void {
+    const active = this.active
+    if (!active || active.ended || !this.intBuf) return
+    Atomics.store(this.intBuf, 1, 1)
+    Atomics.store(this.intBuf, 0, 2)
+    if (this.ctrl) Atomics.notify(this.ctrl, 0)
+    const dbg = active.debug
+    if (dbg) {
+      this.writeBreakpoints([])
+      if (dbg.parked) {
+        dbg.parked = false
+        dbg.queue.splice(0).forEach((q) => q.reject(new Error('The cell was interrupted.')))
+        dbg.queue.push({ id: this.nextDebugId++, req: { kind: 'resume', cmd: 'continue' }, resolve: () => {}, reject: () => {} })
+        this.pumpDebug(dbg)
+      }
+    }
+  }
+
+  /** NotebookKernel: forget one notebook's namespace. A worker that never booted has none to forget. */
+  async restart(notebook: string): Promise<void> {
+    if (!this.kernelMode || !this.worker || !this.isReady()) return
+    if (this.active && !this.active.ended) throw new Error('A cell is running; interrupt it before restarting.')
+    const id = this.nextRestartId++
+    const done = new Promise<void>((resolve) => this.restarts.set(id, resolve))
+    this.worker.postMessage({ type: 'kernel-restart', id, notebook })
+    return done
+  }
+
+  /** The shared body of run() and execute(): one session, one worker message. */
+  private async start(
+    message: (debug: { stopOnEntry: boolean } | null) => Record<string, unknown>,
+    io: CellIO,
+    opts?: RunOptions,
+  ): Promise<RunSession> {
+    if (this.active && !this.active.ended) {
+      throw new Error('A Python program is already running; kill() it before running another.')
     }
 
     await this.load(() => {})
@@ -215,7 +304,11 @@ export class PythonRuntime implements Runtime {
       debug = { stopOnEntry: debugOpts.stopOnEntry === true }
     }
 
-    worker.postMessage({ type: 'run', files: payload, entry, debug })
+    if (this.intBuf) {
+      Atomics.store(this.intBuf, 0, 0)
+      Atomics.store(this.intBuf, 1, 0)
+    }
+    worker.postMessage(message(debug))
 
     const session: PythonRunSession = {
       kill: () => this.killSession(active),
@@ -233,6 +326,11 @@ export class PythonRuntime implements Runtime {
    */
   isReady(): boolean {
     return this.worker !== null && this.version !== null
+  }
+
+  /** A program or cell is in flight; `format()` would refuse. */
+  isBusy(): boolean {
+    return !!this.active && !this.active.ended
   }
 
   /**
@@ -300,6 +398,17 @@ export class PythonRuntime implements Runtime {
     this.dbgSab = new SharedArrayBuffer(DBG_HEADER_BYTES + 2 * DBG_REGION_BYTES)
     this.dbgCtrl = new Int32Array(this.dbgSab, 0, DBG_HEADER_BYTES >> 2)
     this.dbgBytes = new Uint8Array(this.dbgSab, DBG_HEADER_BYTES)
+    if (this.kernelMode) {
+      // Fresh per worker for the same reason as the debugger's buffer.
+      // Word 0 is Pyodide's interrupt buffer (Pyodide clears it when it raises). Word 1 is ours
+      // and sticky: "an interrupt was asked for during this cell" — it survives Pyodide's own
+      // import scan swallowing word 0 while packages download.
+      this.intSab = new SharedArrayBuffer(8)
+      this.intBuf = new Int32Array(this.intSab)
+    }
+    this.epoch++
+    for (const resolve of this.restarts.values()) resolve()
+    this.restarts.clear()
 
     this.lastProgress = null
 
@@ -329,6 +438,8 @@ export class PythonRuntime implements Runtime {
       dbgSab: this.dbgSab,
       indexURL: this.indexURL,
       isatty: this.isatty,
+      kernel: this.kernelMode,
+      intSab: this.intSab,
     })
     return promise
   }
@@ -423,6 +534,23 @@ export class PythonRuntime implements Runtime {
         active.io.onDebugResume?.()
         return
       }
+
+      case 'execute-input':
+        this.active?.io.onExecuteInput?.(msg.count)
+        return
+
+      case 'output':
+        this.active?.io.onOutput?.(msg.kind, msg.output)
+        return
+
+      case 'clear-output':
+        this.active?.io.onClearOutput?.(msg.wait)
+        return
+
+      case 'kernel-restarted':
+        this.restarts.get(msg.id)?.()
+        this.restarts.delete(msg.id)
+        return
 
       case 'debug-reply': {
         const dbg = this.active?.debug
@@ -607,6 +735,12 @@ export class PythonRuntime implements Runtime {
     Atomics.store(ctrl, 0, STATE_EOF)
     Atomics.notify(ctrl, 0)
   }
+}
+
+function filePayload(files: SourceFile[]): Record<string, string> {
+  const payload: Record<string, string> = {}
+  for (const file of files) payload[normalizePath(file.path)] = file.content
+  return payload
 }
 
 /** "./a/b.py", "/a/b.py" and "a//b.py" all become "a/b.py"; ".." is rejected. */

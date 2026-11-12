@@ -8,6 +8,7 @@ import {
   type Language,
 } from '../languages'
 import { templates, type Template, type TemplateLevel } from '../templates'
+import { isNotebookPath } from '../notebook/nbformat'
 import { badgeClass } from './FileBadge'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Dialog'
@@ -295,11 +296,10 @@ function TemplateStep({
   onPick(t: Template): void
 }) {
   const forLang = templates.filter((t) => t.lang === language.id)
-  const empty = forLang.find((t) => t.level === 'empty')
-  // Stable by spec, so two starters of one level keep templates.ts's order.
-  const starters = forLang
-    .filter((t) => t.level !== 'empty')
-    .sort((a, b) => LEVEL_ORDER.indexOf(a.level) - LEVEL_ORDER.indexOf(b.level))
+  // Files and notebooks are two ways to write the same language; a language that has
+  // notebook starters shows them as their own section under its file starters.
+  const notebooks = forLang.filter((t) => isNotebookPath(t.entry))
+  const files = forLang.filter((t) => !isNotebookPath(t.entry))
 
   return (
     <div>
@@ -318,19 +318,42 @@ function TemplateStep({
         </h2>
       </div>
 
-      <div className="grid gap-2 min-[560px]:grid-cols-2">
-        {empty ? <EmptyCard template={empty} onPick={() => onPick(empty)} /> : null}
-        {starters.map((t, i) => (
-          <TemplateCard
-            key={t.id}
-            template={t}
-            // An odd count would leave the last card beside a hole — the very gap this
-            // layout exists to close. It takes the whole row instead.
-            wide={i === starters.length - 1 && starters.length % 2 === 1}
-            onPick={() => onPick(t)}
-          />
-        ))}
-      </div>
+      {notebooks.length ? (
+        <>
+          <Section heading={COPY.pickerFiles}>
+            <StarterGrid templates={files} onPick={onPick} />
+          </Section>
+          <Section heading={COPY.pickerNotebooks}>
+            <StarterGrid templates={notebooks} onPick={onPick} />
+          </Section>
+        </>
+      ) : (
+        <StarterGrid templates={files} onPick={onPick} />
+      )}
+    </div>
+  )
+}
+
+/** One kind of starter: the empty skeleton first, full width, then the lessons by level. */
+function StarterGrid({ templates: list, onPick }: { templates: Template[]; onPick(t: Template): void }) {
+  const empty = list.find((t) => t.level === 'empty')
+  // Stable by spec, so two starters of one level keep templates.ts's order.
+  const starters = list
+    .filter((t) => t.level !== 'empty')
+    .sort((a, b) => LEVEL_ORDER.indexOf(a.level) - LEVEL_ORDER.indexOf(b.level))
+  return (
+    <div className="grid gap-2 min-[560px]:grid-cols-2">
+      {empty ? <EmptyCard template={empty} onPick={() => onPick(empty)} /> : null}
+      {starters.map((t, i) => (
+        <TemplateCard
+          key={t.id}
+          template={t}
+          // An odd count would leave the last card beside a hole — the very gap this
+          // layout exists to close. It takes the whole row instead.
+          wide={i === starters.length - 1 && starters.length % 2 === 1}
+          onPick={() => onPick(t)}
+        />
+      ))}
     </div>
   )
 }

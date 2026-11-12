@@ -12,13 +12,17 @@
  * editor. `App.tsx` calls `formatFile`, catches what it throws, and decides
  * what the student sees.
  */
-import { langForPath, runtimeFor } from '../runtime'
+import { kernelFor, langForPath, runtimeFor } from '../runtime'
+import { maskMagicsForFormat } from '../notebook/magics'
 import { detectIndent } from '../editor/indentDisplay'
 
 /** Thrown when a .py file is formatted before the student has ever run one —
  *  Pyodide is not booted, and booting it just to format would be a silent,
  *  confusing 11 MB download behind a menu click. */
 export class PythonNotLoadedError extends Error {}
+
+/** Every booted Python engine is busy (a program, a notebook cell): formatting would have to wait. */
+export class PythonBusyError extends Error {}
 
 /** True for any language `langForPath` recognises, not just Java/Python (the
  *  two `formatFile` handles) — other extensions pass here then throw there. */
@@ -63,12 +67,29 @@ export async function formatJava(source: string): Promise<string> {
 }
 
 async function formatPython(path: string, source: string): Promise<string> {
-  const runtime = runtimeFor(path)
-  if (!runtime?.format) throw new Error('Python formatting is unavailable.')
-  if (runtime.isReady && !runtime.isReady()) {
-    throw new PythonNotLoadedError('Python has not been loaded yet.')
-  }
-  return runtime.format(source)
+  // Either Python engine can format — the program runner or the notebook kernel, whichever
+  // is already booted (a student working only in a notebook never booted the runner).
+  // …and one that is free: a worker running a program or a cell would refuse (and Format on
+  // Save must never sit waiting behind a long cell).
+  const engines = [runtimeFor(path), kernelFor('.ipynb')].filter((e) => !!e?.format)
+  if (!engines.length) throw new Error('Python formatting is unavailable.')
+  const ready = engines.filter((e) => !e!.isReady || e!.isReady())
+  if (!ready.length) throw new PythonNotLoadedError('Python has not been loaded yet.')
+  const free = ready.find((e) => !e!.isBusy?.())
+  if (!free) throw new PythonBusyError('Python is busy running code.')
+  return free.format!(source)
+}
+
+/**
+ * Reformat one notebook cell: its IPython lines are masked from black and put
+ * back, and the trailing newline black adds is dropped (a cell does not end in one).
+ * A cell whose body is data (`%%writefile`, `%%html`) comes back unchanged.
+ */
+export async function formatCell(source: string): Promise<string> {
+  const mask = maskMagicsForFormat(source)
+  if (!mask) return source
+  const formatted = await formatPython('cell.py', mask.masked)
+  return mask.restore(formatted).replace(/\n+$/, '')
 }
 
 /**

@@ -17,7 +17,16 @@ import { COPY } from '../copy'
  * debug session runs (bottom on touch, out of the code's way). Continue⇄Pause, the three
  * steps, Restart, Stop — each also on its VS Code key (App's command table).
  */
-export function DebugToolbar({ onRestart, onStop }: { onRestart(): void; onStop(): void }) {
+export function DebugToolbar({
+  onRestart,
+  onStop,
+  belowBar = false,
+}: {
+  onRestart(): void
+  onStop(): void
+  /** The editor area opens with a toolbar of its own (a notebook's): dock under it, not over it. */
+  belowBar?: boolean
+}) {
   const s = useDebugState()
   if (s.phase === 'inactive') return null
   const paused = s.phase === 'paused'
@@ -30,7 +39,8 @@ export function DebugToolbar({ onRestart, onStop }: { onRestart(): void; onStop(
         // Touch: bottom-start, clear of the ⋯ fab (bottom-end) and of the code at the
         // top, where the stopped line usually is. Desk: VS Code's top-centre dock.
         'debug-toolbar absolute bottom-[calc(env(safe-area-inset-bottom)+var(--sp-3))] start-3 ' +
-        'desk:bottom-auto desk:start-auto desk:top-1 desk:left-1/2 desk:-translate-x-1/2 ' +
+        'desk:bottom-auto desk:start-auto desk:left-1/2 desk:-translate-x-1/2 ' +
+        (belowBar ? 'desk:top-[calc(var(--bar-top)+var(--sp-1))] ' : 'desk:top-1 ') +
         'z-(--z-raised) flex items-center gap-0.5 rounded-md p-0.5 ' +
         'border border-border-subtle bg-(--code-widget-bg) shadow-raised select-none'
       }

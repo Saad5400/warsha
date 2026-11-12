@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { undo, redo, selectAll } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { EditorView } from '@codemirror/view'
@@ -9,7 +9,14 @@ import { splitPath } from './fs/project'
 import { forgetRoomsForProject, forgetProjectOwner, prefs, projectOwner, rememberOwnedRoom, rememberProjectOwner, rememberRoomMapping, setPrefs } from './fs/prefs'
 import { nextProjectName, type ProjectMeta } from './fs/projects'
 import type { FsSnapshot } from './fs/types'
-import { disposeRuntimes, entryCandidates, isPreviewEntry, langForPath, runtimeFor } from './runtime'
+import { disposeRuntimes, entryCandidates, isPreviewEntry, kernelFor, langForPath, runtimeFor } from './runtime'
+import { classifyRunFailure } from './hooks/useRunner'
+import { createNotebook, isNotebookPath, parseCellPath, readableText, serializeNotebook } from './notebook/nbformat'
+import { closeNotebooksExcept, closeNotebooksForSwitch, flushNotebooks, notebookDocument, notebookFileChanged, notebookModel, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
+import { kernelLabel, notebookDebugOwner, runStatusOf, useOptionalSession } from './notebook/session'
+// The notebook UI (cells, outputs, markdown, math) loads the first time a notebook opens.
+const NotebookView = lazy(() => import('./components/notebook/NotebookView').then((m) => ({ default: m.NotebookView })))
+
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
 import { exportZip } from './zip'
@@ -26,7 +33,7 @@ import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
 import { documentedWordAt, explainAt } from './editor/hoverDocs'
 import { setProjectSource } from './editor/projectSource'
-import { canFormat, formatFile, PythonNotLoadedError } from './actions/format'
+import { canFormat, formatCell, formatFile, PythonNotLoadedError } from './actions/format'
 import { analyzeForGenerate, canGenerate, type GenAnalysis } from './actions/generate'
 import { shareFileAsImage } from './actions/shareImage'
 import { shareProjectAsPdf } from './actions/sharePdf'
@@ -311,16 +318,23 @@ function Ide({ report }: { report: CapabilityReport }) {
 
   // Recomputed on `revision`, not per keystroke — the active buffer is scanned separately by the editor.
   // Bounded so a full re-tokenise can't stall typing on a big project; completions just get less complete instead.
+  // Cell editors read words through a function (their views are never rebuilt for a new list).
+  const projectWordsRef = useRef<readonly string[]>([])
+  const notebookWords = useCallback(() => projectWordsRef.current, [])
   const projectWords = useMemo(() => {
     const words = new Set<string>()
     let budget = 2_000_000
     for (const file of project.sourceFiles()) {
-      budget -= file.content.length
+      // A notebook is read as its code: its JSON is mostly outputs (base64 images).
+      const text = readableText(file.path, file.content)
+      budget -= text.length
       if (budget < 0) break
-      for (const word of wordsInSource(file.content)) words.add(word)
+      for (const word of wordsInSource(text)) words.add(word)
     }
     return [...words]
   }, [project, revision])
+
+  projectWordsRef.current = projectWords
 
   // Module-level source, not a prop — the editor is a singleton mount; `revision` keys its lazy re-scan cache.
   useEffect(() => {
@@ -1128,6 +1142,9 @@ function Ide({ report }: { report: CapabilityReport }) {
       return `${pkg}public class ${cls} {\n\n}\n`
     }
     if (name.endsWith('.py')) return `"""${name}"""\n\n`
+    // A new .ipynb is a real one-cell nbformat 4.5 notebook from the start: the view never
+    // writes one into an empty file by itself (an empty text may only be not-yet-synced).
+    if (name.endsWith('.ipynb')) return serializeNotebook(createNotebook())
     return ''
   }
 
@@ -1163,6 +1180,19 @@ function Ide({ report }: { report: CapabilityReport }) {
       cancelLabel: COPY.dlgNoExtKeep(leaf),
     })
     return ext ? `${name}.${ext}` : name
+  }
+
+  /** File ▸ New Notebook: `Untitled.ipynb` (then 1, 2, …) at the root, opened in the notebook view. */
+  const newNotebook = async () => {
+    let name = 'Untitled.ipynb'
+    for (let i = 1; project.has(name); i++) name = `Untitled${i}.ipynb`
+    try {
+      await whenReady()
+      await project.createFile(name, serializeNotebook(createNotebook()))
+      openFile(name)
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    }
   }
 
   // `presetName` arrives from the explorer's inline create row; without one we
@@ -1240,6 +1270,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, to] of mapping) {
         editorRef.current?.renamePath(from, to)
         debugStore.renamePath(from, to)
+        renameNotebook(from, to)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1260,6 +1291,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       for (const [from, dest] of mapping) {
         editorRef.current?.renamePath(from, dest)
         debugStore.renamePath(from, dest)
+        renameNotebook(from, dest)
       }
       setTabs((cur) => cur.map((t) => mapping.get(t) ?? t))
       setActivePath((cur) => (cur ? (mapping.get(cur) ?? cur) : cur))
@@ -1407,7 +1439,8 @@ function Ide({ report }: { report: CapabilityReport }) {
   const downloadFile = useCallback(
     async (path: string) => {
       const { name } = splitPath(path)
-      const file = new File([project.read(path) ?? ''], name, { type: 'text/plain' })
+      flushNotebooks()
+      const file = new File([project.read(path) ?? ''], name, { type: isNotebookPath(path) ? 'application/x-ipynb+json' : 'text/plain' })
       try {
         const result = await deliverFile(file)
         if (result === 'downloaded') notify(COPY.noteFileDownloaded(name))
@@ -1581,6 +1614,7 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
 
   const exportProject = () => {
+    flushNotebooks()
     const name = `${slug(currentProject?.name) || 'warsha-project'}.zip`
     exportZip(project.snapshot(), name)
     track('project_shared', { via: 'zip' })
@@ -2106,7 +2140,9 @@ function Ide({ report }: { report: CapabilityReport }) {
         !(
           matchEvent(e, 'Mod+Enter') &&
           e.target instanceof Element &&
-          e.target.closest('.cm-editor')
+          e.target.closest('.cm-editor') &&
+          // In a notebook cell Ctrl+Enter runs the cell — and only the cell.
+          !e.target.closest('.notebook-view')
         )
       )
         return
@@ -2259,25 +2295,109 @@ function Ide({ report }: { report: CapabilityReport }) {
   }
   const activeContent = activePath ? (project.read(activePath) ?? '') : ''
 
+  // ---- notebooks ----
+  // A .ipynb opens in the notebook view unless the student asked for its text.
+  const [notebookAsText, setNotebookAsText] = useState<ReadonlySet<string>>(() => new Set())
+  const activeNotebook = activePath && isNotebookPath(activePath) && !notebookAsText.has(activePath) ? activePath : null
+  // Open notebooks follow the tabs: closing a notebook's tab closes it (and frees its namespace).
+  // A notebook shown as text is closed too: its session must not keep writing JSON under the
+  // student's text edits.
+  useEffect(() => {
+    closeNotebooksExcept(new Set(tabs.filter((t) => !notebookAsText.has(t))))
+    if (Array.from(notebookAsText).some((p) => !tabs.includes(p))) setNotebookAsText(new Set(Array.from(notebookAsText).filter((p) => tabs.includes(p))))
+  }, [tabs, notebookAsText])
+  // Pending notebook edits reach the project before any save; open notebooks close before a
+  // project switch, while the project being left is still the one attached (closeNotebooksForSwitch).
+  // Every change to an open notebook's file reaches its document — view on screen or not — so a
+  // collaborator's edit is merged into a notebook whose cell keeps writing in a background tab.
+  useEffect(() => project.onContentChange((path) => notebookFileChanged(path, project.read(path))), [project])
+  useEffect(() => {
+    const offSave = project.onBeforeSave(flushNotebooks)
+    const offSwitch = project.onBeforeSwitch(closeNotebooksForSwitch)
+    return () => {
+      offSave()
+      offSwitch()
+    }
+  }, [project])
+  const notebookIO = useMemo(
+    (): DocumentIO => ({
+      read: (path) => project.read(path),
+      write: (path, text) => {
+        // Deleted (or moved) while open: not brought back.
+        if (!project.has(path)) return
+        // A live-collab notebook lands in its shared doc as a minimal splice, like Format does.
+        if (!collabRef.current.binding?.replaceDoc(path, text)) project.setContent(path, text)
+      },
+      files: () => project.sourceFiles(),
+      workspace: () => currentProjectIdRef.current ?? '',
+      onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
+      onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
+      messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy }),
+    }),
+    [project, notify],
+  )
+  /** A notebook cell reads as "lab.ipynb [3]" (its position) in the debugger; a file as its name. */
+  const debugName = (path: string): string => {
+    const cell = parseCellPath(path)
+    if (!cell) return splitPath(path).name
+    const index = notebookModel(cell.notebook, project.read(cell.notebook))?.cells.findIndex((c) => c.id === cell.cellId) ?? -1
+    return `${splitPath(cell.notebook).name} [${index >= 0 ? index + 1 : '?'}]`
+  }
+  /** One cell's source, for the debugger's breakpoint rows. */
+  const cellSource = (notebook: string, cellId: string): string =>
+    notebookModel(notebook, project.read(notebook))?.cells.find((c) => c.id === cellId)?.source ?? ''
+
+  // A collab viewer (or a guest whose copy is not bound yet — the file editor's rule, setup.ts)
+  // can read a notebook but not edit or run it.
+  const nbReadOnly =
+    !!activeNotebook && !!collab.binding && (collab.binding.readOnly() || (collab.binding.guarded() && !collab.binding.isCollab(activeNotebook)))
+
+  // A notebook on screen owns Run: Run runs all its cells, Debug debugs its selected (or
+  // first) code cell, Stop interrupts, and the status bar shows its kernel — never the
+  // project's entry point, which a notebook-only project does not have.
+  const nbDoc = activeNotebook ? notebookDocument(activeNotebook, kernelFor(activeNotebook)!, notebookIO) : null
+  if (nbDoc) nbDoc.readOnly = nbReadOnly
+  const nbState = useOptionalSession(nbDoc?.session ?? null)
+  const nbStatus = nbState ? runStatusOf(nbState) : null
+  const nbKernelLabel = nbState ? kernelLabel(nbState) : null
+
   // Single state object so Run/Stop in the tab strip (Tabs.tsx), the Run menu, and
   // F5/Shift+F5 all share the same handlers and can't drift apart.
-  const runControl: RunControlState = {
-    status: runner.status,
-    busy: runner.busy,
-    canRun: candidates.length > 0,
-    entry: resolveEntry(entryPath, candidates),
-    onRun: () => {
-      setConsoleOpen(true)
-      void runner.run()
-    },
-    onStop: runner.stop,
-  }
+  const runControl: RunControlState =
+    nbDoc && nbStatus
+      ? {
+          status: nbStatus,
+          busy: nbStatus !== 'idle',
+          canRun: !nbReadOnly,
+          entry: activeNotebook,
+          onRun: () => nbDoc.runAll(),
+          onStop: () => nbDoc.session.interrupt(),
+        }
+      : {
+          status: runner.status,
+          busy: runner.busy,
+          canRun: candidates.length > 0,
+          entry: resolveEntry(entryPath, candidates),
+          onRun: () => {
+            setConsoleOpen(true)
+            void runner.run()
+          },
+          onStop: runner.stop,
+        }
 
   // ---- debugger ----
-  const canDebugEntry = !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
+  const canDebugEntry = nbDoc ? !nbReadOnly : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
   /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
   const startDebugging = () => {
-    if (runner.busy || !canDebugEntry) return
+    // One debug session at a time: a paused notebook cell blocks debugging the program and back.
+    if (runControl.busy || !canDebugEntry || debugStore.get().debugging) return
+    if (nbDoc) {
+      if (!narrow) {
+        setSideView('debug')
+        setExplorerDocked(true)
+      }
+      return nbDoc.debugCurrent()
+    }
     setConsoleOpen(true)
     // VS Code shows Run and Debug when a session starts — docked only; on a phone the
     // drawer would cover the very line the program stops on.
@@ -2303,6 +2423,13 @@ function Ide({ report }: { report: CapabilityReport }) {
   }, [runner.busy])
   /** Open `path` with `line` at the caret (stack frames, breakpoint rows, every stop). */
   const revealLine = (path: string, line: number) => {
+    const cell = parseCellPath(path)
+    if (cell) {
+      if (!project.has(cell.notebook)) return
+      openFile(cell.notebook)
+      revealCell(cell.notebook, cell.cellId, line)
+      return
+    }
     const text = project.read(path)
     if (text === undefined) return
     let off = 0
@@ -2320,7 +2447,11 @@ function Ide({ report }: { report: CapabilityReport }) {
     const f = debug.stopped?.frames[debug.frameIndex]
     if (f) revealRef.current(f.path, f.line)
   }, [debug.phase, debug.stopSeq, debug.frameIndex, debug.stopped])
-  const lineText = (path: string, line: number) => (project.read(path) ?? '').split('\n')[line - 1] ?? ''
+  const lineText = (path: string, line: number) => {
+    const cell = parseCellPath(path)
+    const text = cell ? cellSource(cell.notebook, cell.cellId) : (project.read(path) ?? '')
+    return text.split('\n')[line - 1] ?? ''
+  }
   /** F9 outside the editor (palette, menu): the caret's line in the open file. */
   const toggleBreakpointHere = () => {
     const dom = document.querySelector('.cm-editor')
@@ -2501,6 +2632,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       run: () => setDrawerOpen(false),
     },
     { id: 'file.newFile', title: COPY.cmdFileNewFile, run: () => void newFile('') },
+    { id: 'file.newNotebook', title: COPY.cmdFileNewNotebook, run: () => void newNotebook() },
     { id: 'file.saveAll', title: COPY.cmdFileSaveAll, keys: ['Mod+S'], run: saveAllQuiet },
     {
       id: 'file.format',
@@ -2663,14 +2795,11 @@ function Ide({ report }: { report: CapabilityReport }) {
       // Run Without Debugging, Mod+Enter the historic run binding. Busy: same key stops.
       keys: ['Ctrl+F5', 'Mod+Enter'],
       enabled: () => runControl.canRun,
+      // Through runControl, so a notebook on screen runs all its cells instead of the entry.
       run: () => {
-        const r = runnerRef.current
-        if (r.busy) {
-          if (debugStore.get().phase === 'inactive') r.stop()
-        } else {
-          setConsoleOpen(true)
-          void r.run()
-        }
+        if (runControl.busy) {
+          if (debugStore.get().phase === 'inactive') runControl.onStop()
+        } else runControl.onRun()
       },
     },
     {
@@ -2682,26 +2811,19 @@ function Ide({ report }: { report: CapabilityReport }) {
       keys: ['F5'],
       enabled: () => runControl.canRun || debugStore.get().phase !== 'inactive',
       run: () => {
-        const r = runnerRef.current
         const phase = debugStore.get().phase
         if (phase === 'paused') return debugStore.resume('continue')
         if (phase === 'running') return
-        if (r.busy) return r.stop()
+        if (runControl.busy) return runControl.onStop()
         if (canDebugEntry && debugStore.enabledBreakpoints().length) startDebugging()
-        else {
-          setConsoleOpen(true)
-          void r.run()
-        }
+        else runControl.onRun()
       },
     },
     {
       id: 'debug.runNoDebug',
       title: COPY.cmdDebugRunNoDebug,
-      enabled: () => runControl.canRun && !runnerRef.current.busy,
-      run: () => {
-        setConsoleOpen(true)
-        void runnerRef.current.run()
-      },
+      enabled: () => runControl.canRun && !runControl.busy,
+      run: () => runControl.onRun(),
     },
     { id: 'debug.continue', title: COPY.cmdDebugContinue, enabled: () => debugStore.get().phase === 'paused', run: () => debugStore.resume('continue') },
     { id: 'debug.pause', title: COPY.cmdDebugPause, keys: ['F6'], enabled: () => debugStore.get().phase === 'running', run: () => debugStore.pause() },
@@ -2858,6 +2980,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       label: COPY.menuFile,
       items: [
         { label: COPY.menuNewFile, icon: <IconFilePlus size={18} />, onSelect: () => void newFile('') },
+        { label: COPY.menuNewNotebook, icon: <FileIcon ext="ipynb" size={18} />, onSelect: () => void newNotebook() },
         // Opens the picker regardless of list size; language and starter are chosen there.
         { label: COPY.menuNewProject, icon: <IconFolderPlus size={18} />, onSelect: () => setPickerOpen(true) },
         // The relocated project switcher — projectRows exactly (most recent first, open one unselectable).
@@ -3224,10 +3347,12 @@ function Ide({ report }: { report: CapabilityReport }) {
             <DebugView
               canDebug={canDebugEntry}
               entry={runControl.entry}
-              busy={runner.busy}
+              busy={runControl.busy}
               onStartDebugging={startDebugging}
               onReveal={revealLine}
               lineText={lineText}
+              nameOf={debugName}
+              hint={activeNotebook ? COPY.debugNotebookHint : undefined}
             />
           ) : sideView === 'search' ? (
             <SearchView project={project} revision={revision} onOpenMatch={openAt} />
@@ -3299,7 +3424,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 // Run + file-scoped "⋯" — VS Code's editor-actions corner; Run's one home now
                 // (left the title bar and console header).
                 runControl={runControl}
-                debugControl={{ can: canDebugEntry && !runner.busy, entry: runControl.entry, onDebug: startDebugging }}
+                debugControl={{ can: canDebugEntry && !runControl.busy, entry: runControl.entry, onDebug: startDebugging }}
                 moreItems={deskMoreItems}
               />
 
@@ -3317,10 +3442,44 @@ function Ide({ report }: { report: CapabilityReport }) {
                 onPointerDownCapture={(e) => {
                   lastPointerType.current = e.pointerType
                 }}
-                onContextMenu={onEditorContextMenu}
+                onContextMenu={activeNotebook ? undefined : onEditorContextMenu}
               >
+                {activeNotebook ? (
+                  <Suspense fallback={<div className="flex-1 bg-surface-1" />}>
+                  <NotebookView
+                    key={activeNotebook}
+                    path={activeNotebook}
+                    kernel={kernelFor(activeNotebook)!}
+                    io={notebookIO}
+                    fontSize={fontSize}
+                    // The file editor's rule (setup.ts): a viewer, or a guest whose copy is not bound yet.
+                    readOnly={nbReadOnly}
+                    projectWords={notebookWords}
+                    onOpenAsText={() => setNotebookAsText((cur) => new Set(cur).add(activeNotebook))}
+                    onDownload={() => void downloadFile(activeNotebook)}
+                    formatCell={formatCell}
+                    onFormatResult={(r) =>
+                      r === 'formatted'
+                        ? notify(COPY.noteFormatted)
+                        : r === 'unchanged'
+                          ? notify(COPY.noteAlreadyFormatted)
+                          : r instanceof PythonNotLoadedError
+                            ? notify(COPY.noteFormatNeedsPython)
+                            : notify(COPY.noteFormatFailed, 'error')
+                    }
+                    onDebugStart={() => {
+                      if (!narrow) {
+                        setSideView('debug')
+                        setExplorerDocked(true)
+                      }
+                    }}
+                  />
+                  </Suspense>
+                ) : null}
+                {/* The file editor stays mounted under a notebook (it is a singleton the shell drives); hidden, it holds no file. */}
+                <div className={activeNotebook ? 'hidden' : 'contents'}>
                 <Editor
-                  path={activePath}
+                  path={activeNotebook ? null : activePath}
                   content={activeContent}
                   fontSize={fontSize}
                   onChange={(p, c) => project.setContent(p, c)}
@@ -3351,11 +3510,25 @@ function Ide({ report }: { report: CapabilityReport }) {
                   indentDisplay={indentPref}
                   onIndent={setIndentInfo}
                 />
+                </div>
                 {/* VS Code's floating debug toolbar, over the editor while a session runs. */}
-                <DebugToolbar onRestart={restartDebugging} onStop={runner.stop} />
+                <DebugToolbar
+                  belowBar={!!activeNotebook}
+                  onRestart={() => {
+                    const nb = notebookDebugOwner()
+                    if (nb) nb.restartDebugging()
+                    else restartDebugging()
+                  }}
+                  // A notebook cell under the debugger stops by interrupting it, not by killing its kernel.
+                  onStop={() => {
+                    const nb = notebookDebugOwner()
+                    if (nb) nb.interrupt()
+                    else runner.stop()
+                  }}
+                />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
                     menu. Quiet at rest, semi-transparent, above the home indicator. */}
-                {activePath ? (
+                {activePath && !activeNotebook ? (
                   <button
                     ref={fabRef}
                     type="button"
@@ -3470,20 +3643,22 @@ function Ide({ report }: { report: CapabilityReport }) {
           §4.3 rule 4's console floor claims those pixels first. */}
       {keyboardOpen ? null : (
         <StatusBar
-          status={runner.status}
-          exitCode={runner.exitCode}
+          status={runControl.status}
+          exitCode={nbStatus ? null : runner.exitCode}
           activePath={activePath}
           entryPath={runControl.entry}
-          cursor={empty || !activePath ? null : cursor}
+          kernelLabel={nbKernelLabel}
+          // A notebook has no single caret, problems list or indentation — its cells are many editors.
+          cursor={empty || !activePath || activeNotebook ? null : cursor}
           // Same gate as the caret: a problems count belongs to an open file.
-          problems={empty || !activePath ? null : problems}
+          problems={empty || !activePath || activeNotebook ? null : problems}
           onProblems={() => editorRef.current?.toggleProblems()}
           fontSize={fontSize}
           onFontSize={setFontSize}
           // Ln/Col opens Go to Line — the quick input's ':' face, VS Code's
           // own behaviour for that status item.
           onGotoLine={() => setQuickPick('goto')}
-          indent={indentInfo}
+          indent={activeNotebook ? null : indentInfo}
           onIndentMenu={setIndentMenu}
         />
       )}

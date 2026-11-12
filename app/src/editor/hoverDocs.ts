@@ -1,4 +1,4 @@
-import { Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Facet, Prec, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { debugOwnsHover } from './debugExt'
 import {
   closeHoverTooltips,
@@ -17,6 +17,7 @@ import { syntaxTree } from '@codemirror/language'
 import { builtinDoc, memberCard, pythonTables, renderDocCard, type BuiltinDoc, type CompletionLang } from './completions'
 import { memberAt } from './members'
 import { projectFiles, projectRevision } from './projectSource'
+import { contextual } from './textContext'
 
 /**
  * Docs on hover — the "what does this do?" layer (VS Code's hover widget).
@@ -170,8 +171,14 @@ interface DocsHit {
   user: boolean
 }
 
+/** The hit in the editor's own coordinates; resolved against its text context (a cell sees the cells above). */
 function docsAt(view: EditorView, pos: number, lang: CompletionLang | null): DocsHit | null {
-  const { state } = view
+  const c = contextual(view.state, pos)
+  const hit = docsIn(c.state, c.pos, lang)
+  return hit && c.offset ? { ...hit, from: hit.from - c.offset, to: hit.to - c.offset } : hit
+}
+
+function docsIn(state: EditorState, pos: number, lang: CompletionLang | null): DocsHit | null {
   const word = state.wordAt(pos)
   if (!word) return null
   const name = state.sliceDoc(word.from, word.to)

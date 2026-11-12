@@ -45,8 +45,9 @@ type Listener = () => void
 
 const STORAGE_PREFIX = 'warsha.debug.v1.'
 
-/** Extensions whose files can carry a breakpoint (the debuggable engines' sources). */
-const DEBUGGABLE = /\.(py|java|cs|c|m?js|cjs|jsx|tsx?|mts|cts)$/i
+/** Extensions whose files can carry a breakpoint (the debuggable engines' sources),
+ *  and notebook cells, whose path is `nb.ipynb#cell=<id>` (notebook/nbformat.ts). */
+const DEBUGGABLE = /\.(py|java|cs|c|m?js|cjs|jsx|tsx?|mts|cts)$|\.ipynb#cell=[\w-]+$/i
 export function canHoldBreakpoints(path: string | null | undefined): boolean {
   return !!path && DEBUGGABLE.test(path)
 }
@@ -149,12 +150,12 @@ class DebugStore {
     ])
   }
   renamePath(from: string, to: string) {
-    const isDir = (p: string) => p === from || p.startsWith(from + '/')
+    const isDir = (p: string) => within(p, from)
     if (!this.state.breakpoints.some((b) => isDir(b.path))) return
     this.updateBreakpoints(this.state.breakpoints.map((b) => (isDir(b.path) ? { ...b, path: to + b.path.slice(from.length) } : b)))
   }
   dropPath(path: string) {
-    const gone = (p: string) => p === path || p.startsWith(path + '/')
+    const gone = (p: string) => within(p, path)
     if (!this.state.breakpoints.some((b) => gone(b.path))) return
     this.updateBreakpoints(this.state.breakpoints.filter((b) => !gone(b.path)))
   }
@@ -169,29 +170,48 @@ class DebugStore {
     this.session?.setBreakpoints(this.enabledBreakpoints())
   }
 
-  // ---- session lifecycle (driven by useRunner) ----
-  begin(debugging: boolean) {
+  // ---- session lifecycle (driven by useRunner, and by a notebook's session) ----
+  /**
+   * Two things can run code: the program runner and a notebook's kernel. Each
+   * passes itself as `owner`, and while one is DEBUGGING the other's lifecycle
+   * calls are ignored — a plain Run starting (or ending) must not reset the
+   * store under a paused notebook cell, orphaning it with no way to resume.
+   * Starting a second debug session is refused by the callers (`busyFor`).
+   */
+  private owner: unknown = 'program'
+  /** True when someone other than `owner` holds a live debug session. */
+  busyFor(owner: unknown): boolean {
+    return this.state.debugging && this.owner !== owner
+  }
+  begin(debugging: boolean, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
+    this.owner = owner
     this.session = null
     this.varCache.clear()
     this.set({ phase: debugging ? 'running' : 'inactive', debugging, stopped: null, frameIndex: 0, watchResults: {} })
   }
-  attach(session: DebugSession) {
+  attach(session: DebugSession, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.session = session
     // Breakpoints toggled while the engine was booting reach it now.
     session.setBreakpoints(this.enabledBreakpoints())
   }
-  end() {
+  end(owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.session = null
     this.varCache.clear()
     if (this.state.phase !== 'inactive' || this.state.debugging)
       this.set({ phase: 'inactive', debugging: false, stopped: null, frameIndex: 0, watchResults: {} })
   }
-  onStop(stopped: DebugStopped) {
+  /** Stops and resumes come from whoever runs code; only the owner of the live debug session is heard. */
+  onStop(stopped: DebugStopped, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.varCache.clear()
     this.set({ phase: 'paused', stopped, frameIndex: 0, stopSeq: this.state.stopSeq + 1 })
     void this.refreshWatches()
   }
-  onResume() {
+  onResume(owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.varCache.clear()
     if (this.state.phase === 'paused') this.set({ phase: 'running', stopped: null, frameIndex: 0 })
   }
@@ -201,7 +221,7 @@ class DebugStore {
     if (this.state.phase !== 'paused' || !this.session) return
     this.session.resume(cmd)
     // Optimistic: the toolbar flips to Pause immediately; onDebugResume confirms.
-    this.onResume()
+    this.onResume(this.owner)
   }
   pause() {
     if (this.state.phase === 'running') this.session?.pause()
@@ -313,6 +333,11 @@ class DebugStore {
     if (seq !== this.state.stopSeq || frame !== this.state.frameIndex) return
     this.set({ watchResults: { ...this.state.watchResults, [w.id]: result } })
   }
+}
+
+/** `p` is `root`, under it as a folder, or one of its cells as a notebook. */
+function within(p: string, root: string): boolean {
+  return p === root || p.startsWith(root + '/') || p.startsWith(root + '#')
 }
 
 function sortBps(bps: BreakpointEntry[]) {

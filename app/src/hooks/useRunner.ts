@@ -230,7 +230,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
     const lang = langOfEntry(entry)
     track('run_started', { lang })
 
-    const debugging = !!opts?.debug && !!runtime.canDebug?.(entry)
+    // One debug session at a time: while a notebook cell holds the debugger, a program runs plain.
+    const debugging = !!opts?.debug && !!runtime.canDebug?.(entry) && !debugStore.busyFor('program')
 
     const mine = ++token.current
     awaiting.current = false

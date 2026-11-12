@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test:collab": "node tools/unit-tests.mjs collab",
     "test:editor": "node tools/unit-tests.mjs editor",
+    "test:notebook": "node tools/unit-tests.mjs notebook",
     "tutorials:shots": "node tools/tutorials-shots.mjs",
     "prebuild": "npm run assets",
     "predev": "npm run assets",

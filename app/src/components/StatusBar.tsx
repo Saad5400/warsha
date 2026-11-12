@@ -1,3 +1,4 @@
+import { isNotebookPath } from '../notebook/nbformat'
 import type { RunStatus } from '../hooks/useRunner'
 import { langForPath } from '../runtime'
 import { extOf } from './FileBadge'
@@ -12,6 +13,8 @@ export interface StatusBarProps {
   activePath: string | null
   /** The file Run starts — not necessarily the one being edited. */
   entryPath: string | null
+  /** A notebook is open: its kernel's state stands where the entry point does (there is no entry). */
+  kernelLabel?: string | null
   cursor: { line: number; col: number } | null
   /** The linter's tally, or null when no file is open. The item hides at zero. */
   problems?: { errors: number; warnings: number } | null
@@ -33,7 +36,7 @@ function languageLabel(path: string | null): string {
   if (!path) return COPY.langNone
   const lang = langForPath(path)
   if (lang === 'java') return COPY.langJava
-  if (lang === 'python') return COPY.langPython
+  if (lang === 'python' || isNotebookPath(path)) return COPY.langPython
   const ext = extOf(path)
   return ext ? ext.toUpperCase() : COPY.langPlain
 }
@@ -93,6 +96,7 @@ export function StatusBar({
   exitCode,
   activePath,
   entryPath,
+  kernelLabel,
   cursor,
   problems,
   onProblems,
@@ -132,10 +136,10 @@ export function StatusBar({
             ) : null}
           </button>
         ) : null}
-        <span className={ITEM} title={entryPath ? COPY.statusBarRunStarts(entryPath) : COPY.noEntry}>
+        <span className={ITEM} data-kernel-status={kernelLabel ? '' : undefined} title={kernelLabel ?? (entryPath ? COPY.statusBarRunStarts(entryPath) : COPY.noEntry)}>
           {/* max-w caps a marathon path; min-w-0 lets it ellipsis before anything to the right loses a pixel. */}
           <span className="min-w-0 max-w-[40ch] overflow-hidden text-ellipsis whitespace-nowrap">
-            {entryPath ?? COPY.statusBarNoEntry}
+            {kernelLabel ?? entryPath ?? COPY.statusBarNoEntry}
           </span>
         </span>
       </div>

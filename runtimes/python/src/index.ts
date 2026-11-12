@@ -21,4 +21,8 @@ export type {
   DebugStopped,
   DebugValue,
   RunOptions,
+  NotebookKernel,
+  CellRequest,
+  CellIO,
+  CellOutputKind,
 } from './types'
