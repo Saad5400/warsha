@@ -522,6 +522,49 @@ const chromeTheme = EditorView.theme(
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',
     },
+    // ---- Touch: a compact list (founder 2026-11-12: "looks bad, takes a huge
+    // part of the phone"). 36px rows — the app's touch row (--row-tree) — and at
+    // most 5 of them; the NAME never yields (it used to ellipsize to nothing
+    // while the gloss kept its full width), the short gloss takes what is left;
+    // the type/auto-import tail of the detail is dropped (cm-completionGloss,
+    // rendered by addToOptions below) and the side info panel is off — it had no
+    // room and rendered 26px wide. The docs card is a long-press away.
+    '&.cm-editor:not(.cm-desk) .cm-tooltip.cm-tooltip-autocomplete': {
+      // The CODE pane's width, not the screen's: the activity bar takes its
+      // share, and a popup wider than the pane cannot be clamped inside it.
+      maxWidth: 'min(340px, calc(100vw / var(--ui-scale, 1) - var(--activity-w) - 2 * var(--sp-2)))',
+      borderRadius: '6px',
+      overflow: 'hidden',
+    },
+    '&.cm-editor:not(.cm-desk) .cm-tooltip.cm-tooltip-autocomplete > ul': {
+      maxHeight: 'min(calc(30vh / var(--ui-scale, 1)), calc(5 * var(--row-tree)))',
+    },
+    '&.cm-editor:not(.cm-desk) .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      minHeight: 'var(--row-tree)',
+      gap: '6px',
+      paddingInline: 'var(--sp-2)',
+      fontSize: '13px',
+    },
+    '&.cm-editor:not(.cm-desk) .cm-completionLabel': {
+      flex: '0 1 auto',
+      overflow: 'visible',
+      textOverflow: 'clip',
+    },
+    '&.cm-editor:not(.cm-desk) .cm-completionDetail': { display: 'none' },
+    '&.cm-editor .cm-completionGloss': {
+      flex: '1 1 0',
+      minWidth: '0',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      textAlign: 'end',
+      fontFamily: 'var(--font-ui)',
+      fontSize: '11.5px',
+      color: 'var(--text-3)',
+    },
+    '&.cm-editor.cm-desk .cm-completionGloss': { display: 'none' },
+    '&.cm-editor:not(.cm-desk) .cm-completionIcon': { width: '1.1em', paddingRight: '0' },
+    '&.cm-editor:not(.cm-desk) .cm-tooltip.cm-completionInfo': { display: 'none' },
     '&.cm-editor .cm-completionMatchedText': {
       textDecoration: 'none',
       color: 'var(--accent)',
@@ -834,6 +877,30 @@ const chromeTheme = EditorView.theme(
   },
   { dark: true },
 )
+
+/**
+ * The plain-English part of a completion's detail, for the compact touch list:
+ * `void, (value) — print a line` → `print a line`; `preset some arguments of a
+ * function — auto-imports functools` → `preset some arguments of a function`;
+ * `() — Capitalize the first letter` → `Capitalize the first letter`.
+ */
+export function completionGloss(detail: string | undefined): string {
+  if (!detail) return ''
+  const parts = detail.split(' — ').map((x) => x.trim()).filter((x) => x && !/^auto-imports?\b/.test(x))
+  if (parts.length === 0) return ''
+  // A leading signature segment (types, parens, commas) is not prose.
+  const prose = parts.filter((x) => !/^[\w.<>\[\]?, ]*(\(.*\))?$/.test(x) || /\s\w+\s/.test(x))
+  return (prose.length ? prose[prose.length - 1] : parts[parts.length - 1]) ?? ''
+}
+
+function glossNode(detail: string | undefined): Node | null {
+  const g = completionGloss(detail)
+  if (!g) return null
+  const el = document.createElement('span')
+  el.className = 'cm-completionGloss'
+  el.textContent = g
+  return el
+}
 
 /**
  * ------------------------------------------------------------- Find widget
@@ -1389,6 +1456,10 @@ export function createEditor(
         // 390px screen. The list is ranked, so the tail is rarely what you want.
         maxRenderedOptions: 30,
         icons: true,
+        // Touch shows this short gloss instead of the full detail (the theme
+        // swaps them by density); the detail string itself is left untouched —
+        // receiver.ts parses Java members' `Type, (params) — gloss` shape.
+        addToOptions: [{ render: (c) => glossNode(c.detail), position: 85 }],
       }),
       // Docs on hover (mouse), long-press (touch) and Ctrl/Cmd+K Ctrl/Cmd+I —
       // in this compartment because the built-in dictionary is per-language,
@@ -1464,7 +1535,9 @@ export function createEditor(
       position: 'absolute',
       tooltipSpace: (view) => {
         const r = (view.dom.closest('.editor-pane') ?? view.dom).getBoundingClientRect()
-        return { top: r.top, left: r.left, bottom: r.bottom, right: r.right }
+        // 6px off the right edge: on a phone the pane IS the screen, and a popup
+        // flush against the glass reads as cut off.
+        return { top: r.top, left: r.left, bottom: r.bottom, right: r.right - 6 }
       },
     }),
     // Breakpoint glyph margin (left of the numbers, VS Code's order), the stop
