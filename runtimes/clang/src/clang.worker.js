@@ -816,10 +816,11 @@ const DOWNLOAD_MESSAGE = 'Downloading C toolchain (clang, one-time)…'
 let bytesLoaded = 0
 let lastProgressAt = 0
 
-function installFetchProgress() {
+/** `cache`: a fetch cache mode forced on every request (the retry's 'reload'), or undefined. */
+function installFetchProgress(cache) {
   const original = self.fetch.bind(self)
   self.fetch = async (input, initArg) => {
-    const response = await original(input, initArg)
+    const response = await original(input, cache ? { ...initArg, cache } : initArg)
     try {
       if (!response.ok || !response.body) return response
       const reader = response.body.getReader()
@@ -848,17 +849,37 @@ function installFetchProgress() {
   return () => { self.fetch = original }
 }
 
+/**
+ * The clang package, downloaded once more if the first body read breaks.
+ *
+ * A Stop in the middle of the ~30 MB download terminates this worker mid-body,
+ * and the browser's HTTP cache can keep the truncated entry. The next boot's
+ * download then failed inside the Wasmer SDK with "Could not retrieve response
+ * body" and the student read "Warsha could not start C" (reproduced by
+ * run-status-check: Stop while C downloads, then a cold Run). A retry that
+ * bypasses the HTTP cache ('reload') fetches it whole; anything else, or a
+ * second failure, is a real error and is reported as one.
+ */
+async function fetchToolchain() {
+  for (let attempt = 0; ; attempt++) {
+    const restoreFetch = installFetchProgress(attempt ? 'reload' : undefined)
+    try {
+      return await Wasmer.fromRegistry('clang/clang')
+    } catch (e) {
+      if (attempt || !/response body|failed to fetch|network/i.test(String((e && e.message) || e))) throw e
+      bytesLoaded = 0 // the retry's progress counts from zero, not on top of the failed attempt
+    } finally {
+      restoreFetch()
+    }
+  }
+}
+
 async function boot() {
   const t0 = performance.now()
   self.postMessage({ type: 'progress', phase: 'download', message: DOWNLOAD_MESSAGE })
 
-  const restoreFetch = installFetchProgress()
-  try {
-    await init()
-    clang = await Wasmer.fromRegistry('clang/clang')
-  } finally {
-    restoreFetch()
-  }
+  await init()
+  clang = await fetchToolchain()
 
   // Warm the WASI sysroot: the first compile that pulls in <stdio.h> demand-loads
   // system headers + libc out of the package (~24 s, M0). Pay it here, behind the
