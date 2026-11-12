@@ -88,9 +88,8 @@ if (typeof window === 'undefined') {
         './index.html',
         // The per-locale entry points (app/ARCHITECTURE.md §7). Precached so a
         // student who installed from an /ar/ link still opens offline on the
-        // document they bookmarked. They do not exist under `vite dev`, where
-        // only the build emits them — cache.add's per-URL .catch below covers
-        // that without failing the whole install.
+        // document they bookmarked. Like every page here, install requires them
+        // (a build always emits them; `vite dev` installs nothing).
         './ar/',
         './en/',
         // This very file, as the page's first <script>: an offline reload asks
@@ -252,10 +251,39 @@ if (typeof window === 'undefined') {
         const hash = [...digest].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
         return { bytes: buf.byteLength, hash };
     };
-    // A kept same-origin file known to be exactly this build's.
+    // Whether the server has moved past this worker's build: set from every
+    // navigation, by whether the page it returned is this build's (`ownPage`).
+    // While it is set, a kept file matching THIS build's manifest proves nothing
+    // about what the pages now in front of us need — a newer page, served
+    // network-first by this (old) worker, runs against the newer build's runtime
+    // files — so hash trust is off and every runtime file goes back to asking
+    // the server, as it did before the manifest existed. That covers the normal
+    // window between a deploy and the new worker taking over, and an update
+    // whose install keeps failing. Persisted (the worker is often restarted
+    // between a navigation and the requests that follow it) in the index cache.
+    const SERVER_AHEAD_KEY = new URL('/__warsha-server-ahead', self.location.href).href;
+    let serverAhead = null;
+    const loadServerAhead = () => (serverAhead ??= (async () => {
+        try {
+            return !!(await (await caches.open(KEEP_INDEX_CACHE)).match(SERVER_AHEAD_KEY));
+        } catch {
+            return false;
+        }
+    })());
+    const setServerAhead = async (ahead) => {
+        if ((await loadServerAhead()) === ahead) return;
+        serverAhead = Promise.resolve(ahead);
+        const cache = await caches.open(KEEP_INDEX_CACHE);
+        if (ahead) await cache.put(SERVER_AHEAD_KEY, new Response('1'));
+        else await cache.delete(SERVER_AHEAD_KEY);
+    };
+
+    // A kept same-origin file known to be exactly this build's — and this build
+    // still being the one the server serves.
     const isThisBuilds = async (url) => {
         const path = manifestPath(url);
-        return !!path && (await loadIndex())[url]?.[2] === FILES[path];
+        if (!path || (await loadServerAhead())) return false;
+        return (await loadIndex())[url]?.[2] === FILES[path];
     };
 
     // When a 'declared' entry was stored, in a header of our own (the response's
@@ -506,14 +534,20 @@ if (typeof window === 'undefined') {
     // copy is current, or when it cannot be asked (offline — what keeps the
     // installed app working with no network).
     const revalidate = async (r, request) => {
+        // While the server is ahead of this worker's build, what it sends is the
+        // NEXT build's file: served to the page that asked, never kept — kept, it
+        // would be what this build's own pages get offline if the update never
+        // lands. The next worker's install brings it into the cache properly.
+        const ahead = await loadServerAhead();
         // This build's own shell (icons, fonts, this script) was fetched from the
-        // server by this build's install: it IS this build's, nothing to ask.
+        // server by this build's install: it IS this build's, nothing to ask —
+        // unless the server has moved on, and then it is no longer the answer.
         const shelled = await fromShell(r);
-        if (shelled) return isolate(shelled);
-        const cached = await fromKeep(r);
+        if (shelled && !ahead) return isolate(shelled);
+        const cached = shelled || (await fromKeep(r));
         if (!cached) {
             const net = await fetch(request, { cache: 'no-store' });
-            await keep(r, net).opened;
+            if (!ahead) await keep(r, net).opened;
             return isolate(net);
         }
         if (await isThisBuilds(r.url)) {
@@ -534,30 +568,62 @@ if (typeof window === 'undefined') {
             touch(r.url);
             return isolate(cached);
         }
-        await keep(r, net).opened;
+        if (!ahead) await keep(r, net).opened;
         return isolate(net);
     };
 
-    // ---- install: stage everything, fail whole -----------------------------
-    // Install writes only into STAGE_CACHE (and this build's own shell), and
-    // fails as a whole if anything it needs cannot be had: a precache item, a
-    // shell file, a page that turns out to be another build's (an older
-    // container answering during a rollout), a runtime file that cannot be
-    // refreshed or does not match the manifest. A failed install changes
-    // nothing the running worker serves; the browser simply tries again on a
-    // later visit. Only `activate` moves the staged files into KEEP_CACHE.
+    // ---- install: stage everything; fail only for what an offline boot needs --
+    // Install writes only into STAGE_CACHE (and this build's own shell); only
+    // `activate` moves the staged files into KEEP_CACHE, so an install cut
+    // short changes nothing the running worker serves.
+    //
+    // It fails — leaving the running worker in charge, the browser retrying on
+    // a later visit — only for what an offline boot of THIS build cannot do
+    // without: its pages (and they must be this build's, not an older
+    // container's during a rollout), its precached JS/CSS, and any file it
+    // downloaded whose bytes are not this build's. Everything else is
+    // best-effort: an icon that 404s, a kept runtime file that cannot be
+    // refreshed (its hash record is dropped instead, so it is asked about on
+    // its next use). Failing for those made one missing icon block every
+    // install forever: no update for returning students, no worker at all for
+    // new ones.
+    //
+    // And an install that has failed INSTALL_RETRIES times in a row for this
+    // build still goes through, best-effort for everything, and says so —
+    // console.error and a message the app turns into an anonymous analytics
+    // event — so a release that cannot install is seen, not silently stuck.
     const STAGE_META = new URL('/__warsha-stage-meta', self.location.href).href;
+    const INSTALL_FAILURES_KEY = new URL('/__warsha-install-failures', self.location.href).href;
+    const INSTALL_RETRIES = 3;
+    const installFailures = async () => {
+        try {
+            const rec = await (await (await caches.open(KEEP_INDEX_CACHE)).match(INSTALL_FAILURES_KEY))?.json();
+            return rec?.version === VERSION ? rec.count : 0;
+        } catch {
+            return 0;
+        }
+    };
+    // The last failure's reasons ride along: a release stuck on install can then
+    // be diagnosed from the browser (Application → Cache Storage), not guessed.
+    const setInstallFailures = async (count, reasons) => {
+        const cache = await caches.open(KEEP_INDEX_CACHE);
+        if (count) await cache.put(INSTALL_FAILURES_KEY, new Response(JSON.stringify({ version: VERSION, count, reasons })));
+        else await cache.delete(INSTALL_FAILURES_KEY);
+    };
     const fetchOrThrow = async (url, init) => {
         const net = await fetch(url, init);
-        if (!net.ok) throw new Error(`install: ${url} answered ${net.status}`);
+        if (!net.ok) throw new Error(`${url} answered ${net.status}`);
         return net;
     };
     const stageOne = async (stage, meta, req, net) => {
-        if (!(await keep(req, net, STAGE_CACHE).done)) throw new Error(`install: ${req.url} not storable`);
+        if (!(await keep(req, net, STAGE_CACHE).done)) throw new Error(`${req.url} could not be stored`);
         const m = await measure(stage, req.url);
         const path = manifestPath(req.url);
-        if (path && m?.hash !== FILES[path]) throw new Error(`install: ${req.url} is not this build's (${m?.hash} != ${FILES[path]})`);
-        meta[req.url] = [m?.bytes ?? 0, m?.hash];
+        if (path && m?.hash !== FILES[path]) {
+            await stage.delete(req);
+            throw new Error(`${req.url} is not this build's (${m?.hash} != ${FILES[path]})`);
+        }
+        meta.files[req.url] = [m?.bytes ?? 0, m?.hash];
     };
 
     // Bring every kept same-origin runtime file up to THIS build, before it
@@ -566,9 +632,10 @@ if (typeof window === 'undefined') {
     // left alone, with no request. (Asking the server instead re-downloaded
     // every kept runtime on every deploy: nginx's ETag is mtime + size, and a
     // deploy re-stamps every file.) A kept file this build no longer ships is
-    // NOT deleted here — `prune` does that, by the manifest, after activation —
-    // so a passing 404 from a proxy mid-swap costs nothing.
-    const refreshKept = async (stage, meta) => {
+    // NOT deleted here — `prune` does that, by the manifest, after activation.
+    // A file that cannot be fetched is best-effort (its record is dropped at
+    // activation); one that arrives with the wrong bytes is `fatal`.
+    const refreshKept = async (stage, meta, fatal, soft) => {
         const kept = await caches.open(KEEP_CACHE);
         const idx = await loadIndex();
         const queue = (await kept.keys()).filter((req) => {
@@ -577,7 +644,18 @@ if (typeof window === 'undefined') {
         });
         const worker = async () => {
             for (let req = queue.shift(); req; req = queue.shift()) {
-                await stageOne(stage, meta, req, await fetchOrThrow(req.url, { cache: 'no-store', credentials: 'same-origin' }));
+                let net;
+                try {
+                    net = await fetchOrThrow(req.url, { cache: 'no-store', credentials: 'same-origin' });
+                } catch (e) {
+                    meta.untrust.push(req.url);
+                    soft(e);
+                    continue;
+                }
+                await stageOne(stage, meta, req, net).catch((e) => {
+                    meta.untrust.push(req.url);
+                    fatal(e);
+                });
             }
         };
         await Promise.all(Array.from({ length: 6 }, worker));
@@ -586,32 +664,67 @@ if (typeof window === 'undefined') {
     self.addEventListener("install", (event) => {
         self.skipWaiting();
         if (DEV) return;
-        event.waitUntil((async () => {
-            const shell = await caches.open(SHELL_CACHE);
-            const stage = await caches.open(STAGE_CACHE);
-            const kept = await caches.open(KEEP_CACHE);
-            const meta = {};
-            await Promise.all([
-                // `cache: 'reload'` skips the HTTP cache so a fresh deploy is
-                // precached, not a stale copy.
-                ...SHELL.map(async (url) => {
-                    await shell.add(new Request(url, { cache: 'reload' }));
-                    if (isPage(new URL(url, self.location.href).pathname) && !(await ownPage(await shell.match(url)))) {
-                        throw new Error(`install: ${url} is another build's page`);
-                    }
-                }),
-                // A chunk an earlier build already brought is the same bytes under
-                // the same name: only what this deploy actually changed downloads.
-                ...PRECACHE.map(async (url) => {
-                    const req = new Request(url);
-                    if (await kept.match(req)) return;
-                    await stageOne(stage, meta, req, await fetchOrThrow(url, { cache: 'reload' }));
-                }),
-                refreshKept(stage, meta),
-            ]);
-            await stage.put(STAGE_META, new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
-        })());
+        event.waitUntil(installRelease().catch(async (e) => {
+            // Anything that escaped the accounting below still counts, so the
+            // escape hatch is reached whatever went wrong.
+            if (!e?.counted) await setInstallFailures((await installFailures()) + 1, [String(e?.message || e)]).catch(() => {});
+            throw e;
+        }));
     });
+
+    const installRelease = async () => {
+        const shell = await caches.open(SHELL_CACHE);
+        const stage = await caches.open(STAGE_CACHE);
+        const kept = await caches.open(KEEP_CACHE);
+        const meta = { files: {}, untrust: [] };
+        const failures = await installFailures();
+        const lenient = failures >= INSTALL_RETRIES;
+        const problems = [];
+        // What an offline boot needs fails the install (unless lenient);
+        // anything else is noted and let go.
+        const fatal = (e) => { problems.push({ fatal: true, message: String(e?.message || e) }); };
+        const soft = (e) => { problems.push({ fatal: false, message: String(e?.message || e) }); };
+        await Promise.all([
+            // `cache: 'reload'` skips the HTTP cache so a fresh deploy is
+            // precached, not a stale copy.
+            ...SHELL.map(async (url) => {
+                const page = isPage(new URL(url, self.location.href).pathname);
+                try {
+                    const net = await fetchOrThrow(new Request(url, { cache: 'reload' }));
+                    if (page && !(await ownPage(net.clone()))) throw new Error(`${url} is another build's page`);
+                    await shell.put(url, net);
+                } catch (e) {
+                    (page ? fatal : soft)(e);
+                }
+            }),
+            // A chunk an earlier build already brought is the same bytes under
+            // the same name: only what this deploy actually changed downloads.
+            ...PRECACHE.map(async (url) => {
+                const req = new Request(url);
+                if (await kept.match(req)) return;
+                try {
+                    await stageOne(stage, meta, req, await fetchOrThrow(url, { cache: 'reload' }));
+                } catch (e) {
+                    fatal(e);
+                }
+            }),
+            refreshKept(stage, meta, fatal, soft),
+        ]);
+        const blocking = problems.filter((p) => p.fatal);
+        if (blocking.length && !lenient) {
+            await setInstallFailures(failures + 1, blocking.map((p) => p.message)).catch(() => {});
+            throw Object.assign(new Error(`install: ${blocking.map((p) => p.message).join('; ')}`), { counted: true });
+        }
+        await stage.put(STAGE_META, new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
+        await setInstallFailures(0).catch(() => {});
+        if (lenient && blocking.length) {
+            const report = `Warsha's offline copy of this release is incomplete (installed after ${failures} failed attempts): ${blocking.map((p) => p.message).join('; ')}`;
+            console.error(report);
+            for (const client of await self.clients.matchAll({ includeUncontrolled: true, type: 'window' })) {
+                client.postMessage({ type: 'warsha:install-degraded', attempts: failures });
+            }
+        }
+    };
 
     self.addEventListener("activate", (event) => {
         event.waitUntil((async () => {
@@ -631,18 +744,23 @@ if (typeof window === 'undefined') {
                 const stage = await caches.open(STAGE_CACHE);
                 const kept = await caches.open(KEEP_CACHE);
                 const idx = await loadIndex();
-                const meta = await (await stage.match(STAGE_META))?.json().catch(() => ({})) ?? {};
+                const meta = await (await stage.match(STAGE_META))?.json().catch(() => null) ?? { files: {}, untrust: [] };
                 for (const req of await stage.keys()) {
                     if (req.url === STAGE_META) continue;
                     const res = await stage.match(req);
                     if (!res) continue;
                     await kept.put(req, res);
-                    const [bytes, hash] = meta[req.url] || [];
+                    const [bytes, hash] = meta.files?.[req.url] || [];
                     idx[req.url] = [Date.now(), bytes || 0, hash];
                 }
+                // Kept files install could not bring up to this build: no hash
+                // record, so each is asked about on its next use.
+                for (const url of meta.untrust || []) if (idx[url] && !meta.files?.[url]) idx[url][2] = undefined;
                 await caches.delete(STAGE_CACHE);
                 persistIndex();
             }
+            // This worker's build is what the server served a moment ago.
+            await setServerAhead(false).catch(() => {});
             await self.clients.claim();
         })());
         // Housekeeping right after, outside waitUntil — see `prune`.
@@ -752,11 +870,14 @@ if (typeof window === 'undefined') {
                     // the mode to same-origin; redirects stay manual, so a 3xx
                     // still reaches the browser as an opaqueredirect it follows.)
                     const net = await fetch(request, { cache: 'no-cache' });
-                    if (net && net.status === 200) {
+                    if (net && net.status === 200 && !DEV) {
+                        // Decided BEFORE the page gets its response: the page's
+                        // first requests must already see the right answer
+                        // (`isThisBuilds`). Reading a ~40 KB document is cheap.
                         const copy = net.clone();
-                        ownPage(copy.clone()).then(async (own) => {
-                            if (own) await (await caches.open(SHELL_CACHE)).put(path, copy);
-                        }).catch(() => {});
+                        const own = await ownPage(net.clone()).catch(() => true);
+                        await setServerAhead(!own).catch(() => {});
+                        if (own) (await caches.open(SHELL_CACHE)).put(path, copy).catch(() => {});
                     }
                     return isolate(net);
                 } catch (err) {
