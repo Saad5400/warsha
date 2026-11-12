@@ -12,6 +12,10 @@
  *   { type: "init", sab, dbgSab, indexURL?, isatty? }
  *   { type: "run", files: { [path]: content }, entry: string, debug?: { stopOnEntry } | null }
  *   { type: "format", id, code }            reformat one file's source with black
+ *   { type: "cell", files, notebook, cellPath, code, source, magic?, pip?, debug? }
+ *                                           run one notebook cell in that notebook's
+ *                                           persistent namespace (kernel workers only)
+ *   { type: "kernel-restart", id, notebook } drop one notebook's namespace
  * (worker -> main thread):
  *   { type: "progress", phase, message, loaded?, total? }   boot progress, and
  *                                           after "ready" the download of the
@@ -28,6 +32,15 @@
  *   { type: "debug-stop", stopped }         parked under the debugger (DebugStopped)
  *   { type: "debug-resume" }                released from a debug stop
  *   { type: "debug-reply", id, ok, result?, error? }  answer to variables/evaluate
+ *   { type: "execute-input", count }        a cell started; its In[count]
+ *   { type: "output", kind, output }        a cell's display/result/error output (nbformat JSON)
+ *   { type: "clear-output", wait }          IPython's clear_output()
+ *   { type: "kernel-restarted", id }        answer to kernel-restart
+ *
+ * A KERNEL worker (init `kernel: true`, PythonRuntime's notebook instance)
+ * also defines the cell runner from kernel.js and gets an interrupt buffer
+ * (`intSab`): Interrupt raises KeyboardInterrupt in the running cell instead
+ * of terminating the worker, so the notebook's variables survive it.
  *
  * While a debug run is in flight every main -> worker debugger message (resume,
  * pause, breakpoints, variables/evaluate requests) goes through the second
@@ -40,6 +53,8 @@
  * `runEntry()` blocks this worker's only thread, so the message would simply
  * queue behind it — callers must gate on the run state themselves.
  */
+
+import { KERNEL } from './kernel.js'
 
 const PYODIDE_VERSION = '314.0.3'
 const DEFAULT_INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`
@@ -54,6 +69,8 @@ let pyodide = null
 let runEntry = null // PyProxy of _warsha_run
 let resetFs = null // PyProxy of _warsha_reset_fs
 let isatty = false
+let kernelMode = false
+let runCellFn = null // PyProxy of _warsha_run_cell (kernel workers)
 let indexURL = DEFAULT_INDEX_URL
 
 // --- stdin shared-memory protocol -------------------------------------------
@@ -61,6 +78,11 @@ let indexURL = DEFAULT_INDEX_URL
 // ctrl[1]: byte length of the line sitting in `data`
 let ctrl = null
 let data = null
+// Kernel workers only: Pyodide's interrupt buffer (2 = SIGINT requested).
+let intBuf = null
+// Set when a read was cut short by Interrupt; the kernel's input() turns the
+// resulting EOF into KeyboardInterrupt (kernel.js, _warsha_input).
+let stdinInterrupted = false
 
 const stdinDecoder = new TextDecoder()
 // One streaming decoder per stream so a multi-byte character split across two
@@ -76,6 +98,13 @@ function requestStdinLine() {
   // makes this a loop rather than an indefinite park, which keeps the thread
   // observable and leaves a hook for pyodide.checkInterrupt() later.
   while (Atomics.load(ctrl, 0) === 0) {
+    // Interrupt while parked here: Python is not executing bytecode, so the
+    // interrupt buffer would never be seen. Answer EOF and say why.
+    if (intBuf && Atomics.load(intBuf, 0) === 2) {
+      Atomics.store(intBuf, 0, 0)
+      stdinInterrupted = true
+      return undefined
+    }
     Atomics.wait(ctrl, 0, 0, 250)
   }
 
@@ -147,6 +176,35 @@ const debugBridge = {
   },
 }
 
+// --- notebook kernel bridge ---------------------------------------------------
+// Exposed to Python as _warsha_kernel_js in kernel workers. Like the debugger's
+// bridge it only moves bytes; kernel.js decides everything.
+const kernelBridge = {
+  /** kind: 'display' | 'update' | 'result' | 'error'; `json` is one nbformat output. */
+  publish(kind, json) {
+    self.postMessage({ type: 'output', kind, output: JSON.parse(json) })
+  },
+  clearOutput(wait) {
+    self.postMessage({ type: 'clear-output', wait: !!wait })
+  },
+  executeInput(count) {
+    self.postMessage({ type: 'execute-input', count })
+  },
+  stdinInterrupted() {
+    const was = stdinInterrupted
+    stdinInterrupted = false
+    return was
+  },
+  /** A pip install is starting a download: say what, and count every byte from now. */
+  progress(message) {
+    bytesLoaded = 0
+    bytesAnnounced = 0
+    downloadMessage = message
+    downloadFloor = 0
+    postDownloadProgress(true)
+  },
+}
+
 // --- output -----------------------------------------------------------------
 
 let sentBytes = 0
@@ -210,14 +268,16 @@ function postDownloadProgress(force) {
   })
 }
 
-function installFetchProgress() {
+/** `counts(url)` picks which responses feed the bar: the interpreter's own files by default,
+ *  every download while pip is installing (wheels come from PyPI too). */
+function installFetchProgress(counts = (url) => url.startsWith(indexURL)) {
   const original = self.fetch.bind(self)
 
   self.fetch = async (input, init) => {
     const response = await original(input, init)
     try {
       const url = typeof input === 'string' ? input : input && input.url ? input.url : String(input)
-      if (!url.startsWith(indexURL) || !response.ok || !response.body) return response
+      if (!counts(url) || !response.ok || !response.body) return response
 
       const declared = Number(response.headers.get('content-length') || 0)
       if (declared > 0) bytesAnnounced += declared
@@ -288,6 +348,10 @@ async function boot() {
 
   pyodide.FS.mkdirTree(PROJECT_DIR)
   pyodide.registerJsModule('_warsha_dbg', debugBridge)
+  if (kernelMode) {
+    pyodide.registerJsModule('_warsha_kernel_js', kernelBridge)
+    if (intBuf) pyodide.setInterruptBuffer(intBuf)
+  }
 
   // Define the runner once and pay the import cost of traceback/shutil now, so
   // the first Run is not noticeably slower than the second.
@@ -295,6 +359,10 @@ async function boot() {
   pyodide.runPython(DEBUGGER)
   runEntry = pyodide.globals.get('_warsha_run')
   resetFs = pyodide.globals.get('_warsha_reset_fs')
+  if (kernelMode) {
+    pyodide.runPython(KERNEL)
+    runCellFn = pyodide.globals.get('_warsha_run_cell')
+  }
 
   self.postMessage({
     type: 'ready',
@@ -345,6 +413,11 @@ def _warsha_internal_frame(frame):
     filename = frame.filename
     if not filename or filename.startswith(_WARSHA_PROJ):
         return False
+    # Everything defined through pyodide.runPython (this runner, the debugger,
+    # the notebook kernel) compiles as "<exec>"; a student's own exec() is
+    # "<string>", so this never hides their code.
+    if filename == "<exec>":
+        return True
     if "/pyodide/" in filename or "/_pyodide/" in filename:
         return True
     return frame.name.startswith("_warsha_")
@@ -520,8 +593,12 @@ def _warsha_run(entry, debug=None):
     return status
 
 
-def _warsha_close_open_files(proj):
+def _warsha_close_open_files(proj, close=True):
     """Flush and close every file the program left open in the project dir.
+
+    close=False only flushes: a notebook kernel keeps running between cells,
+    and a file a student opened in one cell may be written in the next -- but
+    what it holds so far must reach the disk before the files are diffed.
 
     Real Python does this at interpreter exit, so f = open("out.txt", "w");
     f.write(...) with no close() still produces out.txt. This interpreter never
@@ -556,7 +633,7 @@ def _warsha_close_open_files(proj):
         return 2
     for obj in sorted(found, key=layer):
         try:
-            obj.close()
+            obj.close() if close else obj.flush()
         except Exception:
             pass
 `
@@ -663,10 +740,18 @@ def _warsha_safe_repr(v):
         return "<" + type(v).__name__ + " object (repr failed: " + type(e).__name__ + ")>"
 
 
+# Names a notebook kernel puts in every namespace (In, Out, get_ipython...) and
+# IPython's numbered history (_3, _i3): machinery, not the student's variables.
+_warsha_hidden_names = set()
+_WARSHA_HISTORY_NAME = __import__("re").compile(r"^_i{0,3}\d*$")
+
+
 def _warsha_visible_global(name, v):
     if name.startswith("__") and name.endswith("__"):
         return False
     if name.startswith("_warsha") or name.startswith("_WARSHA"):
+        return False
+    if name in _warsha_hidden_names or _WARSHA_HISTORY_NAME.match(name):
         return False
     return not isinstance(v, _WARSHA_NOISE)
 
@@ -714,6 +799,10 @@ class _WarshaDebugger:
         if fn.startswith(self.prefix):
             p = fn[len(self.prefix):]
         elif fn and not fn.startswith("<") and not os.path.isabs(fn) and os.path.isfile(os.path.join(self.proj, fn)):
+            p = fn
+        elif fn and "#cell=" in fn and not fn.startswith("<") and not os.path.isabs(fn):
+            # A notebook cell ("nb.ipynb#cell=<id>"): no file on disk, but the
+            # student's code all the same; its lines are cell-local.
             p = fn
         self.paths[code] = p
         return p
@@ -1140,6 +1229,10 @@ self.onmessage = (ev) => {
     dctl = new Int32Array(msg.dbgSab, 0, DBG_HEADER_BYTES >> 2)
     dbytes = new Uint8Array(msg.dbgSab, DBG_HEADER_BYTES)
     if (msg.isatty === true) isatty = true
+    if (msg.kernel === true) {
+      kernelMode = true
+      if (msg.intSab) intBuf = new Int32Array(msg.intSab, 0, 1)
+    }
     if (typeof msg.indexURL === 'string' && msg.indexURL) indexURL = msg.indexURL
     boot().catch((e) =>
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e), duringBoot: true }),
@@ -1154,6 +1247,110 @@ self.onmessage = (ev) => {
 
   if (msg.type === 'format') {
     void formatPython(msg.id, msg.code)
+    return
+  }
+
+  if (msg.type === 'cell') {
+    void runCell(msg)
+    return
+  }
+
+  if (msg.type === 'kernel-restart') {
+    try {
+      pyodide.globals.get('_warsha_kernel_restart')(msg.notebook)
+    } catch {
+      /* a namespace that cannot be dropped is gone with the worker anyway */
+    }
+    self.postMessage({ type: 'kernel-restarted', id: msg.id })
+  }
+}
+
+/* --- notebook cells ------------------------------------------------------------
+ *
+ * A kernel keeps its files between cells, unlike a Run (which wipes the
+ * project dir first): a cell that wrote plot.png or opened a file must find
+ * it in the next cell. So the project is SYNCED in, not reset: files the
+ * shell's copy changed are rewritten, files the shell deleted are removed, and
+ * anything else on disk (a binary the program wrote, which cannot come back
+ * into a text-only project) stays where the kernel left it.
+ */
+let kernelFiles = {} // path -> content, as the shell last gave it (or took it back)
+const reportedSkipped = new Set()
+
+function syncKernelFiles(files) {
+  const FS = pyodide.FS
+  for (const path of Object.keys(kernelFiles)) {
+    if (!(path in files)) {
+      try {
+        FS.unlink(`${PROJECT_DIR}/${path}`)
+      } catch {
+        /* the program already removed it */
+      }
+    }
+  }
+  const changed = {}
+  for (const [path, content] of Object.entries(files)) {
+    if (kernelFiles[path] !== content) changed[path] = content
+  }
+  writeProjectFiles(changed)
+  kernelFiles = { ...files }
+}
+
+async function preparePip(pip) {
+  if (!pip || !pip.length) return
+  const restoreFetch = installFetchProgress(() => true)
+  try {
+    await pyodide.loadPackage('micropip')
+    await pyodide.globals.get('_warsha_pip_prepare')(JSON.stringify(pip))
+  } finally {
+    restoreFetch()
+  }
+}
+
+const SHIMMED_IMPORTS = /^[ \t]*(?:from[ \t]+IPython\b|import[ \t]+IPython\b).*$/gm
+
+async function runCell(msg) {
+  sentBytes = 0
+  capped = false
+  stdinInterrupted = false
+  try {
+    // pip first: a package it installs may be what the cell imports next.
+    await preparePip(msg.pip)
+    // The kernel's own IPython shim answers `from IPython.display import …`;
+    // left in, the scan would download the real IPython (~15 packages) for it.
+    const sources = { ...msg.files, [`${msg.cellPath}.py`]: msg.code.replace(SHIMMED_IMPORTS, '') }
+    const loadError = await loadImportedPackages(sources)
+    if (loadError) {
+      self.postMessage({ type: 'stderr', text: loadError })
+      self.postMessage({ type: 'done', code: 1, ms: 0 })
+      return
+    }
+    syncKernelFiles(msg.files)
+    if (intBuf) Atomics.store(intBuf, 0, 0)
+    const t0 = performance.now()
+    const status = runCellFn(
+      msg.notebook,
+      msg.cellPath,
+      msg.code,
+      msg.source,
+      msg.magic ? JSON.stringify(msg.magic) : undefined,
+      msg.debug ? JSON.stringify(msg.debug) : undefined,
+    )
+    try {
+      const change = collectFileChanges(kernelFiles)
+      for (const f of change.written) kernelFiles[f.path] = f.content
+      for (const p of change.deleted) delete kernelFiles[p]
+      change.skipped = change.skipped.filter((p) => !reportedSkipped.has(p))
+      for (const p of change.skipped) reportedSkipped.add(p)
+      if (change.written.length || change.deleted.length || change.skipped.length) {
+        self.postMessage({ type: 'files', ...change })
+      }
+    } catch (e) {
+      self.postMessage({ type: 'stderr', text: `[Warsha: could not save files your notebook wrote: ${e}]\n` })
+    }
+    self.postMessage({ type: 'done', code: String(status) === 'ok' ? 0 : 1, ms: Math.round(performance.now() - t0) })
+  } catch (e) {
+    self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
   }
 }
 

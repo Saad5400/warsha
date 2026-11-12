@@ -100,3 +100,55 @@ export interface FilesChange {
   deleted: string[]
   skipped: string[]
 }
+
+/**
+ * THE NOTEBOOK KERNEL CONTRACT — a persistent interpreter for .ipynb notebooks.
+ *
+ * Unlike `run()`, which starts every program from nothing, a kernel keeps one
+ * namespace per notebook (keyed by the notebook's path) alive across cells
+ * until `restart(notebook)`. One cell runs at a time; everything else about a
+ * cell's execution is a run's: stdin, the debugger, files written back, and
+ * the session's `kill()`. A cell's rich outputs arrive as nbformat output
+ * objects (`display_data`, `execute_result`, `error`) through `onOutput`, so
+ * the shell stores exactly what lands in the .ipynb.
+ */
+export interface NotebookKernel {
+  /** Bumps whenever the interpreter itself was replaced (a forced stop, a crash):
+   *  every notebook's namespace is gone, and their execution counts with it. */
+  readonly epoch: number
+  load(onProgress: (p: ProgressReport) => void): Promise<void>
+  /** Run one cell. `files` is the whole project, as for `run()`; it is the cell's working directory. */
+  execute(files: SourceFile[], cell: CellRequest, io: CellIO, opts?: RunOptions): Promise<RunSession>
+  /** Raise KeyboardInterrupt in the running cell; the namespace survives. */
+  interrupt(): void
+  /** Forget one notebook's namespace. Resolves once the kernel has done it. */
+  restart(notebook: string): Promise<void>
+  /** Reformat one cell's source (same engine as `Runtime.format`). */
+  format?(code: string): Promise<string>
+  isReady?(): boolean
+}
+
+export interface CellRequest {
+  /** Project-relative path of the notebook — the namespace's key. */
+  notebook: string
+  /** The cell's synthetic path (`nb.ipynb#cell=<id>`): its compile filename, breakpoint path and frame path. */
+  cellPath: string
+  /** What the student wrote (tracebacks quote it). */
+  source: string
+  /** `source` with IPython syntax rewritten to Python, line for line. */
+  code: string
+  cellMagic?: { name: string; args: string; body: string; python: boolean } | null
+  /** Arguments of the cell's pip lines, installed before it runs. */
+  pip?: string[]
+}
+
+export type CellOutputKind = 'display' | 'update' | 'result' | 'error'
+
+export interface CellIO extends RunIO {
+  /** The cell has started, as In[count]. */
+  onExecuteInput?(count: number): void
+  /** One nbformat output object. 'update' replaces the earlier output with the same `transient.display_id`. */
+  onOutput?(kind: CellOutputKind, output: Record<string, unknown>): void
+  /** IPython's clear_output(); `wait` means clear when the next output arrives. */
+  onClearOutput?(wait: boolean): void
+}

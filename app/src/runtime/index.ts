@@ -1,4 +1,4 @@
-import type { Runtime, SourceFile } from './types'
+import type { NotebookKernel, Runtime, SourceFile } from './types'
 import { PythonRuntime } from '../../../runtimes/python/src'
 import { JavaRuntime } from '../../../runtimes/java/src'
 import { CSharpRuntime } from '../../../runtimes/csharp/src'
@@ -31,6 +31,20 @@ const registry: Record<LangId, Runtime> = {
   js: new JsRuntime(),
 }
 
+/**
+ * The notebook kernel: a SECOND Python engine, booted only when a notebook runs
+ * a cell. Kept apart from `registry.python` on purpose — Stop on a program
+ * terminates that worker, which must never wipe a notebook's variables, and a
+ * long cell must never block Run. The cost (a second Pyodide heap) is paid only
+ * by a session that uses both.
+ */
+const notebookKernel = new PythonRuntime({ kernel: true })
+
+/** The kernel for a notebook file, by its language. Every notebook Warsha opens is Python today. */
+export function kernelFor(notebookPath: string): NotebookKernel | null {
+  return /\.ipynb$/i.test(notebookPath) ? notebookKernel : null
+}
+
 export function runtimeFor(entryPath: string): Runtime | null {
   const lang = langForPath(entryPath)
   return lang ? registry[lang] : null
@@ -44,7 +58,7 @@ export function isPreviewEntry(entryPath: string | null | undefined): boolean {
 
 /** Terminates every engine worker on page unload, so a backgrounded tab doesn't hold a JVM+CPython heap against iPad memory pressure. Not called on language switch — a Java re-warm costs 7–20s. */
 export function disposeRuntimes(): void {
-  for (const runtime of Object.values(registry)) {
+  for (const runtime of [...Object.values(registry), notebookKernel]) {
     try {
       runtime.dispose?.()
     } catch {
@@ -150,5 +164,5 @@ function dedupe(xs: string[]) {
 // Dev/QA seam: lets tools/qa/debug-*.mjs drive an engine (incl. the debugger)
 // headlessly without clicking through the UI. Absent from production builds.
 if (import.meta.env.DEV && typeof window !== 'undefined') {
-  ;(window as unknown as { __warshaRuntime?: unknown }).__warshaRuntime = { runtimeFor, langForPath }
+  ;(window as unknown as { __warshaRuntime?: unknown }).__warshaRuntime = { runtimeFor, langForPath, kernelFor }
 }
