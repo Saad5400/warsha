@@ -337,16 +337,19 @@ export class CSharpRuntime implements Runtime {
       return Promise.reject(new Error(NOT_ISOLATED))
     }
 
-    if (!this.sab) {
-      this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
-      this.ctrl = new Int32Array(this.sab, 0, 2)
-      this.data = new Uint8Array(this.sab, HEADER_BYTES)
-    }
-    if (!this.dsab) {
-      this.dsab = new SharedArrayBuffer(D_CMD + D_CMD_CAP)
-      this.dctrl = new Int32Array(this.dsab, 0, 8)
-      this.dbytes = new Uint8Array(this.dsab)
-    }
+    // A FRESH stdin buffer per worker. terminate() does not stop a worker parked
+    // in its stdin Atomics.wait loop at once, and the old one used to share this
+    // buffer with its replacement: Stop at an input prompt, Run again at once, and
+    // the dying worker woke up, took the line the student typed for the NEW run
+    // and the program sat at its prompt forever (measured: 8 of 8 reruns lost
+    // their input right after a Stop at input()).
+    this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
+    this.ctrl = new Int32Array(this.sab, 0, 2)
+    this.data = new Uint8Array(this.sab, HEADER_BYTES)
+    // The debugger's buffer too, for the same reason.
+    this.dsab = new SharedArrayBuffer(D_CMD + D_CMD_CAP)
+    this.dctrl = new Int32Array(this.dsab, 0, 8)
+    this.dbytes = new Uint8Array(this.dsab)
 
     this.lastProgress = null
 
