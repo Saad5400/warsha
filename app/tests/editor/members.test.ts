@@ -252,7 +252,7 @@ test('hover: a member card follows the receiver’s real type', () => {
   assert.doesNotMatch(card.doc, /characters/)
 })
 
-test('typing on past a dot ends a dictionary result (no Character.getNumericValue on e.getM)', async () => {
+test('a dot ends a dictionary result (no Character.getNumericValue on e.getM, no System.out.println after System.out.)', async () => {
   const { completionSources } = await import('../../src/editor/completions.ts')
   const { CompletionContext } = await import('@codemirror/autocomplete')
   const { ensureSyntaxTree } = await import('@codemirror/language')
@@ -268,13 +268,14 @@ test('typing on past a dot ends a dictionary result (no Character.getNumericValu
     const stillValid = typeof valid === 'function' ? valid('ex.getM', 0, 0, state) : valid instanceof RegExp ? valid.test('ex.getM') : false
     assert.equal(stillValid, false, `a source kept its result past the dot: ${r.options.slice(0, 3).map((o) => o.label)}`)
   }
-  // While the text could still be a dotted label, the result stays (no flicker on `System.ou`).
+  // Before the dot the result stays; the dot itself hands over to the member source.
   const sys = javaMain('    Sys')
   const sysAt = sys.indexOf('Sys') + 3
   const s2 = EditorState.create({ doc: sys, selection: { anchor: sysAt }, extensions: [java()] })
   ensureSyntaxTree(s2, sys.length, 5000)
   const kept = completionSources('java', () => [])
     .map((s) => s(new CompletionContext(s2, sysAt, false)))
-    .some((r) => r && !(r instanceof Promise) && typeof r.validFor === 'function' && r.validFor('System.ou', 0, 0, s2))
-  assert.ok(kept)
+    .filter((r) => r && !(r instanceof Promise) && typeof r.validFor === 'function')
+  assert.ok(kept.some((r) => (r as { validFor: (t: string, f: number, to: number, s: EditorState) => boolean }).validFor('Syste', 0, 0, s2)))
+  assert.ok(kept.every((r) => !(r as { validFor: (t: string, f: number, to: number, s: EditorState) => boolean }).validFor('System.', 0, 0, s2)))
 })

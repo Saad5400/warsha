@@ -1622,17 +1622,9 @@ function staticSource(lang: CompletionLang): CompletionSource {
   const all = staticOptions(lang)
   const rest = all.filter((o) => !statementOnly(lang, o))
   const [listValid, match] = listMatchers(all)
-  // The qualifiers dotted labels start with (`System`, `System.out`, `Math`, `os.path`…).
-  const qualifiers = new Set<string>()
-  for (const { label } of all) for (let i = label.indexOf('.'); i !== -1; i = label.indexOf('.', i + 1)) qualifiers.add(label.slice(0, i))
-  // Typing on past a dot keeps this result only while the text could still be one of
-  // those labels — `e.getM` is a member access (re-query, the member source takes it),
-  // not a filter over `Character.getNumericValue`.
-  const validFor = (text: string) => {
-    if (!listValid.test(text)) return false
-    const dot = text.lastIndexOf('.')
-    return dot === -1 || qualifiers.has(text.slice(0, dot))
-  }
+  // A dot ends this result: from there on it is a member access (`e.getM`, `System.out.`),
+  // the member source re-queries and owns it — never a filter over `Character.getNumericValue`.
+  const validFor = (text: string) => !text.includes('.') && listValid.test(text)
   return (ctx: CompletionContext) => {
     if (memberContext(ctx.state, ctx.pos, lang)) return null
     // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the
