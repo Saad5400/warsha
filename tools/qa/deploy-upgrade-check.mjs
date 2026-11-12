@@ -28,6 +28,11 @@
  *      closed mid-install; an older container still answers the pages during a
  *      rollout. Offline afterwards, whichever build boots must get only its own
  *      files — an unfinished install may change nothing the old build serves.
+ *   E. A RELEASE THAT CANNOT FULLY INSTALL. One shell icon 404s: the upgrade
+ *      must still complete. A precached chunk is missing: the install refuses,
+ *      the old worker stays — and must still hand the new page the new runtime
+ *      files online; after repeated failures the install goes through
+ *      best-effort and tells the page.
  *   C. OFFLINE RIGHT AFTER THE UPGRADE. On that first v2 visit, before anything
  *      has run on v2, the network goes and every language the student used on
  *      v1 is run again. Runtimes must outlive a deploy; Java and C have known
@@ -61,7 +66,7 @@
  * Overridable:
  *   WARSHA_V1_DIST, WARSHA_V2_DIST  the two builds                       (required)
  *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind,notebook (default all)
- *   WARSHA_SCENARIOS    comma list of A,B,C,D                            (default all)
+ *   WARSHA_SCENARIOS    comma list of A,B,C,D,E                          (default all)
  *   WARSHA_NGINX_CONF   nginx server block    (default ../../app/deploy/nginx.conf)
  *   WARSHA_PORT         host port for nginx                              (default 8291)
  *   WARSHA_V1_AGE_DAYS  how old v1's Last-Modified is                    (default 10)
@@ -90,7 +95,7 @@ const CHROME = process.env.CHROME ?? '/usr/bin/google-chrome'
 const BASE = `http://127.0.0.1:${PORT}/`
 const RUN_TIMEOUT_MS = Number(process.env.WARSHA_RUN_TIMEOUT_MS ?? 240000)
 const SHOTS = process.env.WARSHA_SHOTS ?? join(HERE, 'screenshots')
-const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C,D').split(',').map((s) => s.trim().toUpperCase())
+const SCENARIOS = (process.env.WARSHA_SCENARIOS ?? 'A,B,C,D,E').split(',').map((s) => s.trim().toUpperCase())
 
 const results = []
 const pass = (name, detail = '') => { results.push(true); console.log(`PASS  ${name}${detail ? ' :: ' + detail : ''}`) }
@@ -224,6 +229,14 @@ function startNginx() {
   ], { stdio: 'ignore' })
 }
 const stopNginx = () => { try { execFileSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) } catch { /* gone */ } }
+
+/** The server itself unreachable — connection refused for every client,
+ *  service workers included. `context.setOffline()` alone is emulation that a
+ *  worker started before Playwright attaches to it (as after a browser
+ *  restart) does not obey; a scenario whose point is "no network" must not be
+ *  able to reach the server by that side door. */
+const serverDown = () => execFileSync('docker', ['stop', '-t', '0', CONTAINER], { stdio: 'ignore' })
+const serverUp = () => execFileSync('docker', ['start', CONTAINER], { stdio: 'ignore' })
 
 /** What nginx actually sent since `since` (a Date), from its own access log:
  *  the server's view of every download, service-worker requests included. */
@@ -461,11 +474,13 @@ async function cacheAudit(page) {
   })
 }
 
-function assertFresh(label, audit, dist) {
+function assertFresh(label, audit, dist, removed = new Set()) {
   const stale = []
   for (const [path, got] of Object.entries(audit.served)) {
     const file = join(dist, decodeURIComponent(path))
-    if (!existsSync(file)) continue // a file v2 dropped; nothing current to compare against
+    // A file v2 dropped, or one this scenario deleted from the server: nothing
+    // current to compare against.
+    if (!existsSync(file) || removed.has(path)) continue
     if (got !== sha(readFileSync(file))) stale.push(path)
   }
   check(`${label}: every cached runtime file served is the deployed one`, stale.length === 0,
@@ -707,6 +722,7 @@ try {
         await ctx.setOffline(true)
       }
       if (!caught && how !== 'mixed') warn(`D ${label}`, 'install finished before it could be interrupted — inconclusive')
+      serverDown()
       page = ctx.pages()[0] ?? (await ctx.newPage())
       await page.goto(BASE, { waitUntil: 'load' }).catch(() => {})
       const booted = await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 }).then(() => true).catch(() => false)
@@ -720,6 +736,94 @@ try {
         ? await runLang(page, 'python').catch((e) => ({ kind: `threw: ${String(e.message).split('\n')[0]}` }))
         : { kind: 'not booted' }
       check(`D ${label}: Python runs offline`, r.kind === 'ok', r.kind)
+      await ctx.close()
+      serverUp()
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+  }
+
+  if (SCENARIOS.includes('E')) {
+    // E. A release that cannot fully install. The install must not let one
+    // missing file strand anyone on the old version, and whatever worker is in
+    // charge must hand the NEW page the NEW runtime files.
+    const E_LANGS = ['python', 'java', 'js', 'csharp'].filter((l) => LANGS.includes(l))
+    // A precached chunk NEW in v2 (one v1 already brought is skipped, rightly),
+    // lazy (not needed to boot): the notebook kernel when it changed.
+    const v1Assets = new Set(readdirSync(join(V1, 'assets')))
+    const newChunks = readdirSync(join(V2, 'assets')).filter((f) => f.endsWith('.js') && !v1Assets.has(f) && !f.startsWith('index-'))
+    const lazyChunk = newChunks.find((f) => f.startsWith('kernel-')) ?? newChunks[0]
+    const variants = [
+      ['one shell icon 404s', '/apple-touch-icon.png'],
+      [`a precached chunk is missing (${lazyChunk})`, `/assets/${lazyChunk}`],
+    ]
+    for (const [label, missing] of variants) {
+      const removed = new Set([missing])
+      const breakIt = () => rmSync(join(SERVE, missing))
+      console.log(`\n-- E. a release that cannot fully install: ${label}`)
+      deploy(V1, AGE_DAYS)
+      await launch(mkdtempSync(join(tmpdir(), 'warsha-upgrade-broken-')))
+      let page = ctx.pages()[0] ?? (await ctx.newPage())
+      await page.goto(BASE, { waitUntil: 'load' })
+      await waitControlled(page)
+      await waitShell(page, V1_SHELL)
+      for (const lang of E_LANGS) await runLang(page, lang)
+      await page.waitForTimeout(2000)
+      // The tab that ran the engines is closed, as a student's would be by the
+      // next visit: an engine can hold a response through the worker open
+      // indefinitely, and the browser will not activate a new worker until the
+      // old one's in-flight responses finish (scenario B covers a tab that
+      // stays open across a deploy).
+      const fresh = await ctx.newPage()
+      await page.close()
+      page = fresh
+
+      deploy(V2, 0)
+      breakIt()
+      const messages = []
+      await page.exposeFunction('__qaSwMessage', (d) => messages.push(d))
+      await page.addInitScript(() => navigator.serviceWorker?.addEventListener('message', (e) => window.__qaSwMessage(e.data)))
+      await page.goto(BASE, { waitUntil: 'load' })
+      await assertOnV2(`E ${label}`, page)
+      // Whichever worker is in charge right now — the new one, or the old one
+      // while the new one's install is failing — the new page gets the new
+      // runtime files.
+      assertFresh(`E ${label}: online, before any update lands`, await cacheAudit(page), V2, removed)
+
+      const installState = () => page.evaluate(async () => {
+        const reg = await navigator.serviceWorker.getRegistration()
+        const failures = await (await (await caches.open('warsha-keep-index')).match('/__warsha-install-failures'))?.text()
+        return JSON.stringify({ installing: !!reg?.installing, waiting: !!reg?.waiting, caches: await caches.keys(), failures: failures ?? null })
+      })
+      if (label.startsWith('one shell icon')) {
+        const ok = await waitShell(page, V2_SHELL)
+        check(`E ${label}: the upgrade still installs`, ok, ok ? '' : await installState())
+      } else {
+        await page.waitForTimeout(4000)
+        check(`E ${label}: the install refuses (v1 stays in charge)`, !(await waitShell(page, V2_SHELL, 3000)), await installState())
+        // Further visits retry the install; past the retry limit it must go
+        // through best-effort and say so.
+        let installed = false
+        const attempts = []
+        for (let i = 0; i < 6 && !installed; i++) {
+          attempts.push(await page.evaluate(async () => {
+            try {
+              await (await navigator.serviceWorker.getRegistration())?.update()
+              return 'ok'
+            } catch (e) {
+              return String(e?.message || e).slice(0, 60) // a failed install rejects
+            }
+          }))
+          installed = await waitShell(page, V2_SHELL, 10000)
+        }
+        check(`E ${label}: after repeated failures the install goes through (escape hatch)`, installed,
+          installed ? `after ${attempts.length} update attempts` : `${JSON.stringify(attempts)} ${await installState()}`)
+        check(`E ${label}: …and the page is told its offline copy is incomplete`, messages.some((m) => m?.type === 'warsha:install-degraded'),
+          JSON.stringify(messages.slice(0, 2)))
+      }
+      await page.reload({ waitUntil: 'load' })
+      assertFresh(`E ${label}: after the update`, await cacheAudit(page), V2, removed)
+      const r = await runLang(page, 'java').catch((e) => ({ kind: `threw: ${String(e.message).split('\n')[0]}` }))
+      check(`E ${label}: Java runs on the new build`, r.kind === 'ok', r.kind)
       await ctx.close()
     }
   }
