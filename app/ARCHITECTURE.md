@@ -33,6 +33,8 @@ WARSHA_ORIGIN=https://example.org npm run build   # deploying to a new origin �
 | `src/editor/typeIndex.ts` | The student's own classes (fields, methods, constants, parents) scanned from the open file and the project. |
 | `src/editor/names.ts` | JetBrains-style variable-name suggestions where a new name goes. |
 | `src/editor/projectSource.ts` | The project-files seam App registers once per revision; read by hover docs and the type index. |
+| `src/editor/textContext.ts` | The text that precedes a document (a notebook cell: the code cells above it). Completion sources and hover docs resolve against `prefix + doc` through `contextual()`; ordinary files carry no context and are untouched. See §2.7. |
+| `src/notebook/` | Notebooks (.ipynb), §2.7: `nbformat.ts` (lossless parse/serialise, cell ids and paths), `magics.ts` (IPython syntax → Python, line for line), `document.ts` (an open notebook's model + coalesced write-back, outside React), `session.ts` (run queue, kernel status, outputs, debugger hookup), `outputs.ts`, `cellEditor.ts`, `markdown.ts` + `tex.ts` (markdown and math → safe HTML/MathML), `ansi.ts`. |
 | `src/ui/viewport.ts` | Keyboard-aware shell geometry: publishes `--app-h`, `--kb-inset`, `html[data-kb]`. |
 | `src/runtime/types.ts` | **The runtime contract.** `SourceFile`, `LoadProgress`, `RunIO` (incl. `onRender`), `RunContext`, `RunSession`, `RuntimeKind`, `Runtime`. |
 | `src/runtime/index.ts` | Runtime **registry** + entry-point resolution + `isPreviewEntry`. |
@@ -240,6 +242,44 @@ UI state lives in `debug/store.ts` (breakpoints + watches persisted per project 
 Shift+F11, Shift+F5; Ctrl+F5 runs without debugging). Engine limitations are listed in each
 `runtimes/<lang>/INTEGRATION.md`; suites are `tools/qa/debug-*.mjs` (dev server — they use the
 `window.__warshaRuntime` dev seam).
+
+### 2.7 Notebooks (`.ipynb`)
+
+A `.ipynb` opens in `components/notebook/NotebookView` instead of the file editor (which stays
+mounted, empty, under it). The pieces, and the one decision behind each:
+
+- **The kernel is a second Python engine.** `runtime/index.ts`'s `kernelFor(path)` returns a
+  `PythonRuntime({ kernel: true })` — the `NotebookKernel` contract in `runtime/types.ts`: one
+  namespace per notebook (keyed by its path) kept across cells until `restart(nb)`; `execute(cell)`
+  has `run()`'s stdin/debug/files semantics; `interrupt()` raises KeyboardInterrupt through
+  Pyodide's interrupt buffer (and out of a parked `input()`), so variables survive it. It is NOT the
+  program runner's instance: Stop terminates that worker, which must never wipe a notebook, and a
+  long cell must never block Run. A session that uses both pays for a second Pyodide heap; one that
+  uses only notebooks pays for one. Every open notebook shares the kernel's single thread, so cells
+  queue across notebooks. Details: `runtimes/python/INTEGRATION.md`, "Notebook kernel".
+- **Cell paths.** A cell's code compiles under `nb.ipynb#cell=<id>` (stable id, never an index), and
+  that one string is its breakpoint path, its stop frames' path and its editor's gutter path.
+  `debug/store.ts` accepts it, `DebugView` shows it as `nb.ipynb [3]`, and a stop reveals the cell.
+- **IPython syntax** (`%magic`, `%%cell magic`, `!shell`, `obj?`) is rewritten by
+  `notebook/magics.ts` before compile, each line to one line, so line N is still line N; the kernel
+  registers the student's ORIGINAL cell in linecache under the cell path, so tracebacks quote what
+  they typed (`Cell In[3], line 2`).
+- **The file stays the student's.** `nbformat.ts` keeps every key it does not own, each field's
+  string/list form, indent and key order: an untouched Colab or Jupyter file re-serialises
+  byte-for-byte (`tests/notebook`). New notebooks are nbformat 4.5 with `python3` as kernelspec; an
+  older notebook keeps its minor version and gets stable ids in `metadata.id` (Colab's convention).
+- **Outputs are rendered as untrusted.** HTML (DataFrames, `display(HTML)`) goes in an iframe
+  sandboxed with `allow-same-origin` and **no** `allow-scripts` — nothing in it ever runs, while the
+  shell can still measure and theme it. Markdown is rendered by escaping everything and rebuilding a
+  small tag/attribute allowlist; math becomes native MathML (no typesetting dependency).
+- **Writes are coalesced.** `notebook/document.ts` owns each open notebook's model outside React (a
+  cell keeps writing after its tab is switched away) and writes the JSON to the project at most every
+  300 ms — and at once before a cell runs, on save, download and export.
+- **Completion across cells** goes through `editor/textContext.ts` (above): the engine is not
+  forked; a cell's editor just carries a context function.
+- **Collaboration:** a notebook in a live session is written through the binding's minimal
+  `replaceDoc` splice, like Format; a viewer gets the notebook read-only. Two people editing the same
+  notebook at once edit one JSON text — concurrent structural edits can conflict (see §6).
 
 ### Entry-point resolution
 
@@ -649,6 +689,12 @@ answer that does not cost a student the right filename and entry. A `ready` lang
 - No multi-file find, no drag-and-drop in the tree, no git. (In-editor find/replace exists —
   `@codemirror/search`, styled as VS Code's top-right widget.)
 - `content/exercises/` is not surfaced in the UI yet.
+- **Notebooks** (§2.7): Python only; interactive widgets (`ipywidgets`) render as their text
+  fallback; JavaScript outputs and `%%javascript` do not run; `%run` of another notebook, `%debug`,
+  `%load_ext` are not supported (each says so); packages are limited to what Pyodide/micropip can
+  install (pure Python + Pyodide's own builds). Two collaborators editing one notebook's structure at
+  the same moment edit one JSON text, so a conflicting merge can make it unreadable (the view then
+  offers "Open as text"); per-cell CRDT editing would need a notebook-shaped shared doc.
 
 ---
 

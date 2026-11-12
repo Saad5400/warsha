@@ -77,6 +77,15 @@ exactly two things and say so: the `/favicon.ico` 404 (the app declares no favic
 and ~38 `Network error for null` console errors per Java session, which are CheerpJ
 probing optional JVM paths absent from its CDN. Anything else fails the run.
 
+## Notebook suite
+
+`notebook-check.mjs` (dev server, the same `__warshaRuntime` seam) drives the notebook kernel
+directly (K: namespace, rich display, magics, shell, tracebacks, interrupt, restart, per-cell
+debugging, pip) and then the notebook UI (U: template picker, Run all, IntelliSense across cells,
+`input()`, command-mode keys, debug a cell from the gutter, Format cell, download, phone/RTL
+geometry), saving screenshots as `notebook-*.png`. `ONLY=K` / `ONLY=U` runs one half; `PIP=0` skips
+the two checks that need PyPI.
+
 ## Debugger suites
 
 `debug-{js,python,java,csharp,c}.mjs` drive each engine's `DebugSession` directly; `debug-ui.mjs`

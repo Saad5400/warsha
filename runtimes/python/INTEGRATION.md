@@ -343,6 +343,59 @@ switches apps may stall until resume; and the on-screen keyboard needs
 `visualViewport`-aware layout with `autocapitalize`/`autocorrect` off on the stdin
 input. `SharedArrayBuffer` needs Safari 15.2+.
 
+## Notebook kernel
+
+`new PythonRuntime({ kernel: true })` is the same class turned into a notebook kernel (the app's
+`NotebookKernel` contract, `app/src/runtime/types.ts`). Its worker additionally loads
+`src/kernel.js` (lazily — a program runner's worker never fetches it) and gets a third shared
+buffer, Pyodide's **interrupt buffer**.
+
+```ts
+const kernel = new PythonRuntime({ kernel: true })
+const session = await kernel.execute(files, {
+  notebook: 'lab.ipynb',
+  cellPath: 'lab.ipynb#cell=3f2a9c01',   // compile filename, breakpoint path, frame path
+  source: '%time df = load()\ndf.head()',   // what the student wrote
+  code: '_warsha_k.line_magic("time", "df = load()", 1)\ndf.head()',  // app/src/notebook/magics.ts
+  cellMagic: null, pip: [],
+}, io /* RunIO + onExecuteInput / onOutput / onClearOutput */, opts /* { debug } as for run() */)
+kernel.interrupt()            // KeyboardInterrupt in the cell; the namespace survives
+await kernel.restart('lab.ipynb')
+```
+
+What it is, and the choices behind it:
+
+- **Not `_warsha_run`.** That runs one entry fresh as `__main__` and clears user modules and
+  linecache every time — the opposite of a kernel. `_warsha_run_cell(nb, cell_path, code, source,
+  magic, debug)` keeps one `_WarshaKernel` per notebook: its namespace, its execution counter (so
+  `Out`, `_`, `_3`, `In` work), and every cell's source, re-registered in linecache before each cell.
+- **Files are synced, not reset.** The project dir is rewritten only where the shell's copy changed
+  (and files the shell deleted are removed), so a binary a cell wrote (`plot.png`, a SQLite db)
+  survives into the next cell; the usual write-back diff runs after each cell, and an unreturnable
+  binary is reported once, not after every cell. Open files are flushed, not closed, between cells.
+- **Packages:** before a cell runs, its `%pip`/`!pip` lines are installed with micropip (async, with
+  a progress bar counting every download), then `loadPackagesFromImports` runs over the cell and
+  the project's `.py` files exactly as for a program. `from IPython…` imports are removed from that
+  scan: the kernel's own `IPython.display` shim answers them, and the scan would otherwise download
+  the real IPython (~15 packages). `IPython.get_ipython()` deliberately returns `None` so libraries
+  that probe for a real IPython (matplotlib, tqdm) take their plain path.
+- **Rich display:** `_repr_mimebundle_` / `_repr_*_` like Jupyter, published as nbformat output
+  objects through the `_warsha_kernel_js` bridge; matplotlib uses a `module://_warsha_inline`
+  backend (Agg + a `show()` that publishes 2× PNGs; open figures are flushed after every cell).
+- **Interrupt** sets the buffer to 2 (SIGINT) and wakes a cell parked in `input()` — the stdin loop
+  checks the buffer and answers EOF, which the kernel's `input()` turns into a clean
+  KeyboardInterrupt. A cell parked in the debugger is released first (breakpoints cleared). The app
+  restarts the worker if an interrupt has not landed after 4 s (native code, a download).
+- **The debugger** is the same `_WarshaDebugger`, one per debug cell; `user_path()` accepts the
+  `nb.ipynb#cell=<id>` filename form as user code, so breakpoints, stepping into a function defined
+  in an earlier cell (its frame names THAT cell) and post-mortem stops all speak cell-local lines.
+  The `_warsha_dbg` bridge and its buffer live as long as the worker, i.e. across cells.
+- **Tracebacks** drop the kernel's own frames (everything compiled through `pyodide.runPython` is
+  `<exec>`, which `_warsha_internal_frame` now hides) and read `Cell In[3], line 2, in f`.
+
+`kernel.js` carries the same `String.raw` caveat as the runner: no backtick and no `${` anywhere
+in it (`chr(96)`/`chr(36)` stand in); `npm run check` now syntax-checks it too.
+
 ## Self-hosting Pyodide (optional, later)
 
 `new PythonRuntime({ indexURL: '/pyodide/' })` points the loader at a same-origin
