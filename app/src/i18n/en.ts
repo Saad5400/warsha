@@ -222,6 +222,12 @@ export const EN = {
   homeContinue: 'Continue where you left off',
   homeAll: 'All projects',
   homeOpen: 'Open',
+  /** A Home card's facts line: "Python · 3 files". */
+  homeFacts: (lang: string | null, files: number) => [lang, count(files, 'file')].filter(Boolean).join(' · '),
+  /** The chip on a card whose project holds a notebook. */
+  homeNotebook: 'Notebook',
+  /** The open project's card, instead of its last-opened time. */
+  homeCurrentlyOpen: 'Open now',
   homeDuplicate: 'Duplicate',
   // Appended to a copy's name: "Bank accounts" → "Bank accounts copy".
   homeDupSuffix: 'copy',

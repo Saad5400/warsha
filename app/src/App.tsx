@@ -1925,16 +1925,14 @@ function Ide({ report }: { report: CapabilityReport }) {
   // ---- the projects Home (components/Home.tsx) ----
   /** Language + file count for a Home card. The open project is read live; others via a snapshot. */
   const metaOf = useCallback(
-    async (id: string): Promise<{ lang: IconLang | null; files: number }> => {
-      if (id === currentProject?.id) {
-        const files = project.sourceFiles()
-        const entry = entryCandidates(files)[0] ?? files[0]?.path ?? null
-        return { lang: entry ? toIconLang(langForPath(entry)) : null, files: project.paths().length }
-      }
-      const snap = await snapshotOf(id)
-      if (!snap) return { lang: null, files: 0 }
-      const entry = entryCandidates(snap.files)[0] ?? snap.files[0]?.path ?? null
-      return { lang: entry ? toIconLang(langForPath(entry)) : null, files: snap.files.length }
+    async (id: string): Promise<{ lang: IconLang | null; files: number; notebook: boolean }> => {
+      const files = id === currentProject?.id ? project.sourceFiles() : ((await snapshotOf(id))?.files ?? [])
+      const entry = entryCandidates(files)[0] ?? files[0]?.path ?? null
+      // A notebook-only project has no runnable entry, but its kernel is Python —
+      // without this its card fell back to a generic folder (QA polish).
+      const notebook = files.some((f) => isNotebookPath(f.path))
+      const lang = (entry ? toIconLang(langForPath(entry)) : null) ?? (notebook ? 'python' : null)
+      return { lang, files: id === currentProject?.id ? project.paths().length : files.length, notebook }
     },
     [currentProject, project, snapshotOf],
   )

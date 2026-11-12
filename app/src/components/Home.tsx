@@ -31,7 +31,7 @@ import { Logo, LogoLockup } from './Logo'
 import { TriggerMenu, useDrillIn, type MenuItem } from './ui/Menu'
 
 /** Per-project facts the cards show, resolved lazily (a snapshot read each). */
-type ProjectFacts = { lang: IconLang | null; files: number }
+type ProjectFacts = { lang: IconLang | null; files: number; notebook: boolean }
 
 type SortMode = 'recent' | 'name' | 'created'
 
@@ -388,7 +388,7 @@ function ContinueCard({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="text-micro leading-[1.4] text-text-3">{COPY.homeContinue}</span>
-        <span dir="auto" className="truncate [text-align:match-parent] text-[15px] leading-[1.3] font-semibold text-text-1">{project.name}</span>
+        <span dir="auto" className="max-w-full self-start truncate text-[15px] leading-[1.3] font-semibold text-text-1">{project.name}</span>
         <span className="truncate text-meta leading-normal text-text-3">{metaLine(facts, project.lastOpenedAt, locale)}</span>
       </span>
       <span
@@ -472,11 +472,14 @@ function ProjectCard({
           <span className={GLYPH}>
             {facts?.lang ? <LangIcon lang={facts.lang} size={22} /> : <IconFolderOpen size={20} />}
           </span>
+          {/* The name sizes to its text (not flex-1): it carries dir="auto" so a Latin
+              name ellipsizes at its own end under an Arabic UI, and a full-width box
+              would then align it to the wrong side. Flex places it at the UI's start. */}
           <span className="mt-0.5 flex min-w-0 flex-1 items-center gap-1.5">
             {pinned ? (
               <IconStarFilled size={13} className="flex-none text-text-2" aria-label={COPY.a11yPinned} />
             ) : null}
-            <span dir="auto" className="min-w-0 flex-1 truncate [text-align:match-parent] text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
+            <span dir="auto" className="min-w-0 truncate text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
             {/* Cloud glyph: a green check only when confirmed backed up as the owner; a
                 neutral cloud when the project belongs to an account but this session isn't
                 actively syncing it (signed out, or a different account). Anonymous → none. */}
@@ -494,6 +497,20 @@ function ProjectCard({
             <CardMenu items={items} />
           </span>
         </div>
+        {/* What is in it, right under the name — language, size, notebook — so the card's
+            middle carries the facts a student picks a project by, not empty space. */}
+        {facts ? (
+          <span className="-mt-1 flex min-w-0 items-center gap-2 ps-[56px]">
+            <span className="min-w-0 truncate text-meta leading-normal text-text-2">
+              {COPY.homeFacts(facts.lang ? (languageById(facts.lang)?.label ?? null) : null, facts.files)}
+            </span>
+            {facts.notebook ? (
+              <span className="flex-none rounded-sm border border-border-control px-1.5 py-px text-micro leading-[1.4] text-text-2">
+                {COPY.homeNotebook}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
         <span className="mt-auto flex items-center gap-1.5 truncate text-meta leading-normal text-text-3">
           {pill ? (
             <span className={pill.warn ? 'text-warn' : 'text-text-3'}>{pill.text}</span>
@@ -502,9 +519,12 @@ function ProjectCard({
           ) : otherAccount ? (
             COPY.homeCloudOtherAccount
           ) : isOpen ? (
-            COPY.menuProjectOpenHint
+            <>
+              <span aria-hidden="true" className="size-1.5 flex-none rounded-full bg-success" />
+              {COPY.homeCurrentlyOpen}
+            </>
           ) : (
-            metaLine(facts, project.lastOpenedAt, locale)
+            relativeTime(project.lastOpenedAt, locale)
           )}
         </span>
       </div>
@@ -561,7 +581,7 @@ function CloudCard({
             <IconCloud size={20} />
           </span>
           <span className="mt-0.5 flex min-w-0 flex-1 items-center gap-1.5">
-            <span dir="auto" className="min-w-0 flex-1 truncate [text-align:match-parent] text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
+            <span dir="auto" className="min-w-0 truncate text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
           </span>
           {canDelete ? (
             <span className="pointer-events-auto -me-1 -mt-1 flex-none">
