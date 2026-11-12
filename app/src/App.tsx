@@ -28,7 +28,7 @@ import { createApi, type DocListEntry, type DocRole } from './collab/api'
 import { currentToken, ensureDeviceToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
 import { useKeyboardOpen, useMedia } from './hooks/useMedia'
 import { installViewport } from './ui/viewport'
-import { setStaleBuildSaver } from './ui/staleBuild'
+import { reloadIfStale, setStaleBuildSaver } from './ui/staleBuild'
 import { chords, formatKeys, isMacLike, isModifierOnly, matchEvent, type Command } from './ui/keys'
 import type { EditorController } from './editor/setup'
 import { wordsInSource } from './editor/completions'
@@ -2444,7 +2444,12 @@ function Ide({ report }: { report: CapabilityReport }) {
       // The project whose files `project` holds — not currentProject, which trails a switch.
       owner: () => project.owner,
       onFilesChanged: (change) => void project.applyProgramChanges(change).catch(() => {}),
-      onFailure: (message) => notify(classifyRunFailure(new Error(message), 'Python').message, 'error'),
+      // The kernel failing to start in a notebook left open across a deploy is the
+      // run path's stale-page failure again, so it gets the same self-heal first.
+      onFailure: (message) =>
+        void reloadIfStale().then((reloading) => {
+          if (!reloading) notify(classifyRunFailure(new Error(message), 'Python').message, 'error')
+        }),
       messages: () => ({ restarted: COPY.nbRestarted, forcedRestart: COPY.nbForcedRestart, lost: COPY.nbLost, debugBusy: COPY.nbDebugBusy, stoppedAtError: COPY.nbStoppedAtError }),
     }),
     [project, notify],

@@ -16,7 +16,14 @@
  * a page that was working.
  *
  * Every caller goes through `reloadIfStale()`: the run path (useRunner, when an
- * engine fails to start), Vite's failed-chunk event, and the crash screen.
+ * engine fails to start), a notebook's kernel failing to start (App), Vite's
+ * failed-chunk event (any lazy chunk — the notebook UI, a language mode), and
+ * the crash screen. None of them passes anything: the save that must happen
+ * first is registered once, by App (`setStaleBuildSaver`).
+ *
+ * A tab left open on an old build after the service worker has pruned that
+ * build's /assets/ is exactly this case: its next lazy chunk is gone from the
+ * cache and from the server, the import fails, and the tab reloads here.
  */
 
 /** The page's build fingerprint: the hashed entry script its document boots.
