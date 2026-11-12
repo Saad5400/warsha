@@ -625,6 +625,8 @@
      site. The keyframes themselves are at the end of this file. */
   --animate-dot-pulse: warsha-pulse 1.4s var(--ease) infinite;
   --animate-sweep: warsha-sweep 1.4s var(--ease) infinite;
+  /* Its mirror, for `rtl:` — an Arabic page's bar fills right to left, so its sweep runs that way too. */
+  --animate-sweep-rtl: warsha-sweep-rtl 1.4s var(--ease) infinite;
   --animate-spinner: warsha-spin 700ms linear infinite;
 
   /* Overlay motion, for the Radix primitives in components/ui. Enter is the
@@ -1267,10 +1269,25 @@
      rather than a red line. It reuses `.note--danger`'s anatomy so it reads as
      part of the same product as the import dialog's warnings, and it sits INSIDE
      the transcript so it cannot cover the output a student is reading. */
-  .console-failure {
+  .console-failure,
+  .console-quiet {
     margin: var(--sp-2) 0;
   }
-  .console-failure__title {
+  /* "Still running" — a program quiet for 30 s. Not a warning: it carries the
+     accent rule a running process has everywhere else (DESIGN-SPEC §1.3), the
+     same anatomy as the failure block so the two read as one family. */
+  /* Compound: `.note` is declared later in this layer and would win the colour back. */
+  .note.console-quiet {
+    border-inline-start-color: var(--accent);
+  }
+  /* Warsha speaking, not the program: the UI face, though it sits in the
+     monospace transcript. */
+  .console-failure .note__text,
+  .console-quiet .note__text {
+    font-family: var(--font-ui);
+  }
+  /* Title and button row, shared by the failure and still-running blocks. */
+  .console-note__title {
     font-family: var(--font-ui);
     font-size: var(--fs-meta);
     line-height: 1.55;
@@ -1278,13 +1295,13 @@
     color: var(--text-1);
     margin: 0 0 var(--sp-1);
   }
-  .console-failure__actions {
+  .console-note__actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2);
     margin-top: var(--sp-2);
   }
-  .console-failure__actions .console-earlier {
+  .console-note__actions .console-earlier {
     margin-bottom: 0;
   }
   /* The engine's own words. Wrapped, not scrolled sideways: a student on a phone

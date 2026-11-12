@@ -1,5 +1,6 @@
 import { isNotebookPath } from '../notebook/nbformat'
 import type { RunStatus } from '../hooks/useRunner'
+import type { LoadProgress } from '../runtime/types'
 import { langForPath } from '../runtime'
 import { extOf } from './FileBadge'
 import { StatusPill } from './StatusPill'
@@ -9,6 +10,9 @@ import { COPY } from '../copy'
 export interface StatusBarProps {
   status: RunStatus
   exitCode: number | null
+  /** Names the loading step in the run-state block ("Downloading · 42%"). */
+  progress?: LoadProgress | null
+  durationMs?: number | null
   /** The file being edited — it names the language. */
   activePath: string | null
   /** The file Run starts — not necessarily the one being edited. */
@@ -94,6 +98,8 @@ const STEP_BTN =
 export function StatusBar({
   status,
   exitCode,
+  progress,
+  durationMs,
   activePath,
   entryPath,
   kernelLabel,
@@ -110,7 +116,7 @@ export function StatusBar({
   return (
     <footer className={BAR} aria-label={COPY.a11yStatusBar}>
       <div className={GROUP + GROUP_LEAD}>
-        <StatusPill status={status} exitCode={exitCode} variant="bar" />
+        <StatusPill status={status} exitCode={exitCode} progress={progress} durationMs={durationMs} variant="bar" />
         {/* VS Code's problems counter: far left, colour-coded, tap to open the
             panel. Inline colours beat STATUS_ITEM's hover:text-white so the
             severity hues survive a hover, as they do in VS Code. */}

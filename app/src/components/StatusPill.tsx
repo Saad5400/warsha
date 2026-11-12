@@ -1,4 +1,5 @@
 import type { RunStatus } from '../hooks/useRunner'
+import type { LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
 import { useDebugState } from '../debug/store'
 
@@ -28,7 +29,9 @@ const BAR =
   'text-statusbar-fg ' +
   'data-[state=preparing]:bg-statusbar-remote data-[state=preparing]:text-white ' +
   'data-[state=running]:bg-statusbar-remote data-[state=running]:text-white ' +
-  'data-[state=waiting]:bg-statusbar-remote data-[state=waiting]:text-white ' +
+  // Waiting is the student's turn, not the program's — the input's own --info, so it can't
+  // be mistaken for the green "still working" block at a glance (10.2:1 on the soft fill).
+  'data-[state=waiting]:bg-info-soft data-[state=waiting]:text-info ' +
   'data-[state=failed]:bg-danger-fill data-[state=failed]:text-white'
 
 // §3.2's 12px floor applies to the glyph too; the box stays narrow so the pill doesn't grow.
@@ -55,13 +58,28 @@ const pillLabel = (status: RunStatus): string =>
     stopped: COPY.pillStopped,
   })[status]
 
+/** While loading, the pill names the step — "Preparing" for a minute reads as stuck. */
+const loadingLabel = (phase: LoadProgress['phase']): string =>
+  ({
+    download: COPY.pillDownloading,
+    unpack: COPY.pillUnpacking,
+    boot: COPY.pillStarting,
+    compile: COPY.pillCompiling,
+  })[phase]
+
 export function StatusPill({
   status,
   exitCode,
+  progress = null,
+  durationMs = null,
   variant = 'pill',
 }: {
   status: RunStatus
   exitCode: number | null
+  /** The runner's progress. Present during boot and during an in-run compile or package download. */
+  progress?: LoadProgress | null
+  /** How long the finished program ran, for "Finished · 1.2s". */
+  durationMs?: number | null
   /**
    * `pill`: the console header's filled capsule, shown only while the keyboard hides the
    * status bar. `bar`: the same state/word/glyph as the status bar's remote-indicator block.
@@ -72,9 +90,22 @@ export function StatusPill({
 }) {
   // Parked in the debugger: still a live run (data-state stays, a QA contract), but say so.
   const paused = useDebugState().phase === 'paused' && (status === 'running' || status === 'waiting')
-  const label = paused ? COPY.debugPaused : pillLabel(status)
-  const glyph = paused ? '‖' : GLYPHS[status]
-  const detail = status === 'failed' && exitCode !== null ? ` · exit ${exitCode}` : null
+  // `data-state` stays the run status (a QA contract); only the words follow the phase.
+  const loading = !paused && progress && (status === 'preparing' || status === 'running') ? progress : null
+  const label = paused ? COPY.debugPaused : loading ? loadingLabel(loading.phase) : pillLabel(status)
+  const glyph = paused ? '‖' : loading ? 'dot' : GLYPHS[status]
+  const pct =
+    loading && typeof loading.loaded === 'number' && typeof loading.total === 'number' && loading.total > 0
+      ? Math.min(100, Math.round((loading.loaded / loading.total) * 100))
+      : null
+  const detail =
+    status === 'failed' && exitCode !== null
+      ? ` · exit ${exitCode}`
+      : status === 'ok' && durationMs !== null
+        ? ` · ${COPY.durationShort(durationMs)}`
+        : pct !== null
+          ? ` · ${pct}%`
+          : null
   return (
     // aria-label carries the exit code even when the visual suffix is dropped by a breakpoint.
     // Bare `pill` class carries no styling — it's the unscoped contract selector tools/qa reads.
@@ -95,7 +126,9 @@ export function StatusPill({
         {label}
         {/* First thing dropped when the console header runs out of room on a phone — the
             transcript states it in full just below, so nothing is lost. Status bar always shows it. */}
-        {detail ? <span className={variant === 'pill' ? 'hidden min-[900px]:inline' : undefined}>{detail}</span> : null}
+        {detail ? (
+          <span className={(variant === 'pill' ? 'hidden min-[900px]:inline ' : '') + 'tabular-nums'}>{detail}</span>
+        ) : null}
       </span>
     </span>
   )

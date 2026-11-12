@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RunStatus } from '../hooks/useRunner'
+import type { LoadProgress } from '../runtime/types'
+import { useDebugState } from '../debug/store'
+import { SWEEP } from './ProgressBlock'
 import { activeBuffer } from '../console/buffer'
 import { Button, IconButton } from './ui/Button'
 import { IconChevronDown, IconChevronUp, IconClear } from './ui/Icons'
@@ -11,7 +14,7 @@ import { COPY } from '../copy'
 // `run-mirrored` flips the row for a left-hander's thumb (spec §5.3); ≤460px tightens gaps to keep
 // the collapse control on screen at 360px. `console-header` itself carries no styling — tools/qa reads it.
 const HEADER =
-  'console-header flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
+  'console-header relative flex items-center gap-2 max-[460px]:gap-1 flex-none h-bar-console bg-surface-2 ' +
   'run-mirrored:flex-row-reverse ' +
   'pl-[max(var(--sp-2),env(safe-area-inset-left))] pr-[max(var(--sp-2),env(safe-area-inset-right))]'
 
@@ -46,6 +49,8 @@ export interface RunBarProps {
   /** Drives the keyboard-time status pill; Run itself lives in the tab strip's trailing group (see Tabs.tsx). */
   status: RunStatus
   exitCode: number | null
+  progress?: LoadProgress | null
+  durationMs?: number | null
   /** Entry-point candidates; the picker only appears when there are 2+. */
   candidates: string[]
   entryPath: string | null
@@ -76,6 +81,10 @@ export function RunBar(props: RunBarProps) {
   const entry = resolveEntry(entryPath, candidates)
   // Copy/Clear belong to the Console face only — a web Preview has no transcript on screen.
   const showTranscriptActions = consoleOpen && (!previewActive || view === 'console')
+  // Something is working right now: the language loading, or the program running. Not
+  // while it waits for input (that is the student's turn) or sits on a breakpoint.
+  const paused = useDebugState().phase === 'paused'
+  const working = (status === 'preparing' || status === 'running') && !paused
 
   // A single candidate renders as a label, not a picker — a select with one option is a lie.
   // min-w-[3.5rem] floor: without it the fixed-width icon buttons squeezed the label down to "m…".
@@ -133,8 +142,19 @@ export function RunBar(props: RunBarProps) {
       {/* Keyboard-time only: the status bar (which shows the same status elsewhere) stands down
           while the keyboard is up, so this pill takes over via CSS visibility (html[data-kb]). */}
       <span className="hidden kb-open:flex min-w-0 items-center">
-        <StatusPill status={status} exitCode={exitCode} />
+        <StatusPill status={status} exitCode={exitCode} progress={props.progress} durationMs={props.durationMs} />
       </span>
+
+      {/* VS Code's panel progress line: a 2px sweep along the header's bottom edge while
+          something is working. It is on the header, not in the transcript, so it shows with
+          the console collapsed too, and never reads as program output. A sweep, not a
+          number: what a running program will do next is not something Warsha can count. */}
+      {working ? (
+        <span aria-hidden="true" className="run-activity pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden">
+          {/* Green, the status bar's "working" colour — the white accent here read as one more tab underline. */}
+          <span className={'block h-full bg-success ' + SWEEP} />
+        </span>
+      ) : null}
 
       <div className="ms-auto flex min-w-0 items-center gap-2 max-[460px]:gap-1">
         {/* The entry picker — VS Code's panel controls corner. */}

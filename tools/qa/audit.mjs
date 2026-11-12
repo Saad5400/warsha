@@ -452,12 +452,14 @@ if (liveBox && liveBox.h >= (liveDesk ? 24 : 44) && parseFloat(liveBox.fs) >= (l
   pass(`14/8. the live input is a ${liveDesk ? '24px+ target at 14px+' : '44px target at the 16px iOS floor'}`, JSON.stringify(liveBox))
 else fail('live input floor', JSON.stringify(liveBox))
 // One shell: no accent rail on the console (VS Code parity); the status bar's
-// remote block carries run state via a green fill instead.
+// remote block carries run state instead — green while the program works, and
+// the input's --info on --info-soft while it waits for the student (its turn,
+// not the program's), so the two never read alike.
 const consoleRule = await css('.console-panel', ['border-left-color', 'border-left-width'])
 {
   const remote = await css('footer[aria-label="Status bar"] .status-remote[data-state="waiting"]', ['background-color'])
-  if (consoleRule['border-left-width'] === '0px' && remote && remote['background-color'] === 'rgb(31, 102, 64)')
-    pass('§1.3 no console rail — the status bar remote block runs on the green remote fill', JSON.stringify(remote))
+  if (consoleRule['border-left-width'] === '0px' && remote && remote['background-color'] === 'rgb(27, 42, 56)')
+    pass('§1.3 no console rail — the status bar remote block shows waiting on the info fill', JSON.stringify(remote))
   else fail('§1.3 running state in the status bar', JSON.stringify({ consoleRule, remote }))
 }
 

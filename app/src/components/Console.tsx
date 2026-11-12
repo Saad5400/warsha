@@ -13,7 +13,9 @@ import type { RunFailure, RunStatus } from '../hooks/useRunner'
 import { afterViewportSettles } from '../ui/viewport'
 import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
 import { ProgressBlock } from './ProgressBlock'
-import { IconChevronDown } from './ui/Icons'
+import { Button } from './ui/Button'
+import { IconChevronDown, IconStop } from './ui/Icons'
+import { useDebugState } from '../debug/store'
 import { Menu, type MenuAnchor } from './ui/Menu'
 import { COPY } from '../copy'
 
@@ -21,6 +23,8 @@ export interface ConsoleProps {
   buffer: ConsoleBuffer
   status: RunStatus
   progress: LoadProgress | null
+  /** The running language's name ("Python"), for the progress headline; null where there is none to give. */
+  language?: string | null
   /** A run that could not start (blocked download, missing isolation, dead worker) —
    *  rendered as a block with its own button, not a red line a scrolling transcript would bury. */
   failure?: RunFailure | null
@@ -71,6 +75,13 @@ const LIVE_GRACE_MS = 900
 const FRESH_MAX_BATCH = 8
 
 /**
+ * Silence, while running, before the console says it is still running. Long enough
+ * that a program doing real work rarely sees it; short enough that a student
+ * staring at an empty console has not yet decided the site froze.
+ */
+const QUIET_NOTE_MS = 30_000
+
+/**
  * A transcript, not a log viewer (spec §7.3): output and input share one stream, like
  * a terminal. No standing input bar — an input only exists in the DOM while the program
  * blocks on a read, joining a partial-line prompt so "Your name: " and the answer are
@@ -80,6 +91,7 @@ export function Console({
   buffer,
   status,
   progress,
+  language = null,
   failure = null,
   onRetry,
   onDismissFailure,
@@ -326,6 +338,8 @@ export function Console({
   const visible = hidden > 0 ? lines.slice(hidden) : lines
   const unseen = pausedAt === null ? 0 : countAfter(lines, pausedAt)
   const empty = lines.length === 0 && !progress && !live
+  // On a breakpoint the program is parked on purpose; silence there means nothing.
+  const paused = useDebugState().phase === 'paused'
 
   // The input joins the last line if it's still open (an unterminated print/input prompt);
   // otherwise it starts a fresh `› ` line, matching what `buffer.echo()` will do next.
@@ -361,7 +375,8 @@ export function Console({
           // a non-focusable div would leave focus on <body>, past the panel's keydown handler.
           tabIndex={0}
         >
-          {progress ? <ProgressBlock progress={progress} /> : null}
+          {/* `running` + progress is an in-run compile or package download, not the language's boot. */}
+          {progress ? <ProgressBlock progress={progress} inRun={status === 'running'} language={language} /> : null}
 
           {snapshot.truncated ? (
             <Row line={{ id: -1, kind: 'meta', complete: true, segments: [{ kind: 'meta', text: COPY.truncated }] }} />
@@ -378,7 +393,11 @@ export function Console({
           ) : null}
 
           {empty ? (
-            <p className="console-empty">{cleared ? COPY.consoleCleared : COPY.consoleEmpty}</p>
+            // dir=auto: the transcript runs LTR for code, which put an Arabic sentence's
+            // full stop on the wrong end.
+            <p className="console-empty" dir="auto">
+              {status === 'running' ? COPY.consoleRunning : cleared ? COPY.consoleCleared : COPY.consoleEmpty}
+            </p>
           ) : (
             rows.map((line) => <Row key={line.id} line={line} fresh={line.id > freshFrom} />)
           )}
@@ -391,6 +410,17 @@ export function Console({
               value={value}
               onValue={setValue}
               onSubmit={submit}
+            />
+          ) : null}
+
+          {status === 'running' && !progress && !paused && onStop ? (
+            <QuietNote
+              activity={snapshot}
+              onStop={onStop}
+              // It lands under the last line, so follow it the way new output is followed.
+              onAppear={() => {
+                if (stick.current) scrollToBottom()
+              }}
             />
           ) : null}
 
@@ -516,6 +546,52 @@ function LiveLine({
   )
 }
 
+/**
+ * "Still running" — shown once a running program has printed nothing for
+ * QUIET_NOTE_MS, never as an error: a long computation and an endless loop look the
+ * same from here, and only the student can tell them apart. The seconds keep
+ * counting so the page visibly is not frozen, and Stop sits right there.
+ * Its own component so the one-second tick re-renders this, not the transcript.
+ * `activity` is anything that changes when the program prints (the snapshot).
+ */
+function QuietNote({ activity, onStop, onAppear }: { activity: unknown; onStop(): void; onAppear(): void }) {
+  const [since, setSince] = useState(() => Date.now())
+  const [now, setNow] = useState(since)
+
+  useEffect(() => {
+    const t = Date.now()
+    setSince(t)
+    setNow(t)
+  }, [activity])
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const quiet = now - since
+  const shown = quiet >= QUIET_NOTE_MS
+  useLayoutEffect(() => {
+    if (shown) onAppear()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per appearance
+  }, [shown])
+  if (!shown) return null
+  return (
+    // aria-live off: the transcript is a live log, and a counter inside it would be read
+    // out every second. Stop stays reachable; the status bar's state carries the rest.
+    <div aria-live="off" className="note console-quiet" data-quiet-s={Math.floor(quiet / 1000)}>
+      <p className="console-note__title">{COPY.runQuietTitle}</p>
+      <p className="note__text">{COPY.runQuiet(COPY.elapsedSeconds(Math.floor(quiet / 1000)))}</p>
+      <div className="console-note__actions">
+        <Button variant="stop" onClick={onStop}>
+          <IconStop />
+          {COPY.stopAction}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 /** Lines appended after `id`. Ids only ever ascend, so walk back from the tail. */
 function countAfter(lines: readonly ConsoleLine[], id: number): number {
   let n = 0
@@ -588,12 +664,20 @@ function FailureBlock({
   const [showDetail, setShowDetail] = useState(false)
   return (
     <div role="alert" data-failure={failure.kind} className="note note--danger console-failure">
-      <p className="console-failure__title">{failure.message}</p>
+      <p className="console-note__title">{failure.message}</p>
       {failure.hint ? <p className="note__text">{failure.hint}</p> : null}
-      <div className="console-failure__actions">
+      <div className="console-note__actions">
         {onRetry ? (
           <button type="button" onClick={onRetry} className="console-earlier">
             {COPY.engineRetry}
+          </button>
+        ) : null}
+        {/* The hint for these says "reload" — so the reload is one tap, not a hunt for the
+            browser's own button (hidden in an installed app). Files are saved, so it is safe.
+            Offline gets none: a reload without the network makes things worse, not better. */}
+        {failure.kind === 'engine' || failure.kind === 'isolation' ? (
+          <button type="button" onClick={() => window.location.reload()} className="console-earlier">
+            {COPY.crashReload}
           </button>
         ) : null}
         {failure.detail ? (

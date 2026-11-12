@@ -22,7 +22,7 @@ import { type Template } from './templates'
 import { exportZip } from './zip'
 import { buildShareUrl, clearShareHash, peekSharedFromUrl, type SharedProject } from './sharelink'
 import { useProject } from './hooks/useProject'
-import { useRunner } from './hooks/useRunner'
+import { languageName, useRunner } from './hooks/useRunner'
 import { useCollab, useCloudSync, materializeCloudDoc, CollabControl, peekRoomFromUrl, type Peer, type CollabBinding } from './collab'
 import { createApi, type DocListEntry, type DocRole } from './collab/api'
 import { currentToken, ensureDeviceToken, useAuth, clearSession, setUser, setUsage } from './collab/auth'
@@ -2385,6 +2385,13 @@ function Ide({ report }: { report: CapabilityReport }) {
           onStop: runner.stop,
         }
 
+  // A program asking for input needs the console on screen, or the student is left
+  // with "Waiting for you" and nowhere to type. Opening it mounts the input, which
+  // focuses itself (Console's `waiting` layout effect).
+  useEffect(() => {
+    if (runner.status === 'waiting') setConsoleOpen(true)
+  }, [runner.status])
+
   // ---- debugger ----
   const canDebugEntry = nbDoc ? !nbReadOnly : !!runControl.entry && !!runtimeFor(runControl.entry)?.canDebug?.(runControl.entry)
   /** Start Debugging (F5 with breakpoints, the Run and Debug button, the tab strip's bug). */
@@ -3583,6 +3590,8 @@ function Ide({ report }: { report: CapabilityReport }) {
             <RunBar
               status={runner.status}
               exitCode={runner.exitCode}
+              progress={runner.progress}
+              durationMs={runner.durationMs}
               candidates={candidates}
               entryPath={entryPath}
               consoleOpen={consoleOpen}
@@ -3622,6 +3631,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 buffer={buffer}
                 status={runner.status}
                 progress={runner.progress}
+                language={runControl.entry ? languageName(runControl.entry) : null}
                 // A run that never started has no engine/output for the transcript to show —
                 // its own block with a retry button instead.
                 failure={runner.failure}
@@ -3645,6 +3655,9 @@ function Ide({ report }: { report: CapabilityReport }) {
         <StatusBar
           status={runControl.status}
           exitCode={nbStatus ? null : runner.exitCode}
+          // A notebook on screen owns the status bar, its kernel's loading included.
+          progress={nbStatus ? nbState!.progress : runner.progress}
+          durationMs={nbStatus ? null : runner.durationMs}
           activePath={activePath}
           entryPath={runControl.entry}
           kernelLabel={nbKernelLabel}
