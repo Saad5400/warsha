@@ -49,7 +49,9 @@ const misses = []
 let captured = 0
 let page
 
-const RUN_RE = /^(Run|تشغيل)/
+// The tab strip's Run names its file ("Run index.html"); a bare /^Run/ also matched
+// the activity bar's "Run and Debug", which opened the debug view instead of running.
+const RUN_RE = /^(Run|تشغيل) .*\.\w+\u2069?$/
 const NEWPROJ_RE = /(New project|مشروع جديد)/
 const NEWFILE_RE = /(New file|ملف جديد)/
 const CREATE_RE = /(Create|إنشاء)/
@@ -74,7 +76,14 @@ async function hl(locator, up = 0) {
   return true
 }
 
+/** Close every toast: a "project ready" toast sat over the tab strip's Run button in
+ *  the run shot, the very control that step points at. */
+async function quiet() {
+  for (const b of await page.locator('[role="status"] button').all()) await b.click({ timeout: 500 }).catch(() => {})
+}
+
 async function snap(name, lang) {
+  await quiet()
   await page.waitForTimeout(180)
   await page.screenshot({ path: join(OUT, `${name}.${lang}.png`) })
   captured++
@@ -84,8 +93,13 @@ async function snap(name, lang) {
 async function shot(name, lang, fn) {
   if (ONLY && !ONLY.test(name)) return
   try {
+    await quiet()
     const ok = await fn()
-    if (ok === false) { misses.push(`${name}.${lang}`); log(`  MISS ${name}.${lang}`); return }
+    if (ok === false) {
+      misses.push(`${name}.${lang}`); log(`  MISS ${name}.${lang}`)
+      if (process.env.WARSHA_MISS_SHOTS) await page.screenshot({ path: join(process.env.WARSHA_MISS_SHOTS, `miss-${name}.${lang}.png`) }).catch(() => {})
+      return
+    }
     await snap(name, lang)
   } catch (e) {
     misses.push(`${name}.${lang}`); log(`  MISS ${name}.${lang} :: ${String(e).split('\n')[0]}`)
@@ -240,6 +254,11 @@ async function capture(lang) {
     return hl(page.locator('[role="menu"]'))
   })
   await esc()
+  // The pane header's actions are hover-revealed at desk: hover the row so the button shows.
+  await shot('explorer-addfiles', lang, async () => {
+    await page.locator('.sidebar-project-row').hover()
+    return hl(page.locator('.sidebar-project-row').getByRole('button', { name: /^(Add files|إضافة ملفات)/ }))
+  })
 
   log(`=== ${lang} :: search ===`)
   await shot('search', lang, async () => {
@@ -354,6 +373,34 @@ async function capture(lang) {
   } catch (e) {
     log(`  MISS web-group.${lang} ::\n${String(e).split('\n').slice(0, 6).join('\n')}`)
     for (const n of ['run', 'console-output', 'console-clear', 'preview', 'preview-toggle']) misses.push(`${n}.${lang}`)
+  }
+
+  // ---- Project 3: a notebook (needs Python, ~11 MB from the CDN once) ----
+  log(`=== ${lang} :: notebooks ===`)
+  try {
+    await esc(); await esc()
+    await gotoHome()
+    await shot('notebook-picker', lang, async () => {
+      await page.getByRole('button', { name: NEWPROJ_RE }).first().click()
+      const dialog = page.locator('[role="dialog"]')
+      await dialog.getByRole('button', { name: /^Python/ }).first().click()
+      await page.waitForTimeout(400)
+      const section = dialog.locator('section').filter({ has: page.locator('h3', { hasText: /^(Notebooks|دفاتر)$/ }) })
+      return hl(section)
+    })
+    const dialog = page.locator('[role="dialog"]')
+    await dialog.locator('.template-card').filter({ hasText: /(Python basics notebook|دفتر أساسيات)/ }).first().click()
+    await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 20000 })
+    await page.waitForTimeout(800)
+    const cell = page.locator('.notebook-view [data-cell-type="code"]').first()
+    await cell.locator('.cm-content').click()
+    await page.keyboard.press('Shift+Enter')
+    await page.waitForFunction(() => document.querySelector('.notebook-view [data-cell-type="code"]')?.getAttribute('data-state') === 'ok', null, { timeout: 120000 })
+    await page.waitForTimeout(600)
+    await shot('notebook-run', lang, () => hl(cell))
+  } catch (e) {
+    log(`  MISS notebook-group.${lang} :: ${String(e).split('\n')[0]}`)
+    misses.push(`notebook-run.${lang}`)
   }
 
   await ctx.close()

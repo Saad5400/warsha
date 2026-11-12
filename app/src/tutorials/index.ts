@@ -13,6 +13,7 @@ import { editor } from './lessons/editor'
 import { files } from './lessons/files'
 import { search } from './lessons/search'
 import { run } from './lessons/run'
+import { notebooks } from './lessons/notebooks'
 import { console as consoleLesson } from './lessons/console'
 import { preview } from './lessons/preview'
 import { share } from './lessons/share'
@@ -28,6 +29,7 @@ export const TUTORIALS: Tutorial[] = [
   files,
   search,
   run,
+  notebooks,
   consoleLesson,
   preview,
   share,
