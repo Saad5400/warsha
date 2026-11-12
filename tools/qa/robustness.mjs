@@ -25,6 +25,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
+import { runButton, stopButton, waitRunnable } from './lib/rw.mjs'
 
 const BASE = process.env.WARSHA_URL ?? 'http://127.0.0.1:8086/'
 const SHOTS = process.env.WARSHA_SHOTS ?? fileURLToPath(new URL('./screenshots', import.meta.url))
@@ -107,7 +108,9 @@ const BREAK_OPFS_ENTIRELY = `
 `
 
 // Prefix match: the accessible name includes the file, e.g. "Run main.py".
-const runBtn = (page) => page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).first()
+// The tab strip's Run names its file ("Run main.py"); a looser pattern matched the menu
+// bar's Run menu, which is never disabled, so "Run is available again" passed vacuously.
+const runBtn = runButton
 const outputText = (page) => page.locator('[aria-label="Program output"]').innerText()
 const failureBlock = (page) => page.locator('[data-failure]')
 
@@ -117,14 +120,7 @@ const failureBlock = (page) => page.locator('[data-failure]')
  */
 async function waitForRunnable(page) {
   await page.waitForSelector('.cm-content', { timeout: 20000 })
-  await page.waitForFunction(
-    () => {
-      const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b(?! and Debug)/.test(b.getAttribute('aria-label') ?? ''))
-      return !!btn && !btn.disabled
-    },
-    null,
-    { timeout: 20000 },
-  )
+  await waitRunnable(page, 20000)
 }
 
 /**
@@ -336,7 +332,7 @@ await scenario('python download aborted mid-flight', {
     const appeared = await failureBlock(page).waitFor({ timeout: 120000 }).then(() => true).catch(() => false)
     check(appeared, 'a dropped download ends in a failure block')
     if (appeared) info(`kind=${await failureBlock(page).getAttribute('data-failure')}`)
-    const stuck = await page.getByRole('button', { name: /^Stop\b/ }).count()
+    const stuck = await stopButton(page).count()
     check(stuck === 0, 'the control is no longer stuck on Stop')
     const unhandled = await page.evaluate(() => window.__warshaErrors ?? [])
     check(unhandled.length === 0, 'no unhandled rejection on a dropped download', unhandled.slice(0, 3).join(' | '))
@@ -399,21 +395,12 @@ await scenario('worker terminated mid-run', {
     check(killed, 'worker terminated from outside the engine')
 
     await page.waitForTimeout(1500)
-    const stillRunning = await page.getByRole('button', { name: /^Stop\b/ }).count()
+    const stillRunning = await stopButton(page).count()
     info(`control shows Stop: ${stillRunning > 0} (expected — nothing tells the page its worker died)`)
 
     // Stop must always get the student out, even with no onExit ever coming.
-    if (stillRunning > 0) await page.getByRole('button', { name: /^Stop\b/ }).first().click()
-    const recovered = await page
-      .waitForFunction(
-        () => {
-          // Tab-strip Run names its file ("Run main.py") — prefix, not equality.
-          const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b(?! and Debug)/.test(b.getAttribute('aria-label') ?? ''))
-          return !!btn && !btn.disabled
-        },
-        null,
-        { timeout: 10000 },
-      )
+    if (stillRunning > 0) await stopButton(page).click()
+    const recovered = await waitRunnable(page, 10000)
       .then(() => true)
       .catch(() => false)
     check(recovered, 'Stop ends the session even with no onExit from the engine')
@@ -746,7 +733,7 @@ await scenario('runaway output stays bounded', {
     check(before.chars < 30_000_000, 'the transcript is bounded', `${before.chars} chars`)
 
     const stopT0 = Date.now()
-    await page.getByRole('button', { name: /^Stop\b/ }).click()
+    await stopButton(page).click()
     const stopped = await page
       .waitForFunction(
         () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('Stopped'),
@@ -848,7 +835,7 @@ if (RUN_JAVA) {
         info((await outputText(page)).slice(-400))
         return
       }
-      await page.getByRole('button', { name: /^Stop\b/ }).click().catch(() => {})
+      await stopButton(page).click().catch(() => {})
       await page.waitForTimeout(800)
 
       // Reload rebuilds the JVM from persisted /files/ — the exact condition

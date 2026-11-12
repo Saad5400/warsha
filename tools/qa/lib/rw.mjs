@@ -27,10 +27,21 @@ export const END_LINE = /Finished\. \(exit code|stopped early|Stopped\.|stopped 
 export const output = (page) => page.locator(OUT).innerText().catch(() => '')
 export const status = (page) => page.locator(PANEL).getAttribute('data-state').catch(() => null)
 
-/** The tab strip's Run/Stop control: its accessible name carries the file ("Run main.py") — a bare
- *  "Run" is the menu bar's Run menu. */
-export const runButton = (page) => page.getByRole('button', { name: /^Run \S+\.\w+$/ }).first()
-export const stopButton = (page) => page.getByRole('button', { name: /^Stop \S+\.\w+$/ }).first()
+/** The tab strip's Run/Stop control: its accessible name carries the file ("Run main.py"). A bare
+ *  "Run" is the menu bar's Run menu, and "Run and Debug" the activity bar. */
+export const RUN_CONTROL = /^Run \S+\.\w+$/
+export const STOP_CONTROL = /^Stop \S+\.\w+$/
+export const runButton = (page) => page.getByRole('button', { name: RUN_CONTROL }).first()
+export const stopButton = (page) => page.getByRole('button', { name: STOP_CONTROL }).first()
+
+/** Whether the Run control is enabled — the editor can mount before the project's files exist. */
+export async function waitRunnable(page, timeout = 30000) {
+  await page.waitForFunction((src) => {
+    const re = new RegExp(src)
+    const b = [...document.querySelectorAll('button')].find((x) => re.test(x.getAttribute('aria-label') ?? ''))
+    return !!b && !b.disabled
+  }, RUN_CONTROL.source, { timeout })
+}
 
 /** Opens the app on `files` as a fresh project and waits until Run is enabled. */
 export async function openProject(page, base, name, files, entry = null) {
@@ -44,12 +55,6 @@ export async function openProject(page, base, name, files, entry = null) {
   await waitRunnable(page)
 }
 
-export async function waitRunnable(page, timeout = 30000) {
-  await page.waitForFunction(() => {
-    const b = [...document.querySelectorAll('button')].find((x) => /^Run \S+\.\w+$/.test(x.getAttribute('aria-label') ?? ''))
-    return !!b && !b.disabled
-  }, null, { timeout })
-}
 
 /** Waits for the console panel to reach one of `states` (idle|preparing|running|waiting|ok|failed|stopped). */
 export async function waitState(page, states, timeout = 240000) {
