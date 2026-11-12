@@ -166,13 +166,18 @@ const HINT = cx(
   'desk:ml-auto desk:text-[13px] desk:text-text-2',
   'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
+/** A key chord (formatKeys' output) rather than a count or a ✓ — meaningless on a
+ *  touch screen with no keyboard, so a coarse pointer does not show it. */
+const isShortcut = (hint: string) => /^(?:Ctrl|Alt|Shift|Cmd|Mod|Meta|Option|F\d|[⌘⌃⌥⇧])/.test(hint)
 /** Submenu marker — same trailing slot as HINT, but a glyph. */
 const SUB_HINT = cx(
   // `rtl:-scale-x-100`: this glyph shows direction, not decoration — Radix flies the child out the trailing side, which is LEFT in Arabic.
   'ms-auto flex-none text-text-3 rtl:-scale-x-100',
   'desk:group-hover/item:text-(--menu-sel-fg) desk:group-data-[highlighted]/item:text-(--menu-sel-fg)',
 )
-const SEPARATOR = 'm-2 border-t border-border-subtle desk:border-(--menu-sep)'
+// --menu-sep at every density: --border-subtle is a panel divider, ~1.1:1 on the
+// menu's own fill, so a phone saw unexplained gaps between groups, not rules (QA #19).
+const SEPARATOR = 'm-2 border-t border-(--menu-sep)'
 /** Section heading (MenuItem.groupLabel) — same caps treatment as the sidebar's
  *  pane titles, so a menu's groups read like the panes do. */
 const GROUP_LABEL = cx(
@@ -226,7 +231,7 @@ function rows(items: MenuItem[], parts: RowParts, plain = false, drill?: (item: 
           </span>
         )}
         <span className={LABEL}>{item.label}</span>
-        {item.hint ? <span className={HINT}>{item.hint}</span> : null}
+        {item.hint ? <span className={HINT + (isShortcut(item.hint) ? ' pointer-coarse:hidden' : '')}>{item.hint}</span> : null}
       </>
     )
 
