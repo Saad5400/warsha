@@ -165,11 +165,22 @@ async function boot() {
   self.postMessage({ type: 'progress', phase: 'download', message: DOWNLOAD_MESSAGE })
 
   const restoreFetch = installFetchProgress()
+  // dotnet.create() fetches its assets in parallel. When the network goes (offline,
+  // a dropped link), the first failure rejects create() and reaches the student as
+  // the failure card via 'fatal'; every other in-flight asset then rejects with no
+  // one listening, and those surfaced as uncaught "Failed to fetch" errors that say
+  // nothing the card does not. Only network rejections, and only while loading.
+  const quietNetworkRejections = (e) => {
+    if (/failed to fetch|networkerror|load failed/i.test(String((e.reason && e.reason.message) || e.reason))) e.preventDefault()
+  }
+  self.addEventListener('unhandledrejection', quietNetworkRejections)
   let getAssemblyExports, getConfig, runMain, setModuleImports
   try {
     ;({ getAssemblyExports, getConfig, runMain, setModuleImports } = await dotnet.create())
   } finally {
     restoreFetch()
+    // Late stragglers still reject after create() settles: give them a moment.
+    setTimeout(() => self.removeEventListener('unhandledrejection', quietNetworkRejections), 5000)
   }
 
   // stdout/stderr stream out per write; stdin blocks on the SAB.
