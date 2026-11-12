@@ -489,7 +489,7 @@ def _warsha_pip_parse(args):
 
 
 def _warsha_dist_name(spec):
-    return _wre.split(r"[<>=!~\[ ;]", spec, 1)[0].strip()
+    return _wre.split(r"[<>=!~\[ ;]", spec, maxsplit=1)[0].strip()
 
 
 def _warsha_installed_version(name):

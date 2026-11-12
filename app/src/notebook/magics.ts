@@ -190,3 +190,29 @@ export function transformCell(source: string): CellTransform {
 
 /** Just the IPython-syntax line numbers of a cell — for the editor (lint, format). */
 export const magicLinesOf = (source: string): number[] => transformCell(source).magicLines
+
+/**
+ * A cell made safe for a Python formatter (black): each IPython line becomes a
+ * marker comment at its own indentation, and `restore` puts the original lines
+ * back into the formatted text. A cell whose body is data (`%%writefile`,
+ * `%%html`) has nothing to format and comes back as null.
+ */
+export function maskMagicsForFormat(source: string): { masked: string; restore(formatted: string): string } | null {
+  const t = transformCell(source)
+  if (t.cellMagic && !t.cellMagic.python) return null
+  const lines = source.split('\n')
+  const originals = new Map<number, string>()
+  for (const n of t.magicLines) {
+    const line = lines[n - 1]
+    const indent = /^[ \t]*/.exec(line)![0]
+    originals.set(originals.size, line.slice(indent.length))
+    lines[n - 1] = `${indent}# warsha-magic-${originals.size - 1}`
+  }
+  return {
+    masked: lines.join('\n'),
+    restore: (formatted) =>
+      formatted.replace(/^([ \t]*)# warsha-magic-(\d+)$/gm, (m, indent: string, i: string) =>
+        originals.has(Number(i)) ? indent + originals.get(Number(i)) : m,
+      ),
+  }
+}

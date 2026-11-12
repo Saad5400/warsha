@@ -1300,7 +1300,8 @@ async function preparePip(pip) {
   if (!pip || !pip.length) return
   const restoreFetch = installFetchProgress(() => true)
   try {
-    await pyodide.loadPackage('micropip')
+    // Quietly: its "Loading micropip" lines would otherwise land in the cell's output.
+    await pyodide.loadPackage('micropip', { messageCallback: () => {} })
     await pyodide.globals.get('_warsha_pip_prepare')(JSON.stringify(pip))
   } finally {
     restoreFetch()
