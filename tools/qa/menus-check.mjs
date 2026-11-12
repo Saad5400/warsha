@@ -57,7 +57,7 @@ await check('menu bar shows six titles', async () => {
 })
 // -------------------------------------------- File: lifecycle rows only
 await openTitle('File')
-for (const n of ['New File…', 'New Project…', 'Open Recent', 'All Projects', 'Import…', 'Export as .zip', 'Save All', 'Rename Project…', 'Empty Project…', 'Delete Project…'])
+for (const n of ['New File…', 'New Project…', 'Open Recent', 'All Projects', 'Import Project…', 'Export as .zip', 'Save All', 'Rename Project…', 'Empty Project…', 'Delete Project…'])
   await check(`File > ${n}`, async () => (await row(n).count()) === 1)
 await check('File no longer carries share rows', async () => (await page.getByRole('menuitem', { name: /Share as|live session/i }).count()) === 0)
 await esc()

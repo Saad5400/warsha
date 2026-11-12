@@ -1309,6 +1309,11 @@ function Ide({ report }: { report: CapabilityReport }) {
    * the safe default), replace, or skip.
    */
   const addFiles = async (dir: string, picked: PickedFile[]) => {
+    // The project the files were picked FOR. Reading and the clash question both
+    // await, and a project switch in that window must not land them in the next one
+    // (the notebook cross-project overwrite, #35): they go to this owner or nowhere.
+    const owner = project.owner
+    if (owner === null) return
     let result: Awaited<ReturnType<typeof importFiles>>
     try {
       result = await importFiles(picked)
@@ -1358,6 +1363,7 @@ function Ide({ report }: { report: CapabilityReport }) {
     }
     try {
       await whenReady()
+      if (project.owner !== owner) return
       const applied = await project.applyProgramChanges({ written, deleted: [] })
       const note = skipped ? ' ' + COPY.addSkipped(skipped) : ''
       if (applied.written.length) notify(COPY.added(applied.written.length, dir) + note, skipped ? 'info' : 'success')
