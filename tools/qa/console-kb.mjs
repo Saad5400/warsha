@@ -65,7 +65,7 @@ else fail('console header overflows at 390px', JSON.stringify(overflow))
 
 // ------------------------------------------------------------- run to the prompt
 // Prefix match: the accessible name includes the file, e.g. "Run main.py".
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await hasOut('name')
 await page.screenshot({ path: `${SHOTS}/con-390-waiting.png` })
 

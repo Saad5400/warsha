@@ -5,6 +5,7 @@
  * in this profile — otherwise it would create the new layout first and there would
  * be nothing to migrate. */
 import { fileURLToPath } from 'node:url'
+import { WELCOME_READY, openEditor } from './lib/seed.mjs'
 import { chromium } from 'playwright-core'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -68,8 +69,11 @@ await page.unroute('**/__seed')
 // ------------------------------------------------------------ now open the app
 await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 }).catch(() => {})
-await page.waitForSelector('.cm-content, [aria-label="Start a project"]', { timeout: 20000 })
+await page.waitForSelector(WELCOME_READY, { timeout: 20000 })
 await page.waitForTimeout(2000)
+// `/` is the projects Home now: the migrated project is a card there — open it.
+await openEditor(page)
+await page.waitForSelector('[role="treeitem"]', { timeout: 20000 })
 
 const files = (await page.locator('[role="treeitem"]').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
 info(`explorer after upgrade: ${JSON.stringify(files)}`)
@@ -142,7 +146,7 @@ else fail('legacy root retired after the copy verified', 'warsha-project/ still 
 // The migrated project must actually run.
 await page.locator('[role="treeitem"]', { hasText: 'main.py' }).first().click()
 await page.waitForTimeout(500)
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('old single-workspace'),
   null, { timeout: 240000 })

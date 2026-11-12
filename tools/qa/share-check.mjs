@@ -18,7 +18,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { seedStarter } from './lib/seed.mjs'
+import { seedStarter, WELCOME_READY } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,7 +49,17 @@ const errors = []
 /** The newest toast containing `needle` (plain substring, [role=status] rows). */
 const hasToast = (page, needle, t = 30000) => page.waitForFunction(
   (n) => [...document.querySelectorAll('[role="status"]')].some((el) => el.innerText.includes(n)),
-  needle, { timeout: t })
+  needle, { timeout: t }).catch(async (e) => {
+  // Say what IS on screen, so a moved flow reads as one instead of a bare timeout.
+  const seen = await page.evaluate(() => ({
+    url: location.pathname + location.hash.slice(0, 20),
+    status: [...document.querySelectorAll('[role="status"]')].map((el) => el.innerText.trim()).filter(Boolean),
+    dialog: document.querySelector('dialog[open]')?.innerText.replace(/\s+/g, ' ').slice(0, 300) ?? null,
+    home: !!document.querySelector('[role="region"][aria-label="Your projects"]'),
+  })).catch(() => null)
+  console.log(`      waiting for toast "${needle}" — on screen: ${JSON.stringify(seen)}`)
+  throw e
+})
 
 /** File > Open Recent row count = how many projects this device holds. */
 async function projectCount(page) {
@@ -75,7 +85,7 @@ async function shareRow(page, label) {
 const a = await launch('a')
 try {
   await a.page.goto(BASE)
-  await a.page.waitForSelector('button:has-text("New from a starter")', { timeout: 60000 })
+  await a.page.waitForSelector(WELCOME_READY, { timeout: 60000 })
   await seedStarter(a.page, { lang: 'Python', name: 'Python basics' })
   await a.page.waitForSelector('.cm-content', { timeout: 30000 })
 
@@ -96,6 +106,9 @@ try {
   // 3 — edit, then the same link creates a second, name-deduped project
   await a.page.locator('.cm-content').click()
   await a.page.keyboard.type('# edited on device A\n')
+  // Let the debounced save land first — navigating at once loses the edit, and the
+  // unchanged project then (correctly) dedupes instead of making a copy.
+  await a.page.waitForTimeout(2500)
   await a.page.evaluate((url) => { location.href = url }, link)
   await hasToast(a.page, 'ready — 1 file')
   const afterEdit = await projectCount(a.page)

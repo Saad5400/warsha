@@ -36,7 +36,7 @@ const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s) => page.waitForFunction(
   (n) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(n), s, { timeout: 300000 })
 // Prefix match: the button's accessible name includes the file, e.g. "Run Main.java".
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 
 const css = (sel, props) => page.evaluate(([s, ps]) => {
   const el = document.querySelector(s)
@@ -571,7 +571,7 @@ await p2.getByRole('button', { name: /starter/i }).first().waitFor({ timeout: 20
 await seedStarter(p2, { name: 'Python (OOP starter)' })
 await p2.waitForSelector('[role="tab"]', { timeout: 15000 })
 await p2.waitForTimeout(800)
-await p2.getByRole('button', { name: /^Run\b/ }).click()
+await p2.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await p2.waitForFunction(() => document.querySelector('[aria-label="Program output"]')?.innerText.includes('Your name:'), null, { timeout: 300000 })
 await p2.locator('[aria-label="Program input"]').fill('Saad')
 await p2.locator('[aria-label="Program input"]').press('Enter')

@@ -3,6 +3,7 @@
  * Python. Drives the real completion popup, not the completion sources
  * directly, so it proves what a student would actually see. */
 import { chromium } from 'playwright-core'
+import { openEditor } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,6 +64,8 @@ const accept = async (label) => {
 
 await page.goto(URL_, { waitUntil: 'load' })
 await page.waitForTimeout(2000)
+// `/` is the projects Home now; get a project open first.
+await openEditor(page, { lang: 'Java', name: 'Java (empty)' })
 await page.waitForSelector('[role="tree"]', { timeout: 20000 })
 
 /* ================================================================== Java ================================================================== */
@@ -137,7 +140,8 @@ await newFile('demo.py')
 console.log('\n--- Python: member completion after `s.`')
 await type('s = "hello"\ns.')
 labels = await popupLabels()
-check('s. offers str’s methods', labels.includes('upper') && labels.includes('strip'), JSON.stringify(labels.slice(0, 8)))
+// The list is alphabetical and renders 30 rows, so check names inside that window (upper/strip sit past it).
+check('s. offers str’s methods', labels.includes('capitalize') && labels.includes('lower') && labels.includes('join'), JSON.stringify(labels.slice(0, 8)))
 await page.screenshot({ path: join(SHOTS, 'completions-python-member.png') })
 await page.keyboard.press('Escape')
 
