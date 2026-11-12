@@ -12,7 +12,7 @@ import { maskMagicsForFormat } from '../../src/notebook/magics.ts'
 
 test('markdown: headings, emphasis, code, lists, tables, quotes', () => {
   const html = renderMarkdown('# Title\n\nSome **bold**, *em*, `x = 1` and ~~old~~.\n\n- a\n- b\n  - nested\n\n1. one\n2. two\n\n| n | sq |\n|---|---:|\n| 2 | 4 |\n\n> quote\n\n```python\nprint(1)\n```')
-  assert.match(html, /<h1 id="title" dir="auto">Title<\/h1>/)
+  assert.match(html, /<h1 id="nb-title" dir="auto">Title<\/h1>/)
   assert.match(html, /<strong>bold<\/strong>/)
   assert.match(html, /<em>em<\/em>/)
   assert.match(html, /<code>x = 1<\/code>/)

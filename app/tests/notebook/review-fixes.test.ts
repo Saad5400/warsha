@@ -16,7 +16,7 @@ g.window ??= globalThis
 g.requestAnimationFrame ??= (fn: () => void) => setTimeout(fn, 0) as unknown as number
 g.cancelAnimationFrame ??= (id: number) => clearTimeout(id)
 const { NotebookSession } = await import('../../src/notebook/session.ts')
-const { NotebookDocument, closeNotebooksForSwitch, notebookDocument } = await import('../../src/notebook/document.ts')
+const { NotebookDocument, closeNotebooksExcept, closeNotebooksForSwitch, notebookDocument, notebookFileChanged } = await import('../../src/notebook/document.ts')
 const { Project } = await import('../../src/fs/project.ts')
 const { MemoryStore } = await import('../../src/fs/opfs.ts')
 
@@ -334,7 +334,7 @@ test('suspected: a program run cannot reset the debug store under a paused noteb
   const { debugStore } = await import('../../src/debug/store.ts')
   const cell = {}
   debugStore.begin(true, cell)
-  debugStore.onStop({ reason: 'breakpoint', frames: [{ name: '<module>', path: 'n.ipynb#cell=a', line: 2, scopes: [] }] })
+  debugStore.onStop({ reason: 'breakpoint', frames: [{ name: '<module>', path: 'n.ipynb#cell=a', line: 2, scopes: [] }] }, cell)
   // A plain Run of main.py starting and ending meanwhile:
   debugStore.begin(false)
   debugStore.end()
@@ -343,4 +343,111 @@ test('suspected: a program run cannot reset the debug store under a paused noteb
   debugStore.end(cell)
   assert.equal(debugStore.get().phase, 'inactive')
   assert.equal(debugStore.busyFor('program'), false)
+})
+
+/* =================================================== re-review (A, B, C) */
+
+const noIds = (sources: string[]) =>
+  JSON.stringify({ cells: sources.map((s) => ({ cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: s })), metadata: {}, nbformat: 4, nbformat_minor: 4 }, null, 1) + '\n'
+
+test('A(i) ids: cells without stored ids get the same minted id on every parse', () => {
+  const t = noIds(['a = 1', 'b = 2', 'a = 1'])
+  const one = parseNotebook(t).cells.map((c) => c.id)
+  assert.deepEqual(parseNotebook(t).cells.map((c) => c.id), one)
+  assert.equal(new Set(one).size, 3, 'identical cells still get distinct ids')
+  // Duplicate stored ids: the second is minted, deterministically too.
+  const dup = JSON.stringify({ cells: ['x', 'y'].map((s) => ({ cell_type: 'code', id: 'same', metadata: {}, outputs: [], source: s, execution_count: null })), metadata: {}, nbformat: 4, nbformat_minor: 5 })
+  assert.deepEqual(parseNotebook(dup).cells.map((c) => c.id), parseNotebook(dup).cells.map((c) => c.id))
+})
+
+test('A(i) merge: a notebook without ids is merged, not doubled', () => {
+  let file = noIds(['a = 1', 'b = 2'])
+  const writes: string[] = []
+  const doc = new NotebookDocument('old.ipynb', fakeKernel(), {
+    read: () => file,
+    write: (_p, t) => void writes.push((file = t)),
+    files: () => [],
+    workspace: () => 'p',
+    onFilesChanged() {},
+    onFailure() {},
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+  })
+  assert.deepEqual(writes, [], 'opening writes nothing (minted ids are not persisted into an unedited file)')
+  const a = doc.get().model!.cells[0].id
+  doc.updateCell(a, (c) => ({ ...c, source: 'a = 10' }))
+  doc.syncFrom(noIds(['a = 1', 'b = 20']))
+  doc.flush()
+  assert.deepEqual(parseNotebook(writes.at(-1)!).cells.map((c) => c.source), ['a = 10', 'b = 20'])
+  doc.dispose()
+})
+
+test('A(ii) sync: a file change reaches an open notebook through the registry, view or not', () => {
+  let file = serializeNotebook(nb([['a', 'A'], ['b', 'B']]))
+  const doc = notebookDocument('bg.ipynb', fakeKernel(), {
+    read: () => file,
+    write: (_p, t) => void (file = t),
+    files: () => [],
+    workspace: () => 'p',
+    onFilesChanged() {},
+    onFailure() {},
+    messages: () => ({ restarted: '', forcedRestart: '', lost: '', debugBusy: '' }),
+  })
+  doc.updateCell('a', (c) => ({ ...c, outputs: [{ output_type: 'stream', name: 'stdout', text: 'running…' }] })) // a cell streaming
+  notebookFileChanged('bg.ipynb', serializeNotebook(nb([['a', 'A'], ['b', 'B theirs']])))
+  doc.flush()
+  const saved = parseNotebook(file).cells
+  assert.equal(saved[1].source, 'B theirs', "the collaborator's edit survives the output flush")
+  assert.equal(saved[0].outputs.length, 1, 'and so does the local output')
+  closeNotebooksExcept(new Set())
+})
+
+test('B fragments: only heading slugs; #room=/#share= and friends are refused', () => {
+  for (const evil of ['#room=abc', '#share=eJxz', '#a/b', '#x?y', '#a=1']) assert.equal(safeUrl(evil, {}, false), null, evil)
+  assert.equal(safeUrl('#load-the-data', {}, false), '#load-the-data')
+  assert.equal(safeUrl('#الفصل_1', {}, false), '#الفصل_1')
+  const html = renderMarkdown('## Load the data\n\n[go](#load-the-data) [evil](#room=abc)')
+  assert.match(html, /<h2 id="nb-load-the-data"/, 'heading ids are namespaced away from the page\'s own ids')
+  assert.match(html, /<a href="#load-the-data">go<\/a>/)
+  assert.doesNotMatch(html, /room=/)
+})
+
+test('C interrupt: a download that never ends is stopped at the ceiling', async () => {
+  const { INTERRUPT_LIMITS } = await import('../../src/notebook/session.ts')
+  const saved = { ...INTERRUPT_LIMITS }
+  INTERRUPT_LIMITS.escalateMs = 20
+  INTERRUPT_LIMITS.ceilingMs = 120
+  let killed = 0
+  let exitFn: ((c: number | null) => void) | null = null
+  const k = fakeKernel({ onExecute: (io) => (exitFn = io.onExit as (c: number | null) => void) })
+  k.execute = async (_f: unknown, cell: { notebook: string }, io: Record<string, (...a: unknown[]) => void>) => {
+    k.executed.push(cell)
+    exitFn = io.onExit as (c: number | null) => void
+    return { kill: () => (killed++, exitFn?.(null)), writeStdin() {} } // never starts (no onExecuteInput), never ends
+  }
+  const host = { files: () => [], workspace: () => 'p', cell: () => newCell('code', 'import big'), update() {}, cellIds: () => [], onFilesChanged() {}, onFailure() {} }
+  const s = new NotebookSession('d.ipynb', k, host, () => ({ restarted: '', forcedRestart: 'forced', lost: '', debugBusy: '' }))
+  s.run(['c'])
+  await tick(10)
+  s.interrupt()
+  await tick(60)
+  assert.equal(killed, 0, 'still downloading: given time to honour the interrupt')
+  await tick(200)
+  assert.equal(killed, 1, 'past the ceiling: restarted')
+  assert.equal(s.get().running, null)
+  Object.assign(INTERRUPT_LIMITS, saved)
+  s.dispose()
+})
+
+test('C debugger: a program\'s stop/resume cannot leak into a cell\'s debug session', async () => {
+  const { debugStore } = await import('../../src/debug/store.ts')
+  const cell = {}
+  debugStore.begin(true, cell)
+  debugStore.onStop({ reason: 'breakpoint', frames: [{ name: '<module>', path: 'n.ipynb#cell=a', line: 2, scopes: [] }] }, cell)
+  const seq = debugStore.get().stopSeq
+  debugStore.onStop({ reason: 'breakpoint', frames: [{ name: '<module>', path: 'main.py', line: 9, scopes: [] }] }) // the program's
+  debugStore.onResume() // the program's
+  assert.equal(debugStore.get().stopSeq, seq)
+  assert.equal(debugStore.get().stopped?.frames[0].path, 'n.ipynb#cell=a')
+  assert.equal(debugStore.get().phase, 'paused')
+  debugStore.end(cell)
 })

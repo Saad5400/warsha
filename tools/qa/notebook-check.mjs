@@ -251,6 +251,13 @@ if (ONLY.includes('K')) {
   if (process.env.PIP !== '0') {
     r = await cell('%pip install -q snowballstemmer\nimport snowballstemmer\nsnowballstemmer.stemmer("english").stemWord("running")', 'w')
     check('K: %pip installs a pure-Python package from PyPI before the cell runs', result(r) === "'run'", J({ err: r.err.slice(0, 300), out: r.out.slice(0, 200), res: result(r) }))
+    // C: Interrupt while %pip is installing reports an interrupted cell, not a runtime error.
+    await page.evaluate(() => window.__K.start('%pip install pyfiglet\nimport pyfiglet', 'pipint'))
+    await page.waitForTimeout(300)
+    await page.evaluate(() => window.__K.k.interrupt())
+    await page.waitForFunction(() => window.__K.rec.exit !== undefined, null, { timeout: 60000 }).catch(() => {})
+    r = await page.evaluate(() => window.__K.rec)
+    check('K C: Interrupt during %pip ends the cell as KeyboardInterrupt, not a runtime error', errorOf(r)?.ename === 'KeyboardInterrupt' && !r.err.includes('runtime error'), J({ exit: r.exit, e: errorOf(r)?.ename, err: r.err.slice(0, 200) }))
     r = await cell('!pip install definitely-not-a-real-package-xyz', 'x')
     check('K: a failed pip install explains itself and does not crash the cell', r.exit === 0 && /ERROR: Could not install/.test(r.err), r.err.slice(0, 300))
   }
@@ -303,7 +310,7 @@ if (ONLY.includes('U')) {
   check('U: Run all numbers every code cell in order', J(counts) === J(['[1]', '[2]', '[3]', '[4]', '[5]', '[6]']), J(counts))
   check('U: the DataFrame renders as a table in a script-less sandbox', await page.evaluate(() => {
     const f = document.querySelector('.nb-outputs iframe')
-    return !!f && f.getAttribute('sandbox') === 'allow-same-origin allow-popups' && !!f.contentDocument?.querySelector('table')
+    return !!f && f.getAttribute('sandbox') === 'allow-same-origin allow-popups allow-popups-to-escape-sandbox' && !!f.contentDocument?.querySelector('table')
   }))
   check('U: the cell that wrote passed.csv put it in the explorer', (await page.locator('[role="treeitem"][data-path="passed.csv"]').count()) === 1)
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-ran.png') })
@@ -502,7 +509,41 @@ if (ONLY.includes('U')) {
     const d = f?.contentDocument
     return d ? { j: d.getElementById('j')?.getAttribute('href') ?? null, h: d.getElementById('h')?.getAttribute('href'), sandbox: f.getAttribute('sandbox') } : null
   })
-  check('#1 U: an HTML output\'s javascript: link loses its href; popups stay sandboxed', !!frameLinks && frameLinks.j === null && frameLinks.h === 'https://example.com' && !frameLinks.sandbox.includes('escape'), J(frameLinks))
+  check('#1 U: an HTML output\'s javascript: link loses its href; vetted links open as normal pages', !!frameLinks && frameLinks.j === null && frameLinks.h === 'https://example.com' && frameLinks.sandbox.includes('allow-popups-to-escape-sandbox'), J(frameLinks))
+
+  // B: a notebook link cannot issue the app's #room= / #share= commands; a heading link scrolls in place.
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('b')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('m')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+  await page.keyboard.insertText('[join](#room=attacker) [import](#share=eJxz) [jump](#results-section)\n\n' + 'filler\n\n'.repeat(40) + '## Results section')
+  await page.keyboard.press('Shift+Enter')
+  await page.waitForTimeout(500)
+  const hashBefore = await page.evaluate(() => location.hash)
+  const frag = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.notebook-view [data-cell-type="markdown"] .nb-md')].at(-1)
+    return el ? [...el.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]) : null
+  })
+  const survives = await page.evaluate(async () => {
+    const a = [...document.querySelectorAll('.notebook-view .nb-md a')].at(-1)
+    a.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 50))
+    return a.isConnected
+  })
+  check('U: selecting a text cell keeps its rendered DOM (a click\'s target is not replaced mid-click)', survives)
+  await page.locator('.notebook-view .nb-md a', { hasText: 'jump' }).last().click()
+  await page.waitForTimeout(800)
+  const after = await page.evaluate(() => {
+    const h = document.getElementById('nb-results-section')
+    const r = h?.getBoundingClientRect()
+    const s = document.querySelector('.notebook-scroller').getBoundingClientRect()
+    return { hash: location.hash, inView: !!r && r.top >= s.top - 2 && r.top < s.bottom }
+  })
+  check('B U: #room= / #share= links render without an href', !!frag && frag.filter(([t]) => t === 'join' || t === 'import').every(([, h]) => h === null), J(frag))
+  check('B U: a heading link scrolls inside the notebook and leaves location.hash alone', after.inView && after.hash === hashBefore, J({ ...after, hashBefore }))
 
   // The file on disk: valid nbformat 4.5 with outputs.
   const text = await page.evaluate(async () => {
