@@ -250,7 +250,8 @@ mounted, empty, under it). The pieces, and the one decision behind each:
 
 - **The kernel is a second Python engine.** `runtime/index.ts`'s `kernelFor(path)` returns a
   `PythonRuntime({ kernel: true })` — the `NotebookKernel` contract in `runtime/types.ts`: one
-  namespace per notebook (keyed by its path) kept across cells until `restart(nb)`; `execute(cell)`
+  namespace per OPEN notebook (keyed by a session id, not its path: a rename keeps the variables,
+  and a new notebook reusing an old name starts clean) kept across cells until `restart(key)`; `execute(cell)`
   has `run()`'s stdin/debug/files semantics; `interrupt()` raises KeyboardInterrupt through
   Pyodide's interrupt buffer (and out of a parked `input()`), so variables survive it. It is NOT the
   program runner's instance: Stop terminates that worker, which must never wipe a notebook, and a
@@ -270,11 +271,22 @@ mounted, empty, under it). The pieces, and the one decision behind each:
   older notebook keeps its minor version and gets stable ids in `metadata.id` (Colab's convention).
 - **Outputs are rendered as untrusted.** HTML (DataFrames, `display(HTML)`) goes in an iframe
   sandboxed with `allow-same-origin` and **no** `allow-scripts` — nothing in it ever runs, while the
-  shell can still measure and theme it. Markdown is rendered by escaping everything and rebuilding a
-  small tag/attribute allowlist; math becomes native MathML (no typesetting dependency).
+  shell can still measure, theme and vet its links (popups opened from it stay sandboxed). Markdown is
+  rendered by escaping everything and rebuilding a small tag/attribute allowlist; every URL goes
+  through `safeUrl`, which first cleans it the way the browser will (C0 controls at the ends, every
+  tab/newline) and then allows only http(s), mailto, #fragments and relative paths. Math becomes
+  native MathML (no typesetting dependency), from a parser with a step budget so no input can hang it.
 - **Writes are coalesced.** `notebook/document.ts` owns each open notebook's model outside React (a
   cell keeps writing after its tab is switched away) and writes the JSON to the project at most every
-  300 ms — and at once before a cell runs, on save, download and export.
+  300 ms — and at once before a cell runs and before every `Project.saveAll` (`onBeforeSave`).
+  `Project` is ONE object whose store is swapped on a project switch, so open notebooks are flushed
+  and closed by `onBeforeSwitch`, while the project being left is still attached — a pending write
+  after the swap would land in the next project's `notebook.ipynb`. A closed notebook (tab closed,
+  file deleted, shown as text) drops everything its session reports late, and never recreates a
+  deleted file. A file that changes under a pending local write (a collaborator) is merged per cell
+  against the last agreed text (`mergeNotebooks`), not overwritten either way.
+- **Streams** are coalesced to one model update per frame, kept as one string per open stream with
+  `\r` folded only on completed lines, and capped at 1 MB (oldest lines dropped, with a note).
 - **Completion across cells** goes through `editor/textContext.ts` (above): the engine is not
   forked; a cell's editor just carries a context function.
 - **Collaboration:** a notebook in a live session is written through the binding's minimal

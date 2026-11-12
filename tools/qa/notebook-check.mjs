@@ -82,7 +82,7 @@ if (ONLY.includes('K')) {
       const rec = (T.rec = { ev: [], out: '', err: '', outputs: [], exit: undefined, stops: [], resumes: 0, count: null })
       T.s = await k.execute(
         T.files,
-        { notebook: opts.nb ?? 'nb.ipynb', cellPath: `${opts.nb ?? 'nb.ipynb'}#cell=${id}`, source: src, code: t.code, cellMagic: t.cellMagic, pip: t.pip },
+        { notebook: opts.nb ?? 'nb.ipynb', workspace: opts.ws ?? 'qa', cellPath: `${opts.nb ?? 'nb.ipynb'}#cell=${id}`, source: src, code: t.code, cellMagic: t.cellMagic, pip: t.pip },
         {
           onStdout: (x) => { rec.out += x },
           onStderr: (x) => { rec.err += x },
@@ -211,6 +211,43 @@ if (ONLY.includes('K')) {
   r = await cell('q', 'dbgC')
   check('K: a debugged cell\'s variables stay in the namespace', result(r) === '5')
 
+  // ---- review fixes (kernel side) ----
+  // #10: Interrupt while the cell's packages are still downloading skips the cell; no kernel kill.
+  const epoch0 = await page.evaluate(() => window.__K.k.epoch)
+  await page.evaluate(() => window.__K.start('import sympy\nsympy.__version__', 'pkgint'))
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.__K.k.interrupt())
+  await page.waitForFunction(() => window.__K.rec.exit !== undefined, null, { timeout: 120000 }).catch(() => {})
+  r = await page.evaluate(() => window.__K.rec)
+  check('K #10: Interrupt during a package download ends the cell with KeyboardInterrupt; the kernel lives', errorOf(r)?.ename === 'KeyboardInterrupt' && (await page.evaluate(() => window.__K.k.epoch)) === epoch0, J({ exit: r.exit, e: errorOf(r)?.ename }))
+  r = await cell('x = 5\nx', 'alive')
+  check('K #10: …and the next cell runs in the same interpreter', result(r) === '5')
+  // Suspected: sys.stdin.readline() used to swallow Interrupt as an empty line.
+  await page.evaluate(() => window.__K.start('import sys\nline = sys.stdin.readline()\nprint("got", repr(line))', 'readline'))
+  await page.waitForFunction(() => window.__K.rec.ev.includes('stdin'), null, { timeout: 8000 }).catch(() => {})
+  await page.evaluate(() => window.__K.k.interrupt())
+  await page.waitForFunction(() => window.__K.rec.exit !== undefined, null, { timeout: 8000 }).catch(() => {})
+  r = await page.evaluate(() => window.__K.rec)
+  check('K suspected: Interrupt reaches sys.stdin.readline() as KeyboardInterrupt, not an empty line', errorOf(r)?.ename === 'KeyboardInterrupt' && !r.out.includes('got'), J({ out: r.out, e: errorOf(r)?.ename }))
+  // Suspected: NaN in a display payload.
+  r = await cell('display({"application/json": {"v": float("nan")}, "text/plain": "nan here"}, raw=True)\n"after"', 'nan')
+  check('K suspected: a NaN in a display payload arrives (as "nan"), and the cell finishes', r.exit === 0 && result(r) === "'after'" && r.outputs.some((x) => x.o?.data?.['application/json']?.v === 'nan'), J({ exit: r.exit, err: r.err.slice(0, 200) }))
+  // Suspected: one project's files are not visible to another project's cells.
+  await cell('open("only_a.bin", "wb").write(bytes([0, 1, 2]))', 'wsA', { ws: 'project-A' })
+  r = await cell('import os\nos.path.exists("only_a.bin")', 'wsB', { ws: 'project-B' })
+  check('K suspected: files a cell wrote in project A are not in project B\'s working directory', result(r) === 'False', result(r))
+  // Suspected: history is capped (IPython's cache_size) — 1,005 runs keep at most 1,000.
+  await page.evaluate(async () => { for (let i = 0; i < 1005; i++) await window.__K.cell(String(i), 'cap' + (i % 3), { nb: 'cap.ipynb' }) })
+  // The run asking is the 1,001st entry: 1,000 kept plus itself.
+  r = await cell('(len(Out), len(_warsha_k.sources) <= 1001, "_1" in globals())', 'capcheck', { nb: 'cap.ipynb' })
+  check('K suspected: Out, sources and _N stay capped at 1,000 runs', result(r) === '(1000, True, False)', result(r))
+  // 11b: the kernel says when it is busy, so formatting goes to a free engine instead of waiting.
+  await page.evaluate(() => window.__K.start('import time\ntime.sleep(1.5)', 'busy'))
+  await page.waitForTimeout(300)
+  const busyNow = await page.evaluate(() => window.__K.k.isBusy())
+  await page.waitForFunction(() => window.__K.rec.exit !== undefined, null, { timeout: 10000 })
+  check('K 11b: the kernel reports isBusy() while a cell runs, and not after', busyNow && !(await page.evaluate(() => window.__K.k.isBusy())))
+
   if (process.env.PIP !== '0') {
     r = await cell('%pip install -q snowballstemmer\nimport snowballstemmer\nsnowballstemmer.stemmer("english").stemWord("running")', 'w')
     check('K: %pip installs a pure-Python package from PyPI before the cell runs', result(r) === "'run'", J({ err: r.err.slice(0, 300), out: r.out.slice(0, 200), res: result(r) }))
@@ -266,7 +303,7 @@ if (ONLY.includes('U')) {
   check('U: Run all numbers every code cell in order', J(counts) === J(['[1]', '[2]', '[3]', '[4]', '[5]', '[6]']), J(counts))
   check('U: the DataFrame renders as a table in a script-less sandbox', await page.evaluate(() => {
     const f = document.querySelector('.nb-outputs iframe')
-    return !!f && f.getAttribute('sandbox') === 'allow-same-origin allow-popups allow-popups-to-escape-sandbox' && !!f.contentDocument?.querySelector('table')
+    return !!f && f.getAttribute('sandbox') === 'allow-same-origin allow-popups' && !!f.contentDocument?.querySelector('table')
   }))
   check('U: the cell that wrote passed.csv put it in the explorer', (await page.locator('[role="treeitem"][data-path="passed.csv"]').count()) === 1)
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-ran.png') })
@@ -282,6 +319,7 @@ if (ONLY.includes('U')) {
   const opts = await page.$$eval('.cm-tooltip-autocomplete li', (els) => els.map((e) => e.textContent))
   check('U: completion in a new cell offers DataFrame members of df from cell 1', opts.some((o) => /^head/.test(o)), J(opts.slice(0, 8)))
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-completion.png') })
+  check('U dup: a cell\'s completion rows carry the shared gloss (same languageStack as files)', (await page.locator('.cm-tooltip-autocomplete .cm-completionGloss').count()) > 0)
   await page.keyboard.press('Escape')
   await page.keyboard.press('Control+a')
   await page.keyboard.type('n = int(input("How many? "))\nn * 2')
@@ -387,6 +425,85 @@ if (ONLY.includes('U')) {
   await dcell.scrollIntoViewIfNeeded()
   await page.screenshot({ path: join(SHOTS, 'notebook-desk-ltr-error.png') })
 
+  // ---- review fixes (UI side) ----
+  // Duplication fix: cells share the file editor's stack, so toggling an Extensions-view switch reaches open cells.
+  const brackets = () => page.evaluate((id) => document.querySelectorAll(`[data-cell-id="${id}"] .cm-bracket-0`).length, dcellId)
+  const hadBrackets = await brackets()
+  await page.evaluate(async () => {
+    const r = await import('/src/extensions/registry.ts')
+    const s = await import('/src/editor/setup.ts')
+    r.setExtEnabled('rainbow-brackets', !r.isExtEnabled('rainbow-brackets'))
+    s.refreshEditorExtensions()
+  })
+  await page.waitForTimeout(300)
+  const toggled = await brackets()
+  await page.evaluate(async () => {
+    const r = await import('/src/extensions/registry.ts')
+    const s = await import('/src/editor/setup.ts')
+    r.setExtEnabled('rainbow-brackets', !r.isExtEnabled('rainbow-brackets'))
+    s.refreshEditorExtensions()
+  })
+  check('U dup: toggling Rainbow Brackets restyles an open cell live', (hadBrackets > 0) !== (toggled > 0), J({ hadBrackets, toggled }))
+
+  // #5: a print loop keeps the page responsive and ends with every line on screen (or the trim note).
+  await dcell.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('for i in range(20000):\n    print(i)')
+  const t5 = Date.now()
+  await page.keyboard.press('Control+Enter')
+  let worst = 0
+  while (Date.now() - t5 < 60000) {
+    const p0 = Date.now()
+    const done = await page.evaluate((id) => document.querySelector(`[data-cell-id="${id}"]`)?.getAttribute('data-state') === 'ok', await dcell.getAttribute('data-cell-id'))
+    worst = Math.max(worst, Date.now() - p0)
+    if (done) break
+    await page.waitForTimeout(100)
+  }
+  const tail = (await dcell.locator('pre[data-stream="stdout"]').innerText()).trim().split('\n').pop()
+  check('#5 U: for i in range(20000): print(i) stays responsive and finishes', worst < 500 && tail === '19999', J({ worst, ms: Date.now() - t5, tail }))
+  // #6: \r progress frames printed one at a time show the last frame only.
+  await dcell.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('import sys, time\nfor p in range(0, 101, 25):\n    sys.stdout.write(f"{p}%\\r"); sys.stdout.flush(); time.sleep(0.05)\nprint("done")')
+  await page.keyboard.press('Control+Enter')
+  await kernelIdle(page, 20000)
+  await page.waitForTimeout(300)
+  const prog = await dcell.locator('pre[data-stream="stdout"]').innerText()
+  check('#6 U: \\r progress frames fold to the last one', prog.trim() === 'done', J(prog))
+  // #1, #2, #7: a text cell with a smuggled javascript: link, a broken TeX environment and code in a link.
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('b')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('m')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+  await page.keyboard.insertText('[evil](\u0001javascript:alert(1)) [tab](java\tscript:alert(2)) [away](//example.com) [`read_csv`](https://pandas.pydata.org)\n\n$\\begin{cases} a \\right) \\end{cases}$')
+  await page.keyboard.press('Shift+Enter')
+  await page.waitForTimeout(500)
+  const md = await page.evaluate(() => {
+    const cells = [...document.querySelectorAll('.notebook-view [data-cell-type="markdown"] .nb-md')]
+    const el = cells.at(-1)
+    return el ? { hrefs: [...el.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('target')]), text: el.textContent, math: !!el.querySelector('math') } : null
+  })
+  check('#1 U: smuggled javascript: links render without an href; //host opens in a new tab', !!md && md.hrefs.every(([, h]) => !h || !/script:/i.test(h)) && md.hrefs.some(([t, h, tg]) => t === 'away' && h === 'https://example.com' && tg === '_blank'), J(md?.hrefs))
+  check('#7 U: a code span inside link text renders (no "undefined")', !!md && md.hrefs.some(([t]) => t === 'read_csv') && !md.text.includes('undefined'), J(md?.text))
+  check('#2 U: a malformed TeX environment renders without hanging the page', !!md && md.math)
+  // The same sanitizer guards links inside HTML outputs.
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('b')
+  await page.waitForTimeout(300)
+  await page.keyboard.insertText('from IPython.display import HTML\nHTML(\'<a id="j" href="\\x01javascript:alert(1)">j</a> <a id="h" href="https://example.com">h</a>\')')
+  await page.keyboard.press('Shift+Enter')
+  await kernelIdle(page, 20000)
+  await page.waitForTimeout(800)
+  const frameLinks = await page.evaluate(() => {
+    const f = [...document.querySelectorAll('.nb-outputs iframe')].at(-1)
+    const d = f?.contentDocument
+    return d ? { j: d.getElementById('j')?.getAttribute('href') ?? null, h: d.getElementById('h')?.getAttribute('href'), sandbox: f.getAttribute('sandbox') } : null
+  })
+  check('#1 U: an HTML output\'s javascript: link loses its href; popups stay sandboxed', !!frameLinks && frameLinks.j === null && frameLinks.h === 'https://example.com' && !frameLinks.sandbox.includes('escape'), J(frameLinks))
+
   // The file on disk: valid nbformat 4.5 with outputs.
   const text = await page.evaluate(async () => {
     await new Promise((r) => setTimeout(r, 700))
@@ -413,6 +530,22 @@ if (ONLY.includes('U')) {
   check('U: it keeps ids, execution counts and outputs (the DataFrame table)', !!nbJson && nbJson.cells.every((c) => typeof c.id === 'string') &&
     nbJson.cells.some((c) => c.execution_count === 1 && c.outputs.some((o) => o.output_type === 'execute_result' && o.data['text/html'])))
   check('U: no session-only keys leak into the file', !!nbJson && !JSON.stringify(nbJson).includes('"transient"'))
+
+  // Suspected: "Open as text" while a cell is printing must not keep rewriting the JSON under the text editor.
+  const lc = page.locator('.notebook-view [data-cell-id]').last()
+  await lc.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.insertText('import time\nfor i in range(40):\n    print(i); time.sleep(0.1)')
+  await page.keyboard.press('Control+Enter')
+  await page.waitForTimeout(600)
+  await page.getByRole('button', { name: 'More notebook actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open as text' }).click()
+  await page.waitForSelector('.editor-pane .cm-content', { timeout: 10000 })
+  await page.waitForTimeout(400)
+  const asText1 = await page.locator('.editor-pane .cm-content').innerText()
+  await page.waitForTimeout(1500)
+  const asText2 = await page.locator('.editor-pane .cm-content').innerText()
+  check('U suspected: a notebook shown as text is no longer rewritten by its (closed) session', asText1 === asText2 && asText1.includes('"cells"'), J({ same: asText1 === asText2, len: asText1.length }))
   await ctx.close()
 
   // Phone, LTR and RTL; desktop RTL.

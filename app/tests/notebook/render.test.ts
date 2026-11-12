@@ -72,7 +72,8 @@ test('outputs: streams merge, carriage returns fold, display updates in place', 
   let o = appendStream([], 'stdout', 'a\n')
   o = appendStream(o, 'stdout', 'b')
   assert.equal(o.length, 1)
-  assert.deepEqual(o[0].text, ['a\n', 'b'])
+  // One string per open stream (nbformat allows it); re-splitting into lines per chunk was quadratic.
+  assert.equal(o[0].text, 'a\nb')
   o = appendStream(o, 'stderr', 'x')
   assert.equal(o.length, 2)
   assert.equal(foldCarriageReturns('10%\r50%\r100%\ndone'), '100%\ndone')
