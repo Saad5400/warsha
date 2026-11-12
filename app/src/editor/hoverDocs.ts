@@ -14,7 +14,8 @@ import {
   type TooltipView,
 } from '@codemirror/view'
 import { syntaxTree } from '@codemirror/language'
-import { builtinDoc, renderDocCard, type BuiltinDoc, type CompletionLang } from './completions'
+import { builtinDoc, memberCard, pythonTables, renderDocCard, type BuiltinDoc, type CompletionLang } from './completions'
+import { memberAt } from './members'
 import { projectFiles, projectRevision } from './projectSource'
 
 /**
@@ -182,6 +183,9 @@ function docsAt(view: EditorView, pos: number, lang: CompletionLang | null): Doc
   const user = projectDocs().get(name)
   if (user) return { from: word.from, to: word.to, entry: user, user: true }
   if (!lang) return null
+  // After a dot, the member of the receiver's real type — an array's `length` is not a String's.
+  const hit = memberAt(lang, state, word.from, word.to, lang === 'python' ? pythonTables() : {})
+  if (hit) return { from: word.from, to: word.to, entry: memberCard(lang, hit.owner, hit.member), user: false }
   // `Math.abs` beats `abs`: read the qualifying receiver just before the word.
   const lineStart = state.doc.lineAt(word.from).from
   const before = state.sliceDoc(Math.max(lineStart, word.from - 60), word.from)

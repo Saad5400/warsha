@@ -448,7 +448,8 @@ function step(scope: Scope, cur: Resolved, seg: Segment): Resolved | null {
   if (seg.k === 'index') {
     const t = cur.type.replace(/\s+/g, '')
     if (lang === 'java') return /\[\]$/.test(t) ? val(t.slice(0, -2)) : null
-    const el = /^(?:list|tuple)\[(.+)\]$/.exec(t)?.[1] ?? (t === 'str' ? 'str' : null)
+    // `df["score"]` is a column; `s[0]` of a str is a str.
+    const el = /^(?:list|tuple)\[(.+)\]$/.exec(t)?.[1] ?? (t === 'str' ? 'str' : t === 'DataFrame' ? 'Series' : null)
     return val(el ?? /^dict\[.+?,(.+)\]$/.exec(t)?.[1])
   }
   if (seg.k !== 'name' && seg.k !== 'call') return null

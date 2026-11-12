@@ -26,7 +26,7 @@ import { projectFiles, projectRevision } from './projectSource'
  * edited (re-scanned only when that document object changes).
  */
 
-export type MemberKind = 'method' | 'field' | 'constant'
+export type MemberKind = 'method' | 'field' | 'constant' | 'class'
 
 export interface MemberInfo {
   name: string
@@ -38,11 +38,14 @@ export interface MemberInfo {
   isStatic: boolean
   /** Python: declared with `@property` — so `@name.setter` can follow it. */
   property?: boolean
+  /** Java `private`, Python `__name`: reachable only from inside its own class. */
+  isPrivate?: boolean
 }
 
 export interface ClassInfo {
   name: string
-  kind: 'class' | 'interface' | 'enum' | 'record'
+  /** `module` is a project .py file, reached through `import helper` (its top-level names). */
+  kind: 'class' | 'interface' | 'enum' | 'record' | 'module'
   /** `extends` first, then `implements` (Java) / the bases in order (Python). */
   supers: string[]
   members: MemberInfo[]
@@ -117,10 +120,11 @@ function scanJavaInto(src: string, index: TypeIndex): void {
       // A nested class/interface/enum is its own entry (the head regex finds it), not a field.
       if (!stmt || /\b(?:class|interface|enum|record)\s+[A-Za-z_$]/.test(stmt)) continue
       const isStatic = /\bstatic\b/.test(stmt) || kind === 'interface' && !/\(/.test(stmt)
+      const isPrivate = /\bprivate\b/.test(stmt)
       const plain = stmt.replace(MODIFIER_WORDS, ' ').replace(/^\s*<[^>]*>\s*/, '').trim()
       const meth = new RegExp(`^(${JAVA_TYPE})\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^)]*)\\)`).exec(plain)
       if (meth && (meth[1] === 'void' || isJavaTypeWord(meth[1]))) {
-        members.push({ name: meth[2], kind: 'method', type: meth[1].replace(/\s+/g, ''), params: meth[3].trim(), isStatic })
+        members.push({ name: meth[2], kind: 'method', type: meth[1].replace(/\s+/g, ''), params: meth[3].trim(), isStatic, isPrivate })
         continue
       }
       if (/^[A-Za-z_$][\w$]*\s*\(/.test(plain)) continue // a constructor
@@ -131,7 +135,7 @@ function scanJavaInto(src: string, index: TypeIndex): void {
           const id = /^([A-Za-z_$][\w$]*)\s*(\[\s*\])*\s*(?:=|$)/.exec(decl)
           if (id) {
             const constant = isStatic && /\bfinal\b/.test(stmt)
-            members.push({ name: id[1], kind: constant ? 'constant' : 'field', type: type + (id[2] ? '[]' : ''), isStatic })
+            members.push({ name: id[1], kind: constant ? 'constant' : 'field', type: type + (id[2] ? '[]' : ''), isStatic, isPrivate })
           }
         }
       }
@@ -181,6 +185,8 @@ function scanPythonInto(src: string, index: TypeIndex): void {
     while (end < lines.length && (lines[end].trim() === '' || indentOf(lines[end]) > base)) end++
     const members = new Map<string, MemberInfo>()
     const add = (mi: MemberInfo) => {
+      // `__balance` is name-mangled: private to the class (dunders like `__init__` are not).
+      if (mi.name.startsWith('__') && !mi.name.endsWith('__')) mi.isPrivate = true
       if (!members.has(mi.name)) members.set(mi.name, mi)
     }
     let bodyIndent = -1
@@ -234,6 +240,24 @@ function scanPythonInto(src: string, index: TypeIndex): void {
   }
 }
 
+/** A project .py file as a module: its top-level functions, classes and assignments. */
+function scanPythonModule(path: string, src: string, index: TypeIndex): void {
+  const name = path.replace(/^.*\//, '').replace(/\.py$/, '')
+  if (!/^[A-Za-z_]\w*$/.test(name) || index.has(name)) return
+  const text = maskCode('python', src)
+  const members: MemberInfo[] = []
+  const seen = new Set<string>()
+  const add = (m: MemberInfo) => {
+    if (!seen.has(m.name)) seen.add(m.name), members.push(m)
+  }
+  for (const m of text.matchAll(/^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:/gm))
+    add({ name: m[1], kind: 'method', type: m[3]?.trim() ?? null, params: m[2].trim(), isStatic: true })
+  for (const m of text.matchAll(/^class\s+([A-Za-z_]\w*)/gm)) add({ name: m[1], kind: 'class', type: m[1], isStatic: true })
+  for (const m of text.matchAll(/^([A-Za-z_]\w*)\s*=(?!=)\s*([^\n]*)$/gm))
+    add({ name: m[1], kind: 'field', type: pythonLiteralType(m[2]), isStatic: true })
+  index.set(name, { name, kind: 'module', supers: [], members, bodyFrom: 0, bodyTo: 0 })
+}
+
 /* ------------------------------------------------------------------- cache */
 
 const scanInto = (lang: TextLang, src: string, index: TypeIndex) =>
@@ -252,6 +276,8 @@ function projectIndex(lang: TextLang): TypeIndex {
       if (f.path.endsWith('.java')) scanJavaInto(f.content, java)
       else if (f.path.endsWith('.py')) scanPythonInto(f.content, python)
     }
+    // Modules after classes, so a class never loses its name to a same-named file.
+    for (const f of projectFiles()) if (f.path.endsWith('.py')) scanPythonModule(f.path, f.content, python)
     projectCache = { rev, java, python }
   }
   return projectCache[lang]

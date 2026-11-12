@@ -4,7 +4,7 @@ import { JAVA_PRIMS, baseOf, isThrowableName, maskCode, splitTopLevel, typeArgs,
 import { javaFqcn } from './imports'
 import { projectRevision } from './projectSource'
 import { parseChain, resolveReceiver, type MemberTypes, type Resolved } from './receiver'
-import { typeIndexFor, type ClassInfo, type MemberInfo, type TypeIndex } from './typeIndex'
+import { enclosingClass, typeIndexFor, type ClassInfo, type MemberInfo, type TypeIndex } from './typeIndex'
 import { recordable, withUsageBoost } from './usage'
 
 /**
@@ -1221,7 +1221,7 @@ function substitute(t: string, owner: string): string {
 
 const memberCompletion = (m: MemberInfo): Completion => ({
   label: m.name,
-  type: m.kind === 'method' ? 'method' : m.kind === 'constant' ? 'constant' : 'property',
+  type: m.kind === 'field' ? 'property' : m.kind,
   detail:
     m.kind === 'method'
       ? `${m.type ?? ''}${m.type && m.params ? ', ' : ''}${m.params || !m.type ? `(${m.params ?? ''})` : ''}`
@@ -1251,15 +1251,17 @@ function libraryMembers(lang: TextLang, name: string, isStatic: boolean, pyTable
  * parent's (project classes recursively, library parents from the tables), then
  * Object's for a Java value. The nearest definition of a name wins.
  */
-function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: TypeIndex, pyTables: PyTables): Completion[] {
+function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: TypeIndex, pyTables: PyTables, viewer: string | null): Completion[] {
   const out: Completion[] = []
   const seen = new Set<string>()
   const walk = (c: ClassInfo, boost: number) => {
     if (seen.has(c.name)) return
     seen.add(c.name)
+    // Private members only from inside their own class — never from Main, never from a subclass.
+    const reachable = c.name === viewer ? c.members : c.members.filter((m) => !m.isPrivate)
     // Static access offers what is static; a Java class with nothing static offers everything rather than nothing.
-    const own = isStatic && lang === 'java' ? c.members.filter((m) => m.isStatic) : c.members
-    for (const m of own.length ? own : c.members) out.push({ ...memberCompletion(m), boost })
+    const own = isStatic && lang === 'java' ? reachable.filter((m) => m.isStatic) : reachable
+    for (const m of own.length ? own : reachable) out.push({ ...memberCompletion(m), boost })
     for (const s of c.supers) {
       const parent = index.get(s)
       if (parent) walk(parent, boost - 2)
@@ -1267,9 +1269,12 @@ function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: T
     }
   }
   walk(cls, 34)
-  if (lang === 'java' && !isStatic) out.push(...JAVA_MEMBERS.Object)
+  if (lang === 'java' && !isStatic) out.push(...OBJECT_MEMBERS)
   return dedupe(out)
 }
+
+/** java.lang.Object's members, ranked under a type's own: `sc.` leads with Scanner's methods, not `equals`. */
+const OBJECT_MEMBERS: readonly Completion[] = JAVA_MEMBERS.Object.map((c) => ({ ...c, boost: 18 }))
 
 function dedupe(list: readonly Completion[]): Completion[] {
   const seen = new Set<string>()
@@ -1279,20 +1284,27 @@ function dedupe(list: readonly Completion[]): Completion[] {
 /** Python receiver tables by type name — builtins, the hand-written modules, and the dictionary-derived ones. */
 export type PyTables = Record<string, readonly Completion[]>
 
-/** Everything `x.` should offer for this resolved type, or null when there is no knowing. */
-export function membersFor(lang: TextLang, r: Resolved, index: TypeIndex, pyTables: PyTables): Completion[] | null {
+/** The type name a member's card is filed under — `ArrayList<String>` → `ArrayList`, `list[str]` → `list`. */
+export const ownerOf = (lang: TextLang, r: Resolved) => (lang === 'java' ? baseOf(r.type) : r.type.replace(/\[.*$/, ''))
+
+/**
+ * Everything `x.` should offer for this resolved type, or null when there is no
+ * knowing. `viewer` is the class the caret is in — the only one that sees its
+ * own private members.
+ */
+export function membersFor(lang: TextLang, r: Resolved, index: TypeIndex, pyTables: PyTables, viewer: string | null = null): Completion[] | null {
   const t = r.type.replace(/\s+/g, '')
   if (lang === 'java') {
-    if (/\[\]$/.test(t)) return [...JAVA_MEMBERS['[]'], ...JAVA_MEMBERS.Object]
+    if (/\[\]$/.test(t)) return [...JAVA_MEMBERS['[]'], ...OBJECT_MEMBERS]
     if (JAVA_PRIMS.has(t)) return null
   }
-  const base = lang === 'java' ? baseOf(t) : t.replace(/\[.*$/, '')
+  const base = ownerOf(lang, r)
   const user = index.get(base)
-  if (user) return userMembers(lang, user, r.isStatic, index, pyTables)
+  if (user) return userMembers(lang, user, r.isStatic, index, pyTables, viewer)
   if (lang === 'java') {
     const table = jdkMembers(base, r.isStatic)
     if (!table) return null
-    return r.isStatic ? [...table] : dedupe([...table, ...JAVA_MEMBERS.Object])
+    return r.isStatic ? [...table] : dedupe([...table, ...OBJECT_MEMBERS])
   }
   const table = pyTables[t] ?? pyTables[base] ?? libraryMembers(lang, base, r.isStatic, pyTables)
   return table.length ? [...table] : null
@@ -1361,7 +1373,9 @@ const PY_RESULTS: Record<string, string> = {
 function findUserMember(cls: ClassInfo, name: string, call: boolean, index: TypeIndex, lang: TextLang, seen = new Set<string>()): string | null | undefined {
   if (seen.has(cls.name)) return undefined
   seen.add(cls.name)
-  const own = cls.members.find((m) => m.name === name && (call ? m.kind === 'method' : m.kind !== 'method'))
+  const own = cls.members.find((m) => m.name === name && (m.kind === 'class' || (call ? m.kind === 'method' : m.kind !== 'method')))
+  // A class inside a module (`helper.Student`): an instance once called, the class itself before.
+  if (own?.kind === 'class') return call ? own.name : `static:${own.name}`
   if (own) return own.type && lang === 'python' ? own.type.replace(/\(\)$/, '') : own.type
   for (const s of cls.supers) {
     const parent = index.get(s)
@@ -1455,6 +1469,22 @@ export function memberContext(state: EditorState, pos: number, lang: TextLang): 
   return { name: text.slice(chain.from, dot), partial, from: pos - partial.length, dotPos: start + dot }
 }
 
+/**
+ * The member under a hover: `word` at `[from, to)` right after a dot, resolved the
+ * same way as the popup. Null when it is not a member access or the type is unknown.
+ */
+export function memberAt(lang: TextLang, state: EditorState, from: number, to: number, pyTables: PyTables): { owner: string; member: Completion } | null {
+  const rc = memberContext(state, to, lang)
+  if (!rc || rc.from !== from) return null
+  const doc = state.doc.toString()
+  const res = resolveReceiver(lang, doc, rc.dotPos, makeMemberTypes(pyTables))
+  if (!res?.resolved) return null
+  const members = membersFor(lang, res.resolved, typeIndexFor(lang, doc), pyTables, enclosingClass(lang, doc, rc.dotPos)?.name ?? null)
+  const name = state.sliceDoc(from, to)
+  const member = members?.find((m) => m.label === name)
+  return member ? { owner: ownerOf(lang, res.resolved), member } : null
+}
+
 /* ----------------------------------------------------------------- ranking */
 
 /** A rough "what type is wanted right where this call sits" — enough to float the
@@ -1512,11 +1542,15 @@ function rankByExpected(members: readonly Completion[], expected: Expected): Com
  *  the file, so a `.` after an unknown value still offers *something* useful. */
 export type MemberFallback = (ctx: CompletionContext) => CompletionResult | null
 
+/** The docs card for a member reached on `owner` (completions.ts builds it, so hover and popup agree). */
+export type MemberInfoPanel = (owner: string, member: Completion) => Completion['info']
+
 export function memberSource(
   lang: TextLang,
   fallback: MemberFallback | undefined,
   /** Every Python receiver table (see PyTables); ignored for Java. */
   pyTables: PyTables = PYTHON_MEMBERS,
+  infoFor?: MemberInfoPanel,
 ): CompletionSource {
   const types = makeMemberTypes(pyTables)
   // One slot: while the member name after a dot is typed, nothing before it moves.
@@ -1528,8 +1562,14 @@ export function memberSource(
     if (memo?.key !== key) {
       const doc = ctx.state.doc.toString()
       const res = resolveReceiver(lang, doc, rc.dotPos, types)
-      const members = res?.resolved ? membersFor(lang, res.resolved, typeIndexFor(lang, doc), pyTables) : null
-      memo = { key, members: members?.length ? members.map((m) => recordable(lang, m)) : null, exprFrom: res?.from ?? rc.dotPos }
+      const viewer = enclosingClass(lang, doc, rc.dotPos)?.name ?? null
+      const members = res?.resolved ? membersFor(lang, res.resolved, typeIndexFor(lang, doc), pyTables, viewer) : null
+      const owner = res?.resolved ? ownerOf(lang, res.resolved) : ''
+      memo = {
+        key,
+        members: members?.length ? members.map((m) => recordable(lang, infoFor && !m.info ? { ...m, info: infoFor(owner, m) } : m)) : null,
+        exprFrom: res?.from ?? rc.dotPos,
+      }
     }
     if (!memo.members) return fallback ? fallback(ctx) : null
     const options = lang === 'java' ? rankByExpected(memo.members, expectedTypeBefore(ctx.state, memo.exprFrom)) : [...memo.members]

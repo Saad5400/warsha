@@ -11,7 +11,11 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { EditorState } from '@codemirror/state'
+import { java } from '@codemirror/lang-java'
 import { javaMain, offered, withProjectFiles } from './helpers.ts'
+import { memberAt } from '../../src/editor/members.ts'
+import { memberCard } from '../../src/editor/completions.ts'
 import { unresolvedImportables } from '../../src/editor/imports.ts'
 
 type Lang = 'java' | 'python'
@@ -211,4 +215,66 @@ test('python: builtins, keywords and exceptions the courses name', () => {
   has('python', 'x = eva‸', 'eval')
   has('python', 'match x:\n    cas‸', 'case')
   has('python', 'x = 0\ndef f():\n    glo‸', 'global')
+})
+
+test('java: private members only from inside their own class', () => {
+  const student = 'class Student {\n  private String name;\n  private double gpa;\n  public String getName() { return name; }\n  void f(Student o) { o.‸ }\n}\n'
+  member('java', javaMain('', student), 'name', 'gpa', 'getName')
+  const outside = 'class Student {\n  private String name;\n  public String getName() { return name; }\n}\n'
+  member('java', javaMain('    Student s = new Student();\n    s.‸', outside), 'getName')
+  lacks('java', javaMain('    Student s = new Student();\n    s.‸', outside), 'name')
+  const py = 'class Account:\n    def __init__(self):\n        self.__balance = 0\n        self.owner = "x"\n\na = Account()\na.‸'
+  member('python', py, 'owner')
+  lacks('python', py, '__balance')
+})
+
+test("java: a type's own members rank above Object's", () => {
+  const { labels } = offered('java', javaMain('    Scanner sc = new Scanner(System.in);\n    sc.‸'))
+  assert.ok(labels.indexOf('nextInt') < labels.indexOf('equals'), labels.slice(0, 12).join(', '))
+})
+
+test('python: a module in the project, and a pandas column', () => {
+  withProjectFiles([{ path: 'helper.py', content: 'class Student:\n    def average(self):\n        return 0\n\ndef greet(name):\n    pass\n' }], () => {
+    member('python', 'import helper\nhelper.‸', 'Student', 'greet')
+    member('python', 'import helper\ns = helper.Student()\ns.‸', 'average')
+  })
+  member('python', 'import pandas as pd\ndf = pd.read_csv("a.csv")\ndf["score"].‸', 'mean', 'value_counts')
+})
+
+test('hover: a member card follows the receiver’s real type', () => {
+  const doc = javaMain('    int[] nums = {1};\n    int n = nums.length;')
+  const state = EditorState.create({ doc, extensions: [java()] })
+  const from = doc.indexOf('length')
+  const hit = memberAt('java', state, from, from + 'length'.length, {})
+  assert.ok(hit, 'resolved')
+  const card = memberCard('java', hit.owner, hit.member)
+  assert.match(card.doc, /slots/)
+  assert.doesNotMatch(card.doc, /characters/)
+})
+
+test('typing on past a dot ends a dictionary result (no Character.getNumericValue on e.getM)', async () => {
+  const { completionSources } = await import('../../src/editor/completions.ts')
+  const { CompletionContext } = await import('@codemirror/autocomplete')
+  const { ensureSyntaxTree } = await import('@codemirror/language')
+  const doc = javaMain('    try {} catch (Exception e) {\n      System.out.println(ex')
+  const at = doc.indexOf('(ex') + 3
+  const state = EditorState.create({ doc, selection: { anchor: at }, extensions: [java()] })
+  ensureSyntaxTree(state, doc.length, 5000)
+  const results = completionSources('java', () => [])
+    .map((s) => s(new CompletionContext(state, at, false)))
+    .filter((r): r is Exclude<typeof r, null | Promise<unknown>> => !!r && !(r instanceof Promise))
+  for (const r of results) {
+    const valid = r.validFor
+    const stillValid = typeof valid === 'function' ? valid('ex.getM', 0, 0, state) : valid instanceof RegExp ? valid.test('ex.getM') : false
+    assert.equal(stillValid, false, `a source kept its result past the dot: ${r.options.slice(0, 3).map((o) => o.label)}`)
+  }
+  // While the text could still be a dotted label, the result stays (no flicker on `System.ou`).
+  const sys = javaMain('    Sys')
+  const sysAt = sys.indexOf('Sys') + 3
+  const s2 = EditorState.create({ doc: sys, selection: { anchor: sysAt }, extensions: [java()] })
+  ensureSyntaxTree(s2, sys.length, 5000)
+  const kept = completionSources('java', () => [])
+    .map((s) => s(new CompletionContext(s2, sysAt, false)))
+    .some((r) => r && !(r instanceof Promise) && typeof r.validFor === 'function' && r.validFor('System.ou', 0, 0, s2))
+  assert.ok(kept)
 })

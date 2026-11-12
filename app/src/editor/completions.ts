@@ -1433,6 +1433,36 @@ const WORD_BEFORE = /[\w$]+/
 /** Words shorter than this are noise; they match half the file. */
 const MIN_IDENT_CHARS = 2
 
+/**
+ * Types whose members the bare-name docs (`length`, `nextInt`, `append`…) were
+ * written for. A member reached on any other type (`arr.length`, `account.add`)
+ * gets a card built from its own row instead, so hover never explains an array's
+ * `length` as a String's.
+ */
+const BARE_DOC_OWNERS: Record<CompletionLang, ReadonlySet<string>> = {
+  java: new Set(['String', 'Scanner', 'ArrayList', 'List', 'HashMap', 'Map', 'PrintStream', 'StringBuilder', 'Random', 'HashSet', 'Set', 'LinkedList']),
+  python: new Set(['str', 'list', 'dict', 'set', 'file', 'tuple']),
+}
+
+/**
+ * The card for `member` reached on a value of type `owner` (`ArrayList`, `int[]`,
+ * `Account`, `ndarray`): the dictionary's qualified entry, its bare entry when the
+ * owner is the type it was written for, else one made from the member's own row.
+ */
+export function memberCard(lang: CompletionLang, owner: string, member: Completion): BuiltinDoc {
+  const qualified = BUILTIN_DOCS[lang][`${owner}.${member.label}`]
+  if (qualified) return qualified
+  const bare = BUILTIN_DOCS[lang][member.label]
+  if (bare && BARE_DOC_OWNERS[lang].has(owner)) return bare
+  const [head, ...rest] = (member.detail ?? '').split(' — ')
+  const said = rest.join(' — ').trim()
+  const call = member.type === 'method' ? '()' : ''
+  return {
+    signature: `${owner}.${member.label}${call}${head && !head.startsWith('(') ? ` → ${head.split(',')[0]}` : ''}`,
+    doc: said ? said[0].toUpperCase() + said.slice(1) + (/[.!?]$/.test(said) ? '' : '.') : head || 'A member of this type.',
+  }
+}
+
 /** The docs card as a completion's `info` panel — the same card the hover shows. */
 const docInfo = (lang: CompletionLang, label: string): Pick<Completion, 'info'> => {
   const entry = docForLabel(lang, label)
@@ -1469,7 +1499,8 @@ const staticOptions = (lang: CompletionLang): Completion[] => {
   const api = lang === 'java' ? JAVA_API : PYTHON_API
   const snippets = lang === 'java' ? JAVA_SNIPPETS : PYTHON_SNIPPETS
   const apiCompletions = api.map(([label, detail]): Completion => {
-    const type = label.includes('.') ? 'method' : /^[A-Z]/.test(label) ? 'class' : 'function'
+    const last = label.slice(label.lastIndexOf('.') + 1)
+    const type = label.includes('.') ? (/^[A-Z][A-Z0-9_]*$/.test(last) ? 'constant' : 'method') : /^[A-Z]/.test(label) ? 'class' : 'function'
     return lang === 'java'
       ? javaApiCompletion(label, detail, type)
       : { label, detail, type, boost: 10, ...docInfo('python', label) }
@@ -1590,7 +1621,18 @@ function charClass(chars: Record<string, true>): string {
 function staticSource(lang: CompletionLang): CompletionSource {
   const all = staticOptions(lang)
   const rest = all.filter((o) => !statementOnly(lang, o))
-  const [validFor, match] = listMatchers(all)
+  const [listValid, match] = listMatchers(all)
+  // The qualifiers dotted labels start with (`System`, `System.out`, `Math`, `os.path`…).
+  const qualifiers = new Set<string>()
+  for (const { label } of all) for (let i = label.indexOf('.'); i !== -1; i = label.indexOf('.', i + 1)) qualifiers.add(label.slice(0, i))
+  // Typing on past a dot keeps this result only while the text could still be one of
+  // those labels — `e.getM` is a member access (re-query, the member source takes it),
+  // not a filter over `Character.getNumericValue`.
+  const validFor = (text: string) => {
+    if (!listValid.test(text)) return false
+    const dot = text.lastIndexOf('.')
+    return dot === -1 || qualifiers.has(text.slice(0, dot))
+  }
   return (ctx: CompletionContext) => {
     if (memberContext(ctx.state, ctx.pos, lang)) return null
     // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the
@@ -1691,6 +1733,12 @@ function pythonModuleMembers(): Record<string, Completion[]> {
   return out
 }
 
+let pyTablesMemo: PyTables | null = null
+/** Every Python receiver table, built once: the hand-written receivers win over the dictionary-derived module ones. */
+export function pythonTables(): PyTables {
+  return (pyTablesMemo ??= { ...pythonModuleMembers(), ...PYTHON_MEMBERS })
+}
+
 export function completionSources(lang: CompletionLang | null, projectWords: () => readonly string[]): CompletionSource[] {
   const collect = makeIdentifierCollector(lang, projectWords)
   // In a `.` context the member source owns the popup; the plain identifier source
@@ -1699,11 +1747,11 @@ export function completionSources(lang: CompletionLang | null, projectWords: () 
     lang && memberContext(ctx.state, ctx.pos, lang) ? null : collect(ctx),
   )
   if (!lang) return [ident]
-  // Built once: the hand-written receivers win over the dictionary-derived module ones.
-  const pyTables: PyTables = lang === 'python' ? { ...pythonModuleMembers(), ...PYTHON_MEMBERS } : {}
+  const pyTables = lang === 'python' ? pythonTables() : {}
+  const memberInfo = (owner: string, m: Completion) => () => renderDocCard(memberCard(lang, owner, m))
   return [
     ifNotIn(NOT_IN, nameSource(lang)),
-    ifNotIn(NOT_IN, memberSource(lang, (ctx) => collect(ctx, true), pyTables)),
+    ifNotIn(NOT_IN, memberSource(lang, (ctx) => collect(ctx, true), pyTables, memberInfo)),
     ifNotIn(NOT_IN, importStatementSource(lang, pyTables)),
     ifNotIn(NOT_IN, staticSource(lang)),
     ident,
