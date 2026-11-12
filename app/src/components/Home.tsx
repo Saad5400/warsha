@@ -388,7 +388,7 @@ function ContinueCard({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="text-micro leading-[1.4] text-text-3">{COPY.homeContinue}</span>
-        <span className="truncate text-[15px] leading-[1.3] font-semibold text-text-1">{project.name}</span>
+        <span dir="auto" className="truncate [text-align:match-parent] text-[15px] leading-[1.3] font-semibold text-text-1">{project.name}</span>
         <span className="truncate text-meta leading-normal text-text-3">{metaLine(facts, project.lastOpenedAt, locale)}</span>
       </span>
       <span
@@ -476,7 +476,7 @@ function ProjectCard({
             {pinned ? (
               <IconStarFilled size={13} className="flex-none text-text-2" aria-label={COPY.a11yPinned} />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
+            <span dir="auto" className="min-w-0 flex-1 truncate [text-align:match-parent] text-btn leading-[1.3] font-semibold text-text-1">{project.name}</span>
             {/* Cloud glyph: a green check only when confirmed backed up as the owner; a
                 neutral cloud when the project belongs to an account but this session isn't
                 actively syncing it (signed out, or a different account). Anonymous → none. */}
@@ -561,7 +561,7 @@ function CloudCard({
             <IconCloud size={20} />
           </span>
           <span className="mt-0.5 flex min-w-0 flex-1 items-center gap-1.5">
-            <span className="min-w-0 flex-1 truncate text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
+            <span dir="auto" className="min-w-0 flex-1 truncate [text-align:match-parent] text-btn leading-[1.3] font-semibold text-text-1">{entry.name}</span>
           </span>
           {canDelete ? (
             <span className="pointer-events-auto -me-1 -mt-1 flex-none">
