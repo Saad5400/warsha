@@ -203,12 +203,15 @@ class DebugStore {
     if (this.state.phase !== 'inactive' || this.state.debugging)
       this.set({ phase: 'inactive', debugging: false, stopped: null, frameIndex: 0, watchResults: {} })
   }
-  onStop(stopped: DebugStopped) {
+  /** Stops and resumes come from whoever runs code; only the owner of the live debug session is heard. */
+  onStop(stopped: DebugStopped, owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.varCache.clear()
     this.set({ phase: 'paused', stopped, frameIndex: 0, stopSeq: this.state.stopSeq + 1 })
     void this.refreshWatches()
   }
-  onResume() {
+  onResume(owner: unknown = 'program') {
+    if (this.busyFor(owner)) return
     this.varCache.clear()
     if (this.state.phase === 'paused') this.set({ phase: 'running', stopped: null, frameIndex: 0 })
   }
@@ -218,7 +221,7 @@ class DebugStore {
     if (this.state.phase !== 'paused' || !this.session) return
     this.session.resume(cmd)
     // Optimistic: the toolbar flips to Pause immediately; onDebugResume confirms.
-    this.onResume()
+    this.onResume(this.owner)
   }
   pause() {
     if (this.state.phase === 'running') this.session?.pause()

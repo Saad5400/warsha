@@ -1343,6 +1343,11 @@ async function runCell(msg) {
   capped = false
   stdinInterrupted = false
   try {
+    // Pyodide's interrupt buffer is detached while packages install: a KeyboardInterrupt raised
+    // inside its async machinery (a download's future callback) leaves the install unsettled
+    // forever. An interrupt asked for meanwhile is kept in the sticky word and honoured the
+    // moment the downloads end (interruptedBeforeStart).
+    if (intBuf) pyodide.setInterruptBuffer(undefined)
     // pip first: a package it installs may be what the cell imports next.
     await preparePip(msg.pip)
     // The kernel's own IPython shim answers `from IPython.display import …`;
@@ -1359,6 +1364,10 @@ async function runCell(msg) {
     }
     syncKernelFiles(msg.files, msg.workspace ?? '')
     if (interruptedBeforeStart()) return
+    if (intBuf) {
+      Atomics.store(intBuf, 0, 0)
+      pyodide.setInterruptBuffer(intBuf)
+    }
     const t0 = performance.now()
     const status = runCellFn(
       msg.notebook,
@@ -1382,6 +1391,9 @@ async function runCell(msg) {
     }
     self.postMessage({ type: 'done', code: String(status) === 'ok' ? 0 : 1, ms: Math.round(performance.now() - t0) })
   } catch (e) {
+    // An Interrupt during %pip surfaces here, raised inside the async install: it is an
+    // interrupted cell, not a runtime failure.
+    if (interruptedBeforeStart()) return
     self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
   }
 }

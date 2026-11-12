@@ -38,6 +38,9 @@ export const TRIMMED_NOTE = '[Warsha: earlier output was trimmed to keep this ce
  * print loop costs O(chunk), not O(everything printed so far).
  */
 export function appendStreamText(prev: string, chunk: string): string {
+  // Linear only in combination with the session's per-frame coalescing (session.ts, `stream`):
+  // the concatenation below is O(1), but finding the last newline makes V8 flatten `prev`, an
+  // O(length) copy — fine once a frame, quadratic if called once per printed chunk.
   const stableEnd = prev.lastIndexOf('\n') + 1
   const tail = prev.slice(stableEnd) + chunk
   const cut = tail.lastIndexOf('\n') + 1

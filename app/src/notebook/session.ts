@@ -69,8 +69,12 @@ export interface SessionMessages {
   debugBusy: string
 }
 
-/** Interrupt that has not landed after this long (stuck in C code) restarts the kernel. */
-const INTERRUPT_ESCALATE_MS = 4000
+/** How long an Interrupt may take. `escalateMs`: a cell whose code is RUNNING and has not
+ *  stopped by then is not listening (native code), so the kernel is restarted. A cell still
+ *  downloading its packages is given until `ceilingMs` — the worker honours the interrupt the
+ *  moment the download ends — but a download that never ends is ended there the hard way.
+ *  Mutable for tests. */
+export const INTERRUPT_LIMITS = { escalateMs: 4000, ceilingMs: 30000 }
 /** Stream chunks are applied to the model at most once a frame, or after this when frames stall (a background tab). */
 const STREAM_FLUSH_MS = 100
 
@@ -179,15 +183,16 @@ export class NotebookSession {
     this.kernel.interrupt()
     clearTimeout(this.escalate)
     const running = this.state.running
+    const asked = Date.now()
     const arm = () => {
       this.escalate = window.setTimeout(() => {
         if (this.state.running !== running || !this.session) return
-        // Still downloading: the worker honours the interrupt the moment the download ends.
-        if (!this.started) return arm()
-        // Running and not listening (native code). End it the hard way.
+        // Still downloading: wait for the download to end, up to the ceiling.
+        if (!this.started && Date.now() - asked < INTERRUPT_LIMITS.ceilingMs) return arm()
+        // Running and not listening (native code), or a download that never ends.
         this.set({ notice: this.messages().forcedRestart })
         this.session.kill()
-      }, INTERRUPT_ESCALATE_MS)
+      }, INTERRUPT_LIMITS.escalateMs)
     }
     arm()
   }
@@ -381,8 +386,8 @@ export class NotebookSession {
             }),
             onStdinRequest: before(() => this.set({ waiting: id })),
             onFilesChanged: before((change: FilesChange) => this.host.onFilesChanged(change)),
-            onDebugStop: before((stopped: DebugStopped) => debugStore.onStop(stopped)),
-            onDebugResume: () => live() && debugStore.onResume(),
+            onDebugStop: before((stopped: DebugStopped) => debugStore.onStop(stopped, this)),
+            onDebugResume: () => live() && debugStore.onResume(this),
             onExit: (c) => {
               flush()
               resolve(c)
