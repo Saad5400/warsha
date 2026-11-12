@@ -1157,7 +1157,21 @@ if (ONLY.includes('Q')) {
     await importNotebook(page, qaFile)
     await page.waitForSelector('.notebook-view [data-cell-id="q7"]', { timeout: 30000 })
     await page.waitForTimeout(1200)
-    check('Q minor 14: the phone kernel pill has a label, not a bare dot', await page.evaluate(() => { const s = document.querySelector('[data-kernel] span:last-child'); return !!s && getComputedStyle(s).display !== 'none' && s.textContent.trim().length > 0 }))
+    // The kernel pill shows a whole word at every width — never a bare dot, never "Pytho…" —
+    // and the toolbar never overflows for it.
+    for (const w of [390, 360, 600, 768, 1024]) {
+      await page.setViewportSize({ width: w, height: 844 })
+      await page.waitForTimeout(250)
+      const pill = await page.evaluate(() => {
+        const label = [...document.querySelectorAll('[data-kernel] [data-kernel-label]')].find((e) => getComputedStyle(e).display !== 'none')
+        const bar = document.querySelector('.notebook-toolbar [role="toolbar"]')
+        const r = label?.getBoundingClientRect(), b = bar.getBoundingClientRect()
+        return { text: label?.textContent ?? null, whole: !!label && label.scrollWidth <= label.clientWidth + 0.5, inBar: !!r && r.right <= b.right + 0.5 && r.left >= b.left - 0.5, barFits: bar.scrollWidth <= bar.clientWidth + 0.5 }
+      })
+      check(`Q minor 14: at ${w}px the kernel pill shows a whole word, inside a toolbar that fits`, !!pill.text && pill.whole && pill.inBar && pill.barFits, J(pill))
+    }
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForTimeout(250)
     await page.locator('.notebook-view [data-cell-id="q5"]').click()
     await page.waitForTimeout(300)
     await page.locator('.notebook-view [data-cell-id="q5"]').getByRole('button', { name: 'Cell actions' }).last().click()

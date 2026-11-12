@@ -519,9 +519,11 @@ export function runStatusOf(s: SessionState): 'idle' | 'preparing' | 'running' |
 }
 
 /** The kernel's state in words — the notebook toolbar's pill and the status bar read this one function. */
-export function kernelLabel(s: SessionState): string {
-  if (s.kernel === 'starting') return COPY.nbKernelStarting
-  if (s.kernel === 'interrupting') return COPY.nbKernelInterrupting
-  if (sessionBusy(s)) return COPY.nbKernelBusy
-  return s.kernel === 'off' ? COPY.nbKernelOff : COPY.nbKernelIdle
+export function kernelLabel(s: SessionState, short = false): string {
+  // `short`: one word for a phone's toolbar ("Ready", «جاهز»), where the full label truncated.
+  if (s.kernel === 'starting') return short ? COPY.nbKernelShortStarting : COPY.nbKernelStarting
+  if (s.kernel === 'interrupting') return short ? COPY.nbKernelShortInterrupting : COPY.nbKernelInterrupting
+  if (sessionBusy(s)) return short ? COPY.nbKernelShortBusy : COPY.nbKernelBusy
+  if (s.kernel === 'off') return short ? COPY.nbKernelShortOff : COPY.nbKernelOff
+  return short ? COPY.nbKernelShortIdle : COPY.nbKernelIdle
 }
