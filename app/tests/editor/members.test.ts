@@ -279,3 +279,14 @@ test('a dot ends a dictionary result (no Character.getNumericValue on e.getM, no
   assert.ok(kept.some((r) => (r as { validFor: (t: string, f: number, to: number, s: EditorState) => boolean }).validFor('Syste', 0, 0, s2)))
   assert.ok(kept.every((r) => !(r as { validFor: (t: string, f: number, to: number, s: EditorState) => boolean }).validFor('System.', 0, 0, s2)))
 })
+
+test('python: a nested module chains (os.path)', () => {
+  member('python', 'import os\nos.pa‸', 'path')
+  member('python', 'import os\nos.path.‸', 'join', 'exists', 'basename')
+})
+
+test('java: a fully-qualified declared type resolves like the short one', () => {
+  member('java', javaMain('    java.util.List<Integer> xs = new java.util.ArrayList<>();\n    xs.‸'), 'add', 'size')
+  member('java', javaMain('    java.util.ArrayList<String> ys = new java.util.ArrayList<>();\n    ys.get(0).len‸'), 'length')
+  member('java', javaMain('    List<Integer> zs = new ArrayList<>();\n    zs.‸'), 'add', 'size')
+})
