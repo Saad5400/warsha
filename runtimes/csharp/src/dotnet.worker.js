@@ -165,11 +165,22 @@ async function boot() {
   self.postMessage({ type: 'progress', phase: 'download', message: DOWNLOAD_MESSAGE })
 
   const restoreFetch = installFetchProgress()
+  // dotnet.create() fetches its assets in parallel. When the network goes (offline,
+  // a dropped link), the first failure rejects create() and reaches the student as
+  // the failure card via 'fatal'; every other in-flight asset then rejects with no
+  // one listening, and those surfaced as uncaught "Failed to fetch" errors that say
+  // nothing the card does not. Only network rejections, and only while loading.
+  const quietNetworkRejections = (e) => {
+    if (/failed to fetch|networkerror|load failed/i.test(String((e.reason && e.reason.message) || e.reason))) e.preventDefault()
+  }
+  self.addEventListener('unhandledrejection', quietNetworkRejections)
   let getAssemblyExports, getConfig, runMain, setModuleImports
   try {
     ;({ getAssemblyExports, getConfig, runMain, setModuleImports } = await dotnet.create())
   } finally {
     restoreFetch()
+    // Late stragglers still reject after create() settles: give them a moment.
+    setTimeout(() => self.removeEventListener('unhandledrejection', quietNetworkRejections), 5000)
   }
 
   // stdout/stderr stream out per write; stdin blocks on the SAB.
@@ -271,9 +282,21 @@ self.onmessage = (ev) => {
       const contents = paths.map((p) => msg.files[p])
       const t0 = performance.now()
       lastBpGen = -1
-      const code = exports.Runner.Run(paths, contents, msg.entry, dctrl ? msg.debug | 0 : 0)
+      let code
+      let exited = false
+      try {
+        code = exports.Runner.Run(paths, contents, msg.entry, dctrl ? msg.debug | 0 : 0)
+      } catch (e) {
+        // Environment.Exit(n) does not return: the runtime unwinds out of Run
+        // with emscripten's ExitStatus. It is the program's own exit code, not
+        // an engine failure -- reporting it as one printed
+        // "[csharp runtime error] [object Object]" and exit code 1.
+        if (!(e && e.name === 'ExitStatus' && typeof e.status === 'number')) throw e
+        code = e.status
+        exited = true
+      }
       postFileChanges()
-      self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0) })
+      self.postMessage({ type: 'done', code: Number(code) | 0, ms: Math.round(performance.now() - t0), exited })
     } catch (e) {
       self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
     }

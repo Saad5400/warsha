@@ -79,6 +79,9 @@ export const EN = {
    * line, no failure card — not the student's fault, and Run is the only next step. */
   engineLost: 'The language engine stopped responding, so Warsha shut it down. Tap Run to start it again.',
   engineRetry: 'Try again',
+  /** What the failure headlines above call an engine that is not one language: a page, or nothing recognised. */
+  engineNamePage: 'the web preview',
+  engineNameUnknown: 'the language',
   engineDetails: 'Details',
   /** Run went ahead on what is on screen because a save did not land. */
   runUnsaved:

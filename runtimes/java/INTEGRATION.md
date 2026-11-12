@@ -728,6 +728,22 @@ working, not assumed (the harness asserts `deleted>0 failed=0`, and 16 cleanup
 reports in one suite run were all `failed=0`). Editing a file between runs takes
 effect; a file removed from the set is really gone.
 
+**Every browser tab gets its own share of `/files/` (2026-11-12).** `/files/` is
+one IndexedDB for the whole origin, but each tab runs its own JVM, and each JVM
+used to treat it as its own: a second tab's build (even its boot-time warm-up)
+`gcOldRuns`-deleted the first tab's run directory while that program was still
+running (`NoClassDefFoundError` for any class not yet loaded), and both staged
+their data files into one `/files/warsha-work`, so the first program read the
+other project's `data.txt` and then reported it back as a file it had written.
+Run ids are now `<scope>_<unique>`, where the scope is minted per tab
+(`tabScope()` in `javaRuntime.ts`: sessionStorage, so a reload keeps it and its
+compile cache; a Web Lock, so a duplicated tab mints its own). The workspace is
+`/files/warsha-work-<scope>`; `gcOldRuns` deletes only its own older runs,
+unscoped leftovers and the directories of a scope minted over seven days ago (a
+tab long gone); the warm-up deletes nothing; `recoverReuse` adopts only its own
+scope's compile. `BootstrapSelfTest` covers the rules, `tools/qa/real-world-check.mjs
+projects` the two-tab run.
+
 **Student code shares a classpath with `warsha.*`.** A student could call
 `warsha.Bridge` directly and spoof a status or read another run's output.
 Irrelevant for a teaching tool, noted so nobody is surprised.

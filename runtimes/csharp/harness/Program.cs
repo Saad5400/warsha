@@ -174,12 +174,12 @@ public partial class Runner
         catch (TargetInvocationException tie) when (tie.InnerException is not null)
         {
             // Environment.Exit surfaces here on wasm; treat it as a real exit code.
-            WriteErr("\n" + tie.InnerException + "\n");
+            WriteErr("\n" + UnhandledReport(tie.InnerException) + "\n");
             return 1;
         }
         catch (Exception ex)
         {
-            WriteErr("\n" + ex + "\n");
+            WriteErr("\n" + UnhandledReport(ex) + "\n");
             return 1;
         }
         finally
@@ -189,6 +189,22 @@ public partial class Runner
             Console.SetError(savedErr);
             alc.Unload();
         }
+    }
+
+    /// <summary>
+    /// What `dotnet run` prints for an exception nobody caught. The student's
+    /// entry point runs through MethodInfo.Invoke, so ex.ToString() ended in
+    /// four frames of System.Reflection invoke machinery that are Warsha's, not
+    /// the program's; those (and only those) are dropped. Frames inside the BCL
+    /// that the program itself called, like int.Parse's, stay.
+    /// </summary>
+    private static string UnhandledReport(Exception ex)
+    {
+        var frames = ex.ToString()
+            .Split('\n')
+            .Where(line => !line.TrimStart().StartsWith("at System.Reflection.", StringComparison.Ordinal)
+                        && !line.TrimStart().StartsWith("at System.RuntimeMethodHandle.", StringComparison.Ordinal));
+        return "Unhandled exception. " + string.Join("\n", frames).TrimEnd();
     }
 
     /// <summary>

@@ -309,11 +309,15 @@ export class ClangRuntime implements Runtime {
       return Promise.reject(new Error(NOT_ISOLATED))
     }
 
-    if (!this.sab) {
-      this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
-      this.ctrl = new Int32Array(this.sab, 0, 2)
-      this.data = new Uint8Array(this.sab, HEADER_BYTES)
-    }
+    // A FRESH stdin buffer per worker. terminate() does not stop a worker parked
+    // in its stdin Atomics.wait loop at once, and the old one used to share this
+    // buffer with its replacement: Stop at an input prompt, Run again at once, and
+    // the dying worker woke up, took the line the student typed for the NEW run
+    // and the program sat at its prompt forever (measured: 8 of 8 reruns lost
+    // their input right after a Stop at input()).
+    this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
+    this.ctrl = new Int32Array(this.sab, 0, 2)
+    this.data = new Uint8Array(this.sab, HEADER_BYTES)
 
     this.lastProgress = null
 

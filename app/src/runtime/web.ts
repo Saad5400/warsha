@@ -1,5 +1,6 @@
 import { bundleProject, ensureBundler, needsBundle } from './bundle'
 import { assetUrl } from './assetUrl'
+import { CONSOLE_FORMAT_SOURCE } from './consoleFormat'
 import type { ProgressReport, RunContext, RunIO, RunSession, Runtime, SourceFile } from './types'
 
 /**
@@ -92,19 +93,19 @@ function bridge(nonce: string): string {
   return `(function(){
   var NONCE=${JSON.stringify(nonce)};
   function send(stream,text){
+    if(!text)return;
     try{parent.postMessage({mark:${JSON.stringify(MARK)},nonce:NONCE,stream:stream,text:String(text)},'*')}catch(e){}
   }
-  function fmt(a){
-    if(typeof a==='string')return a;
-    if(a instanceof Error)return a.stack||a.message||String(a);
-    try{return JSON.stringify(a)}catch(e){return String(a)}
-  }
-  function line(args){return Array.prototype.map.call(args,fmt).join(' ')+'\\n'}
+  ${CONSOLE_FORMAT_SOURCE}
   var c=window.console||{};
-  ['log','info','debug'].forEach(function(k){var o=c[k];c[k]=function(){send('out',line(arguments));if(o)try{o.apply(c,arguments)}catch(e){}}});
-  ['warn','error'].forEach(function(k){var o=c[k];c[k]=function(){send('err',line(arguments));if(o)try{o.apply(c,arguments)}catch(e){}}});
+  function wrap(k,stream,render){var o=c[k];c[k]=function(){send(stream,render(arguments));if(o)try{o.apply(c,arguments)}catch(e){}}}
+  ['log','info','debug'].forEach(function(k){wrap(k,'out',__wline)});
+  ['warn','error','trace'].forEach(function(k){wrap(k,'err',__wline)});
+  wrap('dir','out',function(a){return __wfmt(a[0])+'\\n'});
+  wrap('table','out',function(a){return __wtable(a[0],a[1])});
+  wrap('assert','err',function(a){return a[0]?'':__wline(['Assertion failed'+(a.length>1?':':'')].concat(Array.prototype.slice.call(a,1)))});
   window.addEventListener('error',function(e){send('err',(e.message||'Script error')+(e.filename?' ('+(e.lineno||0)+':'+(e.colno||0)+')':'')+'\\n')});
-  window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;send('err','Uncaught (in promise) '+fmt(r)+'\\n')});
+  window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;send('err','Uncaught (in promise) '+__wfmt(r)+'\\n')});
 })();`
 }
 

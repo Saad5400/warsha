@@ -54,7 +54,8 @@ type FromWorker =
   | { type: 'files'; written: SourceFile[]; deleted: string[]; skipped: string[] }
   | { type: 'debug-stop'; json: string }
   | { type: 'debug-vars'; json: string }
-  | { type: 'done'; code: number; ms: number }
+  /** `exited`: the program called Environment.Exit, which shut this worker's .NET runtime down. */
+  | { type: 'done'; code: number; ms: number; exited?: boolean }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
 
 export interface CSharpRuntimeOptions {
@@ -336,16 +337,19 @@ export class CSharpRuntime implements Runtime {
       return Promise.reject(new Error(NOT_ISOLATED))
     }
 
-    if (!this.sab) {
-      this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
-      this.ctrl = new Int32Array(this.sab, 0, 2)
-      this.data = new Uint8Array(this.sab, HEADER_BYTES)
-    }
-    if (!this.dsab) {
-      this.dsab = new SharedArrayBuffer(D_CMD + D_CMD_CAP)
-      this.dctrl = new Int32Array(this.dsab, 0, 8)
-      this.dbytes = new Uint8Array(this.dsab)
-    }
+    // A FRESH stdin buffer per worker. terminate() does not stop a worker parked
+    // in its stdin Atomics.wait loop at once, and the old one used to share this
+    // buffer with its replacement: Stop at an input prompt, Run again at once, and
+    // the dying worker woke up, took the line the student typed for the NEW run
+    // and the program sat at its prompt forever (measured: 8 of 8 reruns lost
+    // their input right after a Stop at input()).
+    this.sab = new SharedArrayBuffer(HEADER_BYTES + STDIN_CAPACITY)
+    this.ctrl = new Int32Array(this.sab, 0, 2)
+    this.data = new Uint8Array(this.sab, HEADER_BYTES)
+    // The debugger's buffer too, for the same reason.
+    this.dsab = new SharedArrayBuffer(D_CMD + D_CMD_CAP)
+    this.dctrl = new Int32Array(this.dsab, 0, 8)
+    this.dbytes = new Uint8Array(this.dsab)
 
     this.lastProgress = null
 
@@ -423,6 +427,8 @@ export class CSharpRuntime implements Runtime {
 
       case 'done':
         this.finish(msg.code)
+        // A runtime the program exited cannot run anything else.
+        if (msg.exited) this.replaceWorker()
         return
 
       case 'fatal':
@@ -474,14 +480,17 @@ export class CSharpRuntime implements Runtime {
 
   private killSession(active: Active): void {
     if (active.ended) return
+    this.finish(null)
+    this.replaceWorker()
+  }
+
+  /** Throws the worker away and starts a fresh one, so the next run() only waits for whatever is left of the re-warm. Failures surface on the next load()/run(). */
+  private replaceWorker(): void {
     // terminate() kills the thread even mid-Atomics.wait and mid-CPU-loop.
     this.worker?.terminate()
     this.worker = null
     this.booting = null
     this.bootSettle = null
-    this.finish(null)
-    // Respawn immediately so the next run() only waits for whatever is left of
-    // the re-warm. Failures surface on the next load()/run().
     this.booting = this.spawn()
     this.booting.catch(() => {})
   }

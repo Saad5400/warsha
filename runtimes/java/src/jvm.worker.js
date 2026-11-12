@@ -51,6 +51,14 @@ const JAVA_VERSION = 17
  * resolves nothing. See build-bootstrap.sh. */
 const DEFAULT_BOOT_JAR_PATH = '/app/warsha-boot.jar'
 
+/* The student program's working directory, set per run from its id -- MUST
+ * match Workspace.rootFor in bootstrap/Workspace.java, plus the trailing slash. */
+let workdir = '/files/warsha-work/'
+const workdirFor = (runId) => {
+  const scope = /^([0-9a-z]+)_/.exec(runId)
+  return scope ? `/files/warsha-work-${scope[1]}/` : '/files/warsha-work/'
+}
+
 /* Engine assets worth measuring, for a determinate progress bar.
  *
  * Streaming them ourselves reports real byte counts and leaves them in the HTTP
@@ -363,7 +371,118 @@ self.onmessage = (event) => {
   }
 }
 
+// --- working directory -----------------------------------------------------
+
+/**
+ * Makes a relative file name resolve inside the program's working directory.
+ *
+ * CheerpJ has no cwd: cheerpOS.js's cheerpjNormalizePath pins every relative
+ * path to /files/ ("TODO: Support cwd" in its source). Workspace points
+ * user.dir, java.io's cached copy of it and NIO's default directory at the
+ * workspace, but plain java.io hands a relative name straight to the platform
+ * -- so `new Scanner(new File("data.txt"))`, `new FileReader("data.txt")` and
+ * `new FileWriter("out.txt")`, the file I/O every Java course teaches, read
+ * from and wrote to /files/ instead: the project's data.txt was "not found",
+ * and out.txt never reached the explorer (it piled up in IndexedDB instead).
+ *
+ * cheerpOS.js is a classic script imported into this worker's global scope and
+ * calls the function by its global name, so replacing the global is enough.
+ * Only relative paths change; everything Warsha and CheerpJ themselves open is
+ * absolute (/app/, /lt/, /files/warsha-run-*, /str/). Workspace's
+ * `relative=ok|MISSES` probe on the internal channel is the check that this
+ * still takes after a CheerpJ upgrade.
+ */
+function anchorRelativePaths() {
+  const normalize = self.cheerpjNormalizePath
+  if (typeof normalize !== 'function') {
+    post({ type: 'internal', level: 'warn', text: 'warsha-workdir: cheerpjNormalizePath not found; relative java.io paths resolve to /files/', noise: false })
+    return
+  }
+  self.cheerpjNormalizePath = (path) =>
+    normalize(typeof path === 'string' && path !== '' && !path.startsWith('/') ? workdir + path : path)
+}
+
 // --- boot ------------------------------------------------------------------
+
+/**
+ * Reports the bytes CheerpJ downloads during a phase -- the boot, or the first
+ * compile -- as download progress.
+ *
+ * The measured prefetch above is only the ~4 MB engine core. Booting then
+ * pulls the Java 17 runtime itself, and the first compile pulls every platform
+ * class ECJ touches -- tens of MB of module image, fetched lazily in ranged
+ * chunks -- while the worker said nothing but "Starting the Java engine…" or
+ * "Compiling your code…" with a seconds counter. On a slow school or phone
+ * connection that silence outlasted the shell's stall watchdog, which failed a
+ * download that was progressing fine. Each chunk now counts, so a moving byte
+ * total is both what the student sees and what keeps the watchdog fed.
+ *
+ * cheerpOS.js calls the global fetch per chunk, so wrapping it is enough. The
+ * count reads a clone, never the body CheerpJ consumes (a rebuilt Response
+ * would lose `url`, which CheerpJ reads). Silent unless `gate` announced: a
+ * warm start must not flash a bar. Returns the function that unwraps fetch.
+ *
+ * Every chunk reports, so the shell's stall watchdog (app/src/runtime/
+ * stallWatchdog.ts) restarts its window for as long as bytes arrive. While they
+ * do, `downloadReport` is what is posted (the boot says `download`: 45 s from
+ * the last chunk, so a dead link is still caught fast); a second without one
+ * goes back to `phaseReport` (boot or compile: CPU work, minutes of budget).
+ */
+function reportDownloads(gate, phaseReport, expectedBytes, downloadReport = phaseReport) {
+  const original = self.fetch
+  let loaded = 0
+  let lastReport = 0
+  let quiet = 0
+  let stopped = false
+  const settle = () => {
+    clearTimeout(quiet)
+    // No chunk for a second: what follows is the phase's own work, not a download.
+    quiet = setTimeout(() => {
+      if (!stopped && gate.announced) post(phaseReport)
+    }, QUIET_MS)
+  }
+  self.fetch = async (...args) => {
+    const response = await original(...args)
+    if (response.body && !stopped) {
+      const reader = response.clone().body.getReader()
+      ;(async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            // A chunk still streaming in after the phase ended belongs to the next one.
+            if (done || stopped) return
+            loaded += value.byteLength
+            const now = performance.now()
+            if (gate.announced && now - lastReport > 250) {
+              lastReport = now
+              // A floor, never a promise: past it the bar just keeps up with `loaded`.
+              post({ ...downloadReport, loaded, total: Math.max(expectedBytes, loaded) })
+            }
+            settle()
+          }
+        } catch {
+          // The real reader's error is CheerpJ's to report.
+        }
+      })()
+    }
+    return response
+  }
+  return () => {
+    stopped = true
+    clearTimeout(quiet)
+    self.fetch = original
+  }
+}
+
+/** How long without a downloaded chunk before a phase's progress says what it is doing again. */
+const QUIET_MS = 1000
+
+/* What a cold boot and a cold first compile download, measured for the PINNED
+ * CheerpJ 4.3 / Java 17 runtime (fresh profile, a Scanner program): ~10.1 MB and
+ * ~5.6 MB. Used as the floor of `total` so the status bar can show a percent, the
+ * same way the C and C# workers floor theirs; a bigger download just runs past it. */
+const BOOT_DOWNLOAD_BYTES = 10_500_000
+const FIRST_COMPILE_DOWNLOAD_BYTES = 6_000_000
 
 async function boot(cdnBase) {
   const started = performance.now()
@@ -375,14 +494,13 @@ async function boot(cdnBase) {
   // and vanishes inside 100ms would read as a glitch.
   // (importScripts blocks this thread, so the timer can only fire once the
   // loader is in and we are inside cheerpjInit.)
-  const bootGate = announceAfter({
-    type: 'progress',
-    phase: 'boot',
-    message: 'Starting the Java engine…',
-  })
+  const bootReport = { type: 'progress', phase: 'boot', message: 'Starting the Java engine…' }
+  const bootGate = announceAfter(bootReport)
 
   // Classic script, on purpose and non-negotiably -- see the file header.
   importScripts(cdnBase + 'loader.js')
+  // The boot is a download as far as the student can tell ("Downloading Java").
+  const stopCounting = reportDownloads(bootGate, bootReport, BOOT_DOWNLOAD_BYTES, { type: 'progress', phase: 'download', message: 'Downloading Java (one-time)…' })
 
   await cheerpjInit({
     status: 'none',
@@ -404,11 +522,17 @@ async function boot(cdnBase) {
     },
   })
   const initMs = performance.now() - started
+  anchorRelativePaths()
 
   // The bootstrap is prebuilt, so this either works or the deploy is broken.
   const warmStarted = performance.now()
-  const outcome = await startServer()
-  bootGate.cancel()
+  let outcome
+  try {
+    outcome = await startServer()
+  } finally {
+    stopCounting()
+    bootGate.cancel()
+  }
 
   if (outcome !== 0) {
     throw new Error(
@@ -631,6 +755,7 @@ async function warmCompiler() {
 // --- run -------------------------------------------------------------------
 
 async function compileAndRun({ runId, files, entryPath, debug }) {
+  workdir = workdirFor(runId)
   // The Server main died earlier in the session (a student System.exit whose
   // run already reported, or a fatal). The runtime replaces this worker when
   // told; make sure it is told rather than hanging a run forever.
@@ -684,15 +809,20 @@ async function compileAndRun({ runId, files, entryPath, debug }) {
   //    it. Gated by announceAfter like every other phase, so the common case --
   //    a warm compile, or a reuse hit that skips ECJ entirely -- stays silent.
   const compileWait = waitPhase('compile')
-  const compileGate = announceAfter({
-    type: 'progress',
-    phase: 'compile',
-    message: 'Compiling your code…',
-  })
+  const compileReport = { type: 'progress', phase: 'compile', message: 'Compiling your code…' }
+  const compileGate = announceAfter(compileReport)
+  // The first compile's downloads stay "Compiling your code", with bytes: in a run,
+  // the shell reads a download as packages the program imports, which these are not.
+  const stopCounting = reportDownloads(compileGate, compileReport, FIRST_COMPILE_DOWNLOAD_BYTES)
   const compileStarted = performance.now()
   sendCommand(`run\t${runId}\t${entryPath}`)
-  const compileStatus = await Promise.race([compileWait, serverExited.then(() => 'dead')])
-  compileGate.cancel()
+  let compileStatus
+  try {
+    compileStatus = await Promise.race([compileWait, serverExited.then(() => 'dead')])
+  } finally {
+    stopCounting()
+    compileGate.cancel()
+  }
   const compileMs = performance.now() - compileStarted
 
   if (compileStatus === 'dead') {

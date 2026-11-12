@@ -55,6 +55,7 @@ public final class BootstrapSelfTest {
         workspace_stagesOnlyWhatDiffers();
         workspace_diffReportsWritesDeletesAndSkips();
         workspace_decodeRejectsBinary();
+        scopes_keepTabsApart();
         // Last: it re-points this JVM's working directory.
         workspace_enterRedirectsNioRelativePaths();
 
@@ -534,6 +535,25 @@ public final class BootstrapSelfTest {
             new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("data.txt")), "UTF-8"));
         java.nio.file.Files.write(java.nio.file.Paths.get("nio-out.txt"), "ok".getBytes("UTF-8"));
         check("enter: Files.write(relative) lands in the workspace", true, new File(root, "nio-out.txt").isFile());
+    }
+
+    /** Two browser tabs share /files/: each may clean up only its own directories (and long-dead tabs'). */
+    private static void scopes_keepTabsApart() {
+        String now = Long.toString(System.currentTimeMillis(), 36);
+        String old = Long.toString(System.currentTimeMillis() - 8L * 24 * 60 * 60 * 1000, 36);
+        String mine = now + "aaaa";
+        String other = now + "bbbb";
+        check("scope: read from a run id", mine, Build.scopeOf(mine + "_mhx1"));
+        check("scope: the warm-up has none", null, Build.scopeOf("warm0"));
+        check("scope: own older runs are reclaimable", true, Build.reclaimable(mine, mine));
+        check("scope: a live tab's runs are not", false, Build.reclaimable(other, mine));
+        check("scope: a week-old tab's runs are", true, Build.reclaimable(old + "cccc", mine));
+        check("scope: unscoped leftovers are", true, Build.reclaimable(null, mine));
+        check("scope: an undatable scope is never assumed dead", false, Build.reclaimable("zz", mine));
+        check("workspace: one per tab", "/files/warsha-work-" + mine, Workspace.rootFor(mine + "_1").getPath());
+        check("workspace: dir names map back to scopes", other, Workspace.scopeOfDir("warsha-work-" + other));
+        check("workspace: legacy dir is recognised", true, Workspace.isWorkspaceDir("warsha-work"));
+        check("workspace: run dirs are not workspaces", false, Workspace.isWorkspaceDir("warsha-run-x_1"));
     }
 
     private static void check(String what, Object expected, Object actual) {

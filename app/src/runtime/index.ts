@@ -8,8 +8,9 @@ import { JsRuntime } from './js'
 import { assetUrl } from './assetUrl'
 import { languages } from '../languages'
 
-/** Runtime key, distinct from the editor language (see editorLangForPath). `web` draws the preview; `js` is a headless script — an HTML-referenced `.js` is inlined by `web`, not chosen here. */
-export type LangId = 'java' | 'python' | 'web' | 'js' | 'csharp' | 'c'
+import { langForPath, SCRIPT_RE, type LangId } from './langForPath'
+
+export { langForPath, type LangId }
 
 /**
  * Maps a language to its engine (one instance each, reused across runs). Java
@@ -68,17 +69,6 @@ export function disposeRuntimes(): void {
   }
 }
 
-/** Runtime selected by extension: html/css draws the preview, js/ts runs headless. Editor grammar is separate (editorLangForPath). */
-export function langForPath(path: string): LangId | null {
-  if (path.endsWith('.java')) return 'java'
-  if (path.endsWith('.py')) return 'python'
-  if (path.endsWith('.cs')) return 'csharp'
-  if (path.endsWith('.c')) return 'c'
-  if (/\.(html?|css)$/i.test(path)) return 'web'
-  if (SCRIPT_RE.test(path)) return 'js'
-  return null
-}
-
 /**
  * The language's own name for a sentence ("Downloading Python"), from the one
  * extension map above and the picker's labels. Null for a web page and for a
@@ -90,8 +80,6 @@ export function languageName(entryPath: string): string | null {
   return languages.find((l) => l.id === id)?.label ?? null
 }
 
-/** Extensions the `js` engine runs headless. TypeScript or cross-file imports get bundled first (bundle.ts); plain one-file JS doesn't. */
-const SCRIPT_RE = /\.(m?js|cjs|jsx|tsx?|mts|cts)$/i
 
 const JAVA_MAIN = /public\s+static\s+void\s+main\s*\(/
 const CSHARP_MAIN = /\bstatic\s+(?:async\s+)?(?:void|int|Task(?:<\s*int\s*>)?)\s+Main\s*\(/

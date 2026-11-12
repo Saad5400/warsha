@@ -700,6 +700,34 @@ function loadInstrumenter() {
 
 const decodeMaybe = (x) => (typeof x === 'string' ? x : new TextDecoder().decode(x || new Uint8Array()))
 
+/**
+ * The student's program crashing, said the way a terminal would — or null for
+ * anything else (an engine bug, which stays a [c runtime error]).
+ *
+ * A wasm trap is what a segfault, a division by zero or runaway recursion
+ * becomes here. Its stack is wasm-function indexes and the shim's unpkg URL,
+ * so printing it raw (as the engine error path did) told a student nothing
+ * except that Warsha seemed broken.
+ */
+function programCrash(e) {
+  const message = String((e && e.message) || '')
+  const isTrap = e instanceof WebAssembly.RuntimeError
+  if (!isTrap && !(e instanceof RangeError && /call stack/i.test(message))) return null
+  const why = /out of bounds/i.test(message)
+    ? 'it read or wrote memory it does not own (a bad pointer, or an array index past the end)'
+    : /divide by zero|division by zero/i.test(message)
+      ? 'integer division by zero'
+      : /call stack/i.test(message)
+        ? 'a function called itself too many times (stack overflow)'
+        : /unreachable/i.test(message)
+          ? 'it hit a trap (usually a NULL pointer, reading past the end of an array, or abort())'
+          : message || 'a trap'
+  return '\nYour program crashed: ' + why + '.\n'
+}
+
+/** clang names files by the mount point; the student knows them as project paths. */
+const studentDiag = (text) => text.split('/project/').join('')
+
 /** Compile all .c files (plus the rt shim) into one WASIX executable. Returns the
  *  wasm bytes, or null after streaming clang's diagnostics if compilation failed. */
 async function compile(files, opts = {}) {
@@ -729,7 +757,7 @@ async function compile(files, opts = {}) {
     if (res.code !== 0) { opts.quiet.diag = diag; return null }
     return await dir.readFile('out.wasm')
   }
-  if (diag) self.postMessage({ type: 'stderr', text: diag.endsWith('\n') ? diag : diag + '\n' })
+  if (diag) self.postMessage({ type: 'stderr', text: studentDiag(diag.endsWith('\n') ? diag : diag + '\n') })
   if (res.code !== 0) return null
   // `dir` is mounted AT /project inside the guest, so its OWN paths are relative to
   // its root: the guest wrote /project/out.wasm, which is `out.wasm` here.
@@ -766,7 +794,7 @@ async function compileForDebug(files) {
     // wasm-ld only runs once every TU compiled, so a link error (undefined function,
     // two mains) is the student's own; it quotes no source line, so its text is exact.
     if (/wasm-ld: error:/.test(why) && !/__wd_/.test(why)) {
-      self.postMessage({ type: 'stderr', text: why.endsWith('\n') ? why : why + '\n' })
+      self.postMessage({ type: 'stderr', text: studentDiag(why.endsWith('\n') ? why : why + '\n') })
       return null
     }
     break
@@ -788,10 +816,11 @@ const DOWNLOAD_MESSAGE = 'Downloading C toolchain (clang, one-time)…'
 let bytesLoaded = 0
 let lastProgressAt = 0
 
-function installFetchProgress() {
+/** `cache`: a fetch cache mode forced on every request (the retry's 'reload'), or undefined. */
+function installFetchProgress(cache) {
   const original = self.fetch.bind(self)
   self.fetch = async (input, initArg) => {
-    const response = await original(input, initArg)
+    const response = await original(input, cache ? { ...initArg, cache } : initArg)
     try {
       if (!response.ok || !response.body) return response
       const reader = response.body.getReader()
@@ -820,17 +849,37 @@ function installFetchProgress() {
   return () => { self.fetch = original }
 }
 
+/**
+ * The clang package, downloaded once more if the first body read breaks.
+ *
+ * A Stop in the middle of the ~30 MB download terminates this worker mid-body,
+ * and the browser's HTTP cache can keep the truncated entry. The next boot's
+ * download then failed inside the Wasmer SDK with "Could not retrieve response
+ * body" and the student read "Warsha could not start C" (reproduced by
+ * run-status-check: Stop while C downloads, then a cold Run). A retry that
+ * bypasses the HTTP cache ('reload') fetches it whole; anything else, or a
+ * second failure, is a real error and is reported as one.
+ */
+async function fetchToolchain() {
+  for (let attempt = 0; ; attempt++) {
+    const restoreFetch = installFetchProgress(attempt ? 'reload' : undefined)
+    try {
+      return await Wasmer.fromRegistry('clang/clang')
+    } catch (e) {
+      if (attempt || !/response body|failed to fetch|network/i.test(String((e && e.message) || e))) throw e
+      bytesLoaded = 0 // the retry's progress counts from zero, not on top of the failed attempt
+    } finally {
+      restoreFetch()
+    }
+  }
+}
+
 async function boot() {
   const t0 = performance.now()
   self.postMessage({ type: 'progress', phase: 'download', message: DOWNLOAD_MESSAGE })
 
-  const restoreFetch = installFetchProgress()
-  try {
-    await init()
-    clang = await Wasmer.fromRegistry('clang/clang')
-  } finally {
-    restoreFetch()
-  }
+  await init()
+  clang = await fetchToolchain()
 
   // Warm the WASI sysroot: the first compile that pulls in <stdio.h> demand-loads
   // system headers + libc out of the package (~24 s, M0). Pay it here, behind the
@@ -886,7 +935,11 @@ self.onmessage = (ev) => {
       } catch (e) {
         // A trap (segfault, abort) still keeps whatever the program wrote before it.
         postFileChanges(msg.files, projectDir)
-        self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
+        const crash = programCrash(e)
+        if (crash) {
+          self.postMessage({ type: 'stderr', text: crash })
+          self.postMessage({ type: 'done', code: 1, ms: Math.round(performance.now() - t0) })
+        } else self.postMessage({ type: 'fatal', text: String((e && e.stack) || e) })
       }
     })()
     return

@@ -67,6 +67,28 @@ error, correctly. Java has no such requirement.
 | `deploy-upgrade-check.mjs` | — | A real deploy, through the production nginx config in docker: two builds (`WARSHA_V1_DIST`, `WARSHA_V2_DIST`), v1 visited and every language run, v2 deployed, then (A) the same profile returns and runs every language — twice, since a poisoned cache bites on the visit after — (B) a tab left open across the deploy runs every language (one self-heal reload allowed, an error is not), (C) the upgraded app runs Python offline. Asserts the output, that the page is v2, that every cached runtime file served is byte-identical to v2 on disk, and that no HTML sits in the cache under a script URL. Not in `npm run all`: it needs docker and two builds. |
 | `sw-range.mjs` | 5 | The caching service worker vs. CheerpJ's HTTP Range reads of `/app/ecj.jar`. Deliberately **poisons** the cache with a full-body `200 ecj.jar` (what a whole-jar refetch leaves behind), then proves a range request through the SW still returns `206` + `Content-Range` (not the poisoned full body) **and** real CheerpJ Java boots and runs to a clean exit despite the poison. Guards the regression where cache-first served a `200` for a Range request and Java died with "could not start Java". |
 
+## Real-world run check
+
+`real-world-check.mjs` is the broad "what students actually do" sweep, one section per area:
+course programs in every language (Scanner/input, files read and written, OOP across files,
+compile errors, crashes, exit codes, huge output, Arabic), web pages and the React/Vue/Svelte
+templates, notebooks (a Colab export, `input()` in a cell, interrupt, a cell beside a Run, a
+phone), behaviour (hammering Run, Stop on loops and at input prompts in each stdin engine,
+typing ahead, reloading mid-run), project changes (switching mid-run, deleting or renaming the
+entry, two tabs running Java), environment (a 25-run session, a phone, a cold Java start through a
+throttling proxy, offline), a breakpoint flow per language, and typing C#/C key by key. Every
+scenario also asserts no `window.__warshaErrors` entry, no failure card and none of the
+engine-internal strings a student must never see. It uses the **dev server** and opens
+projects through `#share=` links, so it needs no seeding:
+
+```bash
+cd app && npx vite --port 8150 --strictPort --host 127.0.0.1
+cd tools/qa && WARSHA_URL=http://127.0.0.1:8150/ node real-world-check.mjs [section…]
+```
+
+Keep `TMPDIR` on a real disk: Chrome profiles on a small tmpfs fail large cache writes with a
+false "network error".
+
 ## Two habits worth keeping
 
 **Assert on what the student sees, then re-check it after a reload.** "The file is
