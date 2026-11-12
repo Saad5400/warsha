@@ -27,10 +27,10 @@
 let coepCredentialless = false;
 if (typeof window === 'undefined') {
     // ---- Warsha offline caching layer -----------------------------------
-    // These two globals are injected at build time by the plugin in
+    // These globals are injected at build time by the plugin in
     // app/vite.config.ts, which PREPENDS them to dist/coi-serviceworker.js. In
-    // dev the file is served straight from public/ with neither defined, so
-    // both fall back: precaching is skipped and runtime caching does the rest —
+    // dev the file is served straight from public/ with none defined, so
+    // they fall back: precaching is skipped and runtime caching does the rest —
     // dev is never run offline, so that is fine.
     const VERSION = self.__WARSHA_VERSION__ || 'dev';
     // Every file this build emitted under /assets/ (content-hashed, so a name is
@@ -38,6 +38,12 @@ if (typeof window === 'undefined') {
     // says which /assets/ entries a deploy has retired (see `prune`).
     const ASSETS = self.__WARSHA_ASSETS__ || [];
     const ASSET_PATHS = new Set(ASSETS.map((a) => new URL(a, self.location.href).pathname));
+    // Every other file of this build that the worker may keep (the public/
+    // runtimes, icons, fonts…): path -> content hash. It says whether a kept
+    // copy IS this build's without asking the server, whose ETag (mtime + size)
+    // changes on every deploy even for unchanged bytes. See `refreshKept`.
+    const FILES = self.__WARSHA_FILES__ || {};
+    const hasManifest = Object.keys(FILES).length > 0;
     // Under `vite dev` neither global is injected, so VERSION stays 'dev'. In that
     // mode we MUST NOT cache: every module Vite serves is same-origin, so cache-first
     // would pin the first build and silently swallow every later edit (HMR included).
@@ -66,6 +72,11 @@ if (typeof window === 'undefined') {
     // cache so it is never mistaken for a download.
     const KEEP_INDEX_CACHE = 'warsha-keep-index';
     const KEEP_INDEX_KEY = new URL('/__warsha-keep-index', self.location.href).href;
+    // Where install puts what it downloads, until this worker activates. KEEP_CACHE
+    // is shared with the worker still in charge: writing into it during install
+    // handed THIS build's files to the previous build's pages whenever install
+    // then failed or was cut short (a closed browser, a dropped network).
+    const STAGE_CACHE = `warsha-stage-${VERSION}`;
 
     // The app shell: the stable entry and icon set from public/, plus this
     // build's hashed JS/CSS (which goes to KEEP_CACHE, see install). `./` and
@@ -189,10 +200,14 @@ if (typeof window === 'undefined') {
             || !/text\/html/i.test(response.headers.get('content-type') || '');
     };
 
-    // ---- the KEEP_CACHE index (LRU) --------------------------------------
-    // url -> [lastUsedMs, bytes]. Held in memory, written back after a quiet
-    // second: a worker killed before the write loses only some recency, which
-    // makes the cap slightly less fair, never wrong.
+    // ---- the KEEP_CACHE index ---------------------------------------------
+    // url -> [lastUsedMs, bytes, contentHash]. Recency and size drive the LRU
+    // cap; the hash (same-origin manifest files only, measured from the bytes
+    // actually stored, never assumed) is what lets a kept file be trusted as
+    // this build's without asking the server. Held in memory and written back
+    // after a quiet second; a record lost to a worker killed inside that second
+    // is re-measured by the next `prune`, so a lost record costs a re-read,
+    // never a wrong answer.
     let index = null;
     const loadIndex = () => (index ??= (async () => {
         try {
@@ -213,32 +228,56 @@ if (typeof window === 'undefined') {
     };
     // Entries this worker has served: the cap never evicts what is in use.
     const usedNow = new Set();
-    const touch = async (url, bytes) => {
+    const touch = async (url, bytes, hash) => {
         const idx = await loadIndex();
         usedNow.add(url);
-        idx[url] = [Date.now(), bytes ?? idx[url]?.[1] ?? 0];
+        const was = idx[url] || [];
+        idx[url] = [Date.now(), bytes ?? was[1] ?? 0, hash ?? was[2]];
         persistIndex();
     };
 
-    // When a 'declared' entry was stored, in a header of our own (the response's
-    // Date header is not readable cross-origin).
-    const STORED_AT = 'x-warsha-stored-at';
-    const stillFresh = (cached) => {
-        const maxAge = /max-age=(\d+)/.exec(cached.headers.get('cache-control') || '')?.[1];
-        const storedAt = Number(cached.headers.get(STORED_AT));
-        return !!maxAge && !!storedAt && storedAt + Number(maxAge) * 1000 > Date.now();
+    // The manifest path of a same-origin URL, when this build lists it.
+    const manifestPath = (url) => {
+        const u = new URL(url);
+        return u.origin === self.location.origin && u.pathname in FILES ? u.pathname : null;
+    };
+    // Size, and for a manifest file the content hash (sha1, as the build
+    // computes it), of what a cache actually holds for a URL.
+    const measure = async (cache, url) => {
+        const res = await cache.match(url);
+        if (!res) return null;
+        if (!manifestPath(url)) return { bytes: (await res.blob()).size };
+        const buf = await res.arrayBuffer();
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', buf));
+        const hash = [...digest].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+        return { bytes: buf.byteLength, hash };
+    };
+    // A kept same-origin file known to be exactly this build's.
+    const isThisBuilds = async (url) => {
+        const path = manifestPath(url);
+        return !!path && (await loadIndex())[url]?.[2] === FILES[path];
     };
 
-    // Store into KEEP_CACHE, counting the bytes as they stream into the cache
-    // (the decoded size, which is what quota sees — Content-Length is the
-    // compressed one, and reading a 110 MB body twice to measure it is not on).
-    // The response is cloned synchronously, before the caller hands the original
-    // to the page. Two promises come back: `opened` (the write is under way —
-    // what the fetch path waits for, so a request right after finds the entry
-    // being written, never missing) and `done` (the write is on disk — what
-    // install waits for, so "installed" means "ready offline").
-    const keep = (request, response) => {
-        if (!storable(request, response)) return { opened: Promise.resolve(), done: Promise.resolve() };
+    // When a 'declared' entry was stored, in a header of our own (the response's
+    // Date header is not readable cross-origin). Age counts against max-age when
+    // the CDN exposes it (leaningtech does not today; then it reads as 0).
+    const STORED_AT = 'x-warsha-stored-at';
+    const stillFresh = (cached) => {
+        const maxAge = Number(/max-age=(\d+)/.exec(cached.headers.get('cache-control') || '')?.[1]);
+        const age = Number(cached.headers.get('age')) || 0;
+        const storedAt = Number(cached.headers.get(STORED_AT));
+        return maxAge > 0 && storedAt > 0 && storedAt + (maxAge - age) * 1000 > Date.now();
+    };
+
+    // Store a response, counting its bytes as they stream into the cache (the
+    // decoded size, which is what quota sees). The response is cloned
+    // synchronously, before the caller hands the original to the page. Two
+    // promises come back: `opened` (the write is under way — what the fetch path
+    // waits for, so a request right after finds the entry being written, never
+    // missing) and `done` (the write is on disk and, for KEEP_CACHE, recorded —
+    // what install waits for). Into KEEP_CACHE by default; install stages.
+    const keep = (request, response, cacheName = KEEP_CACHE) => {
+        if (!storable(request, response)) return { opened: Promise.resolve(), done: Promise.resolve(false) };
         let bytes = 0;
         const counted = response.clone().body.pipeThrough(new TransformStream({
             transform(chunk, ctl) {
@@ -249,22 +288,25 @@ if (typeof window === 'undefined') {
         const headers = new Headers(response.headers);
         headers.set(STORED_AT, String(Date.now()));
         const copy = new Response(counted, { status: response.status, statusText: response.statusText, headers });
-        const opened = caches.open(KEEP_CACHE);
+        const opened = caches.open(cacheName);
         const done = opened
-            .then((cache) => cache.put(request, copy))
-            .then(() => touch(request.url, bytes))
-            .then(() => schedulePrune())
-            .catch(() => {});
+            .then((cache) => cache.put(request, copy).then(() => cache))
+            .then(async (cache) => {
+                if (cacheName !== KEEP_CACHE) return true;
+                const m = manifestPath(request.url) ? await measure(cache, request.url) : null;
+                await touch(request.url, bytes, m?.hash);
+                schedulePrune();
+                return true;
+            })
+            .catch(() => false);
         return { opened, done };
     };
 
     // Whether a page is THIS build's: its entry chunk is one this build emitted.
-    // Only such a page goes into this build's shell. When the server has moved
-    // on, the navigation that brings the new page is still answered by this
-    // (old) worker — and had it shelved that page, a student who closed the tab
-    // before the new worker installed would boot the NEW page offline against
-    // this build's runtime files. Not shelving it keeps the offline copy one
-    // consistent build: this one, until the new worker installs its own shell.
+    // Only such a page goes into this build's shell — at install as on any
+    // navigation. When the server has moved on (or, during a rollout, an older
+    // container answers), the page in hand belongs to another build, and a
+    // student offline would boot it against this build's files.
     const ownPage = async (response) => {
         if (!ASSET_PATHS.size) return true; // dev: no asset list to check against
         const entry = /<script[^>]+type="module"[^>]+src="([^"]*\/assets\/index-[^"]+\.js)"/.exec(await response.text())?.[1];
@@ -282,17 +324,28 @@ if (typeof window === 'undefined') {
 
     // The storage budget. 500 MB covers everything Warsha runs today (~200 MB
     // decoded, the C toolchain image ~110 MB of it) plus one generation of
-    // runtime version bumps. But a browser's quota can be far smaller than that,
-    // and the student's project files live in the same quota (OPFS): the cache
-    // may take at most half the quota, minus everything else the origin already
-    // stores, so a save never fails because a runtime was cached.
+    // runtime version bumps. But a browser's quota can be far smaller, and the
+    // student's project files live in the same quota (OPFS): the cache may take
+    // at most half the quota, minus everything else the origin stores, so a
+    // save never fails because a runtime was cached.
+    //
+    // "Everything else" is NOT usage minus our cache: right after caches are
+    // deleted, estimate() keeps counting them until the browser restarts (a
+    // migration measured 640 MB reported for 320 MB real), and that phantom
+    // would read as the student's own data and evict real runtimes. So a pass
+    // that deleted caches does not consult estimate() at all; otherwise the
+    // per-kind breakdown (Chromium) excludes every cache, and without one our
+    // own measured bytes are subtracted.
     const KEEP_CAP_BYTES = 500 * 1024 * 1024;
-    const keepBudget = async (keepBytes) => {
+    const keepBudget = async (keepBytes, deletedCaches) => {
+        if (deletedCaches) return KEEP_CAP_BYTES;
         try {
-            const { quota, usage } = await navigator.storage.estimate();
+            const { quota, usage, usageDetails } = await navigator.storage.estimate();
             if (!quota) return KEEP_CAP_BYTES;
-            const others = Math.max(0, (usage || 0) - keepBytes);
-            return Math.max(0, Math.min(KEEP_CAP_BYTES, quota / 2 - others));
+            const others = typeof usageDetails?.caches === 'number'
+                ? (usage || 0) - usageDetails.caches
+                : (usage || 0) - keepBytes;
+            return Math.max(0, Math.min(KEEP_CAP_BYTES, quota / 2 - Math.max(0, others)));
         } catch {
             return KEEP_CAP_BYTES;
         }
@@ -300,21 +353,22 @@ if (typeof window === 'undefined') {
 
     // Background housekeeping, serialized, and debounced after stores so a
     // burst of downloads is one pass. Never inside `activate`'s waitUntil: no
-    // fetch is answered until activation completes, and copying an old worker's
-    // few hundred MB of runtimes there would freeze every page for its duration.
+    // fetch is answered until activation completes.
     //   1. Caches no live worker owns: copy what is still worth keeping (an
     //      immutable, storable entry not yet kept), then delete them. That
     //      retires the pre-KEEP_CACHE `warsha-runtime-<v>` caches without making
-    //      a student re-download a runtime; and an OLD shell cache the previous
-    //      worker re-created while it served the update navigation.
-    //   2. A /assets/ entry this build did not emit is a chunk of an older build
-    //      (content-hashed names are never reused); and any entry that fails
-    //      `storable` (an older worker's SPA-fallback HTML). A tab still open on that old
-    //      build may ask for it next: the server no longer has it either, so its
-    //      import fails and ui/staleBuild.ts reloads that tab onto this build.
-    //   3. The rest held under `keepBudget`, least recently used first — the
-    //      only way a CDN version a runtime has moved on from ever leaves (the
-    //      worker cannot know which versions the runtimes pin; recency tells it).
+    //      a student re-download a runtime; an OLD shell cache the previous
+    //      worker re-created while it served the update navigation; and the
+    //      staging cache of an install that never activated.
+    //   2. Entries no build of this worker uses: a /assets/ file this build did
+    //      not emit (content-hashed names are never reused) — a tab still open
+    //      on that old build that asks for it next finds it gone from the
+    //      server too, so its import fails and ui/staleBuild.ts reloads it onto
+    //      this build; a same-origin file not in this build's manifest; and any
+    //      entry that fails `storable` (an older worker's SPA-fallback HTML).
+    //   3. Records re-measured where size or hash went missing.
+    //   4. The rest held under `keepBudget`, least recently used first — the
+    //      only way a CDN version a runtime has moved on from ever leaves.
     let pruning = Promise.resolve();
     let pruneTimer = 0;
     const schedulePrune = (delay = 5000) => {
@@ -323,9 +377,8 @@ if (typeof window === 'undefined') {
     };
     // Housekeeping belongs to the registration's CURRENT worker alone. Two
     // workers overlap during every update, and KEEP_CACHE is shared: an old
-    // worker pruning by its own asset list would delete the new build's chunks
-    // and its shell cache mid-install, and an installing one would delete the
-    // shell the old one is still serving from.
+    // worker pruning by its own lists would delete the new build's files, and
+    // an installing one would delete the shell the old one is still serving.
     const isCurrent = () => {
         const reg = self.registration;
         if (reg.installing || reg.waiting || !reg.active) return false;
@@ -335,6 +388,7 @@ if (typeof window === 'undefined') {
         if (DEV || !isCurrent()) return;
         const cache = await caches.open(KEEP_CACHE);
         const live = new Set([SHELL_CACHE, KEEP_CACHE, KEEP_INDEX_CACHE]);
+        let deletedCaches = false;
         for (const name of await caches.keys()) {
             if (!name.startsWith('warsha-') || live.has(name)) continue;
             const old = await caches.open(name);
@@ -344,39 +398,39 @@ if (typeof window === 'undefined') {
                 if (storable(req, res)) await cache.put(req, res).catch(() => {});
             }
             await caches.delete(name);
+            deletedCaches = true;
         }
         const idx = await loadIndex();
         const present = new Set();
         for (const req of await cache.keys()) {
             const u = new URL(req.url);
-            const retired = ASSET_PATHS.size && u.origin === self.location.origin
-                && u.pathname.startsWith('/assets/') && !ASSET_PATHS.has(u.pathname);
-            // Also anything that should never have been stored (see `storable`):
-            // a cache hit is checked the same way, but an entry nobody asks for
-            // would otherwise sit there, poisoned, until someone does.
-            if (retired || !strategyFor(req.url) || !storable(req, await cache.match(req))) {
+            const strategy = strategyFor(req.url);
+            const sameOrigin = u.origin === self.location.origin;
+            const retired =
+                (sameOrigin && strategy === 'immutable' && ASSET_PATHS.size && !ASSET_PATHS.has(u.pathname))
+                || (sameOrigin && strategy === 'revalidate' && hasManifest && !(u.pathname in FILES));
+            if (retired || !strategy || !storable(req, await cache.match(req))) {
                 await cache.delete(req);
                 continue;
             }
             present.add(req.url);
         }
         for (const url of Object.keys(idx)) if (!present.has(url)) delete idx[url];
-        // Entries with no record (moved over from an older worker's caches):
-        // oldest possible use, size read once from the stored body.
         for (const url of present) {
-            if (idx[url]) continue;
-            const res = await cache.match(url);
-            idx[url] = [0, res ? (await res.blob()).size : 0];
+            const rec = idx[url];
+            if (rec && rec[1] > 0 && (rec[2] || !manifestPath(url))) continue;
+            const m = await measure(cache, url);
+            if (m) idx[url] = [rec?.[0] ?? 0, m.bytes, m.hash];
         }
         let total = 0;
-        for (const url of present) total += idx[url][1];
-        const budget = await keepBudget(total);
-        const byAge = [...present].sort((a, b) => idx[a][0] - idx[b][0]);
+        for (const url of present) total += idx[url]?.[1] || 0;
+        const budget = await keepBudget(total, deletedCaches);
+        const byAge = [...present].sort((a, b) => (idx[a]?.[0] ?? 0) - (idx[b]?.[0] ?? 0));
         for (const url of byAge) {
             if (total <= budget) break;
             if (usedNow.has(url)) continue;
             await cache.delete(url);
-            total -= idx[url][1];
+            total -= idx[url]?.[1] || 0;
             delete idx[url];
         }
         persistIndex();
@@ -400,13 +454,15 @@ if (typeof window === 'undefined') {
         }
         let net;
         try {
-            // Same-origin: straight to the server, past the HTTP cache. The
-            // pre-fix nginx sent no Cache-Control, so a browser may still hold a
-            // heuristically "fresh" SPA-fallback page for this very URL, and
-            // would hand it back instead of asking. This is a miss — it happens
-            // once per file, and what comes back is kept. A CDN's own HTTP
-            // caching is right, so cross-origin requests keep it.
-            net = await fetch(request, new URL(r.url).origin === self.location.origin ? { cache: 'no-store' } : undefined);
+            net = await fetch(request);
+            // Same-origin, a miss may still be answered by the HTTP cache — which
+            // is right (a hashed chunk fetched before this worker took control
+            // is there, and offline it is the only copy) unless that copy is the
+            // pre-fix nginx's SPA-fallback page, heuristically "fresh" under
+            // this very URL. Then, and only then, ask the server itself.
+            if (!storable(r, net) && new URL(r.url).origin === self.location.origin) {
+                net = await fetch(request, { cache: 'no-store' });
+            }
         } catch (err) {
             // A lapsed 'declared' copy still beats no copy at all offline.
             if (cached) return isolate(cached);
@@ -419,8 +475,8 @@ if (typeof window === 'undefined') {
 
     // A conditional request for one cached same-origin file: the server answers
     // 304 (unchanged, no body) or 200 with the deployed bytes. Throws when the
-    // server cannot be asked (offline, timeout). Shared by the fetch path and
-    // install's refresh, so both ask the same question the same way.
+    // server cannot be asked (offline, timeout). For files the build's manifest
+    // does not cover (and dev): with a manifest, `isThisBuilds` answers first.
     //
     // `cache: 'no-store'`: the HTTP cache must not answer for the server. It is
     // exactly what used to hand back a heuristically "fresh" file from the
@@ -442,15 +498,27 @@ if (typeof window === 'undefined') {
         }
     };
 
-    // For a URL that keeps its name across deploys: serve the cached copy only
-    // when the server says it is still the deployed one, or when it cannot be
-    // asked (offline — what keeps the installed app working with no network).
+    // For a URL that keeps its name across deploys. This build's shell copy, or
+    // a kept copy whose content hash is this build's, is served as is — no
+    // request at all (install has
+    // already brought every kept file up to this build, see `refreshKept`).
+    // Otherwise the server is asked; its copy is served only when it says the
+    // copy is current, or when it cannot be asked (offline — what keeps the
+    // installed app working with no network).
     const revalidate = async (r, request) => {
-        const cached = await lookup(r);
+        // This build's own shell (icons, fonts, this script) was fetched from the
+        // server by this build's install: it IS this build's, nothing to ask.
+        const shelled = await fromShell(r);
+        if (shelled) return isolate(shelled);
+        const cached = await fromKeep(r);
         if (!cached) {
             const net = await fetch(request, { cache: 'no-store' });
             await keep(r, net).opened;
             return isolate(net);
+        }
+        if (await isThisBuilds(r.url)) {
+            touch(r.url);
+            return isolate(cached);
         }
         let net;
         try {
@@ -470,24 +538,46 @@ if (typeof window === 'undefined') {
         return isolate(net);
     };
 
+    // ---- install: stage everything, fail whole -----------------------------
+    // Install writes only into STAGE_CACHE (and this build's own shell), and
+    // fails as a whole if anything it needs cannot be had: a precache item, a
+    // shell file, a page that turns out to be another build's (an older
+    // container answering during a rollout), a runtime file that cannot be
+    // refreshed or does not match the manifest. A failed install changes
+    // nothing the running worker serves; the browser simply tries again on a
+    // later visit. Only `activate` moves the staged files into KEEP_CACHE.
+    const STAGE_META = new URL('/__warsha-stage-meta', self.location.href).href;
+    const fetchOrThrow = async (url, init) => {
+        const net = await fetch(url, init);
+        if (!net.ok) throw new Error(`install: ${url} answered ${net.status}`);
+        return net;
+    };
+    const stageOne = async (stage, meta, req, net) => {
+        if (!(await keep(req, net, STAGE_CACHE).done)) throw new Error(`install: ${req.url} not storable`);
+        const m = await measure(stage, req.url);
+        const path = manifestPath(req.url);
+        if (path && m?.hash !== FILES[path]) throw new Error(`install: ${req.url} is not this build's (${m?.hash} != ${FILES[path]})`);
+        meta[req.url] = [m?.bytes ?? 0, m?.hash];
+    };
+
     // Bring every kept same-origin runtime file up to THIS build, before it
-    // takes over. Without it, a student who upgraded online and then went
-    // offline was served the previous build's workers next to this build's
-    // bundle — the very mismatch the revalidation exists to stop, unreachable
-    // by ui/staleBuild.ts because it cannot ask the server offline either.
-    // Only what changed downloads; the rest is a 304. Bounded concurrency: a
-    // student who has used C# has a few hundred of these.
-    const refreshKept = async () => {
-        const cache = await caches.open(KEEP_CACHE);
-        const queue = (await cache.keys()).filter((req) => strategyFor(req.url) === 'revalidate');
+    // takes over — but only the ones that actually differ. The manifest says
+    // what this build's bytes are; a kept file whose recorded hash matches is
+    // left alone, with no request. (Asking the server instead re-downloaded
+    // every kept runtime on every deploy: nginx's ETag is mtime + size, and a
+    // deploy re-stamps every file.) A kept file this build no longer ships is
+    // NOT deleted here — `prune` does that, by the manifest, after activation —
+    // so a passing 404 from a proxy mid-swap costs nothing.
+    const refreshKept = async (stage, meta) => {
+        const kept = await caches.open(KEEP_CACHE);
+        const idx = await loadIndex();
+        const queue = (await kept.keys()).filter((req) => {
+            const path = manifestPath(req.url);
+            return path && idx[req.url]?.[2] !== FILES[path];
+        });
         const worker = async () => {
             for (let req = queue.shift(); req; req = queue.shift()) {
-                const cached = await cache.match(req);
-                if (!cached) continue;
-                const net = await askServer(req.url, cached).catch(() => null);
-                if (!net || net.status === 304 || net.status >= 500) continue;
-                if (net.status === 404 || net.status === 410) await cache.delete(req);
-                else await keep(req, net).done;
+                await stageOne(stage, meta, req, await fetchOrThrow(req.url, { cache: 'no-store', credentials: 'same-origin' }));
             }
         };
         await Promise.all(Array.from({ length: 6 }, worker));
@@ -495,38 +585,65 @@ if (typeof window === 'undefined') {
 
     self.addEventListener("install", (event) => {
         self.skipWaiting();
-        // Best-effort, per item: a single 404 (an icon renamed between builds,
-        // say) must not abort the whole precache the way `cache.addAll` would.
-        // `cache: 'reload'` skips the HTTP cache so a fresh deploy is precached,
-        // not a stale copy. Every write is awaited: "installed" means "ready
-        // offline", and the old worker keeps serving until then.
+        if (DEV) return;
         event.waitUntil((async () => {
             const shell = await caches.open(SHELL_CACHE);
+            const stage = await caches.open(STAGE_CACHE);
+            const kept = await caches.open(KEEP_CACHE);
+            const meta = {};
             await Promise.all([
-                ...SHELL.map((url) => shell.add(new Request(url, { cache: 'reload' })).catch(() => {})),
+                // `cache: 'reload'` skips the HTTP cache so a fresh deploy is
+                // precached, not a stale copy.
+                ...SHELL.map(async (url) => {
+                    await shell.add(new Request(url, { cache: 'reload' }));
+                    if (isPage(new URL(url, self.location.href).pathname) && !(await ownPage(await shell.match(url)))) {
+                        throw new Error(`install: ${url} is another build's page`);
+                    }
+                }),
                 // A chunk an earlier build already brought is the same bytes under
                 // the same name: only what this deploy actually changed downloads.
                 ...PRECACHE.map(async (url) => {
-                    const req = new Request(url, { cache: 'reload' });
-                    if (await fromKeep(req)) return;
-                    const net = await fetch(req).catch(() => null);
-                    if (net) await keep(req, net).done;
+                    const req = new Request(url);
+                    if (await kept.match(req)) return;
+                    await stageOne(stage, meta, req, await fetchOrThrow(url, { cache: 'reload' }));
                 }),
-                refreshKept().catch(() => {}),
+                refreshKept(stage, meta),
             ]);
+            await stage.put(STAGE_META, new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
         })());
     });
 
     self.addEventListener("activate", (event) => {
         event.waitUntil((async () => {
-            await self.clients.claim();
             if (DEV) {
                 // In dev, keep nothing: a stale dev cache is exactly what we must purge.
                 await Promise.all((await caches.keys())
                     .filter((n) => n.startsWith('warsha-'))
                     .map((n) => caches.delete(n)));
+                await self.clients.claim();
                 return;
             }
+            // Promote the staged files into KEEP_CACHE before taking over any page,
+            // so a page this worker serves sees this build's files from its first
+            // request. A cache-to-cache copy of what install already downloaded:
+            // quick, even for a whole runtime.
+            if (await caches.has(STAGE_CACHE)) {
+                const stage = await caches.open(STAGE_CACHE);
+                const kept = await caches.open(KEEP_CACHE);
+                const idx = await loadIndex();
+                const meta = await (await stage.match(STAGE_META))?.json().catch(() => ({})) ?? {};
+                for (const req of await stage.keys()) {
+                    if (req.url === STAGE_META) continue;
+                    const res = await stage.match(req);
+                    if (!res) continue;
+                    await kept.put(req, res);
+                    const [bytes, hash] = meta[req.url] || [];
+                    idx[req.url] = [Date.now(), bytes || 0, hash];
+                }
+                await caches.delete(STAGE_CACHE);
+                persistIndex();
+            }
+            await self.clients.claim();
         })());
         // Housekeeping right after, outside waitUntil — see `prune`.
         if (!DEV) schedulePrune(0);

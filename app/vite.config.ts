@@ -641,7 +641,8 @@ function warshaServiceWorkerPrecache(): Plugin {
         .sort()
     },
     closeBundle() {
-      const swPath = resolve(__dirname, 'dist/coi-serviceworker.js')
+      const distDir = resolve(__dirname, 'dist')
+      const swPath = resolve(distDir, 'coi-serviceworker.js')
       let source: string
       try {
         source = readFileSync(swPath, 'utf8')
@@ -649,13 +650,47 @@ function warshaServiceWorkerPrecache(): Plugin {
         // No SW in the output (e.g. a library build) — nothing to inject.
         return
       }
-      const version = createHash('sha1').update(assets.join('|')).digest('hex').slice(0, 8)
+      // The runtime manifest: path -> content hash for every file the worker
+      // revalidates rather than trusts by name (everything outside assets/ but
+      // the pages and the worker itself). With it the worker knows, per file,
+      // whether the copy it keeps IS this build's, without asking the server —
+      // whose ETag (mtime + size) changes on every deploy for unchanged bytes,
+      // because every deploy re-stamps every file. Without it, each deploy
+      // re-downloaded every runtime a student had ever used.
+      const files: Record<string, string> = {}
+      for (const path of walkFiles(distDir)) {
+        const rel = path.slice(distDir.length).replaceAll('\\', '/')
+        if (rel.startsWith('/assets/') || rel.endsWith('.html') || rel === '/coi-serviceworker.js') continue
+        files[rel] = createHash('sha1').update(readFileSync(path)).digest('hex').slice(0, 12)
+      }
+      const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)))
+      // Any change to either list renames the shell cache and changes the
+      // worker's bytes — which is what makes the browser install it at all.
+      const version = createHash('sha1')
+        .update(assets.join('|') + JSON.stringify(sorted))
+        .digest('hex')
+        .slice(0, 8)
       const header =
         `self.__WARSHA_VERSION__=${JSON.stringify(version)};` +
-        `self.__WARSHA_ASSETS__=${JSON.stringify(assets)};\n`
+        `self.__WARSHA_ASSETS__=${JSON.stringify(assets)};` +
+        `self.__WARSHA_FILES__=${JSON.stringify(sorted)};\n`
       writeFileSync(swPath, header + source)
     },
   }
+}
+
+/** Every file under a folder, recursively; [] when it does not exist. */
+function walkFiles(dir: string): string[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return names.flatMap((name) => {
+    const path = resolve(dir, name)
+    return statSync(path).isDirectory() ? walkFiles(path) : [path]
+  })
 }
 
 /**
@@ -719,21 +754,7 @@ function warshaCspHashes(): Plugin {
 }
 
 /** Every .html file under a folder. */
-function htmlFiles(dir: string): string[] {
-  let out: string[] = []
-  let names: string[]
-  try {
-    names = readdirSync(dir)
-  } catch {
-    return out
-  }
-  for (const name of names) {
-    const path = resolve(dir, name)
-    if (statSync(path).isDirectory()) out = out.concat(htmlFiles(path))
-    else if (name.endsWith('.html')) out.push(path)
-  }
-  return out
-}
+const htmlFiles = (dir: string): string[] => walkFiles(dir).filter((f) => f.endsWith('.html'))
 
 export default defineConfig({
   // Root-absolute asset paths (`/assets/…`, `/warsha-*`), so the app boots

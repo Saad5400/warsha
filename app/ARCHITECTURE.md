@@ -210,9 +210,16 @@ a real Vite build and a real dev server.
   runtime files) lives in one URL-keyed `warsha-keep` cache, not a per-build one — a deploy only
   replaces the small per-build shell cache, prunes `/assets/` files the new build no longer emits,
   and holds the rest least-recently-used under min(500 MB, half the quota minus what the origin
-  already stores), so cached runtimes never crowd out project saves. Install refreshes every kept
-  same-origin runtime file (a `304` when unchanged), so a student who updates online and then goes
-  offline gets this build's workers, not the last one's. Pages are cached only by navigations, only
+  already stores), so cached runtimes never crowd out project saves. The build injects a
+  content-hash manifest of every unhashed runtime file (`warsha:sw-precache`); a kept file whose
+  hash is this build's is served with no request at all, and install refreshes only the kept files
+  whose hash changed — so a deploy costs exactly what it changed, not a re-download of every runtime
+  (nginx's mtime+size ETag changes on every deploy; `/Dockerfile` also stamps content-derived mtimes
+  via `tools/stable-mtimes.mjs` so it changes only with the bytes). Install stages everything in a
+  per-build cache, fails as a whole if any file is missing, wrong or another build's (a rollout's
+  older container), and only activation promotes it into `warsha-keep` — so an install cut short
+  changes nothing the running build serves, and a student who updates online and then goes offline
+  gets this build's workers, not the last one's. Pages are cached only by navigations, only
   in their own build's shell, and only when the page is that build's (its entry chunk is in the
   worker's asset list); every lookup names its cache. So a language a student already ran is neither
   re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
