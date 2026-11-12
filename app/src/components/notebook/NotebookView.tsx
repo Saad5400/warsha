@@ -53,7 +53,9 @@ export interface NotebookViewProps {
 let clipboard: NbCell[] = []
 
 const BAR =
-  'notebook-toolbar sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center bg-surface-1 ' +
+  // A size container: what the buttons and the kernel pill show follows the BAR's width, not the
+  // window's — a 900px laptop with the sidebar open has a 620px bar.
+  'notebook-toolbar @container sticky top-0 z-(--z-raised) flex h-bar-top flex-none items-center bg-surface-1 ' +
   'shadow-[inset_0_-1px_0_0_var(--border-subtle)] min-w-0'
 
 const BAR_BTN =
@@ -66,7 +68,8 @@ function BarButton({ label, icon, onClick, disabled, showLabel = true, ...rest }
   return (
     <button type="button" aria-label={label} title={label} className={BAR_BTN} disabled={disabled} onClick={onClick} {...rest}>
       {icon}
-      {showLabel ? <span className="max-[559px]:hidden">{label}</span> : null}
+      {/* Labels when the bar has room for all of them (608px measured, en; 592 ar), else icons + tooltips. */}
+      {showLabel ? <span className="hidden @min-[720px]:inline">{label}</span> : null}
     </button>
   )
 }
@@ -75,7 +78,7 @@ function KernelPill({ state }: { state: SessionState }) {
   const busy = sessionBusy(state)
   const tone = state.kernel === 'off' && !busy ? 'off' : busy || state.kernel !== 'idle' ? 'busy' : 'idle'
   return (
-    <span data-kernel={state.kernel} data-busy={busy || undefined} className="flex min-w-0 items-center gap-1.5 ps-1 text-micro text-text-3" aria-live="polite">
+    <span data-kernel={state.kernel} data-busy={busy || undefined} title={kernelLabel(state)} className="flex min-w-0 items-center gap-1.5 ps-1 text-micro text-text-3" aria-live="polite">
       <span
         aria-hidden="true"
         className={
@@ -87,7 +90,11 @@ function KernelPill({ state }: { state: SessionState }) {
               : 'bg-transparent border-text-3')
         }
       />
-      <span className="truncate">{kernelLabel(state)}</span>
+      {/* The full label only where it fits beside the labelled buttons; otherwise one whole word
+          ("Ready", «جاهز») — never a truncated one ("Pytho…"). The full label stays in the tooltip
+          and the status bar. */}
+      <span data-kernel-label="" className="hidden whitespace-nowrap @min-[800px]:inline">{kernelLabel(state)}</span>
+      <span data-kernel-label="short" className="whitespace-nowrap @min-[800px]:hidden">{kernelLabel(state, true)}</span>
     </span>
   )
 }
