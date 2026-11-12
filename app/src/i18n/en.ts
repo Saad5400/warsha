@@ -353,11 +353,12 @@ export const EN = {
   explorerAddFilesTo: (dir: string) => (dir ? `Add files to ${dir}` : 'Add files'),
   explorerDropHere: (dir: string) => (dir ? `Drop to add to ${dir}` : 'Drop to add to the project'),
   addConflictTitle: (n: number, name: string) => (n === 1 ? `“${name}” already exists` : `${n} files already exist`),
+  /** One clash is already named by the title; several are listed here. */
   addConflictBody: (names: string[], more: number) =>
-    `${names.join(', ')}${more ? ` and ${more} more` : ''}. Keep both adds a numbered copy beside the original.`,
+    `${names.length > 1 ? `${names.join(', ')}${more ? ` and ${more} more` : ''}. ` : ''}Keep both adds a numbered copy beside the original.`,
   addKeepBoth: 'Keep both',
   addReplace: 'Replace',
-  addSkip: (n: number): string => (n === 1 ? 'Skip it' : 'Skip those'),
+  addSkip: 'Skip',
   added: (n: number, dir: string) => (dir ? `Added ${count(n, 'file')} to ${dir}.` : `Added ${count(n, 'file')}.`),
   addedNone: 'Nothing was added.',
   /** Pictures and other binaries: projects hold text (code, CSV, JSON, …). */

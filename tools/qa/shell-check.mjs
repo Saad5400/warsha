@@ -77,6 +77,31 @@ async function fromStarter(page, lang = /Python|بايثون/, card = 1) {
   await page.waitForTimeout(500)
 }
 const toast = (page) => page.locator('[role="status"], [role="alert"]').allInnerTexts().then((t) => t.join(' | '))
+/** Nothing but the activity bar may occupy its column (QA follow-up: a capture showed
+ *  editor code and picker cards painted there in Arabic). Two readings: what is hit at
+ *  points down the column, and every rendered element whose box enters it. The modal
+ *  scrim, portalled dialogs/menus/toasts and the layout's own ancestors are allowed. */
+const railClean = (page) =>
+  page.evaluate(() => {
+    const nav = document.querySelector('nav')
+    const r = nav.getBoundingClientRect()
+    const allowed = (el) =>
+      nav.contains(el) || el.contains(nav) || el.closest('[role="dialog"], [role="menu"], [role="status"], [data-radix-portal], [data-radix-popper-content-wrapper]') ||
+      getComputedStyle(el).position === 'fixed'
+    const bad = []
+    for (let y = r.top + 4; y < r.bottom - 4; y += 24) {
+      const hit = document.elementsFromPoint(r.left + r.width / 2, y).find((e) => !allowed(e) && e !== document.documentElement && e !== document.body)
+      if (hit) bad.push('hit ' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' @' + Math.round(y))
+    }
+    for (const el of document.querySelectorAll('body *')) {
+      if (allowed(el)) continue
+      const b = el.getBoundingClientRect()
+      if (!b.width || !b.height || getComputedStyle(el).visibility === 'hidden') continue
+      if (b.left < r.right - 1 && b.right > r.left + 1 && b.top < r.bottom - 1 && b.bottom > r.top + 1) bad.push('box ' + el.tagName + '.' + String(el.className).slice(0, 40))
+      if (bad.length > 5) break
+    }
+    return bad
+  })
 
 // ------------------------------------------------------------ splash (first visit)
 {
@@ -160,6 +185,19 @@ for (const lang of ['en', 'ar']) {
     (await dlg.getByRole('button', { name: 'Keep both' }).count()) === 1 &&
     (await dlg.getByRole('button', { name: 'Replace' }).count()) === 1 &&
     (await dlg.getByRole('button', { name: /^Skip/ }).count()) === 1)
+  await check('the dialog is one footer row: Cancel, Skip, Replace, then Keep both (primary) at the end', async () =>
+    page.evaluate(() => {
+      const btns = [...document.querySelectorAll('dialog[open] button')].filter((b) => b.offsetParent)
+      const ys = new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top)))
+      const ok = ys.size === 1 && btns.map((b) => b.textContent.trim()).join('|') === 'Cancel|Skip|Replace|Keep both' && btns.at(-1).dataset.variant === 'primary'
+      if (!ok) console.log(JSON.stringify(btns.map((b) => [b.textContent.trim(), Math.round(b.getBoundingClientRect().top), b.dataset.variant])))
+      return ok
+    }))
+  await check('ltr: with a dialog open, nothing but the activity bar is in its column', async () => {
+    const bad = await railClean(page)
+    if (bad.length) console.log('   ' + bad.join('\n   '))
+    return bad.length === 0
+  })
   await page.screenshot({ path: join(SHOTS, 'shell-add-conflict-1366.png') })
   await dlg.getByRole('button', { name: 'Keep both' }).click()
   await page.waitForTimeout(500)
@@ -253,6 +291,40 @@ for (const lang of ['en', 'ar']) {
   await ctx.close()
 }
 
+// ------------------------------------------- desktop, Arabic: the rail column
+{
+  const { ctx, page, url } = await open({ lang: 'ar', width: 1366, height: 768 })
+  await page.goto(url)
+  await fromStarter(page)
+  await check('rtl: nothing but the activity bar is in its column', async () => {
+    const bad = await railClean(page)
+    if (bad.length) console.log('   ' + bad.join('\n   '))
+    return bad.length === 0
+  })
+  const btn = page.locator('.sidebar-project-row').getByRole('button', { name: /^إضافة ملفات/ })
+  for (let i = 0; i < 2; i++) {
+    const chooser = page.waitForEvent('filechooser')
+    await btn.click()
+    await (await chooser).setFiles([{ name: 'scores.csv', mimeType: 'text/csv', buffer: Buffer.from('a\n' + i + '\n') }])
+    await page.waitForTimeout(500)
+  }
+  await check('rtl: with the clash dialog open, still nothing but the activity bar in its column', async () => {
+    const bad = await railClean(page)
+    if (bad.length) console.log('   ' + bad.join('\n   '))
+    return bad.length === 0
+  })
+  await check('rtl: the clash dialog is one footer row, Keep both at the trailing (left) edge', async () =>
+    page.evaluate(() => {
+      const btns = [...document.querySelectorAll('dialog[open] button')].filter((b) => b.offsetParent)
+      const ys = new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top)))
+      const primary = btns.find((b) => b.dataset.variant === 'primary')
+      return ys.size === 1 && btns.length === 4 && Math.min(...btns.map((b) => b.getBoundingClientRect().left)) === primary.getBoundingClientRect().left
+    }))
+  await page.waitForTimeout(4500) // toasts gone: a clean frame for the eye
+  await page.screenshot({ path: join(SHOTS, 'shell-add-conflict-ar-1366.png') })
+  await ctx.close()
+}
+
 // ------------------------------------------------- phone, Arabic: chrome
 {
   const { ctx, page, url } = await open({ phone: true, lang: 'ar' })
@@ -280,6 +352,29 @@ for (const lang of ['en', 'ar']) {
   await page.waitForTimeout(600)
   await check('phone: the picked file lands in the project', async () =>
     (await page.locator('[role="treeitem"][data-path="data.csv"]').count()) === 1)
+
+  // A clash on a phone: the four answers stack full width, Keep both on top.
+  // (One added file opens in the editor, which closes the drawer: reopen it.)
+  if ((await page.locator('aside[data-state="open"]').count()) === 0) {
+    await page.locator('[aria-label="Explorer"], [aria-label="المستكشف"]').first().click()
+    await page.waitForTimeout(600)
+  }
+  await page.screenshot({ path: join(SHOTS, 'shell-phone-ar-before-reclash.png') })
+  const again = page.waitForEvent('filechooser', { timeout: 5000 })
+  await page.locator('.sidebar-project-row').getByRole('button', { name: /^إضافة ملفات/ }).tap()
+  await (await again).setFiles([{ name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from('a\n2\n') }])
+  await page.waitForTimeout(600)
+  await check('phone: the clash answers stack full width, Keep both on top, Cancel last', async () =>
+    page.evaluate(() => {
+      const d = document.querySelector('dialog[open]').getBoundingClientRect()
+      const btns = [...document.querySelectorAll('dialog[open] button')].filter((b) => b.offsetParent).map((b) => [b.getBoundingClientRect(), b])
+      btns.sort((a, b) => a[0].top - b[0].top)
+      const widths = new Set(btns.map(([r]) => Math.round(r.width)))
+      return btns.length === 4 && widths.size === 1 && btns[0][1].dataset.variant === 'primary' && /إلغاء/.test(btns[3][1].textContent) && btns.every(([r]) => r.left >= d.left && r.right <= d.right)
+    }))
+  await page.screenshot({ path: join(SHOTS, 'shell-phone-ar-add-conflict.png') })
+  await page.getByRole('button', { name: 'الاحتفاظ بالاثنين' }).tap()
+  await page.waitForTimeout(500)
 
   // A row menu on touch: visible group rules, no shortcut hints.
   await page.locator('[role="treeitem"][data-path="data.csv"]').dispatchEvent('contextmenu')

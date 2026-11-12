@@ -165,7 +165,8 @@ export interface ChoiceRequest {
   options: ChoiceOption[]
   /** The way out that picks nothing — "Keep “Main”", not "Cancel". */
   cancelLabel?: string
-  /** The answers are words ("Keep both"), not file endings: the UI font, not the code font. */
+  /** The answers are words ("Keep both"), not file endings: the UI font, and they become
+   *  the dialog's footer row (with Cancel) instead of a chip row above it. */
   prose?: boolean
   resolve: (value: string | null) => void
 }
@@ -393,27 +394,58 @@ function ChoiceDialog({ request, open }: { request: ChoiceRequest; open: boolean
         {request.title}
       </h2>
       {request.message ? <p className={MESSAGE}>{request.message}</p> : null}
-      {/* Wraps rather than scrolls: six chips fit two rows on the narrowest phone, and a
-          row that scrolls sideways hides the options a student most needs to see. */}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {request.options.map((option, i) => (
-          <Button
-            key={option.value}
-            ref={i === 0 ? firstRef : undefined}
-            variant={i === 0 ? 'primary' : 'ghost'}
-            onClick={() => request.resolve(option.value)}
-          >
-            {option.icon}
-            {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
-            <span className={request.prose ? undefined : 'font-code'}>{option.label}</span>
+      {request.prose ? (
+        // Words, not chips: the answers ARE the dialog's actions, so they take its footer —
+        // one row, Cancel first as the quiet way out and the recommendation last, at the
+        // trailing edge where every other dialog's primary sits (ACTIONS). Too narrow for
+        // one row (a phone), they stack full width with the recommendation on top.
+        <div className={ACTIONS + ' flex-wrap max-[479px]:flex-col-reverse max-[479px]:items-stretch'}>
+          <Button variant="ghost" large onClick={() => request.resolve(null)}>
+            {request.cancelLabel ?? COPY.dlgCancel}
           </Button>
-        ))}
-      </div>
-      <div className={ACTIONS}>
-        <Button variant="ghost" large onClick={() => request.resolve(null)}>
-          {request.cancelLabel ?? COPY.dlgCancel}
-        </Button>
-      </div>
+          {request.options
+            .map((option, i) => (
+              <Button
+                key={option.value}
+                ref={i === 0 ? firstRef : undefined}
+                variant={i === 0 ? 'primary' : 'ghost'}
+                large
+                // The footer's 96px floor is for its two ends (Cancel, the primary); four
+                // floors overflow a 26rem dialog, so the answers between take their own width.
+                className={i === 0 ? undefined : 'min-w-0!'}
+                onClick={() => request.resolve(option.value)}
+              >
+                {option.icon}
+                {option.label}
+              </Button>
+            ))
+            .reverse()}
+        </div>
+      ) : (
+        <>
+          {/* Wraps rather than scrolls: six chips fit two rows on the narrowest phone, and a
+              row that scrolls sideways hides the options a student most needs to see. */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {request.options.map((option, i) => (
+              <Button
+                key={option.value}
+                ref={i === 0 ? firstRef : undefined}
+                variant={i === 0 ? 'primary' : 'ghost'}
+                onClick={() => request.resolve(option.value)}
+              >
+                {option.icon}
+                {/* Code voice: these read as file names, and ".java" beside "Main" should look like it does in the tree. */}
+                <span className="font-code">{option.label}</span>
+              </Button>
+            ))}
+          </div>
+          <div className={ACTIONS}>
+            <Button variant="ghost" large onClick={() => request.resolve(null)}>
+              {request.cancelLabel ?? COPY.dlgCancel}
+            </Button>
+          </div>
+        </>
+      )}
     </Modal>
   )
 }

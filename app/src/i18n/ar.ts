@@ -325,10 +325,11 @@ export const AR: Bundle = {
   explorerDropHere: (dir) => (dir ? `أفلِت للإضافة إلى ${iso(dir)}` : 'أفلِت للإضافة إلى المشروع'),
   addConflictTitle: (n, name) => (n === 1 ? `«${iso(name)}» موجود بالفعل` : `${files(n)} موجودة بالفعل`),
   addConflictBody: (names, more) =>
-    `${names.map(iso).join('، ')}${more ? ' وغيرها' : ''}. «الاحتفاظ بالاثنين» يضيف نسخة مرقّمة بجانب الأصل.`,
+    `${names.length > 1 ? `${names.map(iso).join('، ')}${more ? ' وغيرها' : ''}. ` : ''}«الاحتفاظ بالاثنين» يضيف نسخة مرقّمة بجانب الأصل.`,
   addKeepBoth: 'الاحتفاظ بالاثنين',
   addReplace: 'استبدال',
-  addSkip: (n) => (n === 1 ? 'تخطّيه' : 'تخطّيها'),
+  // A verbal noun, like its two neighbours («الاحتفاظ بالاثنين»، «استبدال»).
+  addSkip: 'تخطّي',
   added: (n, dir) => (dir ? `أُضيف ${files(n)} إلى ${iso(dir)}.` : `أُضيف ${files(n)}.`),
   addedNone: 'لم يُضَف شيء.',
   addSkipped: (n) => `تُرك ${files(n)} — المشروع يحفظ الملفات النصية فقط (كود، CSV، JSON، …).`,

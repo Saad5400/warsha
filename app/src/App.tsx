@@ -1333,7 +1333,7 @@ function Ide({ report }: { report: CapabilityReport }) {
         options: [
           { value: 'both', label: COPY.addKeepBoth },
           { value: 'replace', label: COPY.addReplace },
-          { value: 'skip', label: COPY.addSkip(clashes.length) },
+          { value: 'skip', label: COPY.addSkip },
         ],
         cancelLabel: COPY.dlgCancel,
         prose: true,
