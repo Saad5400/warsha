@@ -56,7 +56,7 @@
  *
  * Overridable:
  *   WARSHA_V1_DIST, WARSHA_V2_DIST  the two builds                       (required)
- *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind (default all)
+ *   WARSHA_LANGS        comma list of python,java,csharp,c,js,web,vue,svelte,tailwind,notebook (default all)
  *   WARSHA_SCENARIOS    comma list of A,B,C                              (default all)
  *   WARSHA_NGINX_CONF   nginx server block    (default ../../app/deploy/nginx.conf)
  *   WARSHA_PORT         host port for nginx                              (default 8291)
@@ -153,6 +153,21 @@ const PROGRAMS = {
       ['index.html', '<!doctype html>\n<html><head><script src="https://cdn.tailwindcss.com"></script></head><body><p id="tw" class="font-bold">upgrade-ok tailwind</p></body></html>\n'],
     ],
   },
+  // A Jupyter notebook: its own kernel (runtimes/python/src/kernel.js) and its
+  // own lazy UI chunk, run through the notebook's "Run cell", not the tab Run.
+  // The printed marker is built at run time so the cell SOURCE never contains it.
+  notebook: {
+    entry: 'lab.ipynb',
+    notebook: true,
+    files: [
+      ['lab.ipynb', JSON.stringify({
+        cells: [{ cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: ['print("upgrade-ok " + "notebook")'] }],
+        metadata: { kernelspec: { name: 'python3', display_name: 'Python 3', language: 'python' } },
+        nbformat: 4,
+        nbformat_minor: 5,
+      })],
+    ],
+  },
 }
 const LANGS = (process.env.WARSHA_LANGS ?? Object.keys(PROGRAMS).join(',')).split(',').map((s) => s.trim()).filter(Boolean)
 
@@ -218,6 +233,9 @@ info(`v1 entry ${V1_ENTRY}  ->  v2 entry ${V2_ENTRY}`)
  *  version the warsha:sw-precache plugin stamps onto the worker's first line. */
 const shellCacheOf = (dist) =>
   `warsha-shell-${readFileSync(join(dist, 'coi-serviceworker.js'), 'utf8').match(/__WARSHA_VERSION__="([^"]+)"/)?.[1]}`
+/** Real, not-precached wasm chunks of v2 (precache is JS/CSS only, so these
+ *  are fetched lazily and cache-first): the targets of the poisoning check. */
+const POISON_URLS = readdirSync(join(V2, 'assets')).filter((f) => f.endsWith('.wasm')).slice(0, 2).map((f) => `${BASE}assets/${f}`)
 const V1_SHELL = shellCacheOf(V1)
 const V2_SHELL = shellCacheOf(V2)
 
@@ -295,28 +313,38 @@ async function runLang(page, lang, { allowHeal = false } = {}) {
       history.pushState(null, '', '/')
       location.hash = hash
     }, new URL(shareLink(lang)).hash)
-    await page.waitForSelector('.cm-content', { timeout: 60000 })
+    const ready = p.notebook ? '[data-notebook] .cm-content' : '.cm-content'
+    await page.waitForSelector(ready, { timeout: 60000 })
     await page.waitForTimeout(400)
     for (let attempt = 0; attempt < 2; attempt++) {
       navigated = false
       // The tab strip's Run is labelled "Run <file>" (RunControl); a bare /^Run/
-      // would also match the menu bar's Run menu and open it instead.
+      // would also match the menu bar's Run menu and open it instead. A notebook
+      // runs a cell from the cell's own gutter button.
       // dispatchEvent, not click(): the "project ready" toast sits over the tab
       // strip for a few seconds and would swallow a pointer click.
-      await page.getByRole('button', { name: `Run ${p.entry}`, exact: true }).dispatchEvent('click', {}, { timeout: 30000 })
+      const run = p.notebook
+        ? page.locator('[data-notebook]').getByRole('button', { name: 'Run cell', exact: true }).first()
+        : page.getByRole('button', { name: `Run ${p.entry}`, exact: true })
+      await run.dispatchEvent('click', {}, { timeout: 30000 })
       const outcome = await (async () => {
         const deadline = Date.now() + RUN_TIMEOUT_MS
         while (Date.now() < deadline) {
           if (navigated) return { kind: 'reloaded' }
           const state = await page.evaluate(() => ({
             out: document.querySelector('[aria-label="Program output"]')?.innerText ?? '',
-            failure: document.querySelector('.console-failure__title')?.textContent ?? null,
+            notebook: document.querySelector('[data-notebook]')?.innerText ?? '',
+            // The run console's failure block, or a notebook's error toast.
+            failure: document.querySelector('.console-failure__title')?.textContent
+              ?? document.querySelector('.toast[data-kind="error"]')?.textContent ?? null,
             crash: !!document.querySelector('[data-crash]'),
           })).catch(() => null)
           if (state) {
             if (state.crash) return { kind: 'crash' }
             if (state.failure) return { kind: 'failure', text: state.failure }
-            if (!p.preview && state.out.includes(marker) && /Finished\. \(exit code 0\)/.test(state.out)) return { kind: 'ok' }
+            if (p.notebook) {
+              if (state.notebook.includes(marker)) return { kind: 'ok' }
+            } else if (!p.preview && state.out.includes(marker) && /Finished\. \(exit code 0\)/.test(state.out)) return { kind: 'ok' }
             if (p.preview) {
               for (const f of page.frames()) {
                 if (f === page.mainFrame()) continue
@@ -489,6 +517,19 @@ try {
     // these URLs, so v2 must never fetch one of them again.
     const v1Downloads = await crossOriginCached(page)
     info(`v1 cached ${v1Downloads.size} cross-origin runtime files: ${summarizeHosts([...v1Downloads])}`)
+    // Two things an older worker could have left behind, planted on purpose:
+    //  - `/` fetched as data, exactly as ui/staleBuild.ts does on any failure. A
+    //    worker that cached it long-term would, after the deploy, boot that old
+    //    page offline — whose entry chunk the deploy pruned: a blank screen.
+    //  - the prod nginx's SPA-fallback HTML stored under real /assets/*.wasm
+    //    URLs, by the pre-fix worker, in its legacy cache and in the long-lived
+    //    one. Neither may ever be served as the wasm again.
+    await page.evaluate(() => fetch('/').then((r) => r.text())).catch(() => {})
+    await page.evaluate(async (urls) => {
+      const html = () => new Response('<!doctype html><title>poison</title>', { headers: { 'content-type': 'text/html' } })
+      await (await caches.open('warsha-runtime-legacy00')).put(urls[0], html())
+      await (await caches.open('warsha-keep')).put(urls[1] ?? urls[0], html())
+    }, POISON_URLS)
     await ctx.close()
 
     deploy(V2, 0)
@@ -511,11 +552,15 @@ try {
         console.log('\n-- C. offline right after the upgrade, nothing run on v2 yet')
         check('C: the v2 service worker is installed', await waitShell(page, V2_SHELL))
         await ctx.setOffline(true)
-        await page.reload({ waitUntil: 'load' }).catch(() => {})
+        // `/` is the installed app's start_url: what a student taps on a plane.
+        await page.goto(BASE, { waitUntil: 'load' }).catch(() => {})
         await page.waitForSelector('.cm-content, button:has-text("New project")', { timeout: 30000 })
-          .then(() => pass('C offline: the upgraded shell boots'))
-          .catch(() => fail('C offline: the upgraded shell boots'))
+          .then(() => pass('C offline: the upgraded shell boots at /'))
+          .catch(() => fail('C offline: the upgraded shell boots at /', 'blank — an older page was served'))
         await assertOnV2('C offline', page)
+        // The runtime files the worker serves offline are this build's, not the
+        // previous one's — staleBuild cannot catch a mismatch with no network.
+        assertFresh('C offline', await cacheAudit(page), V2)
         for (const lang of LANGS) {
           const r = await runLang(page, lang)
           if (OFFLINE_LIMITS[lang]) {
@@ -528,6 +573,15 @@ try {
         console.log('\n-- A (cont.) back online')
       }
 
+      if (visit === 'first visit after deploy') {
+        const served = await page.evaluate(async (urls) => Promise.all(urls.map(async (u) => {
+          const r = await fetch(u)
+          const head = new Uint8Array(await r.arrayBuffer()).slice(0, 4)
+          return { u, status: r.status, type: r.headers.get('content-type'), wasm: head[0] === 0 && head[1] === 0x61 && head[2] === 0x73 && head[3] === 0x6d }
+        })), POISON_URLS)
+        check('A: an HTML page cached under a wasm URL by an older worker is never served', served.every((x) => x.wasm),
+          served.map((x) => `${x.u.split('/').pop()} ${x.status} ${x.type}${x.wasm ? '' : ' NOT WASM'}`).join(', '))
+      }
       for (const lang of LANGS) reportRun(`A ${visit}`, lang, await runLang(page, lang, { allowHeal: true }))
       await assertOnV2(`A ${visit}`, page)
       assertFresh(`A ${visit}`, await cacheAudit(page), V2)
