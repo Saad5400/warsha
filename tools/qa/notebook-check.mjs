@@ -691,8 +691,9 @@ if (ONLY.includes('P')) {
   await page.locator('button', { hasText: /^New project$/ }).first().click()
   await page.locator('dialog[open]').getByRole('button', { name: /^Python/ }).first().click()
   await page.locator('.template-card').filter({ hasText: 'Python basics notebook' }).first().click()
-  // A project is already open, so the starter asks for the new project's name first.
-  await page.locator('dialog[open]').getByRole('button', { name: /^Create$/ }).click()
+  // Before #36 a second project from a starter asked for its name first; now the starter names it.
+  // Answer the prompt if one comes, so the check holds either way.
+  await page.locator('dialog[open]').getByRole('button', { name: /^Create$/ }).click({ timeout: 3000 }).catch(() => {})
   await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 15000 }).catch(() => {})
   await page.waitForSelector('[role="treeitem"][data-path="scores.csv"]', { state: 'detached', timeout: 15000 }).catch(() => {})
   await page.waitForSelector('.notebook-view [data-cell-id]', { timeout: 30000 })
