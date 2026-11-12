@@ -95,6 +95,14 @@ interface Events {
    */
   app_crashed: Record<string, never>
   /**
+   * A release's offline copy installed incomplete: the service worker failed to
+   * install it several times in a row and then went through best-effort
+   * (public/coi-serviceworker.js). Without this, a release that cannot install
+   * — one missing file — is invisible: the old version keeps running and
+   * nothing says so. Nothing about the device or the files is sent.
+   */
+  offline_install_degraded: Record<string, never>
+  /**
    * An account sign-in or sign-up attempt resolved. Both halves on one event so
    * the failure rate is the same number as the attempt count — a broken
    * warsha-api shows up as `result: network` climbing, not as a quiet week with

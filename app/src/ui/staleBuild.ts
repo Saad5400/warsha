@@ -26,6 +26,8 @@
  * cache and from the server, the import fails, and the tab reloads here.
  */
 
+import { track } from '../analytics'
+
 /** The page's build fingerprint: the hashed entry script its document boots.
  *  Its name changes whenever any bundled code does (Vite hashes it), and both
  *  this page and the deployed index.html carry it, so comparing the two needs
@@ -132,5 +134,11 @@ export function reloadIfStale(): Promise<boolean> {
 export function watchForStaleBuild(): void {
   window.addEventListener('vite:preloadError', () => {
     void reloadIfStale()
+  })
+  // The other half of a release that did not land: the service worker reports
+  // when it could only install this release's offline copy incompletely (it
+  // also logs the details to its own console). Counted, never described.
+  navigator.serviceWorker?.addEventListener('message', (e: MessageEvent) => {
+    if ((e.data as { type?: string } | null)?.type === 'warsha:install-degraded') track('offline_install_degraded', {})
   })
 }
