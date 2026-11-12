@@ -297,20 +297,66 @@ if (typeof window === 'undefined') {
         return maxAge > 0 && storedAt > 0 && storedAt + (maxAge - age) * 1000 > Date.now();
     };
 
-    // Store a response, counting its bytes as they stream into the cache (the
-    // decoded size, which is what quota sees). The response is cloned
-    // synchronously, before the caller hands the original to the page. Two
-    // promises come back: `opened` (the write is under way — what the fetch path
-    // waits for, so a request right after finds the entry being written, never
-    // missing) and `done` (the write is on disk and, for KEEP_CACHE, recorded —
-    // what install waits for). Into KEEP_CACHE by default; install stages.
-    // `sole`: nobody else will read `response` (install), so its own body is
-    // streamed into the cache instead of a clone — a clone whose twin is never
-    // read can stall on the pipe they share (see `readPage`).
+    // One network body, two readers (the page, the cache), with no way for one
+    // to hold up the other. A native clone() cannot promise that: the clones
+    // share one bounded pipe, so a reader that stops pulling — a cache write
+    // that fails part-way, a page that abandons the request, a copy nobody reads
+    // — stalls its twin too. A stalled response never finishes, the worker
+    // stays busy, the next worker cannot activate, and over HTTP/1.1 a few such
+    // streams hold every connection to the host, so even a navigation queues
+    // forever. Here the body is read once, at network speed, and every chunk
+    // handed to both readers; one that errors or cancels is dropped, the other
+    // still gets every byte. The cost is buffering when a reader is slower than
+    // the network: bounded by the file's size.
+    const fanOut = (body) => {
+        const reader = body.getReader();
+        const sinks = [{ live: true }, { live: true }];
+        const branches = sinks.map((sink) => new ReadableStream({
+            start(controller) { sink.controller = controller; },
+            cancel() { sink.live = false; },
+        }));
+        const each = (fn) => {
+            sinks.forEach((sink, i) => {
+                if (!sink.live) return;
+                try { fn(sink.controller, i); } catch { sink.live = false; }
+            });
+        };
+        (async () => {
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    // Each reader its own bytes: a consumer may transfer the
+                    // buffer it is handed, and the other must not find it gone.
+                    each((c, i) => c.enqueue(i ? value.slice() : value));
+                    if (!sinks.some((x) => x.live)) {
+                        await reader.cancel().catch(() => {});
+                        return;
+                    }
+                }
+                each((c) => c.close());
+            } catch (e) {
+                each((c) => c.error(e));
+            }
+        })();
+        return branches;
+    };
+
+    // Store a response, counting its bytes as they arrive (the decoded size,
+    // which is what quota sees). Two promises come back: `opened`
+    // (the write is under way — what the fetch path waits for, so a request
+    // right after finds the entry being written, never missing) and `done` (the
+    // write is on disk and, for KEEP_CACHE, recorded — what install waits for);
+    // and `response`, what the caller hands the page instead of the original
+    // (whose body now feeds both, see `fanOut`). Into KEEP_CACHE by default;
+    // install stages. `sole`: nobody else reads the response (install), so its
+    // body goes to the cache alone.
     const keep = (request, response, cacheName = KEEP_CACHE, sole = false) => {
-        if (!storable(request, response)) return { opened: Promise.resolve(), done: Promise.resolve(false) };
+        if (!storable(request, response)) return { opened: Promise.resolve(), done: Promise.resolve(false), response };
+        const init = { status: response.status, statusText: response.statusText, headers: response.headers };
+        const [toCache, toPage] = sole ? [response.body, null] : fanOut(response.body);
         let bytes = 0;
-        const counted = (sole ? response : response.clone()).body.pipeThrough(new TransformStream({
+        const counted = toCache.pipeThrough(new TransformStream({
             transform(chunk, ctl) {
                 bytes += chunk.byteLength;
                 ctl.enqueue(chunk);
@@ -318,10 +364,22 @@ if (typeof window === 'undefined') {
         }));
         const headers = new Headers(response.headers);
         headers.set(STORED_AT, String(Date.now()));
-        const copy = new Response(counted, { status: response.status, statusText: response.statusText, headers });
+        // Collected into a Blob first, and only the finished Blob handed to the
+        // cache — never the stream itself. With a body still streaming into
+        // Cache.put() while the same download was served to a page, Chromium
+        // kept the worker busy in a share of runs with an event that never
+        // finished: the next worker could not activate, and once every tab was
+        // closed even a navigation waited behind it, forever (bisected: a
+        // stream put stalled in most runs of tools/qa/deploy-upgrade-check.mjs
+        // scenario E's sequence, a Blob put in none). Blob storage is
+        // disk-backed, so a 110 MB runtime need not fit in memory.
         const opened = caches.open(cacheName);
         const done = opened
-            .then((cache) => cache.put(request, copy).then(() => cache))
+            .then(async (cache) => {
+                const blob = await new Response(counted).blob();
+                await cache.put(request, new Response(blob, { status: response.status, statusText: response.statusText, headers }));
+                return cache;
+            })
             .then(async (cache) => {
                 if (cacheName !== KEEP_CACHE) return true;
                 const m = manifestPath(request.url) ? await measure(cache, request.url) : null;
@@ -330,7 +388,7 @@ if (typeof window === 'undefined') {
                 return true;
             })
             .catch(() => false);
-        return { opened, done };
+        return { opened, done, response: toPage ? new Response(toPage, init) : null };
     };
 
     // Whether a page is THIS build's: its entry chunk is one this build emitted.
@@ -510,8 +568,9 @@ if (typeof window === 'undefined') {
             throw err;
         }
         if (cached && !net.ok) return isolate(cached);
-        await keep(r, net).opened;
-        return isolate(net);
+        const kept = keep(r, net);
+        await kept.opened;
+        return isolate(kept.response);
     };
 
     // A conditional request for one cached same-origin file: the server answers
@@ -560,8 +619,10 @@ if (typeof window === 'undefined') {
         const cached = shelled || (await fromKeep(r));
         if (!cached) {
             const net = await fetch(request, { cache: 'no-store' });
-            if (!ahead) await keep(r, net).opened;
-            return isolate(net);
+            if (ahead) return isolate(net);
+            const kept = keep(r, net);
+            await kept.opened;
+            return isolate(kept.response);
         }
         if (await isThisBuilds(r.url)) {
             touch(r.url);
@@ -581,8 +642,10 @@ if (typeof window === 'undefined') {
             touch(r.url);
             return isolate(cached);
         }
-        if (!ahead) await keep(r, net).opened;
-        return isolate(net);
+        if (ahead) return isolate(net);
+        const kept = keep(r, net);
+        await kept.opened;
+        return isolate(kept.response);
     };
 
     // ---- install: stage everything; fail only for what an offline boot needs --
