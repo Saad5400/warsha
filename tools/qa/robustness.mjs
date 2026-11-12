@@ -20,7 +20,7 @@
  * only is unreachable via "localhost" when Chrome resolves it to ::1 first. */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { seedStarter } from './lib/seed.mjs'
+import { seedStarter, WELCOME_READY, openEditor, openNewProject } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,7 +47,10 @@ const CHEERPJ_CDN = '**://cjrtnc.leaningtech.com/**'
  * `before` runs pre-navigation — the only point where addInitScript/route
  * can catch the app's own startup.
  */
+// ONLY="two tabs" runs just the scenarios whose name contains that text.
+const ONLY = process.env.ONLY
 async function scenario(name, { before, body }) {
+  if (ONLY && !name.includes(ONLY)) return
   console.log(`\n--- ${name} ---`)
   const dir = mkdtempSync(join(tmpdir(), 'warsha-robust-'))
   const ctx = await chromium.launchPersistentContext(dir, {
@@ -104,7 +107,7 @@ const BREAK_OPFS_ENTIRELY = `
 `
 
 // Prefix match: the accessible name includes the file, e.g. "Run main.py".
-const runBtn = (page) => page.getByRole('button', { name: /^Run\b/ }).first()
+const runBtn = (page) => page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).first()
 const outputText = (page) => page.locator('[aria-label="Program output"]').innerText()
 const failureBlock = (page) => page.locator('[data-failure]')
 
@@ -116,7 +119,7 @@ async function waitForRunnable(page) {
   await page.waitForSelector('.cm-content', { timeout: 20000 })
   await page.waitForFunction(
     () => {
-      const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b/.test(b.getAttribute('aria-label') ?? ''))
+      const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b(?! and Debug)/.test(b.getAttribute('aria-label') ?? ''))
       return !!btn && !btn.disabled
     },
     null,
@@ -405,7 +408,7 @@ await scenario('worker terminated mid-run', {
       .waitForFunction(
         () => {
           // Tab-strip Run names its file ("Run main.py") — prefix, not equality.
-          const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b/.test(b.getAttribute('aria-label') ?? ''))
+          const btn = [...document.querySelectorAll('button')].find((b) => /^Run\b(?! and Debug)/.test(b.getAttribute('aria-label') ?? ''))
           return !!btn && !btn.disabled
         },
         null,
@@ -493,7 +496,7 @@ await scenario('OPFS unavailable at startup', {
   body: async (page) => {
     await page.goto(BASE, { waitUntil: 'load' })
     const loaded = await page
-      .waitForSelector('button:has-text("New from a starter"), .cm-content', { timeout: 30000 })
+      .waitForSelector(WELCOME_READY, { timeout: 30000 })
       .then(() => true)
       .catch(() => false)
     check(loaded, 'the IDE still loads with no usable storage')
@@ -501,14 +504,14 @@ await scenario('OPFS unavailable at startup', {
     const crashed = await page.locator('[data-crash="true"]').count()
     check(crashed === 0, 'no crash screen')
 
+    // And it is a working IDE, not a read-only shell. (`/` is the projects Home;
+    // the storage banners live in the editor, where the work happens.)
+    await seedStarter(page, { name: 'Python (OOP starter)' })
+    await page.waitForSelector('.cm-content', { timeout: 15000 })
     const banner = page.locator('.storage-banner[data-notice="memory-only"]')
     const shown = await banner.waitFor({ timeout: 10000 }).then(() => true).catch(() => false)
     check(shown, 'the student is told their work will not survive the tab')
     if (shown) info((await banner.innerText()).replace(/\n/g, ' | '))
-
-    // And it is a working IDE, not a read-only shell.
-    await seedStarter(page, { name: 'Python (OOP starter)' })
-    await page.waitForSelector('.cm-content', { timeout: 15000 })
     await typeProgram(page, 'print("memory only")')
     const editorText = await page.locator('.cm-content').innerText()
     check(editorText.includes('memory only'), 'files can still be created and edited in memory')
@@ -521,38 +524,41 @@ await scenario('OPFS unavailable at startup', {
 // ===========================================================================
 await scenario('remembered project has vanished', {
   body: async (page) => {
+    // Two projects, then the remembered one is evicted: the app must reopen the
+    // OTHER one and say so. (With nothing left there is nothing to reopen and,
+    // by design in fs/projects.ts, no notice — the empty Home says it all.)
     await startPythonProject(page)
-    // Mimics iOS: wipes OPFS but leaves localStorage, so prefs point at a dead
-    // project id. Reload happens in the same task as the wipe — a setPrefs
-    // call in between would overwrite the injected id with the real one from
-    // prefs()'s module-level cache.
+    await page.goto(BASE, { waitUntil: 'load' })
+    await seedStarter(page, { lang: 'Java', name: 'Java basics' })
+    await page.waitForTimeout(1500)
+    // Mimics iOS evicting just that project's storage while localStorage still
+    // points at it. Reload in the same task as the delete — a setPrefs call in
+    // between would overwrite the injected id from prefs()'s module cache.
     await page.evaluate(async () => {
-      const root = await navigator.storage.getDirectory()
-      // A debounced save may still be in flight, holding a lock that makes
-      // removeEntry throw — retry until a full sweep hits nothing mid-write.
+      const id = location.pathname.match(/\/p\/([^/]+)/)?.[1]
+      const projects = await (await (await navigator.storage.getDirectory()).getDirectoryHandle('warsha')).getDirectoryHandle('projects')
+      // A debounced save may still hold a lock that makes removeEntry throw — retry.
       for (let attempt = 0; attempt < 20; attempt++) {
-        let locked = false
-        for await (const [name] of root.entries()) {
-          try {
-            await root.removeEntry(name, { recursive: true })
-          } catch {
-            locked = true
-          }
+        try {
+          await projects.removeEntry(id, { recursive: true })
+          break
+        } catch {
+          await new Promise((r) => setTimeout(r, 250))
         }
-        if (!locked) break
-        await new Promise((r) => setTimeout(r, 250))
       }
       location.reload()
     })
     await page.waitForLoadState('load')
 
     const loaded = await page
-      .waitForSelector('.cm-content, button:has-text("New from a starter")', { timeout: 30000 })
+      .waitForSelector(WELCOME_READY, { timeout: 30000 })
       .then(() => true)
       .catch(() => false)
     check(loaded, 'the app opens something rather than crash-looping on a missing id')
     check((await page.locator('[data-crash="true"]').count()) === 0, 'no crash screen after eviction')
 
+    info(`after eviction: ${JSON.stringify(await page.evaluate(() => ({ url: location.pathname, home: !!document.querySelector('[role="region"][aria-label="Your projects"]'), banners: [...document.querySelectorAll('.storage-banner')].map((b) => b.getAttribute('data-notice')), cards: document.querySelectorAll('button[aria-label^="Open — "]').length })))}`)
+    await openEditor(page)
     const banner = page.locator('.storage-banner[data-notice="evicted"]')
     const shown = await banner.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)
     check(shown, 'the student is told the project was reopened elsewhere')
@@ -568,7 +574,9 @@ await scenario('open in two tabs', {
     await startPythonProject(page)
     const second = await ctx.newPage()
     await second.goto(BASE, { waitUntil: 'load' })
-    await second.waitForSelector('.cm-content, button:has-text("New from a starter")', { timeout: 30000 })
+    await second.waitForSelector(WELCOME_READY, { timeout: 30000 })
+    // `/` is the projects Home: continue into the project, where the banner lives.
+    await openEditor(second)
 
     const advisory = second.locator('.storage-banner[data-notice="multi-tab"]')
     const shown = await advisory.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)
@@ -576,6 +584,7 @@ await scenario('open in two tabs', {
     if (shown) info((await advisory.innerText()).replace(/\n/g, ' | '))
 
     // Advisory, not a lock-out: the second tab must still be a working IDE.
+    await second.waitForSelector('.cm-content', { timeout: 30000 })
     await second.locator('.cm-content').click()
     await second.keyboard.press('Control+a')
     await second.keyboard.type('print("second tab works")')
@@ -584,6 +593,9 @@ await scenario('open in two tabs', {
     check(text.includes('second tab works'), 'the second tab is fully usable')
 
     // Both tabs writing the same OPFS project: last write wins, nothing breaks.
+    // A background tab gets no animation frames, so Playwright's "stable" check
+    // never settles there — bring tab one forward before typing into it.
+    await page.bringToFront()
     await page.locator('.cm-content').click()
     await page.keyboard.press('Control+a')
     await page.keyboard.type('print("first tab wins")')
@@ -602,7 +614,8 @@ await scenario('open in two tabs', {
 await scenario('zip import edge cases', {
   body: async (page) => {
     await page.goto(BASE, { waitUntil: 'load' })
-    await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
+    // Import lives in the New-project picker ("Import files or a .zip") on Home.
+    await openNewProject(page)
 
     const problem = () => page.locator('[role="alert"]').first()
 
@@ -629,7 +642,7 @@ await scenario('zip import edge cases', {
       { name: 'logo.png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02]) },
     ])
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
+    await openNewProject(page)
     await importBuffer(page, 'mixed.zip', mixed)
     const dialogText = await page.locator('form').innerText()
     info(`mixed: ${dialogText.replace(/\n/g, ' | ')}`)
@@ -638,7 +651,7 @@ await scenario('zip import edge cases', {
 
     // --- an oversized archive, refused before a byte is read ---
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
+    await openNewProject(page)
     await page.getByRole('button', { name: /Import/ }).first().click()
     await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 5000 })
     // Path, not buffer — Playwright refuses in-memory files over 50MB, which
@@ -656,7 +669,7 @@ await scenario('zip import edge cases', {
 
     // --- garbage that is not a zip at all ---
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
+    await openNewProject(page)
     await importBuffer(page, 'lies.zip', Buffer.from('this is not a zip file, it is a sentence'))
     const junkText = (await problem().count()) ? await problem().innerText() : ''
     info(`garbage: ${junkText}`)
@@ -680,7 +693,8 @@ await scenario('500-file project', {
       })).concat([{ name: 'main.py', data: Buffer.from('print("five hundred")\n') }]),
     )
     await page.goto(BASE, { waitUntil: 'load' })
-    await page.waitForSelector('button:has-text("Import")', { timeout: 20000 })
+    // Import lives in the New-project picker ("Import files or a .zip") on Home.
+    await openNewProject(page)
     const t0 = Date.now()
     await importBuffer(page, 'many.zip', many)
     await page.getByRole('button', { name: /^(Import|Replace files)$/ }).click()

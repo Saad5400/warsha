@@ -13,7 +13,7 @@ mkdirSync(SHOTS, { recursive: true })
 const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(),'jmeas-')), {
   executablePath: CHROME, headless: true, viewport: { width: 1280, height: 900 } })
 const page = ctx.pages()[0]
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 
 async function sampler() {
   await page.evaluate(() => {

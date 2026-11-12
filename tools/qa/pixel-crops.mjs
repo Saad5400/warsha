@@ -362,7 +362,7 @@ await setSource(
 
 /* The progress block only exists mid-download, so it must be caught live, not
  * set up afterward — on a warm cache it's gone in well under a second. */
-await page.getByRole('button', { name: /^Run\b/ }).first().click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).first().click()
 const sawProgress = await page.waitForSelector(S.progress, { timeout: 30000 }).then(() => true).catch(() => false)
 if (sawProgress) {
   await shot('1280-progress-block', { sel: S.progress, note: 'boot progress: title, track, %, meta lines' })
@@ -567,7 +567,7 @@ await shot('1280-toast', { sel: S.toast, pad: 16, note: 'toast: icon/text baseli
 
 step('1280 — stopped state')
 await setSource('while True: print("spin")')
-await page.getByRole('button', { name: /^Run\b/ }).first().click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).first().click()
 await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 12,
   null, { timeout: 60000 },
@@ -623,7 +623,7 @@ await page.waitForTimeout(450)
 
 step('390 — keyboard open (simulated the way ui/viewport.ts publishes it)')
 await setSource('name = input("Your name: ")\nprint("Hi", name)\n')
-await page.getByRole('button', { name: /^Run\b/ }).first().click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).first().click()
 await waitOut('Your name:', 90000)
 /* Two passes: the console's ResizeObserver scroll can't land inside the same evaluate() that forced the shrink. See console-kb.mjs. */
 const raiseKeyboard = () => {

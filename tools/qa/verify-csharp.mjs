@@ -52,7 +52,7 @@ const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle),
   s, { timeout: 240000 })
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 
 /** Single-line C# avoids CodeMirror auto-indent surprises; auto-closed brackets get overtyped. */

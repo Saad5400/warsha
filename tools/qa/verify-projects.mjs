@@ -6,7 +6,7 @@
  * hardwired workspace, and reopening the last project on the next visit. */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { seedStarter } from './lib/seed.mjs'
+import { seedStarter, WELCOME_READY } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,7 +39,7 @@ const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 240000) => page.waitForFunction(
   (needle) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(needle), s, { timeout: t })
 // Run's label includes the filename ("Run main.py") — hence the prefix match.
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 
 // Project list is File > Open Recent everywhere (behind ☰ below 1050px); this
 // harness runs lifecycle actions via the palette, not the menu rows.
@@ -118,16 +118,24 @@ async function setEditor(text) {
 const explorerFiles = async () =>
   (await page.locator('[role="treeitem"]').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
 
-// ============================================ 1. first visit: one empty project
+// ============================================ 1. first visit: the projects Home
 await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 }).catch(() => {})
-await page.waitForSelector('[aria-label="Start a project"], .cm-content', { timeout: 20000 })
+await page.waitForSelector(WELCOME_READY, { timeout: 20000 })
 await page.waitForTimeout(800)
 
-let rows = await menuRows()
-info(`project list on first visit: ${JSON.stringify(rows)}`)
-if (rows.some((r) => /^My project/.test(r))) pass('first visit has exactly one project, listed in the menu', rows.find((r) => /^My project/.test(r)))
-else fail('first visit has exactly one project, listed in the menu', JSON.stringify(rows))
+// A first visit lands on the projects Home with nothing in it — no project
+// exists until the student makes one (was: an auto-created empty "My project").
+{
+  const home = page.locator('[role="region"][aria-label="Your projects"]')
+  const cards = await page.getByRole('button', { name: /^Open — / }).count()
+  if ((await home.count()) && cards === 0) pass('first visit shows the projects Home with no projects')
+  else fail('first visit shows the projects Home with no projects', `home=${await home.count()} cards=${cards}`)
+}
+let rows
+// ============================== 2. python project from New project, then Run
+await seedStarter(page, { name: 'Python (OOP starter)' })
+await page.waitForTimeout(1200)
 // One File menu holds creation, transfer, and lifecycle rows (lifecycle also
 // exists as palette commands, exercised in sections 6-7).
 {
@@ -144,19 +152,14 @@ else fail('first visit has exactly one project, listed in the menu', JSON.string
   else fail('project actions present in the File menu', JSON.stringify(fileRows))
 }
 
-// ============================== 2. python project from the start panel, then Run
-// New from a starter → language → starter is the only entry point; the advanced
-// starter fills the empty first project in place.
-await seedStarter(page, { name: 'Python (OOP starter)' })
-await page.waitForTimeout(1200)
 info(`explorer after python starter: ${JSON.stringify(await explorerFiles())}`)
 rows = await menuRows()
 info(`menu after python starter: ${JSON.stringify(rows)}`)
 if (rows.filter((r) => /Open$/.test(r)).length === 1) pass('exactly one project is marked Open')
 else fail('exactly one project is marked Open', JSON.stringify(rows))
-if (rows.some((r) => /^Python \(OOP starter\)/.test(r)) && !rows.some((r) => /^My project/.test(r)))
-  pass('the empty first project became the Python project (no orphan left behind)', 'Python (OOP starter)')
-else fail('the empty first project became the Python project', JSON.stringify(rows))
+if (rows.length === 1 && rows.some((r) => /^Python \(OOP starter\)/.test(r)))
+  pass('New project made exactly one project, the Python one', 'Python (OOP starter)')
+else fail('New project made exactly one project, the Python one', JSON.stringify(rows))
 
 await runBtn().click()
 await hasOut('Your name:')

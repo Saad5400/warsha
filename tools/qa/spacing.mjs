@@ -18,7 +18,7 @@
  *   WARSHA_URL   base URL of a served build (default http://127.0.0.1:8093/)
  */
 import { chromium } from 'playwright-core'
-import { seedStarter } from './lib/seed.mjs'
+import { seedStarter, WELCOME_READY } from './lib/seed.mjs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,7 +41,7 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'w
 const page = ctx.pages()[0] ?? (await ctx.newPage())
 await page.goto(BASE, { waitUntil: 'load' })
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 }).catch(() => {})
-await page.waitForSelector('[aria-label="Start a project"], .cm-content', { timeout: 20000 })
+await page.waitForSelector(WELCOME_READY, { timeout: 20000 })
 await page.waitForTimeout(700)
 if (!(await page.locator('.cm-content').count())) {
   await seedStarter(page, { name: 'Python (OOP starter)' })

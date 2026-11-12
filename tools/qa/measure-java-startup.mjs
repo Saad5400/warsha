@@ -19,7 +19,7 @@ const ctx = await chromium.launchPersistentContext(profile, {
 const page = ctx.pages()[0] ?? (await ctx.newPage())
 
 const out = () => page.locator('[aria-label="Program output"]').innerText().catch(() => '')
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 
 /** Waits for `text`, sampling the console so we can prove what was on screen. */
 async function waitFor(text, ms) {
@@ -44,7 +44,7 @@ async function waitFor(text, ms) {
 
 await page.goto(URL, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(3500)
-if (await page.getByRole('button', { name: /New from a starter/ }).count()) {
+if (!(await page.locator('.cm-content').count())) {
   await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
   await page.waitForTimeout(2500)
 }

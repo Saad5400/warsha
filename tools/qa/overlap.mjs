@@ -24,7 +24,7 @@
  * Usage: node overlap.mjs
  */
 import { chromium } from 'playwright-core'
-import { seedStarter } from './lib/seed.mjs'
+import { seedStarter, WELCOME_READY } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -248,7 +248,7 @@ async function scenario(label, setup) {
 /* Seed a real project + open the console, then walk the widths. */
 async function seed() {
   await page.goto(URL_, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /New from a starter/ }).waitFor({ timeout: 20000 })
+  await page.waitForSelector(WELCOME_READY, { timeout: 20000 })
   await seedStarter(page, { lang: 'Java', name: 'Java (OOP starter)' })
   await page.waitForSelector('[role="tab"]', { timeout: 15000 })
   await page.waitForTimeout(700)
@@ -393,7 +393,7 @@ await scenario('1280px · progress block during real cold boot', async () => {
   await page.setViewportSize({ width: 1280, height: 860 })
   await page.waitForTimeout(300)
   // Run's label includes the filename ("Run Main.java") — hence the prefix match.
-  const run = page.getByRole('button', { name: /^Run\b/ })
+  const run = page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
   // Must check isEnabled(), not just present — clicking a disabled Run hangs the whole sweep for 30s instead of failing cleanly.
   if ((await run.count()) && (await run.isEnabled())) {
     await run.click()

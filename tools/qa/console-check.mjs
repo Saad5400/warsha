@@ -37,7 +37,7 @@ const out = () => page.locator('[aria-label="Program output"]').innerText()
 const hasOut = (s, t = 120000) => page.waitForFunction(
   (n) => document.querySelector('[aria-label="Program output"]')?.innerText.includes(n), s, { timeout: t })
 // Prefix match: the accessible name includes the file, e.g. "Run main.py".
-const runBtn = () => page.getByRole('button', { name: /^Run\b/ })
+const runBtn = () => page.getByRole('button', { name: /^Run\b(?! and Debug)/ })
 const stopBtn = () => page.getByRole('button', { name: /^Stop\b/ })
 const input = () => page.locator('[aria-label="Program input"]')
 // Run state lives in one place: the status bar's `.status-remote` block

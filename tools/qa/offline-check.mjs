@@ -59,7 +59,7 @@ async function setEditor(code) {
 }
 
 async function run() {
-  await page.getByRole('button', { name: /^Run\b/ }).click()
+  await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 }
 
 // ---------------------------------------------------------------- 1. online boot

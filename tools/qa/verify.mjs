@@ -89,7 +89,7 @@ await page.evaluate(() => {
 
 // ------------------------------------------------------------------- 3. first Run
 // Run's label includes the filename ("Run main.py") — hence the prefix match.
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 
 // The template's input() prompt must be painted BEFORE input is requested.
 await page.waitForFunction(
@@ -155,7 +155,7 @@ await page.keyboard.press('Control+a')
 await page.keyboard.type('while True: print("spin")')
 await page.waitForTimeout(600) // let the 350ms debounce flush to OPFS
 
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
   () => (document.querySelector('[aria-label="Program output"]')?.innerText.match(/spin/g) || []).length > 20,
   null,
@@ -183,12 +183,16 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('print("run again works")')
 await page.waitForTimeout(600)
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
-  () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('run again works'),
+  // Both: the program's line arrives before the run's "Finished." footer.
+  () => {
+    const t = document.querySelector('[aria-label="Program output"]')?.innerText ?? ''
+    return t.includes('run again works') && t.includes('Finished.')
+  },
   null,
   { timeout: 60000 },
-)
+).catch(() => {})
 const afterRerun = await outputText()
 if (afterRerun.includes('run again works') && afterRerun.includes('Finished. (exit code 0)'))
   pass('Run works again after Stop', 'fresh worker executed a new program to exit 0')
@@ -215,7 +219,7 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+a')
 await page.keyboard.type('import sys\nprint("Python", sys.version.split()[0], "in the browser")\nfor i in range(3): print("  line", i)\n')
 await page.waitForTimeout(600)
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
   () => document.querySelector('[aria-label="Program output"]')?.innerText.includes('in the browser'),
   null,

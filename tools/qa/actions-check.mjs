@@ -16,6 +16,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { seedStarter } from './lib/seed.mjs'
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -94,15 +95,9 @@ await page.goto(URL_, { waitUntil: 'load' })
 // started mid-reload gets torn down and fails to fetch, which looks like a
 // real Format/Share bug but is a harness race.
 await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 45000 })
-// Welcome screen's own "New file" card opens the same dialog as the
-// Explorer's, to get the first file down; every file after uses newFile().
-const welcome = page.locator('[role="region"][aria-label="Start a project"]')
-await welcome.waitFor({ timeout: 20000 })
-// Scoped to the welcome region — an unscoped query would also match the
-// Explorer's own "New file" button earlier in the DOM.
-await welcome.getByRole('button', { name: /New file/ }).click()
-await page.locator('dialog input').fill('Boot.java')
-await page.getByRole('button', { name: 'Create' }).click()
+// First visit lands on the projects Home: start from the empty Java starter,
+// which opens Main.java (a real, formattable file); every file after uses newFile().
+await seedStarter(page, { lang: 'Java', name: 'Java (empty)' })
 await page.waitForSelector('aside[aria-label="Files"]', { timeout: 20000 })
 await page.waitForSelector('.cm-content', { timeout: 20000 })
 
@@ -112,7 +107,7 @@ const formatItem = page.getByRole('menuitem', { name: 'Format File' })
 const shareItem = page.getByRole('menuitem', { name: 'Share as image…' })
 check('Format File item is in the ⋯ menu', await formatItem.count() === 1)
 check('Share as image… item is in the ⋯ menu', await shareItem.count() === 1)
-// Boot.java is open (a real, formattable file), so both should be live.
+// Main.java is open (a real, formattable file), so both should be live.
 check('Format File is enabled with a .java file open', await formatItem.getAttribute('disabled') === null)
 check('Share as image… is enabled with a file open', await shareItem.getAttribute('disabled') === null)
 await page.keyboard.press('Escape')
@@ -186,7 +181,7 @@ check('…and the file is untouched while Python is not loaded', (await docText(
 // target, not something meant to run.
 await newFile('warmup.py')
 await setContent('print("ready for black")\n')
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
   () => /ready for black/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''),
   null,
@@ -220,7 +215,7 @@ check(
 // two formats.
 await newFile('throws.py')
 await setContent('raise ValueError("boom")\n')
-await page.getByRole('button', { name: /^Run\b/ }).click()
+await page.getByRole('button', { name: /^Run\b(?! and Debug)/ }).click()
 await page.waitForFunction(
   () => /ValueError|Traceback|positional argument/.test(document.querySelector('[aria-label="Program output"]')?.innerText ?? ''),
   null,
