@@ -210,7 +210,13 @@ a real Vite build and a real dev server.
   replaces the small per-build shell cache, prunes `/assets/` files the new build no longer emits,
   and holds the rest under a 500 MB least-recently-used cap. So a language a student already ran is
   neither re-downloaded after a release nor lost offline. `tools/qa/deploy-upgrade-check.mjs` plays
-  a real deploy against all of it, counting every runtime byte fetched again. One carve-out is load-bearing: **requests carrying a `Range`
+  a real deploy against all of it, counting every runtime byte fetched again.
+
+  `deploy/nginx.conf` also sets a Content-Security-Policy on documents. Only `object-src 'none'`,
+  `base-uri 'self'` and `frame-ancestors 'self'` are enforced; the strict policy (script-src by
+  hash, no `javascript:` or inline handlers) is Report-Only, because the Web preview is a `srcdoc`
+  frame that inherits the page's policy while running the student's own inline scripts, CDN tags
+  and fetches. Enforcing it means moving the preview to its own origin first. One carve-out is load-bearing: **requests carrying a `Range`
   header bypass the cache entirely** (network only, never stored). CheerpJ reads `/app/ecj.jar` — a
   same-origin GET, so otherwise cache-first — in many HTTP Range requests and needs a `206` +
   `Content-Range` on each; the Cache API ignores the `Range` header and would replay the full stored

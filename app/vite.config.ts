@@ -658,6 +658,46 @@ function warshaServiceWorkerPrecache(): Plugin {
   }
 }
 
+/**
+ * Keeps the CSP's script hashes honest. deploy/nginx.conf allows index.html's
+ * inline <script>s by their sha256 (a hash is the only way to allow exactly
+ * those two scripts and not an injected one). The hash is of the exact bytes,
+ * so editing a comment inside either script changes it, and the policy would
+ * quietly stop covering the splash or the recorder gate — invisible while the
+ * policy is Report-Only, a dead splash the day it is enforced. So every build
+ * hashes the built page's inline scripts and fails, naming the new hash, when
+ * nginx.conf does not list it. nginx.conf stays the one place the policy lives.
+ * JSON-LD blocks are data, not script, and are skipped. Build-only.
+ */
+function warshaCspHashes(): Plugin {
+  return {
+    name: 'warsha:csp-hashes',
+    apply: 'build',
+    closeBundle() {
+      let html: string
+      try {
+        html = readFileSync(resolve(__dirname, 'dist/index.html'), 'utf8')
+      } catch {
+        return // No HTML in this output (a library build); nothing to check.
+      }
+      const conf = readFileSync(resolve(__dirname, 'deploy/nginx.conf'), 'utf8')
+      const missing: string[] = []
+      for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+        const attrs = m[1] ?? ''
+        if (/\bsrc=/i.test(attrs) || /application\/ld\+json/i.test(attrs)) continue
+        const hash = `'sha256-${createHash('sha256').update(m[2], 'utf8').digest('base64')}'`
+        if (!conf.includes(hash)) missing.push(hash)
+      }
+      if (missing.length) {
+        throw new Error(
+          `An inline <script> in index.html changed, so its CSP hash did too. Put ${missing.join(' and ')} ` +
+            `in script-src in app/deploy/nginx.conf (and drop the stale one).`,
+        )
+      }
+    },
+  }
+}
+
 export default defineConfig({
   // Root-absolute asset paths (`/assets/…`, `/warsha-*`), so the app boots
   // correctly at any URL depth — `/`, `/en/`, `/tutorials/<slug>`. The former
@@ -673,6 +713,7 @@ export default defineConfig({
     warshaLocaleEntries(),
     warshaTutorialPages(),
     warshaServiceWorkerPrecache(),
+    warshaCspHashes(),
   ],
   build: {
     target: 'es2022',
