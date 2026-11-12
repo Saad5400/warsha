@@ -381,9 +381,11 @@ if (ONLY.includes('U')) {
   await page.keyboard.press('Escape')
   const dcell = page.locator('.notebook-view [data-selected]')
   const dcellId = await dcell.getAttribute('data-cell-id')
-  await dcell.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^2$/ }).click()
+  // Line numbers are off in cells (Colab); F9 on the line is the keyboard path to a breakpoint.
+  await dcell.locator('.cm-line').nth(1).click()
+  await page.keyboard.press('F9')
   await page.waitForTimeout(200)
-  check('U: a click on a cell\'s gutter sets a breakpoint on its cell path', await page.evaluate((id) => {
+  check('U: F9 on a cell line sets a breakpoint on its cell path', await page.evaluate((id) => {
     const raw = Object.keys(localStorage).filter((k) => k.startsWith('warsha.debug.v1.')).map((k) => localStorage.getItem(k)).join('')
     return raw.includes(`notebook.ipynb#cell=${id}`) && raw.includes('"line":2')
   }, dcellId))
@@ -412,7 +414,8 @@ if (ONLY.includes('U')) {
   check('U: Continue finishes the cell with its result', (await dcell.innerText()).includes('20'))
   const hint = await page.locator('[data-debug-phase]').innerText()
   check('U: Run and Debug explains debugging a notebook cell', hint.includes('in a cell') && !hint.includes('Open a program'), J(hint.slice(0, 120)))
-  await dcell.locator('.cm-lineNumbers .cm-gutterElement', { hasText: /^2$/ }).click()
+  await dcell.locator('.cm-line').nth(1).click()
+  await page.keyboard.press('F9')
 
   // Format cell: black through the kernel, IPython lines untouched.
   await dcell.locator('.cm-content').click()
@@ -593,11 +596,15 @@ if (ONLY.includes('U')) {
   check('U suspected: a notebook shown as text is no longer rewritten by its (closed) session', asText1 === asText2 && asText1.includes('"cells"'), J({ same: asText1 === asText2, len: asText1.length }))
   await ctx.close()
 
-  // Phone, LTR and RTL; desktop RTL.
+}
+
+// Every surface: phone/desk × LTR/RTL — geometry included (ONLY=G runs just this part).
+if (ONLY.includes('U') || ONLY.includes('G')) {
   for (const [w, h, mobile, lang, tag] of [
     [390, 844, true, 'en', 'phone-ltr'],
     [390, 844, true, 'ar', 'phone-rtl'],
     [1280, 860, false, 'ar', 'desk-rtl'],
+    [1280, 860, false, 'en', 'desk-ltr'],
   ]) {
     const b = await browser({ width: w, height: h }, mobile)
     await isolated(b.page, `?lang=${lang}`)
@@ -620,6 +627,7 @@ if (ONLY.includes('U')) {
     }))
     check(`U[${tag}]: no horizontal page scroll; plots fit; code stays LTR`, geo.page && geo.img && geo.code === 'ltr', J(geo))
     if (lang === 'ar') check(`U[${tag}]: the page is RTL`, geo.dir === 'rtl')
+    await cellGeometry(b.page, tag, lang, mobile)
     await b.ctx.close()
   }
 }
@@ -723,6 +731,163 @@ if (ONLY.includes('P')) {
   // The documents were scoped right in the first place: the write guard never had to step in.
   check('P: no cross-project write was ever attempted (the guard stayed silent)', refused.length === 0, J(refused))
   await ctx.close()
+}
+
+/* ---- cell geometry (docs/design/NOTEBOOK.md), asserted so the visual bugs cannot come back ---- */
+async function cellGeometry(page, tag, lang, mobile) {
+  const T = (n) => `U[${tag}] geometry: ${n}`
+  // A ran code cell with outputs: text edge, run column, one frame, the rail, no overlaps.
+  const ran = await page.evaluate((mobile) => {
+    const cell = [...document.querySelectorAll('.notebook-view [data-cell-type="code"]')].find((c) => c.querySelector('.nb-outputs'))
+    if (!cell) return null
+    cell.scrollIntoView({ block: 'center' })
+    const r = (el) => el.getBoundingClientRect()
+    const box = cell.querySelector('[data-code-box]')
+    const line = cell.querySelector('.cm-line')
+    const codeText = r(line).left + parseFloat(getComputedStyle(line).paddingLeft)
+    const firstOut = cell.querySelector('.nb-outputs > div > *') ?? cell.querySelector('.nb-outputs > button:not([data-output-menu])')
+    const col = r(cell.querySelector('[data-run-col]'))
+    const btn = cell.querySelector('[data-run]')
+    const count = cell.querySelector('[data-count]')
+    const menu = cell.querySelector('[data-output-menu]')
+    const cx = (x) => x.left + x.width / 2
+    const cy = (x) => x.top + x.height / 2
+    const rail = getComputedStyle(cell, '::before')
+    const cr = r(cell)
+    const overlap = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
+    const outs = r(cell.querySelector('.nb-outputs'))
+    return {
+      outputEdge: Math.abs(r(firstOut).left - codeText),
+      lineNumbers: cell.querySelectorAll('.cm-lineNumbers').length,
+      boxBorder: parseFloat(getComputedStyle(box).borderTopWidth) + parseFloat(getComputedStyle(box).borderLeftWidth),
+      nestedBorders: [...cell.querySelectorAll('*')].filter((e) => !e.closest('.cm-tooltip, [role="toolbar"], .nb-outputs, button') && parseFloat(getComputedStyle(e).borderTopWidth) > 0 && getComputedStyle(e).borderTopStyle !== 'none' && getComputedStyle(e).borderTopColor !== 'rgba(0, 0, 0, 0)').map((e) => e.className.toString().slice(0, 40)),
+      runCentreX: btn ? Math.abs(cx(r(btn)) - cx(col)) : 0,
+      countCentreX: Math.abs(cx(r(count)) - cx(col)),
+      menuCentreX: menu && !mobile ? Math.abs(cx(r(menu)) - cx(col)) : 0,
+      runCentreY: btn ? Math.abs(cy(r(btn)) - cy(r(line))) : 0,
+      railInside: rail.content !== 'none' ? { top: parseFloat(rail.top), bottom: parseFloat(rail.bottom), width: parseFloat(rail.width), left: parseFloat(rail.insetInlineStart || rail.left) } : null,
+      overlaps: [
+        btn && overlap(r(btn), r(box)),
+        overlap(r(box), outs),
+        menu && getComputedStyle(menu).display !== 'none' && overlap(r(menu), outs.left < r(menu).left ? { ...outs.toJSON(), left: outs.left + parseFloat(cell.querySelector('.nb-outputs').style.paddingLeft || '0') } : outs),
+        btn && !mobile && overlap(r(btn), outs),
+      ].filter(Boolean).length,
+      insideCell: [box, btn, count].filter(Boolean).every((e) => { const x = r(e); return x.left >= cr.left - 0.5 && x.right <= cr.right + 0.5 && x.top >= cr.top - 0.5 && x.bottom <= cr.bottom + 0.5 }),
+    }
+  }, mobile)
+  if (!ran) return fail(T('a code cell with output exists'))
+  check(T('output left edge == editor text edge'), ran.outputEdge <= 1, J(ran.outputEdge))
+  check(T('line numbers are off by default'), ran.lineNumbers === 0)
+  check(T('one frame: the code box has no border, nothing inside the cell is bordered'), ran.boxBorder === 0 && ran.nestedBorders.length === 0, J(ran.nestedBorders))
+  check(T('run button, count and output menu are centred in the run column'), ran.runCentreX <= 1 && ran.countCentreX <= 1 && ran.menuCentreX <= 1, J(ran))
+  check(T('the run button is level with the first code line'), ran.runCentreY <= 2, J(ran.runCentreY))
+  check(T('no element overlaps another in the cell; all sit inside its box'), ran.overlaps === 0 && ran.insideCell, J(ran))
+
+  // Select it: the rail is inside the box.
+  await page.locator('.notebook-view [data-cell-type="code"]').first().focus()
+  await page.waitForTimeout(250)
+  const rail = await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view [data-selected]')
+    const b = getComputedStyle(c, '::before')
+    return { top: parseFloat(b.top), bottom: parseFloat(b.bottom), width: parseFloat(b.width), colour: b.backgroundColor }
+  })
+  check(T('the selection rail is slim, inside the cell box, not white'), rail.top >= 0 && rail.bottom >= 0 && rail.width <= 2 && rail.colour !== 'rgb(250, 250, 250)' && rail.colour !== 'rgba(0, 0, 0, 0)', J(rail))
+
+  // Markdown prose starts at the same x as code text.
+  const md = await page.evaluate(() => {
+    const m = document.querySelector('.notebook-view [data-cell-type="markdown"] .nb-md > :first-child')
+    const line = document.querySelector('.notebook-view [data-cell-type="code"] .cm-line')
+    if (!m || !line) return null
+    const range = document.createRange()
+    range.selectNodeContents(m)
+    const text = range.getClientRects()[0]
+    const lr = line.getBoundingClientRect().left + parseFloat(getComputedStyle(line).paddingLeft)
+    // RTL prose starts at the right: compare its start edge with the code column's start edge.
+    const ltr = getComputedStyle(m).direction === 'ltr'
+    const cellBody = m.closest('[data-cell-id]').querySelector('[data-run-col]').nextElementSibling.getBoundingClientRect()
+    const codeBody = line.closest('[data-cell-id]').querySelector('[data-run-col]').nextElementSibling.getBoundingClientRect()
+    return ltr ? Math.abs(text.left - cellBody.left - (lr - codeBody.left)) : 0
+  })
+  if (md !== null) check(T('rendered markdown starts at the code text edge'), md <= 1, J(md))
+
+  // A new empty cell: the placeholder starts at the caret.
+  await page.locator('[role="toolbar"] button[aria-label="' + (lang === 'en' ? 'Add code cell' : 'أضف خلية كود') + '"]').first().click()
+  await page.waitForTimeout(500)
+  const ph = await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view [data-cell-id] .cm-focused')?.closest('[data-cell-id]')
+    const p = c?.querySelector('.cm-placeholder')
+    const caret = c?.querySelector('.cm-cursor')
+    return p && caret ? Math.abs(p.getBoundingClientRect().left - caret.getBoundingClientRect().left) : null
+  })
+  check(T('the placeholder starts exactly at the caret'), ph !== null && ph <= 1, J(ph))
+
+  // The completion popup is whole: in the viewport, unclipped, 3+ rows.
+  const popup = async (where) => {
+    await page.keyboard.type('prin', { delay: 50 })
+    await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {})
+    await page.waitForTimeout(250)
+    const res = await page.evaluate(() => {
+      const t = document.querySelector('.cm-tooltip-autocomplete')
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      const rows = [...t.querySelectorAll('li')].filter((li) => { const x = li.getBoundingClientRect(); return x.top >= r.top - 0.5 && x.bottom <= r.bottom + 0.5 && x.height > 0 })
+      const first = t.querySelector('li')?.getBoundingClientRect()
+      const hit = first ? document.elementFromPoint(first.left + first.width / 2, first.top + first.height / 2) : null
+      const vv = window.visualViewport ?? { width: innerWidth, height: innerHeight }
+      return { inView: r.left >= 0 && r.top >= 0 && r.right <= vv.width + 0.5 && r.bottom <= vv.height + 0.5, unclipped: !!hit && t.contains(hit), rows: rows.length }
+    })
+    check(T(`the completion popup (${where}) is in the viewport, unclipped, 3+ rows`), !!res && res.inView && res.unclipped && res.rows >= 3, J(res))
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+  }
+  await popup('mid-screen')
+  // The same cell pushed to the bottom of the screen: the popup flips above.
+  await page.evaluate(() => {
+    const c = document.querySelector('.notebook-view .cm-focused').closest('[data-cell-id]')
+    const s = document.querySelector('.notebook-scroller')
+    s.scrollTop += c.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom + 8
+  })
+  await page.waitForTimeout(200)
+  await popup('bottom of the screen')
+  if (!mobile) {
+    await page.keyboard.insertText('print(1)')
+    await page.waitForTimeout(200)
+    const line = await page.locator('.notebook-view .cm-focused .cm-line').first().boundingBox()
+    await page.mouse.move(line.x + 30, line.y + line.height / 2)
+    await page.waitForSelector('.cm-tooltip-docs', { timeout: 3000 }).catch(() => {})
+    const card = await page.evaluate(() => {
+      const t = document.querySelector('.cm-tooltip-docs')
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(12, r.height / 2))
+      return { inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5, unclipped: !!hit && t.contains(hit) }
+    })
+    check(T('the hover docs card is in the viewport and unclipped'), !!card && card.inView && card.unclipped, J(card))
+
+    // Insert affordance: between two cells, inside the gap, touching neither cell.
+    const gap = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      cells[0].scrollIntoView({ block: 'center' })
+      const a = cells[0].getBoundingClientRect()
+      const g = cells[0].parentElement.querySelector(':scope > [data-cell-id] + [data-gap]') ?? cells[0].nextElementSibling
+      return { a: a.toJSON(), g: g.getBoundingClientRect().toJSON() }
+    })
+    await page.mouse.move(gap.g.left + gap.g.width / 2, gap.g.top + gap.g.height / 2)
+    await page.waitForTimeout(300)
+    const chips = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.notebook-view [data-cell-id]')]
+      const g = cells[0].nextElementSibling
+      const b = cells[1].getBoundingClientRect()
+      const a = cells[0].getBoundingClientRect()
+      const btns = [...g.querySelectorAll('button')].map((x) => x.getBoundingClientRect())
+      const shown = [...g.querySelectorAll('button')].every((x) => parseFloat(getComputedStyle(x.parentElement).opacity) > 0.9)
+      const g2 = g.getBoundingClientRect()
+      const hit = document.elementFromPoint(g2.left + g2.width / 2, g2.top + g2.height / 2)
+      return { shown, inside: btns.length === 2 && btns.every((x) => x.top >= a.bottom - 0.5 && x.bottom <= b.top + 0.5), gap: g2.height, chip: btns[0]?.height }
+    })
+    check(T('hover shows "+ Code / + Text" inside the 24px gap, clear of both cells'), chips.shown && chips.inside && chips.gap === 24, J(chips))
+  }
 }
 
 const failed = results.filter((r) => r[0] === 'FAIL')
