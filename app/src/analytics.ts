@@ -1,3 +1,5 @@
+import { langForPath, TYPESCRIPT_RE } from './runtime/langForPath'
+
 /**
  * Product analytics — the few aggregate counts that tell us whether Warsha is
  * working, and nothing more.
@@ -202,13 +204,10 @@ export function track<K extends EventName>(name: K, data: Events[K]): void {
  * a student's file name, and file names never leave the device.
  */
 export function langOfEntry(entryPath: string): EventLang {
-  if (entryPath.endsWith('.java')) return 'java'
-  if (entryPath.endsWith('.py')) return 'python'
-  if (entryPath.endsWith('.cs')) return 'csharp'
-  if (entryPath.endsWith('.c')) return 'c'
-  if (/\.(m?tsx?|cts|mts)$/i.test(entryPath)) return 'typescript'
-  if (/\.(m?jsx?|cjs)$/i.test(entryPath)) return 'javascript'
-  if (/\.html?$/i.test(entryPath)) return 'html'
-  if (/\.css$/i.test(entryPath)) return 'css'
-  return 'other'
+  // The engine comes from the one extension map; only the finer split the events
+  // report (TypeScript vs JavaScript, a page vs a stylesheet) is decided here.
+  const lang = langForPath(entryPath)
+  if (lang === 'js') return TYPESCRIPT_RE.test(entryPath) ? 'typescript' : 'javascript'
+  if (lang === 'web') return /\.css$/i.test(entryPath) ? 'css' : 'html'
+  return lang ?? 'other'
 }

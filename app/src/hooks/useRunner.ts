@@ -477,6 +477,8 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
 
 /** The language name, for a sentence a student reads in a failure message. */
 function langName(entryPath: string): string {
-  if (langForPath(entryPath) === 'web') return 'the web preview'
-  return languageName(entryPath) ?? 'the language'
+  // The words for an entry that is not one language come from COPY: English
+  // literals here read as English in the middle of an Arabic sentence.
+  if (langForPath(entryPath) === 'web') return COPY.engineNamePage
+  return languageName(entryPath) ?? COPY.engineNameUnknown
 }
