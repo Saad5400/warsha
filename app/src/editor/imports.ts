@@ -4,6 +4,8 @@ import type { Completion, CompletionContext, CompletionResult, CompletionSource 
 import type { LangId } from '../runtime'
 import { recordable, withUsageBoost } from './usage'
 import { JAVA_FQCN } from './javaApi.generated'
+import { CSHARP_IMPLICIT_USINGS, CSHARP_NAMESPACES, CSHARP_USINGS } from './csharpApi'
+import { C_HEADERS, C_STD_HEADERS } from './cApi'
 
 /**
  * Two of the three gaps from the founder report live here:
@@ -181,6 +183,53 @@ export function pyImportInsertion(state: EditorState, module: string): Edit | nu
 }
 
 /**
+ * A line-per-directive header (`using System.Text;`, `#include <stdio.h>`): null
+ * when `already` matches a line, else the line after the last line `group`
+ * matches, else the top of the file.
+ */
+function directiveInsertion(state: EditorState, line: string, already: RegExp, group: RegExp): Edit | null {
+  const doc = state.doc
+  let last = 0
+  for (let i = 1; i <= doc.lines; i++) {
+    const text = doc.line(i).text.trim()
+    if (already.test(text)) return null
+    if (group.test(text)) last = i
+  }
+  if (last) {
+    const at = doc.line(last).to
+    return { from: at, to: at, insert: `\n${line}` }
+  }
+  return { from: 0, to: 0, insert: `${line}\n` }
+}
+
+/** C#: `using System.Text;` after the other usings, unless already there. */
+export function usingInsertion(state: EditorState, ns: string): Edit | null {
+  const esc = ns.replace(/\./g, '\\.')
+  return directiveInsertion(state, `using ${ns};`, new RegExp(`^(?:global\\s+)?using\\s+${esc}\\s*;`), /^using\s+[\w.]+\s*;/)
+}
+
+/**
+ * C# / C: the `using` / `#include` a dictionary name needs — a note for its detail
+ * and an apply that adds the line (if missing) in the same edit. Null when none is
+ * needed: a C# namespace the runtime already imports globally needs nothing.
+ */
+export function directiveFor(lang: 'csharp' | 'c', label: string): { note: string; apply: Completion['apply'] } | null {
+  if (lang === 'csharp') {
+    const ns = CSHARP_USINGS[label.split('.')[0]]
+    if (!ns || CSHARP_IMPLICIT_USINGS.has(ns)) return null
+    return { note: `adds using ${ns}`, apply: applyWithImport((s) => usingInsertion(s, ns)) }
+  }
+  const header = C_HEADERS[label]
+  return header ? { note: `adds #include <${header}>`, apply: applyWithImport((s) => includeInsertion(s, header)) } : null
+}
+
+/** C: `#include <stdio.h>` after the other includes, unless already there. */
+export function includeInsertion(state: EditorState, header: string): Edit | null {
+  const esc = header.replace(/\./g, '\\.')
+  return directiveInsertion(state, `#include <${header}>`, new RegExp(`^#\\s*include\\s*[<"]${esc}[>"]`), /^#\s*include\b/)
+}
+
+/**
  * Shared apply: inserts the completion's label plus, if `getEdit` finds one,
  * the import it depends on — one transaction, so Undo reverts both together.
  * `getEdit` runs against the state *before* the completion's own insertion.
@@ -276,12 +325,44 @@ function pythonImportSource(ctx: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w.]*$/ }
 }
 
+const USING_PATH = /^\s*using\s+([\w.]*)$/
+const INCLUDE_PATH = /^\s*#\s*include\s*<([\w./]*)$/
+
+/** Is the caret in a `using System.|` path (C#) or an `#include <|` (C)? The dictionary steps aside there. */
+export function inDirective(lang: string, state: EditorState, pos: number): boolean {
+  if (lang !== 'csharp' && lang !== 'c') return false
+  const line = state.doc.lineAt(pos)
+  return (lang === 'c' ? INCLUDE_PATH : USING_PATH).test(state.sliceDoc(line.from, pos))
+}
+
+/** `using Sys|` (C#) / `#include <st|` (C): the namespaces and headers a course uses. */
+function directiveSource(re: RegExp, rows: readonly (readonly [string, string])[], validFor: RegExp, close?: string) {
+  return (ctx: CompletionContext): CompletionResult | null => {
+    const line = ctx.state.doc.lineAt(ctx.pos)
+    const m = re.exec(line.text.slice(0, ctx.pos - line.from))
+    if (!m) return null
+    const rest = line.text.slice(ctx.pos - line.from)
+    const options = rows.map(([label, detail]): Completion => ({
+      label,
+      type: 'namespace',
+      detail,
+      boost: 20,
+      ...(close && !rest.startsWith(close) ? { apply: label + close } : {}),
+    }))
+    return { from: ctx.pos - m[1].length, options, validFor }
+  }
+}
+
 /** `pyTables`: every Python receiver table (modules included), for `from x import …`. */
 export function importStatementSource(lang: LangId, pyTables: Record<string, readonly Completion[]> = {}): CompletionSource {
   const base =
     lang === 'java'
       ? javaImportSource
-      : (ctx: CompletionContext) => pythonFromImportSource(ctx, pyTables) ?? pythonImportSource(ctx)
+      : lang === 'csharp'
+        ? directiveSource(USING_PATH, CSHARP_NAMESPACES, /^[\w.]*$/, ';')
+        : lang === 'c'
+          ? directiveSource(INCLUDE_PATH, C_STD_HEADERS, /^[\w./]*$/, '>')
+          : (ctx: CompletionContext) => pythonFromImportSource(ctx, pyTables) ?? pythonImportSource(ctx)
   // Record and re-rank by usage, same as the other sources — a student who
   // always imports Scanner sees it lead the list.
   return (ctx: CompletionContext) => {

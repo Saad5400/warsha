@@ -7,15 +7,19 @@ import {
   type CompletionSource,
 } from '@codemirror/autocomplete'
 import type { EditorState } from '@codemirror/state'
-import { JAVA_IMPORTS, applyWithImport, importInsertion, importStatementSource, pyImportInsertion } from './imports'
-import { declaredNames, KEYWORDS, type IdentRole } from './codeText'
+import type { EditorView } from '@codemirror/view'
+import { JAVA_IMPORTS, applyWithImport, directiveFor, importInsertion, importStatementSource, inDirective, pyImportInsertion } from './imports'
+import { declaredNames, KEYWORDS, type IdentRole, type TextLang } from './codeText'
+import { CSHARP_API, CSHARP_DOCS, CSHARP_SNIPPETS, type ApiRow, type SnippetRow } from './csharpApi'
+import { C_API, C_DOCS, C_SNIPPETS } from './cApi'
 import { PYTHON_MEMBERS, memberContext, memberSource, type PyTables } from './members'
 import { nameSource, namingSpot } from './names'
 import { recordable, withUsageBoost } from './usage'
 
 /** Narrower than `LangId` — web files get highlighting but no curated
- *  dictionary, so `completionSources` takes this type and `null` for the rest. */
-export type CompletionLang = 'java' | 'python'
+ *  dictionary, so `completionSources` takes this type and `null` for the rest.
+ *  The same union as codeText's `TextLang`: one language list for the whole engine. */
+export type CompletionLang = TextLang
 
 /**
  * Completions and snippets — the "where is the IntelliSense?" layer.
@@ -69,6 +73,16 @@ export type CompletionLang = 'java' | 'python'
 
 const snip = (label: string, template: string, detail: string): Completion =>
   snippetCompletion(template, { label, detail, type: 'snippet', boost: 60 })
+/** Data-file snippets. A C `#include` swallows the `#` when it was already typed (`#inc`), so it never doubles. */
+const snips = (rows: readonly SnippetRow[]) =>
+  rows.map(([label, template, detail]): Completion => {
+    const c = snip(label, template, detail)
+    const apply = c.apply
+    if (!template.startsWith('#') || typeof apply !== 'function') return c
+    const hashed = (view: EditorView, done: Completion, from: number, to: number) =>
+      apply(view, done, view.state.sliceDoc(from - 1, from) === '#' ? from - 1 : from, to)
+    return { ...c, apply: hashed }
+  })
 
 /** Java. `sout` / `souf` / `psvm` are IntelliJ's abbreviations, on purpose. */
 export const JAVA_SNIPPETS: readonly Completion[] = [
@@ -1384,6 +1398,8 @@ export const PYTHON_DOCS: Record<string, BuiltinDoc> = {
 const BUILTIN_DOCS: Record<CompletionLang, Record<string, BuiltinDoc>> = {
   java: JAVA_DOCS,
   python: PYTHON_DOCS,
+  csharp: CSHARP_DOCS,
+  c: C_DOCS,
 }
 
 /** Tries the qualified spelling first (`Math` + `abs` → `Math.abs`), then the
@@ -1442,6 +1458,9 @@ const MIN_IDENT_CHARS = 2
 const BARE_DOC_OWNERS: Record<CompletionLang, ReadonlySet<string>> = {
   java: new Set(['String', 'Scanner', 'ArrayList', 'List', 'HashMap', 'Map', 'PrintStream', 'StringBuilder', 'Random', 'HashSet', 'Set', 'LinkedList']),
   python: new Set(['str', 'list', 'dict', 'set', 'file', 'tuple']),
+  // C# / C cards are all filed qualified (`string.Split`, `Console.WriteLine`) or by function name.
+  csharp: new Set(),
+  c: new Set(),
 }
 
 /**
@@ -1495,16 +1514,32 @@ const pythonModuleCompletion = ([label, module, detail]: readonly [string, strin
   ...docInfo('python', `${module}.${label}`),
 })
 
+/** C# / C: a dictionary name that needs a `using` / `#include` adds it in the same edit. */
+const directiveApiCompletion = (lang: 'csharp' | 'c', label: string, detail: string, type: string): Completion => {
+  const dir = directiveFor(lang, label)
+  return { label, detail: dir ? `${detail} — ${dir.note}` : detail, type, boost: 10, ...(dir ? { apply: dir.apply } : {}), ...docInfo(lang, label) }
+}
+
+const API: Record<CompletionLang, readonly ApiRow[]> = { java: JAVA_API, python: PYTHON_API, csharp: CSHARP_API, c: C_API }
+const SNIPPETS: Record<CompletionLang, readonly Completion[]> = {
+  java: JAVA_SNIPPETS,
+  python: PYTHON_SNIPPETS,
+  csharp: snips(CSHARP_SNIPPETS),
+  c: snips(C_SNIPPETS),
+}
+
 const staticOptions = (lang: CompletionLang): Completion[] => {
-  const api = lang === 'java' ? JAVA_API : PYTHON_API
-  const snippets = lang === 'java' ? JAVA_SNIPPETS : PYTHON_SNIPPETS
-  const apiCompletions = api.map(([label, detail]): Completion => {
+  const api = API[lang]
+  const snippets = SNIPPETS[lang]
+  const apiCompletions = api.map(([label, detail, given]): Completion => {
     const last = label.slice(label.lastIndexOf('.') + 1)
-    const type = label.includes('.') ? (/^[A-Z][A-Z0-9_]*$/.test(last) ? 'constant' : 'method') : /^[A-Z]/.test(label) ? 'class' : 'function'
+    const type = given ?? (label.includes('.') ? (/^[A-Z][A-Z0-9_]*$/.test(last) ? 'constant' : 'method') : /^[A-Z]/.test(label) ? 'class' : 'function')
     return lang === 'java'
       ? javaApiCompletion(label, detail, type)
-      : // Exception classes rank low: they belong after `except`/`raise`, where a prefix finds them anyway.
-        { label, detail, type, boost: /(?:Error|Exception|Interrupt|Iteration)$/.test(label) ? 2 : 10, ...docInfo('python', label) }
+      : lang !== 'python'
+        ? directiveApiCompletion(lang, label, detail, type)
+        : // Exception classes rank low: they belong after `except`/`raise`, where a prefix finds them anyway.
+          { label, detail, type, boost: /(?:Error|Exception|Interrupt|Iteration)$/.test(label) ? 2 : 10, ...docInfo('python', label) }
   })
   return [
     ...snippets,
@@ -1525,10 +1560,12 @@ const IDENT = /[A-Za-z_$][\w$]*/g
 const RESERVED: Record<CompletionLang, ReadonlySet<string>> = {
   java: reservedFor('java'),
   python: reservedFor('python'),
+  csharp: reservedFor('csharp'),
+  c: reservedFor('c'),
 }
 function reservedFor(lang: CompletionLang): Set<string> {
   const s = new Set<string>(KEYWORDS[lang])
-  for (const [label] of lang === 'java' ? JAVA_API : PYTHON_API) s.add(label.slice(label.lastIndexOf('.') + 1))
+  for (const [label] of API[lang]) s.add(label.slice(label.lastIndexOf('.') + 1))
   if (lang === 'python') for (const [label] of PYTHON_MODULE_API) s.add(label)
   return s
 }
@@ -1542,6 +1579,11 @@ const STATEMENT_ONLY: Record<CompletionLang, ReadonlySet<string>> = {
     ),
   ),
   python: new Set('def class import from pass global nonlocal del elif except finally as with assert raise async await'.split(' ')),
+  csharp: new Set(
+    'class interface enum struct record namespace using public private protected internal abstract static sealed override virtual readonly const void'.split(' '),
+  ),
+  // Not `void` or `struct`: C writes `main(void)` and `sizeof(struct Point)` mid-expression.
+  c: new Set('typedef extern static register'.split(' ')),
 }
 
 /** Nearer the caret is likelier what you want. Distance is in characters, so it
@@ -1569,7 +1611,8 @@ function proximityBonus(dist: number): number {
 function atStatementStart(state: EditorState, wordFrom: number): boolean {
   const line = state.doc.lineAt(wordFrom)
   const pre = state.sliceDoc(line.from, wordFrom).replace(/\s+$/, '')
-  return pre === '' || '{};'.includes(pre[pre.length - 1])
+  // A lone `#` opens a C directive (`#inc` → the `include` snippet).
+  return pre === '' || pre === '#' || '{};'.includes(pre[pre.length - 1])
 }
 
 /** Snippets that belong *inside* an expression, not at a statement start — a
@@ -1580,6 +1623,8 @@ function atStatementStart(state: EditorState, wordFrom: number): boolean {
 const EXPRESSION_SNIPPETS: Record<CompletionLang, ReadonlySet<string>> = {
   java: new Set(['lambda']),
   python: new Set(['fstr', 'lambda', 'ternary', 'comp', 'dcomp']),
+  csharp: new Set(['lambda']),
+  c: new Set(),
 }
 
 const statementOnly = (lang: CompletionLang, o: Completion): boolean =>
@@ -1627,7 +1672,7 @@ function staticSource(lang: CompletionLang): CompletionSource {
   // the member source re-queries and owns it — never a filter over `Character.getNumericValue`.
   const validFor = (text: string) => !text.includes('.') && listValid.test(text)
   return (ctx: CompletionContext) => {
-    if (memberContext(ctx.state, ctx.pos, lang)) return null
+    if (memberContext(ctx.state, ctx.pos, lang) || inDirective(lang, ctx.state, ctx.pos)) return null
     // Naming a new variable: no snippet, keyword or API name belongs there (names.ts offers the
     // names). A class-body member is the exception — `public String toS…` may be a method name.
     const spot = namingSpot(lang, ctx.state, ctx.pos)
@@ -1710,8 +1755,9 @@ export function wordsInSource(text: string): string[] {
 }
 
 /** Node types where a popup is never wanted — typing a sentence inside
- *  `println("...")` shouldn't offer `nextDouble`. */
-const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComment', 'BlockComment']
+ *  `println("...")` shouldn't offer `nextDouble`. The lowercase pair are the
+ *  token names of the C / C# stream grammar (clike legacy mode). */
+const NOT_IN = ['String', 'TemplateString', 'FormatString', 'Comment', 'LineComment', 'BlockComment', 'string', 'comment']
 
 /** Module functions offered after `os.` / `json.` / `re.` …, derived from
  *  `PYTHON_MODULE_API` so the two never drift. A module with a richer hand-written

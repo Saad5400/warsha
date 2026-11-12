@@ -135,10 +135,10 @@ export function editorLangForPath(path: string): EditorLang | null {
   return null
 }
 
-/** Only Java and Python carry curated snippets/dictionaries; the rest get
+/** Java, Python, C# and C carry curated snippets/dictionaries; the rest get
  *  grammar highlighting and identifier completion (see completions.ts). */
 function completionLang(lang: EditorLang | null): CompletionLang | null {
-  return lang === 'java' || lang === 'python' ? lang : null
+  return lang === 'java' || lang === 'python' || lang === 'csharp' || lang === 'c' ? lang : null
 }
 
 /**

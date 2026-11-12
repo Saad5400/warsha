@@ -8,6 +8,8 @@ import { CompletionContext, type Completion } from '@codemirror/autocomplete'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { java } from '@codemirror/lang-java'
 import { python } from '@codemirror/lang-python'
+import { LanguageSupport, StreamLanguage } from '@codemirror/language'
+import { c as cMode, csharp as csharpMode } from '@codemirror/legacy-modes/mode/clike'
 import { completionSources, type CompletionLang } from '../../src/editor/completions.ts'
 import { setProjectSource, type ProjectFileText } from '../../src/editor/projectSource.ts'
 
@@ -22,7 +24,19 @@ export function withProjectFiles(files: ProjectFileText[], body: () => void): vo
   }
 }
 
-const sources = { java: completionSources('java', () => []), python: completionSources('python', () => []) }
+const sources: Record<CompletionLang, ReturnType<typeof completionSources>> = {
+  java: completionSources('java', () => []),
+  python: completionSources('python', () => []),
+  csharp: completionSources('csharp', () => []),
+  c: completionSources('c', () => []),
+}
+/** The grammar setup.ts loads for each language (C# and C: the clike stream mode). */
+const grammar = {
+  java: () => java(),
+  python: () => python(),
+  csharp: () => new LanguageSupport(StreamLanguage.define(csharpMode)),
+  c: () => new LanguageSupport(StreamLanguage.define(cMode)),
+}
 
 export interface Offered {
   labels: string[]
@@ -34,7 +48,7 @@ export function offered(lang: CompletionLang, docWithCaret: string): Offered {
   const pos = docWithCaret.indexOf('‸')
   if (pos === -1) throw new Error('no ‸ caret in the test document')
   const doc = docWithCaret.replace('‸', '')
-  const state = EditorState.create({ doc, selection: { anchor: pos }, extensions: [lang === 'java' ? java() : python()] })
+  const state = EditorState.create({ doc, selection: { anchor: pos }, extensions: [grammar[lang]()] })
   ensureSyntaxTree(state, doc.length, 5000)
   const ctx = new CompletionContext(state, pos, true)
   const labels: string[] = []

@@ -1,6 +1,7 @@
 import type { EditorState } from '@codemirror/state'
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
-import { JAVA_PRIMS, baseOf, isThrowableName, maskCode, simpleName, splitTopLevel, typeArgs, type TextLang } from './codeText'
+import { JAVA_PRIMS, baseOf, cTypeKey, isThrowableName, javaLike, maskCode, simpleName, splitTopLevel, stripNullable, typeArgs, type TextLang } from './codeText'
+import { CSHARP_ALIAS, CSHARP_MEMBERS, CSHARP_OBJECT, CSHARP_STATICS, CSHARP_TYPE_PARAMS, LINQ, type MemberRow } from './csharpApi'
 import { javaFqcn } from './imports'
 import { projectRevision } from './projectSource'
 import { parseChain, resolveReceiver, type MemberTypes, type Resolved } from './receiver'
@@ -17,6 +18,10 @@ import { recordable, withUsageBoost } from './usage'
  * (`String, (int) — …`), so keep that accurate: `sc.next().` is a String only
  * because `next` says so. Python's details carry no return type; Python chains
  * read PY_RESULTS below instead, and a method missing there just ends the chain.
+ *
+ * C# runs through the same Java path with its own tables (csharpApi.ts) — the
+ * `Lib` record below is what differs. C has no library members: `p.` / `p->`
+ * offers the fields of the file's own structs (typeIndex.ts).
  */
 
 const method = (label: string, detail: string): Completion => ({ label, type: 'method', detail, boost: 30 })
@@ -1198,6 +1203,51 @@ const JAVA_STATICS: Record<string, ReadonlySet<string>> = {
   Byte: new Set(['parseByte', 'MAX_VALUE', 'MIN_VALUE']),
 }
 
+/** C# member rows → completions, the same shape as the Java tables. LINQ rows rank just under a type's own (`xs.` leads with Add, Count). */
+const fromRows = (rows: readonly MemberRow[], boost = 30): Completion[] =>
+  rows.map((row) => {
+    const [label, detail, kind] = row
+    const b = boost === 30 && LINQ.includes(row) ? 26 : boost
+    return kind ? { label, type: kind, detail, boost: b } : { ...method(label, detail), boost: b }
+  })
+const CSHARP_TABLES: Record<string, readonly Completion[]> = Object.fromEntries(
+  Object.entries(CSHARP_MEMBERS).map(([k, rows]) => [k, fromRows(rows)]),
+)
+
+/**
+ * A Java-like language's library: its member tables, which members are static,
+ * interface→table aliases (applied to instances), type parameters, and the
+ * Object members every value adds (ranked under a type's own).
+ */
+interface Lib {
+  members: Record<string, readonly Completion[]>
+  statics: Record<string, ReadonlySet<string>>
+  alias: Record<string, string>
+  typeParams: Record<string, readonly string[]>
+  object: readonly Completion[]
+  /** What a `catch (SomethingException e)` variable offers. */
+  throwable: readonly Completion[]
+  /** A raw generic's type arguments read as this. */
+  top: string
+}
+const LIBS: Record<'java' | 'csharp', Lib> = {
+  java: {
+    members: JAVA_MEMBERS, statics: JAVA_STATICS, alias: JAVA_INSTANCE_ALIAS, typeParams: JAVA_TYPE_PARAMS,
+    object: JAVA_MEMBERS.Object.map((c) => ({ ...c, boost: 18 })), throwable: JAVA_MEMBERS.Throwable, top: 'Object',
+  },
+  csharp: {
+    // C#'s aliases (`String` → `string`, `IList` → `List`) apply to the type itself, static access included — see csBase.
+    members: CSHARP_TABLES, statics: CSHARP_STATICS, alias: {}, typeParams: CSHARP_TYPE_PARAMS,
+    object: fromRows(CSHARP_OBJECT, 18), throwable: CSHARP_TABLES.Exception, top: 'object',
+  },
+}
+
+/** A C# type as written → its table key: `System.Collections.Generic.List<int>?` → `List`, `String` → `string`. */
+function csBase(t: string): string {
+  const b = simpleName(stripNullable(t))
+  return CSHARP_ALIAS[b] ?? b
+}
+
 /** The return type a member's `detail` advertises — `E, (int) — …` → `E`; `(x) — …` → null. */
 function detailType(detail: string | undefined): string | null {
   if (!detail) return null
@@ -1208,13 +1258,14 @@ function detailType(detail: string | undefined): string | null {
 }
 
 /** `E` → `String` for `ArrayList<String>`; a raw type's parameters become Object. */
-function substitute(t: string, owner: string): string {
-  const params = JAVA_TYPE_PARAMS[javaBase(owner)]
+function substitute(t: string, owner: string, lang: 'java' | 'csharp' = 'java'): string {
+  const lib = LIBS[lang]
+  const params = lib.typeParams[lang === 'csharp' ? csBase(owner) : javaBase(owner)]
   if (!params) return t
   const args = typeArgs(owner)
   let out = t
   params.forEach((p, i) => {
-    out = out.replace(new RegExp(`\\b${p}\\b`, 'g'), args[i] ?? 'Object')
+    out = out.replace(new RegExp(`\\b${p}\\b`, 'g'), args[i] ?? lib.top)
   })
   return out
 }
@@ -1230,19 +1281,22 @@ const memberCompletion = (m: MemberInfo): Completion => ({
 })
 
 /** The library table for a value (or class) of this type, filtered to what that access can reach. */
-function jdkMembers(base: string, isStatic: boolean): readonly Completion[] | undefined {
-  const statics = JAVA_STATICS[base]
+function jdkMembers(base: string, isStatic: boolean, lang: 'java' | 'csharp' = 'java'): readonly Completion[] | undefined {
+  const lib = LIBS[lang]
+  const statics = lib.statics[base]
   if (isStatic) {
-    const table = JAVA_MEMBERS[base]
+    const table = lib.members[base]
     return statics && table ? table.filter((c) => statics.has(c.label)) : table
   }
-  const table = JAVA_MEMBERS[JAVA_INSTANCE_ALIAS[base] ?? base] ?? (isThrowableName(base) ? JAVA_MEMBERS.Throwable : undefined)
+  const table = lib.members[lib.alias[base] ?? base] ?? (isThrowableName(base) ? lib.throwable : undefined)
   return statics && table ? table.filter((c) => !statics.has(c.label)) : table
 }
 
-/** A library (non-project) parent's members: a JDK table in Java, a builtin/module table in Python. */
+/** A library (non-project) parent's members: a JDK / .NET table, a builtin/module table in Python; C has none. */
 function libraryMembers(lang: TextLang, name: string, isStatic: boolean, pyTables: PyTables): readonly Completion[] {
   if (lang === 'java') return jdkMembers(name, isStatic) ?? []
+  if (lang === 'csharp') return jdkMembers(csBase(name), isStatic, lang) ?? []
+  if (lang === 'c') return []
   return pyTables[name] ?? (isThrowableName(name) || name === 'BaseException' ? PYTHON_MEMBERS.BaseException : [])
 }
 
@@ -1260,7 +1314,7 @@ function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: T
     // Private members only from inside their own class — never from Main, never from a subclass.
     const reachable = c.name === viewer ? c.members : c.members.filter((m) => !m.isPrivate)
     // Static access offers what is static; a Java class with nothing static offers everything rather than nothing.
-    const own = isStatic && lang === 'java' ? reachable.filter((m) => m.isStatic) : reachable
+    const own = isStatic && javaLike(lang) ? reachable.filter((m) => m.isStatic) : reachable
     for (const m of own.length ? own : reachable) out.push({ ...memberCompletion(m), boost })
     for (const s of c.supers) {
       const parent = index.get(s)
@@ -1269,12 +1323,12 @@ function userMembers(lang: TextLang, cls: ClassInfo, isStatic: boolean, index: T
     }
   }
   walk(cls, 34)
-  if (lang === 'java' && !isStatic) out.push(...OBJECT_MEMBERS)
+  if (javaLike(lang) && !isStatic) out.push(...LIBS[lang].object)
   return dedupe(out)
 }
 
 /** java.lang.Object's members, ranked under a type's own: `sc.` leads with Scanner's methods, not `equals`. */
-const OBJECT_MEMBERS: readonly Completion[] = JAVA_MEMBERS.Object.map((c) => ({ ...c, boost: 18 }))
+const OBJECT_MEMBERS: readonly Completion[] = LIBS.java.object
 
 function dedupe(list: readonly Completion[]): Completion[] {
   const seen = new Set<string>()
@@ -1285,7 +1339,8 @@ function dedupe(list: readonly Completion[]): Completion[] {
 export type PyTables = Record<string, readonly Completion[]>
 
 /** The type name a member's card is filed under — `ArrayList<String>` → `ArrayList`, `list[str]` → `list`. */
-export const ownerOf = (lang: TextLang, r: Resolved) => (lang === 'java' ? javaBase(r.type) : r.type.replace(/\[.*$/, ''))
+export const ownerOf = (lang: TextLang, r: Resolved) =>
+  lang === 'java' ? javaBase(r.type) : lang === 'csharp' ? csBase(r.type) : lang === 'c' ? r.type.replace(/\[\]/g, '') : r.type.replace(/\[.*$/, '')
 
 /** The table key of a Java type as written: `java.util.List<Integer>` → `List`; `Map.Entry<K, V>` stays `Map.Entry`. */
 function javaBase(t: string): string {
@@ -1304,6 +1359,16 @@ export function membersFor(lang: TextLang, r: Resolved, index: TypeIndex, pyTabl
   if (lang === 'java') {
     if (/\[\]$/.test(t)) return [...JAVA_MEMBERS['[]'], ...OBJECT_MEMBERS]
     if (JAVA_PRIMS.has(t)) return null
+  }
+  if (lang === 'csharp') {
+    const s = stripNullable(t)
+    if (/\[\]$/.test(s)) return dedupe([...CSHARP_TABLES['[]'], ...LIBS.csharp.object])
+    // A user class wins over a library alias of the same name (`class Stack` of your own).
+    const user = index.get(simpleName(s))
+    if (user) return userMembers(lang, user, r.isStatic, index, pyTables, viewer)
+    const table = jdkMembers(csBase(s), r.isStatic, lang)
+    if (!table) return null
+    return r.isStatic ? [...table] : dedupe([...table, ...LIBS.csharp.object])
   }
   const base = ownerOf(lang, r)
   const user = index.get(base)
@@ -1389,8 +1454,8 @@ function findUserMember(cls: ClassInfo, name: string, call: boolean, index: Type
     if (parent) {
       const r = findUserMember(parent, name, call, index, lang, seen)
       if (r !== undefined) return r
-    } else if (lang === 'java') {
-      const hit = jdkMembers(s, false)?.find((c) => c.label === name)
+    } else if (javaLike(lang)) {
+      const hit = libraryMembers(lang, s, false, {}).find((c) => c.label === name)
       if (hit) return detailType(hit.detail)
     }
   }
@@ -1402,6 +1467,8 @@ function makeMemberTypes(pyTables: PyTables): MemberTypes {
     isKnownType(lang, name, index) {
       if (index.has(name)) return true
       if (lang === 'java') return !!JAVA_MEMBERS[name] || !!javaFqcn(name) || isThrowableName(name)
+      if (lang === 'csharp') return !!CSHARP_TABLES[csBase(name)] || isThrowableName(name)
+      if (lang === 'c') return false
       return !!pyTables[name] || name in PY_RESULTS
     },
     callResult(lang, name) {
@@ -1426,6 +1493,34 @@ function makeMemberTypes(pyTables: PyTables): MemberTypes {
           }
         }
         return null
+      }
+      if (lang === 'csharp') {
+        const s = stripNullable(t)
+        if (/\[\]$/.test(s)) {
+          // `arr.Length`, and LINQ on the element type (`nums.Max()` of an int[] is an int).
+          const hit = CSHARP_TABLES['[]'].find((c) => c.label === member)
+          const rt = hit ? detailType(hit.detail) : null
+          return rt ? rt.replace(/\bT\b/g, s.slice(0, -2)) : null
+        }
+        const user = index.get(simpleName(s))
+        if (user) {
+          const found = findUserMember(user, member, call, index, lang)
+          if (found !== undefined) return found && stripNullable(found)
+        }
+        for (const table of user ? [LIBS.csharp.object] : [jdkMembers(csBase(s), on.isStatic, lang), LIBS.csharp.object]) {
+          const hit = table?.find((c) => c.label === member)
+          if (hit) {
+            const rt = detailType(hit.detail)
+            return rt ? substitute(rt, s, lang) : null
+          }
+        }
+        return null
+      }
+      if (lang === 'c') {
+        // `p.x` and `p->x` alike: a field of the struct, whatever the pointer depth.
+        const user = index.get(t.replace(/\[\]/g, ''))
+        const written = user ? findUserMember(user, member, false, index, lang) : null
+        return written ? cTypeKey(written) : null
       }
       const base = t.replace(/\[.*$/, '')
       const user = index.get(base)
@@ -1466,14 +1561,20 @@ export interface Receiver {
  */
 export function memberContext(state: EditorState, pos: number, lang: TextLang): Receiver | null {
   const line = state.doc.lineAt(pos)
-  if (/^\s*(?:import|from|package)\b/.test(state.sliceDoc(line.from, pos))) return null
+  const lineBefore = state.sliceDoc(line.from, pos)
+  if (/^\s*(?:import|from|package)\b/.test(lineBefore)) return null
+  // `using System.Collections.` / `namespace App.` are paths too; so is a C `#include <sys/…`.
+  if (lang === 'csharp' && /^\s*(?:global\s+)?(?:using(?:\s+static)?|namespace)\s+[\w.]*$/.test(lineBefore)) return null
+  if (lang === 'c' && /^\s*#/.test(lineBefore)) return null
   const start = Math.max(0, pos - LOOKBACK)
   const text = state.sliceDoc(start, pos)
   const pm = /[A-Za-z_$][\w$]*$/.exec(text)
   const partial = pm ? pm[0] : ''
-  const dot = text.length - partial.length - 1
-  if (dot < 0 || text[dot] !== '.') return null
-  const chain = parseChain(maskCode(lang, text), dot)
+  let dot = text.length - partial.length - 1
+  // C's `p->x` is a member access too; the chain is parsed from the `-`.
+  if (lang === 'c' && text[dot] === '>' && text[dot - 1] === '-') dot--
+  else if (dot < 0 || text[dot] !== '.') return null
+  const chain = parseChain(maskCode(lang, text), dot, lang === 'c')
   if (!chain) return null
   return { name: text.slice(chain.from, dot), partial, from: pos - partial.length, dotPos: start + dot }
 }

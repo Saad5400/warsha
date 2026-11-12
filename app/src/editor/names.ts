@@ -1,16 +1,22 @@
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import type { EditorState } from '@codemirror/state'
 import {
+  CS_MODIFIERS,
+  CS_TYPE,
+  C_PRIMS,
   JAVA_MODIFIERS_RE,
   JAVA_PRIMS,
   JAVA_TYPE,
   RESERVED_WORDS,
+  curly,
   declaredNames,
-  isJavaTypeWord,
   isThrowableName,
+  isTypeWord,
   javaCatchRe,
+  javaLike,
   maskCode,
   simpleName,
+  stripNullable,
   typeArgs,
   type TextLang,
 } from './codeText'
@@ -29,6 +35,9 @@ import { recordable, withUsageBoost } from './usage'
  *   catch (IOException |       → e, ex, ioException, exception
  *   for (String | : names)     → name, string, s, str
  *   int |                      → i, n
+ *
+ *   C#:      the same shapes (`List<Student> |`, `foreach (var | in students)`)
+ *   C:       int | → i, n · char *| → s, str · FILE *| → fp · struct Point | → point, p
  *
  *   Python:  for | in students:      → student, item, i
  *            for | in range(10):     → i, j, n
@@ -58,6 +67,11 @@ const CONVENTIONAL: Record<string, readonly string[]> = {
   Double: ['d'],
   Character: ['c'],
   Boolean: ['b'],
+  // C#'s keyword types.
+  string: ['s', 'str'],
+  bool: ['b', 'flag'],
+  decimal: ['d', 'amount'],
+  object: ['o', 'obj'],
   PrintWriter: ['pw', 'writer'],
   FileWriter: ['fw', 'writer'],
   BufferedReader: ['br'],
@@ -65,7 +79,7 @@ const CONVENTIONAL: Record<string, readonly string[]> = {
 }
 
 /** Containers named after what they hold (`List<Student>` → `students`). */
-const COLLECTIONS = /^(?:List|ArrayList|LinkedList|Vector|Set|HashSet|TreeSet|LinkedHashSet|Collection|Iterable|Queue|Deque|ArrayDeque|Stack|PriorityQueue|Iterator|Optional|Stream)$/
+const COLLECTIONS = /^(?:List|ArrayList|LinkedList|Vector|Set|HashSet|TreeSet|LinkedHashSet|Collection|Iterable|Queue|Deque|ArrayDeque|Stack|PriorityQueue|Iterator|Optional|Stream|IList|IEnumerable|ICollection|SortedSet)$/
 
 /** `BufferedReader` → ['Buffered', 'Reader']; `IOException` → ['IO', 'Exception']; `snake_case` → ['snake', 'case']. */
 export function words(name: string): string[] {
@@ -102,13 +116,14 @@ const suffixes = (ws: string[]): string[] => ws.map((_, i) => lowerFirst(ws.slic
 
 /** Names JetBrains-style for a Java type as written: `ArrayList<Student>`, `int[]`, `Scanner`. */
 export function namesForJavaType(type: string): string[] {
-  const t = type.replace(/\s+/g, '').replace(/\.\.\.$/, '[]')
+  const t = stripNullable(type).replace(/\.\.\.$/, '[]')
   const dims = (t.match(/\[\]/g) ?? []).length
   const base = simpleName(t)
   const out: string[] = []
   if (isThrowableName(base)) out.push('e', 'ex')
   if (dims > 0) {
-    if (JAVA_PRIMS.has(base) || base === 'String') out.push(plural(base.toLowerCase()))
+    // Lowercase bases are primitives (C#'s `string` / `bool` too): `ints`, `strings`.
+    if (JAVA_PRIMS.has(base) || /^[a-z]/.test(base) || base === 'String') out.push(plural(base.toLowerCase()))
     else {
       const ws = words(base)
       out.push(...suffixes(ws).map(plural), lowerFirst([...ws, 'Array']))
@@ -121,10 +136,10 @@ export function namesForJavaType(type: string): string[] {
   if (COLLECTIONS.test(base) && args.length === 1 && args[0] !== '?') {
     const ews = words(simpleName(args[0]))
     out.push(...suffixes(ews).map(plural), lowerFirst([...ews, ...words(base).slice(-1)]))
-  } else if (/Map$/.test(base) && args.length === 2) {
-    out.push(lowerFirst([...words(simpleName(args[0])), ...words(simpleName(args[1])), 'Map']))
+  } else if (/(?:Map|Dictionary)$/.test(base) && args.length === 2) {
+    out.push(lowerFirst([...words(simpleName(args[0])), ...words(simpleName(args[1])), ...words(base).slice(-1)]))
   }
-  if (!JAVA_PRIMS.has(base)) out.push(...suffixes(words(base)))
+  if (!JAVA_PRIMS.has(base) && !/^[a-z]/.test(base)) out.push(...suffixes(words(base)))
   out.push(...(CONVENTIONAL[base] ?? []))
   return out
 }
@@ -144,6 +159,24 @@ export interface NamingSpot {
 const CONDITION_HEADS = /\b(?:if|while|switch|return|synchronized)\s*\($/
 
 const JAVA_DECL_SPOT = new RegExp(`(^|[({;,]|->)\\s*${JAVA_MODIFIERS_RE}(${JAVA_TYPE}(?:\\.\\.\\.)?)\\s+$`)
+/** C#: its modifiers, `string?`, and `out int |` / `params int[] |` / `foreach (var |`. */
+const CS_DECL_SPOT = new RegExp(`(^|[({;,]|=>)\\s*(?:(?:${CS_MODIFIERS.join('|')}|out|ref|params|using)\\s+)*(${CS_TYPE})\\s+$`)
+/** C: `int |`, `char *|`, `struct Point |`, `const unsigned long |` at a declaration start or in a parameter list. */
+const C_DECL_SPOT = new RegExp(
+  `(^|[({;,])\\s*((?:(?:const|unsigned|signed|long|short|static|register)\\s+)*(?:(?:struct|union|enum)\\s+[A-Za-z_]\\w*|[A-Za-z_]\\w*))(\\s*\\*+\\s*|\\s+)$`,
+)
+
+/** Names for a C declaration's type: `FILE *` → fp; `char *` → s, str; a struct → its name. */
+function namesForCType(type: string, stars: number): string[] {
+  const words_ = type.split(/\s+/)
+  const base = words_[words_.length - 1]
+  if (base === 'FILE') return ['fp', 'file']
+  if (base === 'char' && stars) return ['s', 'str', 'name']
+  if (stars && !C_PRIMS.has(base)) return [...suffixes(words(base)), 'p', 'ptr']
+  if (stars) return ['p', 'ptr']
+  if (/^(?:struct|union|enum)\b/.test(type) || !C_PRIMS.has(base)) return [...suffixes(words(base)), base[0].toLowerCase()]
+  return [...(CONVENTIONAL[base] ?? (/^(?:unsigned|signed|size_t)$/.test(base) ? ['n', 'count'] : []))]
+}
 /** `catch (IOException |` — the empty name group leaves the caret right after the type. */
 const JAVA_CATCH_SPOT = new RegExp(`${javaCatchRe('')}$`)
 
@@ -158,26 +191,38 @@ export function namingSpot(lang: TextLang, state: EditorState, pos: number): Nam
   const partial = wm ? wm[0] : ''
   const head = before.slice(0, before.length - partial.length)
   const from = pos - partial.length
-  if (lang === 'java') {
+  if (javaLike(lang)) {
     const c = JAVA_CATCH_SPOT.exec(head)
     if (c) return { from, names: namesForJavaType(c[1]), inClassBody: false }
-    const m = JAVA_DECL_SPOT.exec(head)
-    if (!m || !isJavaTypeWord(m[2])) return null
+    const m = (lang === 'csharp' ? CS_DECL_SPOT : JAVA_DECL_SPOT).exec(head)
+    if (!m || !isTypeWord(lang, m[2])) return null
     if (m[1] === '(' && CONDITION_HEADS.test(head.slice(0, m.index + 1))) return null
-    const type = m[2].replace(/\s+/g, '')
+    const type = lang === 'csharp' ? stripNullable(m[2]) : m[2].replace(/\s+/g, '')
     const names = type === 'var' ? [] : namesForJavaType(type)
-    // `for (String | : names)` — the collection's name, singular, comes first.
-    const fe = /^\s*\w*\s*:\s*([A-Za-z_$][\w$]*)/.exec(after)
-    if (fe && /\bfor\s*\(/.test(head)) {
+    // `for (String | : names)` / C#'s `foreach (var | in names)` — the collection's name, singular, comes first.
+    const fe = (lang === 'csharp' ? /^\s*\w*\s+in\s+([A-Za-z_$][\w$]*)/ : /^\s*\w*\s*:\s*([A-Za-z_$][\w$]*)/).exec(after)
+    if (fe && (lang === 'csharp' ? /\bforeach\s*\(/ : /\bfor\s*\(/).test(head)) {
       const one = singular(fe[1])
       if (one) names.unshift(one)
     }
     if (!names.length) return null
     const doc = state.doc.toString()
-    const cls = enclosingClass('java', doc, from)
+    const cls = enclosingClass(lang, doc, from)
     // Directly in a class body: the innermost open brace before the caret is the class's own.
-    const inClassBody = !!cls && innermostOpenBrace(maskCode('java', doc), from) === cls.bodyFrom
+    const inClassBody = !!cls && innermostOpenBrace(maskCode(lang, doc), from) === cls.bodyFrom
     return { from, names, inClassBody }
+  }
+  if (lang === 'c') {
+    const m = C_DECL_SPOT.exec(head)
+    if (!m) return null
+    const type = m[2].replace(/\s+/g, ' ')
+    const last = type.split(' ').pop()!
+    // Only a real type opens a declaration: `return |`, `x |` and `else |` do not.
+    const typed = C_PRIMS.has(last) || /^(?:struct|union|enum)\s/.test(type) || /^[A-Z]/.test(last)
+    if (!typed || RESERVED_WORDS.c.has(last) && !C_PRIMS.has(last)) return null
+    if (m[1] === '(' && CONDITION_HEADS.test(head.slice(0, m.index + 1))) return null
+    const names = namesForCType(type, (m[3].match(/\*/g) ?? []).length)
+    return names.length ? { from, names, inClassBody: false } : null
   }
   // Python
   if (/^\s*(?:async\s+)?for\s+$/.test(head)) {
@@ -230,7 +275,7 @@ export function finalNames(lang: TextLang, spot: NamingSpot, taken: ReadonlySet<
   for (let n of spot.names) {
     if (!n) continue
     if (lang === 'python') n = n.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
-    if (reserved.has(n)) n = lang === 'java' ? `a${n[0].toUpperCase()}${n.slice(1)}` : `${n}_`
+    if (reserved.has(n)) n = curly(lang) ? `a${n[0].toUpperCase()}${n.slice(1)}` : `${n}_`
     if (taken.has(n)) {
       let k = 2
       while (taken.has(`${n}${k}`)) k++

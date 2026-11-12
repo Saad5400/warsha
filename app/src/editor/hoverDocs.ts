@@ -179,7 +179,7 @@ function docsAt(view: EditorView, pos: number, lang: CompletionLang | null): Doc
   // No cards inside strings or comments — hovering the word print in
   // println("print something") must not explain the API.
   const node = syntaxTree(state).resolveInner(pos, 0)
-  if (/String|Comment|comment/.test(node.name)) return null
+  if (/String|string|Comment|comment/.test(node.name)) return null
   const user = projectDocs().get(name)
   if (user) return { from: word.from, to: word.to, entry: user, user: true }
   if (!lang) return null
