@@ -874,6 +874,43 @@ const chromeTheme = EditorView.theme(
     '&.cm-editor.cm-desk .cm-completionIcon-keyword, &.cm-editor.cm-desk .cm-completionIcon-snippet': {
       color: 'var(--text-3)',
     },
+    // ---- The popup's FRAME lives on the list, not on the tooltip box.
+    // CodeMirror (view 6.43, tooltip measure) remembers a list's natural height in
+    // `knownHeight` the first time it does not fit the space it has (console open,
+    // caret low) and never forgets it: from then on, while the popup stays open,
+    // the box is pinned to the whole available height — two suggestions in a
+    // half-screen panel (founder report, desk and phone). So the box goes
+    // invisible and click-through, and the list, sized to its rows, draws the
+    // panel; above the caret the list hugs the bottom so it stays next to it.
+    // The doubled class outranks both densities' .cm-tooltip rules (and keeps the keys unique).
+    '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete': {
+      backgroundColor: 'transparent',
+      border: 'none',
+      borderRadius: '0',
+      boxShadow: 'none',
+      overflow: 'visible',
+      display: 'flex',
+      flexDirection: 'column',
+      pointerEvents: 'none',
+    },
+    '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete.cm-tooltip-above': { justifyContent: 'flex-end' },
+    '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete > ul, &.cm-editor .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete .cm-completionInfo': {
+      pointerEvents: 'auto',
+    },
+    '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete > ul': {
+      flex: '0 1 auto',
+      minHeight: '0',
+      boxSizing: 'border-box',
+      border: '1px solid var(--border-subtle)',
+      borderRadius: '6px',
+      backgroundColor: 'var(--surface-3)',
+      boxShadow: 'var(--shadow-raised)',
+    },
+    '&.cm-editor.cm-desk .cm-tooltip.cm-tooltip-autocomplete.cm-tooltip-autocomplete > ul': {
+      backgroundColor: 'var(--code-widget-bg)',
+      border: '1px solid var(--border-widget)',
+      borderRadius: '3px',
+    },
   },
   { dark: true },
 )
