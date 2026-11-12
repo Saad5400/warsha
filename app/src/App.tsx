@@ -2866,7 +2866,10 @@ function Ide({ report }: { report: CapabilityReport }) {
       title: COPY.cmdRunStop,
       keys: ['Shift+F5'],
       enabled: () => runnerRef.current.busy,
-      run: () => runnerRef.current.stop(),
+      // forceStop: the 250 ms swap guard is for a thumb on the Run control that just
+      // turned into Stop. A key is never that tap, and swallowing it left a warm
+      // debug session (paused well inside 250 ms) parked, with Run and F5 dead.
+      run: () => runnerRef.current.forceStop(),
     },
     { id: 'go.file', title: COPY.cmdGoToFile, keys: ['Mod+P'], run: () => setQuickPick('files') },
     {
@@ -3551,7 +3554,8 @@ function Ide({ report }: { report: CapabilityReport }) {
                   onStop={() => {
                     const nb = notebookDebugOwner()
                     if (nb) nb.interrupt()
-                    else runner.stop()
+                    // Not the Run control, so not its double-tap guard (see run.stop).
+                    else runner.forceStop()
                   }}
                 />
                 {/* Touch only (desk:hidden) — the desktop editor has the right-click
