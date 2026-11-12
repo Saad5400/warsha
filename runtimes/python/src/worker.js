@@ -54,8 +54,6 @@
  * queue behind it — callers must gate on the run state themselves.
  */
 
-import { KERNEL } from './kernel.js'
-
 const PYODIDE_VERSION = '314.0.3'
 const DEFAULT_INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`
 
@@ -360,6 +358,9 @@ async function boot() {
   runEntry = pyodide.globals.get('_warsha_run')
   resetFs = pyodide.globals.get('_warsha_reset_fs')
   if (kernelMode) {
+    // Only a notebook's worker pays for the kernel's source (~60 KB): the program
+    // runner's worker never loads it.
+    const { KERNEL } = await import('./kernel.js')
     pyodide.runPython(KERNEL)
     runCellFn = pyodide.globals.get('_warsha_run_cell')
   }

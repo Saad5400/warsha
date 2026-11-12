@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { undo, redo, selectAll } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { EditorView } from '@codemirror/view'
@@ -14,7 +14,8 @@ import { classifyRunFailure } from './hooks/useRunner'
 import { createNotebook, isNotebookPath, parseCellPath, parseNotebook, readableText, serializeNotebook } from './notebook/nbformat'
 import { closeNotebooksExcept, flushNotebooks, renameNotebook, revealCell, type DocumentIO } from './notebook/document'
 import { notebookDebugOwner } from './notebook/session'
-import { NotebookView } from './components/notebook/NotebookView'
+// The notebook UI (cells, outputs, markdown, math) loads the first time a notebook opens.
+const NotebookView = lazy(() => import('./components/notebook/NotebookView').then((m) => ({ default: m.NotebookView })))
 
 import { extensionChoices, hasExtension, isWholeWithoutExtension, leafOf } from './naming'
 import { type Template } from './templates'
@@ -3410,6 +3411,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                 onContextMenu={activeNotebook ? undefined : onEditorContextMenu}
               >
                 {activeNotebook ? (
+                  <Suspense fallback={<div className="flex-1 bg-surface-1" />}>
                   <NotebookView
                     key={activeNotebook}
                     path={activeNotebook}
@@ -3437,6 +3439,7 @@ function Ide({ report }: { report: CapabilityReport }) {
                       }
                     }}
                   />
+                  </Suspense>
                 ) : null}
                 {/* The file editor stays mounted under a notebook (it is a singleton the shell drives); hidden, it holds no file. */}
                 <div className={activeNotebook ? 'hidden' : 'contents'}>
