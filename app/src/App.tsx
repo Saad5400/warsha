@@ -3280,6 +3280,19 @@ function Ide({ report }: { report: CapabilityReport }) {
   const previewActive = isPreviewEntry(runControl.entry)
   const outputFace: OutputView = previewActive ? (outputView ?? 'preview') : 'console'
 
+  // A page needs room the console does not: the console's resting height (~185px at
+  // 1920) showed a page's heading and cut off its first button (QA #23). The first
+  // preview of a session raises a short panel to half the window; never shrinks one,
+  // and never again in the session, so a student who drags it back down keeps that.
+  const previewGrown = useRef(false)
+  const previewShowing = !!runner.previewDoc && consoleOpen && outputFace === 'preview'
+  useEffect(() => {
+    if (!previewShowing || previewGrown.current || consoleMaximized || narrow) return
+    previewGrown.current = true
+    const half = Math.round(window.innerHeight / uiScale / 2)
+    setConsoleHeight((h) => Math.max(h, half))
+  }, [previewShowing, consoleMaximized, narrow, uiScale])
+
   return (
     <>
       {view === 'home' ? (
