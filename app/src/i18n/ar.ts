@@ -105,7 +105,7 @@ export const AR: Bundle = {
   phaseStartingLang: (lang) => `جارٍ تشغيل ${iso(lang)}`,
   phasePreparingCompiler: 'جارٍ تجهيز المترجم',
   phasePackages: 'جارٍ تنزيل الحزم التي يستوردها كودك',
-  phaseBootNote: 'نجهّزها للتشغيل، وتبقى جاهزة ما دامت هذه الصفحة مفتوحة.',
+  phaseBootNote: 'نجهّزها للتشغيل — قد يستغرق ذلك دقيقة في المرة الأولى، ثم تبقى جاهزة ما دامت هذه الصفحة مفتوحة.',
   phaseCompilerNote: 'تهيئة تحدث مرة كلما فتحت ورشة، وقد تستغرق نصف دقيقة على الهاتف.',
   phaseCompileNote: 'أول ترجمة بعد فتح ورشة تستغرق حتى 20 ثانية، وما بعدها سريع.',
   phasePackagesNote: 'في المرة الأولى فقط — بعدها تُحمَّل من جهازك.',
@@ -451,7 +451,6 @@ export const AR: Bundle = {
 
   // ---- the status pill's seven states ----
   pillReady: 'جاهزة',
-  pillPreparing: 'قيد التجهيز',
   pillRunning: 'قيد التشغيل',
   pillWaiting: 'بانتظارك',
   pillFinished: 'انتهى',

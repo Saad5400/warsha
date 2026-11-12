@@ -105,6 +105,12 @@ export function normalizeProgress(p: ProgressReport): LoadProgress {
   return typeof p === 'string' ? { phase: 'boot', message: p } : p
 }
 
+/** Percent done, when the report carries both byte counts; null for an indeterminate phase. */
+export function progressPercent(p: LoadProgress): number | null {
+  if (typeof p.loaded !== 'number' || typeof p.total !== 'number' || p.total <= 0) return null
+  return Math.min(100, Math.round((p.loaded / p.total) * 100))
+}
+
 /** Files a run created, modified or removed — see `RunIO.onFilesChanged`. */
 export interface FilesChange {
   written: SourceFile[]

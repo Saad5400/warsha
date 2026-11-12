@@ -43,7 +43,7 @@ export const EN = {
   phasePackages: 'Downloading the packages your code imports',
   // One sentence per slow phase, shown once it has run a few seconds, saying the
   // wait is expected. A wait that is explained is a wait students sit through.
-  phaseBootNote: 'Getting it ready to run. It stays ready while this tab is open.',
+  phaseBootNote: 'Getting it ready to run — up to a minute the first time. Then it stays ready while this tab is open.',
   phaseCompilerNote: 'A one-time warm-up each time you open Warsha. It can take half a minute on a phone.',
   phaseCompileNote: 'The first compile after opening Warsha takes up to 20 seconds. After that it is quick.',
   phasePackagesNote: 'Only the first time — after that they load from this device.',
@@ -514,7 +514,6 @@ export const EN = {
 
   // ---- the status pill's seven states (§7.3) ----
   pillReady: 'Ready',
-  pillPreparing: 'Preparing',
   pillRunning: 'Running',
   pillWaiting: 'Waiting for you',
   pillFinished: 'Finished',

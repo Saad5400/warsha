@@ -14,7 +14,7 @@
  *      no failure — and Finished carries its time.
  *   3. Warm run: no download UI at all.
  *   4. A program printing continuously: no "still running" note; Stop mid-print.
- *   5. A program silent for 62 s then blocked in input() for 62 s, with the console
+ *   5. A program silent for 80 s then blocked in input() for 62 s, with the console
  *      collapsed meanwhile. Never reported as failed or stalled; "Still running"
  *      appears after 30 s and keeps counting; waiting reopens the console, focuses
  *      the input, drops the activity line. Python imports numpy first (an in-run
@@ -32,6 +32,7 @@
  * (dark) theme, so "light" only proves a light-preferring OS changes nothing.
  *
  * Usage: node run-status-check.mjs [--lang python,java,csharp,c] [--no-main] [--no-offline] [--no-blackhole]
+ *                                   [--no-stop-download]
  * WARSHA_URL / WARSHA_SHOTS / CHROME as in README.md; THROTTLE_MBPS (default 8).
  * One browser at a time, closed between languages. Expect ~25 minutes for all four.
  */
@@ -56,6 +57,9 @@ const LANGS = (argVal('--lang') ?? 'python,java,csharp,c').split(',')
 const OFFLINE = !args.includes('--no-offline')
 const BLACKHOLE = !args.includes('--no-blackhole')
 const MAIN = !args.includes('--no-main')
+// Case 1 can poison what follows: C's engine fails to start after a Stop mid-download
+// (found by this suite, see the report). This flag gets past it to the other cases.
+const STOP_DOWNLOAD = !args.includes('--no-stop-download')
 
 const results = []
 let tag = ''
@@ -74,7 +78,7 @@ const PROGRAMS = {
     prints: 'import time\nfor i in range(80):\n    print("tick", i)\n    t = time.time()\n    while time.time() - t < 0.1:\n        pass\n',
     // numpy: the first import downloads it inside the run (in-run progress).
     quietThenInput:
-      'import numpy as np\nimport time\nt0 = time.time()\nx = 0\nwhile time.time() - t0 < 62:\n    x += 1\nname = input("Your name: ")\nprint("Hi", name, int(np.arange(4).sum()))\n',
+      'import numpy as np\nimport time\nt0 = time.time()\nx = 0\nwhile time.time() - t0 < 80:\n    x += 1\nname = input("Your name: ")\nprint("Hi", name, int(np.arange(4).sum()))\n',
     input: 'input("Type something: ")\n',
     crash: 'print("before the crash")\nraise ValueError("boom")\n',
   },
@@ -84,7 +88,7 @@ const PROGRAMS = {
     prints:
       'public class Main {\n  public static void main(String[] args) {\n    for (int i = 0; i < 80; i++) {\n      System.out.println("tick " + i);\n      long t = System.currentTimeMillis();\n      while (System.currentTimeMillis() - t < 100) {}\n    }\n  }\n}\n',
     quietThenInput:
-      'import java.util.Scanner;\npublic class Main {\n  public static void main(String[] args) {\n    long t0 = System.currentTimeMillis();\n    long x = 0;\n    while (System.currentTimeMillis() - t0 < 62000) { x++; }\n    Scanner in = new Scanner(System.in);\n    System.out.print("Your name: ");\n    String name = in.nextLine();\n    System.out.println("Hi " + name + " " + (x > 0));\n  }\n}\n',
+      'import java.util.Scanner;\npublic class Main {\n  public static void main(String[] args) {\n    long t0 = System.currentTimeMillis();\n    long x = 0;\n    while (System.currentTimeMillis() - t0 < 80000) { x++; }\n    Scanner in = new Scanner(System.in);\n    System.out.print("Your name: ");\n    String name = in.nextLine();\n    System.out.println("Hi " + name + " " + (x > 0));\n  }\n}\n',
     input:
       'import java.util.Scanner;\npublic class Main {\n  public static void main(String[] args) {\n    System.out.print("Type something: ");\n    new Scanner(System.in).nextLine();\n  }\n}\n',
     crash:
@@ -96,7 +100,7 @@ const PROGRAMS = {
     prints:
       'using System;\nusing System.Diagnostics;\nclass Program {\n  static void Main() {\n    for (int i = 0; i < 80; i++) {\n      Console.WriteLine("tick " + i);\n      var sw = Stopwatch.StartNew();\n      while (sw.ElapsedMilliseconds < 100) {}\n    }\n  }\n}\n',
     quietThenInput:
-      'using System;\nusing System.Diagnostics;\nclass Program {\n  static void Main() {\n    var sw = Stopwatch.StartNew();\n    long x = 0;\n    while (sw.ElapsedMilliseconds < 62000) { x++; }\n    Console.Write("Your name: ");\n    var name = Console.ReadLine();\n    Console.WriteLine("Hi " + name + " " + (x > 0));\n  }\n}\n',
+      'using System;\nusing System.Diagnostics;\nclass Program {\n  static void Main() {\n    var sw = Stopwatch.StartNew();\n    long x = 0;\n    while (sw.ElapsedMilliseconds < 80000) { x++; }\n    Console.Write("Your name: ");\n    var name = Console.ReadLine();\n    Console.WriteLine("Hi " + name + " " + (x > 0));\n  }\n}\n',
     input: 'using System;\nclass Program {\n  static void Main() {\n    Console.Write("Type something: ");\n    Console.ReadLine();\n  }\n}\n',
     crash:
       'using System;\nclass Program {\n  static void Main() {\n    Console.WriteLine("before the crash");\n    throw new InvalidOperationException("boom");\n  }\n}\n',
@@ -105,9 +109,10 @@ const PROGRAMS = {
     lang: 'C(?!#)', template: 'C (empty)', cdn: /unpkg\.com|wasmer|registry/,
     hello: '#include <stdio.h>\nint main(void) {\n  printf("Hello from Warsha\\n");\n  return 0;\n}\n',
     prints:
-      '#include <stdio.h>\n#include <time.h>\nint main(void) {\n  for (int i = 0; i < 80; i++) {\n    printf("tick %d\\n", i);\n    fflush(stdout);\n    clock_t t = clock();\n    while ((clock() - t) * 1000 / CLOCKS_PER_SEC < 100) {}\n  }\n  return 0;\n}\n',
+      // clock() needs WASI's emulated process clocks, so a plain counted spin between lines.
+      '#include <stdio.h>\nint main(void) {\n  for (int i = 0; i < 80; i++) {\n    printf("tick %d\\n", i);\n    fflush(stdout);\n    for (volatile long k = 0; k < 30000000; k++) {}\n  }\n  return 0;\n}\n',
     quietThenInput:
-      '#include <stdio.h>\n#include <time.h>\nint main(void) {\n  time_t t0 = time(NULL);\n  long x = 0;\n  while (time(NULL) - t0 < 62) { x++; }\n  char name[64];\n  printf("Your name: ");\n  fflush(stdout);\n  if (scanf("%63s", name) == 1) printf("Hi %s %d\\n", name, x > 0);\n  return 0;\n}\n',
+      '#include <stdio.h>\n#include <time.h>\nint main(void) {\n  time_t t0 = time(NULL);\n  long x = 0;\n  while (time(NULL) - t0 < 80) { x++; }\n  char name[64];\n  printf("Your name: ");\n  fflush(stdout);\n  if (scanf("%63s", name) == 1) printf("Hi %s %d\\n", name, x > 0);\n  return 0;\n}\n',
     input: '#include <stdio.h>\nint main(void) {\n  char s[32];\n  printf("Type something: ");\n  fflush(stdout);\n  scanf("%31s", s);\n  return 0;\n}\n',
     crash: '#include <stdio.h>\nint main(void) {\n  printf("before the crash\\n");\n  fprintf(stderr, "boom\\n");\n  return 3;\n}\n',
   },
@@ -319,12 +324,20 @@ async function languageSuite(id) {
 
     // ---- 1. Stop while downloading
     await throttle(ctx, page, MBPS)
-    await startSampler(page)
-    await clickRun(page)
-    await page.waitForTimeout(4000)
-    const pre = await runState(page)
-    if (pre.state === 'preparing') {
+    // What case 1 saw counts toward case 2's loading checks: a download Stop cut short
+    // can finish from the HTTP cache on the next Run, too fast to sample.
+    let firstTry = []
+    let pre = { state: null }
+    if (STOP_DOWNLOAD) {
+      await startSampler(page)
+      await clickRun(page)
+      await page.waitForTimeout(4000)
+      pre = await runState(page)
+    }
+    if (!STOP_DOWNLOAD) info('1. skipped (--no-stop-download)')
+    else if (pre.state === 'preparing') {
       await shotBoth(page, '1-downloading', { schemes: true })
+      firstTry = await samples(page)
       await clickStop(page)
       const stopped = await waitState(page, 'stopped', 4000)
       const out = await output(page)
@@ -343,9 +356,14 @@ async function languageSuite(id) {
     const coldMs = Date.now() - t0
     const end = await runState(page)
     check(ok2 && end.state === 'ok', '2. cold first run finishes', `${end.text} after ${(coldMs / 1000).toFixed(1)}s`)
+    if (end.state !== 'ok') {
+      await page.getByRole('button', { name: 'Details' }).click().catch(() => {})
+      info(`engine detail: ${(await page.locator('.console-failure__detail').innerText().catch(() => '')).slice(0, 400)}`)
+    }
     check(/Finished · [\d.]+(s|m)/.test(end.text), '2. Finished carries its time', JSON.stringify(end.text))
-    const loading = cold.filter((s) => s.state === 'preparing' || s.progress)
-    const phases = [...new Set(cold.map((s) => s.phase).filter(Boolean))]
+    const both = [...firstTry, ...cold]
+    const loading = both.filter((s) => s.state === 'preparing' || s.progress)
+    const phases = [...new Set(both.map((s) => s.phase).filter(Boolean))]
     info(`phases seen: ${phases.join(' → ') || '(none)'}; ${loading.length} loading samples`)
     for (const s of loading.filter((x, i, a) => i === 0 || x.pill !== a[i - 1].pill).slice(0, 8)) info(`  t=${s.t} pill=${JSON.stringify(s.pill)} block=${JSON.stringify(s.progress)}`)
     check(phases.includes('download'), '2. the download is shown as a download', phases.join(','))
@@ -358,7 +376,8 @@ async function languageSuite(id) {
     check(freeze <= 2200, '2. something on screen changes at least every 2 s while loading', `longest freeze ${freeze} ms`)
     check(loading.every((s) => s.activity), '2. the activity line runs through loading')
     check(!cold.some((s) => s.failure), '2. no failure card on a slow but moving download')
-    check(cold.some((s) => /one|once|first|مرة/i.test(s.progress ?? '')), '2. the download says it is one-time', cold.map((s) => s.progress).find((p) => /first|once|one-time/i.test(p ?? '')) ?? '')
+    const dl = both.filter((s) => s.phase === 'download').map((s) => s.progress ?? '')
+    check(dl.some((p) => /First-time download|مرة واحدة/.test(p)), '2. the download says it is one-time', dl.find((p) => /First-time|مرة واحدة/.test(p)) ?? dl[dl.length - 1] ?? '')
     await shotBoth(page, '2-finished')
     await throttle(ctx, page, 0)
 
@@ -390,7 +409,7 @@ async function languageSuite(id) {
     check(still4.state === 'stopped' && !/stopped responding/.test(await output(page)), '4. and stays "Stopped by you" (no late "stopped responding")', still4.text)
     await shotBoth(page, '4-stopped')
 
-    // ---- 5. silent 62 s, then input() for 62 s (console collapsed meanwhile)
+    // ---- 5. silent 80 s (room for the screenshots), then input() for 62 s, console collapsed meanwhile
     await setEditor(page, P.quietThenInput)
     await startSampler(page)
     await clickRun(page)

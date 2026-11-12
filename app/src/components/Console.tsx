@@ -12,6 +12,7 @@ import type { LoadProgress } from '../runtime/types'
 import type { RunFailure, RunStatus } from '../hooks/useRunner'
 import { afterViewportSettles } from '../ui/viewport'
 import { LONG_PRESS_MS, LONG_PRESS_SLOP } from '../ui/longPress'
+import { useAfter } from '../ui/useAfter'
 import { ProgressBlock } from './ProgressBlock'
 import { Button } from './ui/Button'
 import { IconChevronDown, IconStop } from './ui/Icons'
@@ -80,6 +81,13 @@ const FRESH_MAX_BATCH = 8
  * staring at an empty console has not yet decided the site froze.
  */
 const QUIET_NOTE_MS = 30_000
+
+/**
+ * Before an engine's first report (its worker script still loading), nothing on screen
+ * says what Run is doing. Past this, the console shows "Starting <language>" with a
+ * counter; under it, a cached engine is usually already done, so nothing flashes.
+ */
+const FIRST_REPORT_GRACE_MS = 1000
 
 /**
  * A transcript, not a log viewer (spec §7.3): output and input share one stream, like
@@ -337,7 +345,11 @@ export function Console({
   const hidden = showAll ? 0 : Math.max(0, lines.length - RENDER_WINDOW)
   const visible = hidden > 0 ? lines.slice(hidden) : lines
   const unseen = pausedAt === null ? 0 : countAfter(lines, pausedAt)
-  const empty = lines.length === 0 && !progress && !live
+  const awaitingReport = useAfter(status === 'preparing' && !progress, FIRST_REPORT_GRACE_MS)
+  // What the loading block shows: the engine's report, or a stand-in while it has
+  // not sent one yet. Never the engine's own wording (see ProgressBlock).
+  const shownProgress = progress ?? (awaitingReport ? STARTING : null)
+  const empty = lines.length === 0 && !shownProgress && !live
   // On a breakpoint the program is parked on purpose; silence there means nothing.
   const paused = useDebugState().phase === 'paused'
 
@@ -376,7 +388,9 @@ export function Console({
           tabIndex={0}
         >
           {/* `running` + progress is an in-run compile or package download, not the language's boot. */}
-          {progress ? <ProgressBlock progress={progress} inRun={status === 'running'} language={language} /> : null}
+          {shownProgress ? (
+            <ProgressBlock progress={shownProgress} inRun={status === 'running'} language={language} />
+          ) : null}
 
           {snapshot.truncated ? (
             <Row line={{ id: -1, kind: 'meta', complete: true, segments: [{ kind: 'meta', text: COPY.truncated }] }} />
@@ -395,8 +409,15 @@ export function Console({
           {empty ? (
             // dir=auto: the transcript runs LTR for code, which put an Arabic sentence's
             // full stop on the wrong end.
+            // Blank for the moment Run is preparing — "when you run your code" would be wrong.
             <p className="console-empty" dir="auto">
-              {status === 'running' ? COPY.consoleRunning : cleared ? COPY.consoleCleared : COPY.consoleEmpty}
+              {status === 'preparing'
+                ? ' '
+                : status === 'running'
+                  ? COPY.consoleRunning
+                  : cleared
+                    ? COPY.consoleCleared
+                    : COPY.consoleEmpty}
             </p>
           ) : (
             rows.map((line) => <Row key={line.id} line={line} fresh={line.id > freshFrom} />)
@@ -591,6 +612,8 @@ function QuietNote({ activity, onStop, onAppear }: { activity: unknown; onStop()
     </div>
   )
 }
+
+const STARTING: LoadProgress = { phase: 'boot', message: '' }
 
 /** Lines appended after `id`. Ids only ever ascend, so walk back from the tail. */
 function countAfter(lines: readonly ConsoleLine[], id: number): number {

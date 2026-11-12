@@ -1273,6 +1273,12 @@
   .console-quiet {
     margin: var(--sp-2) 0;
   }
+  /* Warsha's own blocks in the transcript (loading, still running, failure) are
+     interface text, not stdout: they take the interface's direction, which the
+     transcript's own LTR would otherwise force on an Arabic sentence. */
+  html[dir='rtl'] .console-transcript :is(.progress-block, .note) {
+    direction: rtl;
+  }
   /* "Still running" — a program quiet for 30 s. Not a warning: it carries the
      accent rule a running process has everywhere else (DESIGN-SPEC §1.3), the
      same anatomy as the failure block so the two read as one family. */

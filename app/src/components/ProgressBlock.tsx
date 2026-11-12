@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LoadProgress } from '../runtime/types'
+import { progressPercent, type LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
+import { useAfter } from '../ui/useAfter'
 
 // The engine's own `message` is deliberately never rendered — showing it alongside
 // this phase label would read as two competing progress reports. `inRun` is what
@@ -61,12 +62,15 @@ export function ProgressBlock({
   language?: string | null
 }) {
   const { loaded, total, phase } = progress
-  const determinate = typeof loaded === 'number' && typeof total === 'number' && total > 0
-  const pct = determinate ? Math.min(100, Math.round((loaded! / total!) * 100)) : null
-  const elapsed = useElapsedSeconds(phase, !determinate)
+  const pct = progressPercent(progress)
+  const determinate = pct !== null
+  // A determinate bar is its own clock — until the bytes stop moving for a moment (a
+  // slow file's headers, a congested link). Then the seconds show, so the line never sits still.
+  const bytesIdle = useAfter(determinate, 2000, loaded)
+  const elapsed = useElapsedSeconds(phase, !determinate || bytesIdle)
   const eta = useEta(phase, determinate ? loaded! : null, determinate ? total! : null)
   const note = phaseNote(phase, inRun)
-  const showNote = useAfter(phase, note?.afterMs ?? null)
+  const showNote = useAfter(note !== null, note?.afterMs ?? 0, phase)
 
   // One line of numbers only — the headline above already names the phase.
   const detail = [
@@ -109,34 +113,25 @@ export function ProgressBlock({
  */
 function useElapsedSeconds(phase: LoadProgress['phase'], active: boolean): number | null {
   const [elapsed, setElapsed] = useState(0)
+  // Counted from the phase's start, not from when the counter appears: a counter that
+  // shows up at "0s" twenty seconds into a download would undersell the wait.
+  const [started, setStarted] = useState(() => Date.now())
 
   useEffect(() => {
+    setStarted(Date.now())
     setElapsed(0)
+  }, [phase])
+
+  useEffect(() => {
     if (!active) return
-    const started = Date.now()
-    const id = window.setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000)
+    const tick = () => setElapsed(Math.round((Date.now() - started) / 1000))
+    tick()
+    const id = window.setInterval(tick, 1000)
     return () => window.clearInterval(id)
-  }, [phase, active])
+  }, [started, active])
 
   // From zero, not one: the line under the bar must never be empty (§7.6).
   return active ? elapsed : null
-}
-
-/**
- * True once the phase has lasted `ms` (never when `ms` is null) — so a phase a
- * warm engine clears in a blink never flashes its explanation.
- */
-function useAfter(phase: LoadProgress['phase'], ms: number | null): boolean {
-  const [due, setDue] = useState(false)
-
-  useEffect(() => {
-    setDue(false)
-    if (ms === null) return
-    const id = window.setTimeout(() => setDue(true), ms)
-    return () => window.clearTimeout(id)
-  }, [phase, ms])
-
-  return due
 }
 
 /**

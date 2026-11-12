@@ -1,5 +1,5 @@
 import type { RunStatus } from '../hooks/useRunner'
-import type { LoadProgress } from '../runtime/types'
+import { progressPercent, type LoadProgress } from '../runtime/types'
 import { COPY } from '../copy'
 import { useDebugState } from '../debug/store'
 
@@ -50,7 +50,8 @@ const GLYPHS: Record<RunStatus, string> = {
 const pillLabel = (status: RunStatus): string =>
   ({
     idle: COPY.pillReady,
-    preparing: COPY.pillPreparing,
+    // Before the engine's first report — the console says "Starting <language>" by then too.
+    preparing: COPY.pillStarting,
     running: COPY.pillRunning,
     waiting: COPY.pillWaiting,
     ok: COPY.pillFinished,
@@ -94,10 +95,7 @@ export function StatusPill({
   const loading = !paused && progress && (status === 'preparing' || status === 'running') ? progress : null
   const label = paused ? COPY.debugPaused : loading ? loadingLabel(loading.phase) : pillLabel(status)
   const glyph = paused ? '‖' : loading ? 'dot' : GLYPHS[status]
-  const pct =
-    loading && typeof loading.loaded === 'number' && typeof loading.total === 'number' && loading.total > 0
-      ? Math.min(100, Math.round((loading.loaded / loading.total) * 100))
-      : null
+  const pct = loading ? progressPercent(loading) : null
   const detail =
     status === 'failed' && exitCode !== null
       ? ` · exit ${exitCode}`

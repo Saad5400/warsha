@@ -300,9 +300,11 @@ export function useRunner(project: Project, buffer: ConsoleBuffer, entryPath: st
       programStart.current = Date.now()
 
       // No "Running…" row (read as program output). Status flips immediately so
-      // Stop always works; `progress` isn't cleared yet — Java compiles inside
-      // run(), so clearing early blanked the console for ~20s.
-      setState((s) => ({ ...s, status: 'running' }))
+      // Stop always works. The boot's last report goes with it: left up, C#'s
+      // "Getting the compiler ready" sat over a running program, counter climbing,
+      // until its first output. (Java's compile, which runs inside run(), now
+      // reports through onProgress within 250 ms, so the console no longer blanks.)
+      setState((s) => ({ ...s, status: 'running', progress: null }))
 
       // The program has started (or spoken), so whatever onProgress reported is
       // over: drop the block and the stall watchdog with it. A run-phase report
