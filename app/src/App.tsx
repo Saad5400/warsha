@@ -1655,7 +1655,10 @@ function Ide({ report }: { report: CapabilityReport }) {
     // The import's own name is the teacher's assignment title — not ours to count.
     // Only its entry file's language, and only as one of the fixed ids.
     track('project_created', { source: 'zip', lang: entry ? langOfEntry(entry) : 'none' })
-    if (mode === 'new') return importAsNewProject(snapshot, entry, name)
+    if (mode === 'new') {
+      setView('editor')
+      return importAsNewProject(snapshot, entry, name)
+    }
     await replaceProject(snapshot, entry, COPY.imported(name, snapshot.files.length))
   }
 
@@ -1836,14 +1839,20 @@ function Ide({ report }: { report: CapabilityReport }) {
   enterRoomRef.current = enterRoom
 
   const newProject = async (template?: Template) => {
-    const suggested = template ? template.name : nextProjectName(projects)
-    const name = await dialogs.prompt({
-      title: template ? COPY.dlgNewProjectFrom(template.name) : COPY.dlgNewProjectTitle,
-      label: COPY.dlgProjectName,
-      value: suggested,
-      okLabel: COPY.dlgCreate,
-      validate: (v) => (v.trim() ? projectNameTaken(v) : COPY.dlgProjectNameRequired),
-    })
+    // A starter names its project, exactly as the first project from a starter
+    // always has (the picker says "You can rename the project after"): asking only
+    // from the second project on read as a surprise dialog (QA #25). A blank
+    // project has no name of its own to borrow, so it still asks.
+    const name = template
+      ? uniqueProjectName(template.name)
+      : await dialogs.prompt({
+          title: COPY.dlgNewProjectTitle,
+          label: COPY.dlgProjectName,
+          value: nextProjectName(projects),
+          okLabel: COPY.dlgCreate,
+          prose: true,
+          validate: (v) => (v.trim() ? projectNameTaken(v) : COPY.dlgProjectNameRequired),
+        })
     if (!name) return
     stopIfRunning()
     await stopCollabBeforeSwitch()
@@ -1865,6 +1874,7 @@ function Ide({ report }: { report: CapabilityReport }) {
       label: COPY.dlgProjectName,
       value: currentProject.name,
       okLabel: COPY.dlgRename,
+      prose: true,
       validate: (v) => (v.trim() ? projectNameTaken(v, currentProject.id) : COPY.dlgProjectNameRequired),
     })
     if (!name || name === currentProject.name) return
@@ -3822,9 +3832,11 @@ function Ide({ report }: { report: CapabilityReport }) {
           onPick={pickStarter}
           onBlank={startBlank}
           // Import into a fresh project (non-destructive), not the open one.
+          // Stays on the screen it was opened from (Home, usually) until there is a
+          // project to show: switching first put the LAST project behind the Import
+          // dialog, as if the files were going into it (QA #24). onImported switches.
           onImport={() => {
             setPickerOpen(false)
-            setView('editor')
             setImportMode('new')
           }}
           // Only when a backend is configured (same gate as Home's account affordance).

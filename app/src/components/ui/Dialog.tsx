@@ -116,6 +116,8 @@ export interface PromptRequest {
   okLabel?: string
   /** Returns a student-facing problem, or null when the value is usable. */
   validate?: (value: string) => string | null
+  /** The value is prose (a project's name), not a path: the UI font, not the code font. */
+  prose?: boolean
   resolve: (value: string | null) => void
 }
 
@@ -250,7 +252,12 @@ function PromptDialog({ request, open }: { request: PromptRequest; open: boolean
           spellCheck={false}
           aria-invalid={problem ? true : undefined}
           aria-describedby={problem ? problemId : undefined}
-          className="min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 font-code text-input text-text-1 aria-[invalid=true]:border-danger"
+          // A name typed in Arabic reads right-to-left; a file path stays as typed.
+          dir={request.prose ? 'auto' : undefined}
+          className={
+            'min-h-touch w-full rounded-sm border border-border-control bg-surface-4 px-3 text-input text-text-1 aria-[invalid=true]:border-danger ' +
+            (request.prose ? 'font-ui' : 'font-code')
+          }
         />
         {problem ? (
           <p id={problemId} className="mt-2 flex items-start gap-2 text-meta leading-normal text-danger">
