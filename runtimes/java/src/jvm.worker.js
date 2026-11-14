@@ -308,6 +308,8 @@ function sendCommand(command) {
 
 self.onmessage = (event) => {
   const message = event.data
+  // Only the runtime posts here, always an object; anything else is not ours.
+  if (!message || typeof message !== 'object') return
   switch (message.type) {
     case 'init':
       if (initStarted) return
@@ -487,7 +489,7 @@ const FIRST_COMPILE_DOWNLOAD_BYTES = 6_000_000
 async function boot(cdnBase) {
   const started = performance.now()
 
-  await prefetchEngine(cdnBase)
+  await Promise.all([prefetchEngine(cdnBase), repairFilesDb()])
 
   // Gated like the download: cheerpjInit came back in 34-93ms on a warm cache
   // and starting the prebuilt Server is similarly quick, so a bar that appears
@@ -856,6 +858,95 @@ async function compileAndRun({ runId, files, entryPath, debug }) {
     return
   }
   post({ type: 'done', exit: runStatus, compileMs, runMs, tainted: false })
+}
+
+// --- /files/ repair --------------------------------------------------------
+
+/**
+ * Removes broken entries from CheerpJ's persistent /files/ filesystem before
+ * CheerpJ opens it.
+ *
+ * /files/ is an IndexedDB ("cjFS_/files/", store "files") keyed by path. Each
+ * directory record lists its children ("/name"). A worker terminated in the
+ * middle of a mkdir -- a reload, Stop, or tab close while the background warm-up
+ * created /files/warsha-run-warm0 -- can leave the parent listing a child whose
+ * own record was never written. CheerpJ then dies on every later listFiles() of
+ * that directory: cheerpOS.js does `res !== null && res.type` and a missing
+ * record is `undefined`, so Build's run-directory cleanup threw
+ * "Cannot read properties of undefined (reading 'type')" on EVERY Java run in
+ * that browser, forever -- the database survives a hard reload. Seen in the
+ * field on 2026-11-14 (root listing "/warsha-run-warm0" with no record).
+ *
+ * The repair only drops listings that point at nothing and records that are not
+ * file-system records at all; it never deletes a real file. It runs on every
+ * boot (a few ms for the few dozen records Warsha keeps) and never blocks it:
+ * any failure here is reported and boot continues.
+ */
+async function repairFilesDb() {
+  const started = performance.now()
+  try {
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('cjFS_/files/')
+      // No database yet (first visit): do not create one -- CheerpJ creates it at
+      // its own version with its own schema. Aborting the upgrade leaves nothing.
+      req.onupgradeneeded = () => req.transaction.abort()
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => resolve(null)
+      req.onblocked = () => reject(new Error('blocked'))
+    })
+    if (!db) return
+    try {
+      if (!db.objectStoreNames.contains('files')) return
+      const fixed = await new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readwrite')
+        const store = tx.objectStore('files')
+        const records = new Map()
+        const cursor = store.openCursor()
+        const changes = []
+        cursor.onsuccess = () => {
+          const at = cursor.result
+          if (at) {
+            records.set(at.key, at.value)
+            at.continue()
+            return
+          }
+          const valid = (v) => v !== null && typeof v === 'object' && typeof v.type === 'string'
+          for (const [key, value] of records) {
+            if (!valid(value)) {
+              store.delete(key)
+              changes.push(`record ${key}`)
+            }
+          }
+          for (const [key, value] of records) {
+            if (!valid(value) || value.type !== 'dir' || !Array.isArray(value.contents)) continue
+            const base = String(key).replace(/\/$/, '')
+            const keep = value.contents.filter((child) => {
+              const path = base + (String(child).startsWith('/') ? '' : '/') + child
+              return valid(records.get(path))
+            })
+            if (keep.length !== value.contents.length) {
+              for (const child of value.contents) if (!keep.includes(child)) changes.push(`${key || '/'} -> ${child}`)
+              store.put({ ...value, contents: keep }, key)
+            }
+          }
+        }
+        cursor.onerror = () => reject(cursor.error)
+        tx.oncomplete = () => resolve(changes)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error || new Error('aborted'))
+      })
+      if (fixed.length) {
+        post({
+          type: 'repaired',
+          text: `repaired /files/ in ${Math.round(performance.now() - started)}ms: ${fixed.slice(0, 10).join(', ')}`,
+        })
+      }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    post({ type: 'internal', level: 'warn', text: `warsha-repair: skipped (${describe(error)})`, noise: false })
+  }
 }
 
 // --- helpers ---------------------------------------------------------------

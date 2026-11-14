@@ -6,6 +6,7 @@ import { ClangRuntime } from '../../../runtimes/clang/src'
 import { WebRuntime } from './web'
 import { JsRuntime } from './js'
 import { assetUrl } from './assetUrl'
+import { reportError } from '../analytics'
 import { languages } from '../languages'
 
 import { langForPath, SCRIPT_RE, type LangId } from './langForPath'
@@ -19,7 +20,13 @@ export { langForPath, type LangId }
  * see INTEGRATION.md §2.
  */
 const registry: Record<LangId, Runtime> = {
-  java: new JavaRuntime({ workerUrl: assetUrl('warsha-jvm.worker.js'), loadJavaParser: () => import('../actions/generate').then((m) => m.loadJavaParser()) }),
+  java: new JavaRuntime({
+    workerUrl: assetUrl('warsha-jvm.worker.js'),
+    loadJavaParser: () => import('../actions/generate').then((m) => m.loadJavaParser()),
+    // Engine failures are Warsha's bugs, not the student's: send them where we can read them.
+    onIncident: ({ kind, message, source, phase, recovered }) =>
+      reportError('runtime-crash', { lang: 'java', message, source, phase: `${kind}-${phase}${recovered ? '-recovered' : ''}` }),
+  }),
   python: new PythonRuntime(),
   // .NET-wasm + Roslyn; module worker loaded by URL (not bundled) so its relative
   // dotnet.js import resolves. See runtimes/csharp/INTEGRATION.md.

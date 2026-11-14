@@ -29,6 +29,7 @@ type FromWorker =
   | { type: 'done'; exit: number; compileMs: number; runMs: number; tainted: boolean }
   | { type: 'fatal'; text: string; duringBoot?: boolean }
   | { type: 'internal'; level: string; text: string; noise: boolean }
+  | { type: 'repaired'; text: string }
 
 export interface JavaRuntimeOptions {
   /**
@@ -63,6 +64,12 @@ export interface JavaRuntimeOptions {
   loadJavaParser?: () => Promise<JavaParserLike>
   /** Receives CheerpJ's console chatter (incl. its JIT-failure noise) for debugging. */
   onInternalLog?(entry: { level: string; text: string; noise: boolean }): void
+  /**
+   * The engine failed in a way Warsha did not expect: the worker threw (`crash`),
+   * or it found and repaired a corrupted /files/ database (`repaired`). For error
+   * reporting; never contains the student's code, input or output.
+   */
+  onIncident?(incident: { kind: 'crash' | 'repaired'; message: string; source?: string; phase: string; recovered: boolean }): void
 }
 
 /** A running Java program. Extends the contract with writeEof(). */
@@ -78,6 +85,12 @@ interface Active {
   awaitingStdin: boolean
   progressListener?: (report: ProgressReport) => void
   debug?: DebugState
+  /** main() has started ('compiled'): from here a crash cannot be retried unseen. */
+  compiled?: boolean
+  /** Posts this run again to whichever worker is current (crash recovery). */
+  repost?: () => void
+  /** The one automatic retry has been used. */
+  retried?: boolean
 }
 
 /** Per-run debugger state, main-thread side. */
@@ -128,6 +141,7 @@ export class JavaRuntime implements Runtime {
   private readonly bootJarPath: string
   private readonly cdnBase: string | undefined
   private readonly onInternalLog: JavaRuntimeOptions['onInternalLog']
+  private readonly onIncident: JavaRuntimeOptions['onIncident']
 
   private worker: Worker | null = null
   private readonly loadJavaParser: JavaRuntimeOptions['loadJavaParser']
@@ -165,6 +179,7 @@ export class JavaRuntime implements Runtime {
     this.bootJarPath = options.bootJarPath ?? '/app/warsha-boot.jar'
     this.cdnBase = options.cdnBase
     this.onInternalLog = options.onInternalLog
+    this.onIncident = options.onIncident
     this.loadJavaParser = options.loadJavaParser
   }
 
@@ -269,13 +284,15 @@ export class JavaRuntime implements Runtime {
     // the program's working directory (bootstrap/Workspace.java), so
     // new Scanner(new File("data.txt")) finds the file beside Main.java.
     if (debugNote) io.onStderr(debugNote)
-    worker.postMessage({
+    const runMessage = {
       type: 'run',
       runId,
       files: sent,
       entryPath: entry,
       debug: debug ? { bps: breakpointSpec(debug, opts?.debug?.breakpoints ?? []), entry: !!opts?.debug?.stopOnEntry } : undefined,
-    })
+    }
+    active.repost = () => this.worker?.postMessage(runMessage)
+    worker.postMessage(runMessage)
 
     const session: JavaRunSession = {
       kill: () => this.killSession(active),
@@ -449,12 +466,8 @@ export class JavaRuntime implements Runtime {
     }
     worker.onerror = (event: ErrorEvent) => {
       if (this.worker !== worker) return
-      const text =
-        event.message ||
-        `worker failed to start from ${this.workerUrl} (no message; check the console). ` +
-          'It must be reachable and served as JavaScript.'
-      this.failBoot(new Error(text))
-      this.finish(1, text)
+      event.preventDefault()
+      this.onWorkerCrash(event)
     }
 
     const promise = new Promise<void>((resolve, reject) => {
@@ -510,6 +523,7 @@ export class JavaRuntime implements Runtime {
         return
 
       case 'compiled':
+        if (this.active) this.active.compiled = true
         if (this.active?.debug?.fallback) {
           this.active.io.onStderr('[debugger] Warsha could not prepare this program for debugging, so it runs without breakpoints.\n')
         }
@@ -567,13 +581,62 @@ export class JavaRuntime implements Runtime {
           return
         }
         this.tainted = true
+        this.onIncident?.({ kind: 'crash', message: message.text.split('\n')[0] ?? '', phase: 'fatal', recovered: false })
         this.finish(1, `\n[java runtime error] ${message.text}\n`)
+        return
+
+      case 'repaired':
+        this.onInternalLog?.({ level: 'warn', text: `warsha: ${message.text}`, noise: false })
+        this.onIncident?.({ kind: 'repaired', message: message.text, phase: 'boot', recovered: true })
         return
 
       case 'internal':
         this.onInternalLog?.({ level: message.level, text: message.text, noise: message.noise })
         return
     }
+  }
+
+  /**
+   * The worker threw something nobody caught: inside CheerpJ, or our own code.
+   * Before main() has started nothing the student can see has happened yet, so
+   * the run is retried ONCE on a fresh worker -- whose boot repairs /files/
+   * (repairFilesDb in jvm.worker.js), the cause of the one crash of this kind
+   * seen in the field. After main() started (output printed, input consumed) a
+   * retry would replay the program behind the student's back, so the run ends
+   * with a plain message instead and the next Run gets a fresh engine.
+   */
+  private onWorkerCrash(event: ErrorEvent): void {
+    const booting = this.bootSettle !== null
+    const active = this.active && !this.active.ended ? this.active : null
+    const message =
+      event.message ||
+      `worker failed to start from ${this.workerUrl} (no message; check the console). ` +
+        'It must be reachable and served as JavaScript.'
+    const source = event.filename ? `${event.filename}:${event.lineno}:${event.colno}` : undefined
+    const phase = booting ? 'boot' : !active ? 'idle' : active.compiled ? 'run' : 'compile'
+    const retry = !!active && !active.compiled && !active.retried && !!active.repost
+    this.onInternalLog?.({ level: 'error', text: `java worker crashed (${phase}): ${message}${source ? ' @ ' + source : ''}`, noise: false })
+    this.onIncident?.({ kind: 'crash', message, source, phase, recovered: retry })
+
+    if (retry && active) {
+      active.retried = true
+      this.worker?.terminate()
+      this.worker = null
+      this.bootSettle = null
+      const boot = (this.booting = this.spawn())
+      boot.then(
+        () => {
+          if (this.active === active && !active.ended) active.repost?.()
+        },
+        (error: unknown) => {
+          if (this.booting === boot) this.booting = null
+          this.finish(1, crashNote(error instanceof Error ? error.message : String(error)))
+        },
+      )
+      return
+    }
+    this.failBoot(new Error(message))
+    this.finish(1, crashNote(message))
   }
 
   private failBoot(error: Error): void {
@@ -743,4 +806,9 @@ function normalizePath(path: string): string {
   const parts = path.split('/').filter((part) => part !== '' && part !== '.')
   if (parts.some((part) => part === '..')) throw new Error(`Unsupported file path: ${path}`)
   return parts.join('/')
+}
+
+/** What the console shows when the engine itself failed: not the student's bug, and Run fixes it. */
+function crashNote(detail: string): string {
+  return `\nThe Java engine stopped unexpectedly (${detail}). This is not a problem with your program -- press Run to try again.\n`
 }

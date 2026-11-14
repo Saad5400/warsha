@@ -7,6 +7,7 @@ import { ToastProvider } from './components/ui/Toast'
 import { DialogProvider } from './components/ui/DialogProvider'
 import { initLocale } from './i18n/locale'
 import { watchForStaleBuild } from './ui/staleBuild'
+import { installGlobalErrorReporting } from './analytics'
 
 const host = document.getElementById('root')
 if (!host) throw new Error('missing #root')
@@ -41,6 +42,9 @@ window.addEventListener('error', (e) => {
 // Before the first render: a chunk the shell lazy-loads at mount can already be
 // one a deploy deleted.
 watchForStaleBuild()
+// …and the same two, scrubbed and rate-limited, to Umami as an `error` event so a
+// failure on a student's device is something we can read, not just count.
+installGlobalErrorReporting()
 
 createRoot(host).render(
   <StrictMode>

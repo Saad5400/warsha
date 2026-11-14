@@ -1,8 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from './ui/Button'
 import { COPY } from '../copy'
-import { track } from '../analytics'
 import { reloadIfStale } from '../ui/staleBuild'
+import { reportError, track } from '../analytics'
 
 /**
  * Last line of defence: without it, one thrown render blanks the whole React tree
@@ -24,16 +24,17 @@ export class CrashScreen extends Component<{ children: ReactNode }, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // QA suites and a teacher on a bare iPad both rely on this console line.
     console.error('Warsha crashed:', error, info.componentStack)
-    // Counted, never described. The error and the component stack stay in the
-    // console: a stack frame carries file paths, and a message can quote a
-    // student's own content. That a crash happened is the signal — a white
-    // screen is otherwise the one failure that reports absolutely nothing,
-    // since the student cannot even reach a button to tell us.
+    // Counted — a white screen is otherwise the one failure that reports
+    // absolutely nothing, since the student cannot even reach a button to tell
+    // us. The component stack stays in the console; reportError sends only the
+    // scrubbed message and bundle-file frames.
     track('app_crashed', {})
     // A page older than the deploy can crash on a module the deploy replaced;
     // if so, a reload onto the new build is the fix, so make it instead of
     // asking for it. Otherwise this screen stays, as it always has.
     void reloadIfStale()
+    // The scrubbed message + bundle frames (see reportError) — what, not just that.
+    reportError('render-crash', { error })
   }
 
   render() {

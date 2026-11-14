@@ -12,6 +12,11 @@ import { langForPath, TYPESCRIPT_RE } from './runtime/langForPath'
  * an anonymous counter into something that can leak a student's homework, so
  * the payload types below are deliberately closed unions rather than `string`.
  *
+ * ONE exception, made on purpose (2026-11-14): the `error` event carries a
+ * scrubbed error message and bundle-file frames so crashes can be fixed, not just
+ * counted. Its limits are written down at `reportError()` at the bottom of this
+ * file; docs/legal/PRIVACY.md must say so before this ships.
+ *
  * What this buys us: which languages are actually used (the "Soon" list is
  * guesswork until students tap one), whether first runs succeed, and how often
  * an engine fails to start on real devices — the R1/R3 risks in the PRD, which
@@ -125,6 +130,11 @@ interface Events {
    * sender is already counted by `project_shared`.
    */
   share_opened: { result: ShareOpenResult }
+  /**
+   * An unexpected error — the ONE event that carries text. See `reportError()`
+   * below for why, and for everything that is stripped before it is sent.
+   */
+  error: ErrorPayload
 }
 
 type EventName = keyof Events
@@ -210,4 +220,208 @@ export function langOfEntry(entryPath: string): EventLang {
   if (lang === 'js') return TYPESCRIPT_RE.test(entryPath) ? 'typescript' : 'javascript'
   if (lang === 'web') return /\.css$/i.test(entryPath) ? 'css' : 'html'
   return lang ?? 'other'
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Error reports
+// ───────────────────────────────────────────────────────────────────────────
+//
+// The single, deliberate exception to "no free text" above. `app_crashed` tells
+// us that something broke; it cannot tell us *what*, and a crash we cannot
+// reproduce on a desk is a crash we cannot fix — a Java worker dying with
+// "Cannot read properties of undefined (reading 'type')" on a student's phone
+// leaves nothing behind but that line in a console nobody can open.
+//
+// So this event carries the error's own message and where in *Warsha's* code it
+// came from — and is built so that it cannot carry the student's work:
+//   - only Warsha's own errors are reported: a window error from another origin
+//     (an extension, a third-party script) is dropped, and callers pass engine
+//     crashes, never a student program's exception or output;
+//   - the message is scrubbed: URLs become their last path segment, anything that
+//     looks like a file path, a source-file name or an email address is replaced,
+//     long quoted strings are elided, and the result is cut to MESSAGE_MAX;
+//   - `source` and `stack` are reduced to `bundle-file.js:line:col` frames — never
+//     a query string, a hash, or a directory;
+//   - no code, no file contents, no stdin, no user agent (Umami records browser/OS
+//     on the visit already).
+// Bounded per tab: one report per distinct error, MAX_REPORTS in total, so a
+// throwing render loop or a crash-restart cycle cannot flood the database.
+
+/** What kind of failure this is. Closed — add a word here before using it. */
+export type ErrorKind =
+  | 'runtime-crash' // an engine/worker died underneath a run (Java, Python, C#, C…)
+  | 'window-error' // an uncaught exception reached `window.onerror`
+  | 'unhandled-rejection' // a promise rejected with nobody listening
+  | 'render-crash' // the React error boundary caught a render throw
+
+/** What a caller may pass. Everything is optional; everything is scrubbed. */
+export interface ErrorDetails {
+  /** The language or engine involved: 'java', 'python'… Unknown values become 'other'. */
+  lang?: EventLang
+  /** The thrown value, if there is one — its message and stack are read from it. */
+  error?: unknown
+  /** A message to use instead of (or when there is no) `error`. */
+  message?: string
+  /** `file:line[:col]` or a URL of where it happened, if the caller knows better than the stack. */
+  source?: string
+  /** A short closed-ish tag for where in the caller it happened, e.g. 'worker-onerror', 'boot'. */
+  phase?: string
+}
+
+/** The payload as it reaches Umami. Every string is already scrubbed and capped. */
+interface ErrorPayload {
+  kind: ErrorKind
+  lang: string
+  message: string
+  source: string
+  stack: string
+  phase: string
+  build: string
+}
+
+/** Umami stores event-data strings in a varchar(500); stay well inside it. */
+const MESSAGE_MAX = 300
+const STACK_FRAMES = 4
+/** Per tab (sessionStorage), across reloads — a crash-reload-crash loop is still one student. */
+const MAX_REPORTS = 10
+const REPORTS_KEY = 'warsha.errorReports.v1'
+
+const KNOWN_LANGS = new Set([
+  'java', 'python', 'csharp', 'c', 'cpp', 'typescript', 'javascript', 'html', 'css', 'web', 'mixed',
+])
+
+/**
+ * The build that is running: the content hash Vite put in this chunk's own file
+ * name (`/assets/index-AbC123xy.js` → `AbC123xy`). Changes on every deploy that
+ * changes code, needs no build-time plumbing, and is 'dev' under `vite dev`.
+ */
+const BUILD: string = (() => {
+  try {
+    const m = /-([A-Za-z0-9_-]{6,})\.js$/.exec(new URL(import.meta.url).pathname)
+    return m ? m[1] : 'dev'
+  } catch {
+    return 'unknown'
+  }
+})()
+
+const sent = new Set<string>()
+
+function sessionCount(delta: number): number {
+  try {
+    const n = Number(sessionStorage.getItem(REPORTS_KEY)) || 0
+    if (delta) sessionStorage.setItem(REPORTS_KEY, String(n + delta))
+    return n + delta
+  } catch {
+    // Storage blocked: fall back to the in-memory count for this page.
+    return sent.size
+  }
+}
+
+/** `https://warsha.sb.sa/assets/index-x.js?v=1#a` → `index-x.js`. Our origin only; anything else → 'external'. */
+function scrubUrl(url: string): string {
+  try {
+    const u = new URL(url, location.href)
+    const name = u.pathname.split('/').filter(Boolean).pop() ?? '/'
+    if (u.origin === location.origin || u.protocol === 'blob:') return name
+    if (/^https:\/\/(cjrtnc\.leaningtech\.com|cdn\.jsdelivr\.net)$/.test(u.origin)) return `${u.hostname}/${name}`
+    return 'external'
+  } catch {
+    return '?'
+  }
+}
+
+function scrubMessage(raw: string): string {
+  return raw
+    .replace(/\b(?:https?|blob|file|chrome-extension|moz-extension):\/\/\S+/g, (u) => scrubUrl(u.replace(/[)\]'",.]+$/, '')))
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>')
+    // Paths ("/project/src/Main.java", "C:\\x\\y") and student-ish source file names.
+    .replace(/(?:[A-Za-z]:)?(?:[\\/][^\s\\/:'"()]+){2,}/g, '<path>')
+    .replace(/\b[\w$-]+\.(?:java|py|cs|c|h|cpp|hpp|ts|tsx|jsx|html?|css|txt|json|md|csv)\b/g, '<file>')
+    // A long quoted run is more likely a student's string than an identifier.
+    .replace(/(['"`])[^'"`]{40,}\1/g, '$1…$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MESSAGE_MAX)
+}
+
+/** Top frames of a V8 / JSC / SpiderMonkey stack, as `file.js:line:col` only. */
+function scrubStack(stack: string | undefined): string {
+  if (!stack) return ''
+  const frames: string[] = []
+  for (const line of stack.split('\n')) {
+    const m = /((?:https?|blob):\/\/[^\s)]+?|\/[^\s)]+?):(\d+)(?::(\d+))?\)?\s*$/.exec(line)
+    if (!m) continue
+    frames.push(`${scrubUrl(m[1])}:${m[2]}${m[3] ? `:${m[3]}` : ''}`)
+    if (frames.length >= STACK_FRAMES) break
+  }
+  return frames.join(' < ')
+}
+
+function messageOf(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}`
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object' && 'message' in value) return String((value as { message: unknown }).message)
+  try {
+    return value === undefined ? '' : `non-error: ${typeof value}`
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Report one unexpected error to Umami as an `error` event. Never throws, never
+ * blocks. Safe to call from anywhere, including inside an error handler; repeats
+ * of the same error and anything past MAX_REPORTS in this tab are dropped.
+ *
+ *   reportError('runtime-crash', { lang: 'java', error: e, phase: 'worker-onerror' })
+ */
+export function reportError(kind: ErrorKind, details: ErrorDetails = {}): void {
+  try {
+    const err = details.error
+    const stackText = err instanceof Error ? err.stack : undefined
+    const message = scrubMessage(details.message ?? messageOf(err)) || '(no message)'
+    const stack = scrubStack(stackText)
+    const source = details.source
+      ? scrubStack(`at ${details.source}`) || scrubMessage(details.source).slice(0, 80)
+      : stack.split(' < ')[0] ?? ''
+    const lang = details.lang && KNOWN_LANGS.has(details.lang) ? details.lang : details.lang ? 'other' : 'unknown'
+    const phase = (details.phase ?? '').replace(/[^\w.-]/g, '').slice(0, 40)
+
+    const key = `${kind}|${lang}|${message}|${source}`
+    if (sent.has(key)) return
+    if (sessionCount(0) >= MAX_REPORTS) return
+    sent.add(key)
+    sessionCount(1)
+
+    track('error', { kind, lang, message, source, stack, phase, build: BUILD })
+  } catch {
+    /* Reporting an error must never become one. */
+  }
+}
+
+let globalsInstalled = false
+
+/**
+ * Report uncaught errors and unhandled rejections from the main window. Call once
+ * at startup. Ignores what we cannot act on: cross-origin "Script error." (the
+ * browser has already hidden everything), extension scripts, and the benign
+ * ResizeObserver loop notice.
+ */
+export function installGlobalErrorReporting(): void {
+  if (globalsInstalled || typeof window === 'undefined') return
+  globalsInstalled = true
+  window.addEventListener('error', (e) => {
+    // Resource load failures (an <img> 404) arrive here too, with no message.
+    if (!(e instanceof ErrorEvent) || !e.message) return
+    if (e.message === 'Script error.' || /ResizeObserver loop/.test(e.message)) return
+    if (e.filename && scrubUrl(e.filename) === 'external') return
+    reportError('window-error', {
+      error: e.error,
+      message: e.error instanceof Error ? undefined : e.message,
+      source: e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined,
+    })
+  })
+  window.addEventListener('unhandledrejection', (e) => {
+    reportError('unhandled-rejection', { error: e.reason })
+  })
 }
