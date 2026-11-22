@@ -220,9 +220,11 @@ the well-known placeholder. Everything else (`HOST`, `PORT`, `S3_REGION`, quotas
 ### Behind Traefik (X-Forwarded-For)
 
 The server sits behind Traefik, so per-IP rate-limit buckets (global, device 5/hr,
-auth+claim 10/15min) must key off the **real client IP**, not the proxy. Set `TRUST_PROXY`
-to the number of proxy hops to trust (default in prod is `1` = Traefik) or an explicit list
-of trusted proxy IPs/CIDRs. **Do not** use `TRUST_PROXY=true` (trust-all) in production — it
+auth+claim 10/15min) must key off the **real client IP**, not the proxy. `TRUST_PROXY` is a
+comma-separated list of trusted proxy IPs/CIDRs (proxy-addr names like `loopback` and
+`uniquelocal` work too); the prod default is `loopback,uniquelocal`, i.e. Traefik on the Docker
+network. Hop counts (`1`) are no longer accepted: they can't tell Traefik from a client that
+sends its own X-Forwarded-For (CVE-2026-16732), so a number now falls back to that default. **Do not** use `TRUST_PROXY=true` (trust-all) in production — it
 lets any client spoof `X-Forwarded-For` and mint unlimited rate-limit buckets.
 
 > **Traefik must be configured to _overwrite_ (not append) `X-Forwarded-For`.** With the

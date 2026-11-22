@@ -11,7 +11,7 @@
  * = explicit trusted proxy IPs/CIDRs. `true` = trust every hop (NOT a default —
  * lets any client spoof X-Forwarded-For and defeat per-IP rate limits).
  */
-export type TrustProxy = boolean | number | string[]
+export type TrustProxy = boolean | string[]
 
 export interface Env {
   /** True when NODE_ENV=production. Drives fail-closed checks + verbose errors. */
@@ -136,15 +136,26 @@ function prodRequiredCors(fallback: string[], isProd: boolean): string[] {
   return list
 }
 
+/**
+ * Proxies whose X-Forwarded-For we believe: loopback plus the private ranges, i.e. Traefik on the
+ * Docker network. A request straight from the internet never comes from one of these, so its own
+ * X-Forwarded-For is ignored and its socket address is the client.
+ */
+export const DEFAULT_TRUSTED_PROXIES = ['loopback', 'uniquelocal']
+
 function trustProxy(isProd: boolean): TrustProxy {
   const v = process.env['TRUST_PROXY']
-  // Default: dev trusts nothing (socket peer is the client); prod trusts exactly
-  // one hop (Traefik). One hop keeps clients from spoofing X-Forwarded-For.
-  if (v === undefined || v === '') return isProd ? 1 : false
+  // Default: dev trusts nothing (socket peer is the client); prod trusts Traefik by ADDRESS.
+  if (v === undefined || v === '') return isProd ? DEFAULT_TRUSTED_PROXIES : false
   if (v === 'true') return true
   if (v === 'false') return false
-  const n = Number(v)
-  if (Number.isInteger(n) && String(n) === v.trim()) return n
+  // A hop count ("1") used to be accepted. It can't tell Traefik from a client that sends its own
+  // X-Forwarded-For (CVE-2026-16732), and Fastify >= 5.12.1 treats it as "trust nobody", which would
+  // put every client in Traefik's one rate-limit bucket. Map it to the address-based default.
+  if (/^\d+$/.test(v.trim())) {
+    console.warn('[env] TRUST_PROXY hop counts are no longer supported; trusting loopback + private ranges instead.')
+    return DEFAULT_TRUSTED_PROXIES
+  }
   return v.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
