@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import type { TrustProxy } from '../src/env.js'
 import { buildApp } from '../src/app.js'
-import { loadEnv } from '../src/env.js'
+import { DEFAULT_TRUSTED_PROXIES, loadEnv } from '../src/env.js'
 import { FakeRepo, FakeStorage } from './fakes.js'
 
 /**
@@ -47,6 +47,23 @@ describe('rate-limit keying behind a proxy (§H3)', () => {
   it('with TRUST_PROXY off, X-Forwarded-For is ignored (all share the socket bucket)', async () => {
     app = await build(false)
     // Distinct XFF values, but the socket peer is the key → the 2nd is limited.
+    expect((await get(app, '1.1.1.1')).statusCode).toBe(200)
+    expect((await get(app, '2.2.2.2')).statusCode).toBe(429)
+  })
+
+  it('prod default: a direct client cannot pick its own bucket by sending X-Forwarded-For (CVE-2026-16732)', async () => {
+    app = await build(DEFAULT_TRUSTED_PROXIES)
+    // inject() connects from 127.0.0.1 (trusted, like Traefik): the forwarded client is honoured.
+    expect((await get(app, '9.9.9.9')).statusCode).toBe(200)
+    expect((await get(app, '9.9.9.9')).statusCode).toBe(429)
+    // A spoofed hop in front of the real one doesn't mint a new bucket: the right-most untrusted
+    // address (the one Traefik saw) is the key.
+    expect((await get(app, '7.7.7.7, 9.9.9.9')).statusCode).toBe(429)
+  })
+
+  it('a direct, untrusted peer is keyed by its socket address whatever it forwards', async () => {
+    app = await build(['10.0.0.0/8'])
+    // inject() peers from 127.0.0.1, which this list does not trust → XFF ignored.
     expect((await get(app, '1.1.1.1')).statusCode).toBe(200)
     expect((await get(app, '2.2.2.2')).statusCode).toBe(429)
   })

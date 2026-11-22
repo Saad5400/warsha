@@ -54,7 +54,7 @@ describe('loadEnv fail-closed', () => {
     expect(env.IS_PRODUCTION).toBe(true)
     expect(env.DEV_BEARER_ENABLED).toBe(false)
     expect(env.DEV_SHARED_SECRET).toBe('')
-    expect(env.TRUST_PROXY).toBe(1) // prod default: trust one proxy hop (Traefik)
+    expect(env.TRUST_PROXY).toEqual(['loopback', 'uniquelocal']) // prod default: trust Traefik by address, not by hop count
   })
 
   it('refuses to boot if the dev bearer would be enabled in production', () => {
